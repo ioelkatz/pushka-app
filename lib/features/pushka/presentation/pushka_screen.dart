@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_animate/flutter_animate.dart';
 
 class PushkaScreen extends StatefulWidget {
   const PushkaScreen({super.key});
@@ -11,120 +10,136 @@ class PushkaScreen extends StatefulWidget {
 class _PushkaScreenState extends State<PushkaScreen> {
   double pushkaAmount = 0;
 
-  void addAmount(double amount) {
-    setState(() {
-      pushkaAmount += amount;
-    });
-  }
-
-  void emptyPushka() {
-    setState(() {
-      pushkaAmount = 0;
-    });
-  }
+  void addAmount(double amount) => setState(() => pushkaAmount += amount);
+  void emptyPushka() => setState(() => pushkaAmount = 0);
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
+    const red = Color(0xFFE05A4F);
+    const blue = Color(0xFF2F60C5);
 
     return SafeArea(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          children: [
-            const SizedBox(height: 10),
-            Text(
-              'My Pushka',
-              style: theme.textTheme.titleLarge,
-            ),
-            const SizedBox(height: 16),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(18, 6, 18, 18),
+          child: Column(
+            children: [
+              const Text(
+                "Colel Chabad - Sirviendo a los necesitados de Israel\nDesde 1788",
+                textAlign: TextAlign.center,
+                style: TextStyle(color: Colors.black54),
+              ),
+              const SizedBox(height: 10),
 
-            // Pushka "visual"
-            Expanded(
-              child: Center(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      '\$${pushkaAmount.toStringAsFixed(2)}',
-                      style: theme.textTheme.displaySmall?.copyWith(
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                    const SizedBox(height: 16),
+              Image.asset(
+                'assets/images/jabad.png',
+                height: 54,
+                fit: BoxFit.contain,
+              ),
 
-                    // Placeholder “pushka”
-                    Container(
-                      width: 180,
-                      height: 240,
-                      decoration: BoxDecoration(
-                        color: Colors.grey.shade200,
-                        borderRadius: BorderRadius.circular(24),
-                        border: Border.all(color: Colors.grey.shade400),
-                      ),
-                      alignment: Alignment.center,
-                      child: const Text(
-                        'PUSHKA\n(placeholder)',
-                        textAlign: TextAlign.center,
-                      ),
-                    )
-                        // mini “shake” animation each rebuild (por ahora simple)
-                        .animate()
-                        .shake(duration: 250.ms, hz: 3, offset: const Offset(3, 0)),
-                  ],
+              const SizedBox(height: 18),
+              const Text(
+                "¡Llénala!",
+                style: TextStyle(
+                  fontSize: 26,
+                  fontWeight: FontWeight.w700,
+                  color: blue,
                 ),
               ),
-            ),
+              const SizedBox(height: 6),
+              const Text(
+                "Sigamos avanzando",
+                style: TextStyle(color: Colors.black54, fontSize: 16),
+              ),
+              const SizedBox(height: 18),
 
-            // Preset buttons
-            Row(
-              children: [
-                _amountButton('\$1', () => addAmount(1)),
-                const SizedBox(width: 10),
-                _amountButton('\$5', () => addAmount(5)),
-                const SizedBox(width: 10),
-                _amountButton('\$10', () => addAmount(10)),
-                const SizedBox(width: 10),
-                _amountButton('OTHER', _otherAmount),
-              ],
-            ),
+              Expanded(
+                child: Center(
+                  child: Stack(
+                    alignment: Alignment.center,
+                    children: [
+                      SizedBox(
+                        height: 390,
+                        child: Image.asset(
+                          'assets/images/pushka.png',
+                          fit: BoxFit.contain,
+                        ),
+                      ),
+                      const Positioned(top: 16, child: _Coin()),
+                      const Positioned(
+                        left: 0,
+                        child: Text("\$36.00", style: TextStyle(color: blue, fontSize: 14)),
+                      ),
+                      Positioned(
+                        right: 0,
+                        child: Text(
+                          "-\$${pushkaAmount.toStringAsFixed(2)}",
+                          style: const TextStyle(color: blue, fontSize: 14),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
 
-            const SizedBox(height: 14),
+              const SizedBox(height: 10),
 
-            // Bottom actions
-            Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton(
+              Row(
+                children: [
+                  _moneyBtn('\$1', red, () => addAmount(1)),
+                  const SizedBox(width: 10),
+                  _moneyBtn('\$5', red, () => addAmount(5)),
+                  const SizedBox(width: 10),
+                  _moneyBtn('\$10', red, () => addAmount(10)),
+                  const SizedBox(width: 10),
+                  _moneyBtn('OTRO', red, _otherAmount),
+                ],
+              ),
+
+              const SizedBox(height: 18),
+
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  TextButton(
                     onPressed: () {
-                      // por ahora solo demo
                       ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text('Donate Now (demo)')),
+                        const SnackBar(content: Text('Donar ahora')),
                       );
                     },
-                    child: const Text('DONATE NOW'),
+                    child: const Text(
+                      'DONAR AHORA',
+                      style: TextStyle(color: red, fontWeight: FontWeight.w700),
+                    ),
                   ),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: OutlinedButton(
+                  TextButton(
                     onPressed: emptyPushka,
-                    child: const Text('EMPTY PUSHKA'),
+                    child: const Text(
+                      'VACIAR PUSHKA',
+                      style: TextStyle(color: red, fontWeight: FontWeight.w700),
+                    ),
                   ),
-                ),
-              ],
-            ),
-          ],
+                ],
+              ),
+            ],
+          ),
         ),
-      ),
-    );
+      );
   }
 
-  Expanded _amountButton(String label, VoidCallback onTap) {
+  Expanded _moneyBtn(String label, Color border, VoidCallback onTap) {
     return Expanded(
-      child: OutlinedButton(
-        onPressed: onTap,
-        child: Text(label),
+      child: SizedBox(
+        height: 44,
+        child: OutlinedButton(
+          onPressed: onTap,
+          style: OutlinedButton.styleFrom(
+            side: BorderSide(color: border, width: 2),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            foregroundColor: border,
+            textStyle: const TextStyle(fontWeight: FontWeight.w700),
+          ),
+          child: Text(label),
+        ),
       ),
     );
   }
@@ -135,29 +150,42 @@ class _PushkaScreenState extends State<PushkaScreen> {
     final result = await showDialog<double>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Other amount'),
+        title: const Text('Otro monto'),
         content: TextField(
           controller: controller,
           keyboardType: const TextInputType.numberWithOptions(decimal: true),
-          decoration: const InputDecoration(hintText: 'e.g. 12.50'),
+          decoration: const InputDecoration(hintText: 'Ej: 12.50'),
         ),
         actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
-          ),
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancelar')),
           ElevatedButton(
             onPressed: () {
               final value = double.tryParse(controller.text.replaceAll(',', '.'));
               if (value == null || value <= 0) return;
               Navigator.pop(context, value);
             },
-            child: const Text('Add'),
+            child: const Text('Agregar'),
           ),
         ],
       ),
     );
 
     if (result != null) addAmount(result);
+  }
+}
+
+class _Coin extends StatelessWidget {
+  const _Coin();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 62,
+      height: 62,
+      decoration: const BoxDecoration(
+        color: Color(0xFFF2B316),
+        shape: BoxShape.circle,
+      ),
+    );
   }
 }

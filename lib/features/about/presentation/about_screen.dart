@@ -5,6 +5,8 @@ class AboutScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const Center(child: Text('About Us', style: TextStyle(fontSize: 24)));
+    return const Center(
+      child: Text('Acerca de', style: TextStyle(fontSize: 24)),
+    );
   }
 }

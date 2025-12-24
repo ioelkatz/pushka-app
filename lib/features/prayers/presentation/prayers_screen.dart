@@ -5,6 +5,8 @@ class PrayersScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const Center(child: Text('Segulot & Prayers', style: TextStyle(fontSize: 24)));
+    return const Center(
+      child: Text('Segulot y Rezós', style: TextStyle(fontSize: 24)),
+    );
   }
 }

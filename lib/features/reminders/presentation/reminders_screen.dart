@@ -5,6 +5,8 @@ class RemindersScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const Center(child: Text('Reminders', style: TextStyle(fontSize: 24)));
+    return const Center(
+      child: Text('Recordatorios', style: TextStyle(fontSize: 24)),
+    );
   }
 }

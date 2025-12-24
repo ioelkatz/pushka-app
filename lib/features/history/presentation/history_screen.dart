@@ -5,6 +5,8 @@ class HistoryScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const Center(child: Text('History', style: TextStyle(fontSize: 24)));
+    return const Center(
+      child: Text('Historial', style: TextStyle(fontSize: 24)),
+    );
   }
 }
