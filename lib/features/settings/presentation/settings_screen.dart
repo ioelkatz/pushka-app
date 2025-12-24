@@ -10,19 +10,37 @@ class SettingsScreen extends StatefulWidget {
 class _SettingsScreenState extends State<SettingsScreen> {
   // Valores de configuración
   double pushkaGoal = 3600.00;
-  String selectedPreset = '1.00'; // Primary preset
+  String selectedPreset = '1.00';
   bool soundEnabled = true;
   bool coinJingleEnabled = true;
   bool vibrationEnabled = true;
   bool partialPaymentsEnabled = false;
+  bool additionalPaymentOptionsEnabled = false;
+  bool biometricAuthenticationEnabled = false;
   String selectedCurrency = 'USD';
   String selectedCountry = 'Estados Unidos';
 
+  // Perfil
+  String userName = 'Ioel Katz';
+  String userEmail = 'ioelkatz@gmail.com';
+  String? billingEmail;
+  String? phoneNumber;
+  String? mailingAddress;
+
+  // Mis Pushkas
+  final List<Map<String, String>> myPushkas = [
+    {
+      'name': 'Colel Chabad Pushkah',
+      'id': 'colel-chabad-pushka',
+    },
+  ];
+
   @override
   Widget build(BuildContext context) {
-    const orange = Color(0xFFFF9500); // Color naranja para toggles activos
+    const orange = Color(0xFFFF9500);
+    const red = Color(0xFFE05A4F);
     const blue = Color(0xFF2F60C5);
-    const grey = Color(0xFFF0F0F0);
+    const purple = Color(0xFF9C27B0);
 
     return SingleChildScrollView(
       padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
@@ -39,6 +57,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           _buildInputField(
             value: '\$ ${pushkaGoal.toStringAsFixed(2)}',
             onTap: () => _showPushkaGoalDialog(),
+            blue: blue,
           ),
           const SizedBox(height: 18),
 
@@ -132,6 +151,138 @@ class _SettingsScreenState extends State<SettingsScreen> {
             Colors.grey,
             onChanged: (value) => setState(() => partialPaymentsEnabled = value),
           ),
+          const SizedBox(height: 18),
+
+          // ADDITIONAL PAYMENT OPTIONS
+          _buildToggleRowWithSubtitle(
+            'OPCIONES DE PAGO ADICIONALES',
+            'Incluyendo cheque, transferencia, DAF',
+            additionalPaymentOptionsEnabled,
+            Colors.grey,
+            onChanged: (value) => setState(() => additionalPaymentOptionsEnabled = value),
+          ),
+          const SizedBox(height: 18),
+
+          // BIOMETRIC AUTHENTICATION
+          _buildToggleRow(
+            'AUTENTICACIÓN BIOMÉTRICA',
+            biometricAuthenticationEnabled,
+            Colors.grey,
+            onChanged: (value) => setState(() => biometricAuthenticationEnabled = value),
+          ),
+          const SizedBox(height: 32),
+
+          // MY PUSHKAS Section
+          _buildSectionTitle('MIS PUSHKAS'),
+          const SizedBox(height: 12),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Expanded(child: SizedBox()),
+              ElevatedButton(
+                onPressed: () {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Agregar nueva Pushka')),
+                  );
+                },
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: red,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                ),
+                child: const Text(
+                  '+ AGREGAR PUSHKA',
+                  style: TextStyle(
+                    fontWeight: FontWeight.w700,
+                    fontSize: 14,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          ...myPushkas.map((pushka) => _buildPushkaItem(pushka)),
+          const SizedBox(height: 32),
+
+          // PROFILE Section
+          _buildSectionTitle('PERFIL'),
+          const SizedBox(height: 12),
+          _buildProfileField('NOMBRE', userName),
+          const SizedBox(height: 16),
+          _buildProfileField('CORREO ELECTRÓNICO', userEmail),
+          const SizedBox(height: 16),
+          _buildEditableField(
+            'CORREO DE FACTURACIÓN',
+            billingEmail ?? '-',
+            onEdit: () => _showEditDialog('Correo de Facturación', billingEmail ?? '', (value) {
+              setState(() => billingEmail = value.isEmpty ? null : value);
+            }),
+          ),
+          const SizedBox(height: 16),
+          _buildEditableField(
+            'NÚMERO DE TELÉFONO',
+            phoneNumber ?? '-',
+            onEdit: () => _showEditDialog('Número de Teléfono', phoneNumber ?? '', (value) {
+              setState(() => phoneNumber = value.isEmpty ? null : value);
+            }),
+          ),
+          const SizedBox(height: 16),
+          _buildEditableField(
+            'DIRECCIÓN POSTAL',
+            mailingAddress ?? '-',
+            onEdit: () => _showEditDialog('Dirección Postal', mailingAddress ?? '', (value) {
+              setState(() => mailingAddress = value.isEmpty ? null : value);
+            }),
+          ),
+          const SizedBox(height: 32),
+
+          // MANAGE ACCOUNT Section
+          _buildSectionTitle('ADMINISTRAR CUENTA'),
+          const SizedBox(height: 12),
+          InkWell(
+            onTap: () => _showDeleteAccountDialog(),
+            child: Row(
+              children: [
+                Icon(Icons.delete_outline, color: purple, size: 20),
+                const SizedBox(width: 8),
+                Text(
+                  '¿Eliminar cuenta?',
+                  style: TextStyle(
+                    fontSize: 16,
+                    color: purple,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 32),
+
+          // LOGOUT Button
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton(
+              onPressed: () => _showLogoutDialog(),
+              style: OutlinedButton.styleFrom(
+                side: const BorderSide(color: orange, width: 2),
+                padding: const EdgeInsets.symmetric(vertical: 14),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8),
+                ),
+              ),
+              child: const Text(
+                'CERRAR SESIÓN',
+                style: TextStyle(
+                  color: orange,
+                  fontWeight: FontWeight.w700,
+                  fontSize: 16,
+                ),
+              ),
+            ),
+          ),
           const SizedBox(height: 24),
         ],
       ),
@@ -162,7 +313,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
-  Widget _buildInputField({required String value, required VoidCallback onTap}) {
+  Widget _buildInputField({
+    required String value,
+    required VoidCallback onTap,
+    required Color blue,
+  }) {
     return InkWell(
       onTap: onTap,
       child: Container(
@@ -174,9 +329,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ),
         child: Row(
           children: [
+            Text(
+              '\$ ',
+              style: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.w500,
+                color: blue,
+              ),
+            ),
             Expanded(
               child: Text(
-                value,
+                value.replaceFirst('\$ ', ''),
                 style: const TextStyle(
                   fontSize: 16,
                   fontWeight: FontWeight.w500,
@@ -290,7 +453,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ),
         child: Row(
           children: [
-            // Bandera (usando emoji o icono)
             Container(
               width: 24,
               height: 24,
@@ -358,6 +520,288 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ),
       ],
     );
+  }
+
+  Widget _buildToggleRowWithSubtitle(
+    String label,
+    String subtitle,
+    bool value,
+    Color activeColor, {
+    required ValueChanged<bool> onChanged,
+  }) {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                label,
+                style: const TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                subtitle,
+                style: TextStyle(
+                  fontSize: 12,
+                  color: Colors.grey.shade600,
+                ),
+              ),
+            ],
+          ),
+        ),
+        Switch(
+          value: value,
+          onChanged: onChanged,
+          activeColor: activeColor,
+          activeTrackColor: activeColor.withOpacity(0.5),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildPushkaItem(Map<String, String> pushka) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        border: Border.all(color: Colors.grey.shade200),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(
+        children: [
+          // Icono de pushka
+          Container(
+            width: 48,
+            height: 48,
+            decoration: BoxDecoration(
+              color: const Color(0xFFF0F0F0),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Center(
+              child: Container(
+                width: 32,
+                height: 32,
+                decoration: BoxDecoration(
+                  color: const Color(0xFFE8E8E8),
+                  borderRadius: BorderRadius.circular(4),
+                  border: Border.all(color: Colors.grey.shade400, width: 1.5),
+                ),
+                child: Stack(
+                  children: [
+                    Positioned(
+                      top: 2,
+                      left: 8,
+                      right: 8,
+                      child: Container(
+                        height: 2,
+                        decoration: BoxDecoration(
+                          color: Colors.grey.shade600,
+                          borderRadius: BorderRadius.circular(1),
+                        ),
+                      ),
+                    ),
+                    const Center(
+                      child: Text(
+                        'צדקה',
+                        style: TextStyle(
+                          fontSize: 8,
+                          fontWeight: FontWeight.w600,
+                          height: 1.2,
+                        ),
+                        textDirection: TextDirection.rtl,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  pushka['name']!,
+                  style: const TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  'ID: ${pushka['id']!}',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: Colors.grey.shade600,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildProfileField(String label, String value) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          style: const TextStyle(
+            fontSize: 11,
+            fontWeight: FontWeight.w600,
+            letterSpacing: 0.5,
+            color: Colors.black54,
+          ),
+        ),
+        const SizedBox(height: 6),
+        Text(
+          value,
+          style: const TextStyle(
+            fontSize: 16,
+            fontWeight: FontWeight.w400,
+            color: Colors.black87,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildEditableField(String label, String value, {required VoidCallback onEdit}) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Text(
+              label,
+              style: const TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+                letterSpacing: 0.5,
+                color: Colors.black54,
+              ),
+            ),
+            IconButton(
+              icon: const Icon(Icons.edit, size: 18),
+              color: Colors.grey,
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(),
+              onPressed: onEdit,
+            ),
+          ],
+        ),
+        const SizedBox(height: 6),
+        Text(
+          value,
+          style: const TextStyle(
+            fontSize: 16,
+            fontWeight: FontWeight.w400,
+            color: Colors.black87,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Future<void> _showEditDialog(String title, String currentValue, Function(String) onSave) async {
+    final controller = TextEditingController(text: currentValue == '-' ? '' : currentValue);
+
+    final result = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(title),
+        content: TextField(
+          controller: controller,
+          decoration: InputDecoration(
+            hintText: 'Ingrese $title',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancelar'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, controller.text),
+            child: const Text('Guardar'),
+          ),
+        ],
+      ),
+    );
+
+    if (result != null) {
+      onSave(result);
+    }
+  }
+
+  Future<void> _showDeleteAccountDialog() async {
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Eliminar Cuenta'),
+        content: const Text(
+          '¿Está seguro de que desea eliminar su cuenta? Esta acción no se puede deshacer.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancelar'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.red,
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('Eliminar'),
+          ),
+        ],
+      ),
+    );
+
+    if (result == true) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Cuenta eliminada')),
+      );
+    }
+  }
+
+  Future<void> _showLogoutDialog() async {
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Cerrar Sesión'),
+        content: const Text('¿Está seguro de que desea cerrar sesión?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancelar'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Cerrar Sesión'),
+          ),
+        ],
+      ),
+    );
+
+    if (result == true) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Sesión cerrada')),
+      );
+    }
   }
 
   Future<void> _showPushkaGoalDialog() async {

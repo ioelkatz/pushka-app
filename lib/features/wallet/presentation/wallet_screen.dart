@@ -1,7 +1,23 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../history/providers/history_provider.dart';
 
-class WalletScreen extends StatelessWidget {
+class WalletScreen extends ConsumerStatefulWidget {
   const WalletScreen({super.key});
+
+  @override
+  ConsumerState<WalletScreen> createState() => _WalletScreenState();
+}
+
+class _WalletScreenState extends ConsumerState<WalletScreen> {
+  void _addFunds() {
+    // Por ahora, agregamos un monto de ejemplo. Más adelante se puede hacer un diálogo para ingresar el monto
+    const amount = 50.0;
+    ref.read(historyProvider.notifier).addWalletFill(amount);
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Fondos agregados: \$${amount.toStringAsFixed(2)}')),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -85,11 +101,7 @@ class WalletScreen extends StatelessWidget {
           SizedBox(
             height: 50,
             child: OutlinedButton(
-              onPressed: () {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Agregar fondos (próximamente)')),
-                );
-              },
+              onPressed: _addFunds,
               style: OutlinedButton.styleFrom(
                 side: const BorderSide(color: red, width: 2),
                 shape: RoundedRectangleBorder(

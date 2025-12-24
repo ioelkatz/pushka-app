@@ -11,47 +11,138 @@ class AppDrawer extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    const blue = Color(0xFF2F60C5);
+    
     return Drawer(
-      child: ListView(
-        padding: EdgeInsets.zero,
+      child: Column(
         children: [
-          DrawerHeader(
-            decoration: const BoxDecoration(color: Color(0xFF2F60C5)),
-            child: Text(
-              'HI ${userName.toUpperCase()}',
-              style: const TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.w600),
+          // Header azul
+          Container(
+            height: 120,
+            decoration: const BoxDecoration(color: blue),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(20, 50, 20, 20),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  'HI ${userName.toUpperCase()}',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 24,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 0.5,
+                  ),
+                ),
+              ),
             ),
           ),
 
-          _item(context, DrawerItem.pushka, 'Mi Pushka', '/', Icons.home),
-          _item(context, DrawerItem.wallet, 'Billetera', '/wallet', Icons.account_balance_wallet),
-          _item(context, DrawerItem.reminders, 'Recordatorios', '/reminders', Icons.notifications),
-          _item(context, DrawerItem.history, 'Historial', '/history', Icons.history),
-          _item(context, DrawerItem.settings, 'Configuración', '/settings', Icons.settings),
-          _item(context, DrawerItem.prayers, 'Segulot y Rezós', '/prayers', Icons.menu_book),
-          _item(context, DrawerItem.support, 'Soporte', '/support', Icons.support_agent),
-          _item(context, DrawerItem.about, 'Acerca de', '/about', Icons.info),
+          // Lista de items del menú
+          Expanded(
+            child: ListView(
+              padding: const EdgeInsets.symmetric(vertical: 8),
+              children: [
+                _item(context, DrawerItem.pushka, 'Mi Pushka', '/', Icons.home, blue),
+                _item(context, DrawerItem.wallet, 'Billetera', '/wallet', Icons.account_balance_wallet, blue),
+                _item(context, DrawerItem.reminders, 'Recordatorios', '/reminders', Icons.notifications, blue),
+                _item(context, DrawerItem.history, 'Historial', '/history', Icons.history, blue),
+                _item(context, DrawerItem.settings, 'Configuración', '/settings', Icons.settings, blue),
+                _item(context, DrawerItem.prayers, 'Segulot y Rezós', '/prayers', Icons.menu_book, blue),
+                _item(context, DrawerItem.support, 'Soporte', '/support', Icons.support_agent, blue),
+                _item(context, DrawerItem.about, 'Acerca de', '/about', Icons.info, blue),
+              ],
+            ),
+          ),
+
+          // Footer con versión y patrocinadores
+          Container(
+            padding: const EdgeInsets.all(20),
+            decoration: BoxDecoration(
+              border: Border(top: BorderSide(color: Colors.grey.shade200)),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Versión 3.2.0',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: Colors.grey.shade600,
+                    fontWeight: FontWeight.w400,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'Patrocinado por',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: Colors.grey.shade600,
+                    fontWeight: FontWeight.w400,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  'Rabino Dovid (Roberto)',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: Colors.grey.shade700,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+                Text(
+                  'y Margie Szerer',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: Colors.grey.shade700,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ],
+            ),
+          ),
         ],
       ),
     );
   }
 
-  Widget _item(BuildContext context, DrawerItem item, String title, String route, IconData icon) {
+  Widget _item(
+    BuildContext context,
+    DrawerItem item,
+    String title,
+    String route,
+    IconData icon,
+    Color blue,
+  ) {
     final selected = item == current;
 
-    return ListTile(
-      leading: Icon(icon, color: selected ? const Color(0xFF2F60C5) : null),
-      title: Text(title, style: TextStyle(fontWeight: selected ? FontWeight.w700 : FontWeight.w400)),
-      selected: selected,
-      onTap: () {
-  Navigator.pop(context);
-  if (GoRouterState.of(context).uri.toString() != route) {
-    context.go(route);
-  }
-}
-
-
-
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+      decoration: BoxDecoration(
+        color: selected ? blue : Colors.transparent,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: ListTile(
+        leading: Icon(
+          icon,
+          color: selected ? Colors.white : Colors.grey.shade700,
+          size: 24,
+        ),
+        title: Text(
+          title,
+          style: TextStyle(
+            color: selected ? Colors.white : Colors.black87,
+            fontSize: 16,
+            fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
+          ),
+        ),
+        onTap: () {
+          Navigator.pop(context);
+          if (GoRouterState.of(context).uri.toString() != route) {
+            context.go(route);
+          }
+        },
+        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+      ),
     );
   }
 }
