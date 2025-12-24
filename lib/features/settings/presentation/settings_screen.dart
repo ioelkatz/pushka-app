@@ -327,7 +327,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ],
               ),
             ),
-            const Icon(Icons.chevron_down, color: Colors.grey),
+            const Icon(Icons.keyboard_arrow_down, color: Colors.grey),
           ],
         ),
       ),
@@ -337,9 +337,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Widget _buildToggleRow(
     String label,
     bool value,
-    Color activeColor,
-    {required ValueChanged<bool> onChanged},
-  ) {
+    Color activeColor, {
+    required ValueChanged<bool> onChanged,
+  }) {
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
