@@ -6,52 +6,52 @@ class AboutScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return SingleChildScrollView(
-      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const SizedBox(height: 20),
+          const SizedBox(height: 12),
 
           // Breadcrumb
           Text(
-            'Acerca de | Colel Chabad',
+            'Acerca de | Colel Jabad',
             style: TextStyle(
-              fontSize: 14,
+              fontSize: 13,
               color: Colors.grey.shade600,
               fontWeight: FontWeight.w400,
             ),
           ),
 
-          const SizedBox(height: 32),
+          const SizedBox(height: 24),
 
           // Título principal
           const Text(
-            'Colel Chabad',
+            'Colel Jabad',
             style: TextStyle(
-              fontSize: 32,
+              fontSize: 30,
               fontWeight: FontWeight.w700,
               color: Colors.black87,
               letterSpacing: 0.5,
             ),
           ),
 
-          const SizedBox(height: 32),
+          const SizedBox(height: 26),
 
           // Sección "Acerca de"
           const Text(
             'Acerca de',
             style: TextStyle(
-              fontSize: 24,
+              fontSize: 22,
               fontWeight: FontWeight.w700,
               color: Colors.black87,
             ),
           ),
 
-          const SizedBox(height: 24),
+          const SizedBox(height: 18),
 
           // Párrafo 1
           const Text(
-            'Bienvenido a Colel Chabad. Somos la organización benéfica en funcionamiento continuo más antigua de Israel, dedicada a brindar asistencia a quienes la necesitan sin importar su origen.',
+            'Bienvenido a Colel Jabad. Somos la organización benéfica en funcionamiento continuo más antigua de Israel, dedicada a brindar asistencia a quienes la necesitan sin importar su origen.',
             style: TextStyle(
               fontSize: 16,
               height: 1.6,
@@ -77,7 +77,7 @@ class AboutScreen extends StatelessWidget {
 
           // Párrafo 3
           const Text(
-            'Desde nuestra fundación en 1788, Colel Chabad ha expandido sus servicios en todo Israel, operando bancos de alimentos, comedores comunitarios, programas de asistencia médica y más.',
+            'Desde nuestra fundación en 1788, Colel Jabad ha expandido sus servicios en todo Israel, operando bancos de alimentos, comedores comunitarios, programas de asistencia médica y más.',
             style: TextStyle(
               fontSize: 16,
               height: 1.6,
@@ -86,12 +86,12 @@ class AboutScreen extends StatelessWidget {
             ),
           ),
 
-          const SizedBox(height: 40),
+          const SizedBox(height: 30),
 
           // Copyright
           Center(
             child: Text(
-              '© 2025 Colel Chabad. Todos los derechos reservados.',
+              '© 2025 Colel Jabad. Todos los derechos reservados.',
               style: TextStyle(
                 fontSize: 14,
                 color: Colors.grey.shade600,

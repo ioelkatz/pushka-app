@@ -8,21 +8,20 @@ class SupportScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     const red = Color(0xFFE05A4F);
     const green = Color(0xFF25D366); // Color de WhatsApp
+    const blue = Color(0xFF2F60C5);
 
     return SingleChildScrollView(
-      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          const SizedBox(height: 20),
+          const SizedBox(height: 12),
 
-          // Logo y branding de Colel Chabad
-          Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // Texto principal
-              Column(
+          // Logo y branding de Colel Jabad
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final isNarrow = constraints.maxWidth < 360;
+              final textBlock = Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   // Texto hebreo
@@ -37,11 +36,11 @@ class SupportScreen extends StatelessWidget {
                     textAlign: TextAlign.right,
                   ),
                   const SizedBox(height: 4),
-                  // Colel Chabad
+                  // Colel Jabad
                   const Text(
-                    'Colel Chabad',
+                    'Colel Jabad',
                     style: TextStyle(
-                      fontSize: 32,
+                      fontSize: 30,
                       fontWeight: FontWeight.w700,
                       color: Colors.black87,
                       letterSpacing: 0.5,
@@ -58,20 +57,40 @@ class SupportScreen extends StatelessWidget {
                     ),
                   ),
                 ],
-              ),
-              const SizedBox(width: 16),
-              // Ilustración de Pushka
-              _buildPushkaIllustration(),
-            ],
+              );
+
+              if (isNarrow) {
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    textBlock,
+                    const SizedBox(height: 16),
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: _buildPushkaIllustration(),
+                    ),
+                  ],
+                );
+              }
+
+              return Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(child: textBlock),
+                  const SizedBox(width: 16),
+                  _buildPushkaIllustration(),
+                ],
+              );
+            },
           ),
 
-          const SizedBox(height: 40),
+          const SizedBox(height: 32),
 
           // App Version
           const Text(
             'VERSIÓN DE LA APP',
             style: TextStyle(
-              fontSize: 12,
+              fontSize: 11,
               fontWeight: FontWeight.w600,
               letterSpacing: 1.2,
               color: Colors.black87,
@@ -87,13 +106,13 @@ class SupportScreen extends StatelessWidget {
             ),
           ),
 
-          const SizedBox(height: 32),
+          const SizedBox(height: 28),
 
           // Support Section
           const Text(
             'SOPORTE',
             style: TextStyle(
-              fontSize: 12,
+              fontSize: 11,
               fontWeight: FontWeight.w600,
               letterSpacing: 1.2,
               color: Colors.black87,
@@ -152,31 +171,29 @@ class SupportScreen extends StatelessWidget {
             ),
           ),
 
-          const SizedBox(height: 40),
+          const SizedBox(height: 32),
 
           // Learn More Link
-          Align(
-            alignment: Alignment.centerLeft,
-            child: InkWell(
-              onTap: () => _launchLearnMore(),
-              child: const Text(
-                'Aprende más sobre Colel Chabad y la Pushka de Colel Chabad.',
-                style: TextStyle(
-                  fontSize: 14,
-                  color: Colors.blue,
-                  decoration: TextDecoration.underline,
-                ),
+          InkWell(
+            onTap: () => _launchLearnMore(),
+            child: const Text(
+              'Aprende más sobre Colel Jabad y la Pushka de Colel Jabad.',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 14,
+                color: blue,
+                decoration: TextDecoration.underline,
               ),
             ),
           ),
 
-          const SizedBox(height: 40),
+          const SizedBox(height: 32),
 
           // Developer Section
           const Text(
             'DESARROLLADO POR',
             style: TextStyle(
-              fontSize: 12,
+              fontSize: 11,
               fontWeight: FontWeight.w600,
               letterSpacing: 1.2,
               color: Colors.black87,

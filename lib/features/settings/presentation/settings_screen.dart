@@ -1,13 +1,25 @@
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:country_picker/country_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:local_auth/local_auth.dart';
+import 'package:mobile_scanner/mobile_scanner.dart';
 
-class SettingsScreen extends StatefulWidget {
+import '../../auth/providers/auth_controller.dart';
+import '../../users/data/user_repository.dart';
+import '../../users/presentation/user_profile_provider.dart';
+import '../../wallet/data/wallet_service.dart';
+import 'auto_empty_screen.dart';
+
+class SettingsScreen extends ConsumerStatefulWidget {
   const SettingsScreen({super.key});
 
   @override
-  State<SettingsScreen> createState() => _SettingsScreenState();
+  ConsumerState<SettingsScreen> createState() => _SettingsScreenState();
 }
 
-class _SettingsScreenState extends State<SettingsScreen> {
+class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   // Valores de configuración
   double pushkaGoal = 3600.00;
   String selectedPreset = '1.00';
@@ -19,21 +31,128 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool biometricAuthenticationEnabled = false;
   String selectedCurrency = 'USD';
   String selectedCountry = 'Estados Unidos';
+  String selectedFlag = '🇺🇸';
+  bool _loadedProfile = false;
 
-  // Perfil
-  String userName = 'Ioel Katz';
-  String userEmail = 'ioelkatz@gmail.com';
-  String? billingEmail;
-  String? phoneNumber;
-  String? mailingAddress;
+  Stream<QuerySnapshot<Map<String, dynamic>>> _pushkasStream(String uid) {
+    return FirebaseFirestore.instance
+        .collection('users')
+        .doc(uid)
+        .collection('walletContacts')
+        .orderBy('createdAt', descending: true)
+        .snapshots();
+  }
 
-  // Mis Pushkas
-  final List<Map<String, String>> myPushkas = [
-    {
-      'name': 'Colel Chabad Pushkah',
-      'id': 'colel-chabad-pushka',
-    },
-  ];
+  String _normalizeWalletId(String raw) {
+    final value = raw.trim();
+    if (value.isEmpty) return '';
+    final match = RegExp(r'[A-Za-z0-9-]{4,20}').firstMatch(value);
+    return (match?.group(0) ?? value).trim();
+  }
+
+  Future<void> _addPushkaByWalletId(String rawWalletId) async {
+    final walletId = _normalizeWalletId(rawWalletId);
+    if (walletId.isEmpty) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Ingresa un ID de Pushka válido')),
+      );
+      return;
+    }
+    try {
+      await WalletService.instance.addContact(walletId);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Pushka agregada')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      final msg = e.toString().replaceFirst('Exception: ', '');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(msg)),
+      );
+    }
+  }
+
+  Future<void> _openPushkaScanFlow() async {
+    final result = await Navigator.of(context, rootNavigator: true).push<String>(
+      MaterialPageRoute(builder: (_) => const _SettingsQrScannerScreen()),
+    );
+    if (result == null || result.isEmpty) return;
+    await _addPushkaByWalletId(result);
+  }
+
+  Future<void> _showAddPushkaDialog() async {
+    bool showManualEntry = false;
+    String manualValue = '';
+    String? error;
+
+    final manualWalletId = await showModalBottomSheet<String>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (ctx, setSheetState) {
+            return Padding(
+              padding: EdgeInsets.only(bottom: MediaQuery.of(ctx).viewInsets.bottom),
+              child: Container(
+                decoration: const BoxDecoration(color: Colors.white, borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+                child: SafeArea(top: false, child: SingleChildScrollView(
+                  padding: const EdgeInsets.fromLTRB(20, 8, 20, 16),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Center(child: Container(width: 36, height: 4, margin: const EdgeInsets.only(bottom: 14), decoration: BoxDecoration(color: Colors.grey.shade300, borderRadius: BorderRadius.circular(2)))),
+                      const Text('Agregar nueva Pushka', textAlign: TextAlign.center, style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
+                      const SizedBox(height: 18),
+                      SizedBox(height: 52, child: ElevatedButton(
+                        style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFE05A4F), foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
+                        onPressed: () => Navigator.of(ctx).pop(''),
+                        child: const Text('Escanear código QR', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+                      )),
+                      const SizedBox(height: 12),
+                      if (!showManualEntry)
+                        SizedBox(height: 52, child: OutlinedButton(
+                          style: OutlinedButton.styleFrom(foregroundColor: const Color(0xFFE05A4F), side: const BorderSide(color: Color(0xFFE05A4F), width: 2), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
+                          onPressed: () { setSheetState(() { showManualEntry = true; error = null; }); },
+                          child: const Text('Ingresar ID Pushka', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+                        )),
+                      if (showManualEntry) ...[
+                        TextField(
+                          autofocus: true,
+                          textInputAction: TextInputAction.done,
+                          onChanged: (value) { manualValue = value; if (error != null) setSheetState(() => error = null); },
+                          onSubmitted: (value) {
+                            if (_normalizeWalletId(value).isEmpty) { setSheetState(() => error = 'Ingresa un ID válido'); return; }
+                            Navigator.of(ctx).pop(value);
+                          },
+                          decoration: InputDecoration(
+                            hintText: 'Ingresa ID Pushka', errorText: error,
+                            contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                            border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                            focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: Color(0xFFE05A4F), width: 1.6)),
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                )),
+              ),
+            );
+          },
+        );
+      },
+    );
+
+    if (manualWalletId == null) return;
+    if (manualWalletId.isEmpty) {
+      await _openPushkaScanFlow();
+      return;
+    }
+    await _addPushkaByWalletId(manualWalletId.isEmpty ? manualValue : manualWalletId);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -42,8 +161,74 @@ class _SettingsScreenState extends State<SettingsScreen> {
     const blue = Color(0xFF2F60C5);
     const purple = Color(0xFF9C27B0);
 
+    final user = ref.watch(currentUserProvider);
+    final userProfile = ref.watch(userProfileProvider).valueOrNull;
+
+    String? _getProfileString(String key) {
+      if (userProfile == null) return null;
+      final value = userProfile[key] as String?;
+      if (value == null || value.trim().isEmpty) return null;
+      return value;
+    }
+
+    double? _getProfileDouble(String key) {
+      if (userProfile == null) return null;
+      final value = userProfile[key];
+      if (value is num) return value.toDouble();
+      return null;
+    }
+
+    bool? _getProfileBool(String key) {
+      if (userProfile == null) return null;
+      final value = userProfile[key];
+      if (value is bool) return value;
+      return null;
+    }
+
+    if (!_loadedProfile && userProfile != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        setState(() {
+          pushkaGoal = _getProfileDouble('pushkaGoal') ?? pushkaGoal;
+          final preset = _getProfileDouble('presetAmount');
+          if (preset != null) {
+            selectedPreset = preset.toStringAsFixed(2);
+          }
+          soundEnabled = _getProfileBool('soundEnabled') ?? soundEnabled;
+          coinJingleEnabled =
+              _getProfileBool('coinJingleEnabled') ?? coinJingleEnabled;
+          vibrationEnabled =
+              _getProfileBool('vibrationEnabled') ?? vibrationEnabled;
+          partialPaymentsEnabled =
+              _getProfileBool('partialPaymentsEnabled') ??
+                  partialPaymentsEnabled;
+          additionalPaymentOptionsEnabled =
+              _getProfileBool('additionalPaymentOptionsEnabled') ??
+                  additionalPaymentOptionsEnabled;
+          biometricAuthenticationEnabled =
+              _getProfileBool('biometricAuthenticationEnabled') ??
+                  biometricAuthenticationEnabled;
+          selectedCountry =
+              _getProfileString('currencyCountry') ?? selectedCountry;
+          selectedCurrency =
+              _getProfileString('currencyCode') ?? selectedCurrency;
+          selectedFlag = _flagForCountry(selectedCountry);
+          _loadedProfile = true;
+        });
+      });
+    }
+
+    final userName = _getProfileString('displayName') ??
+        (user?.displayName?.trim().isNotEmpty == true
+            ? user!.displayName!
+            : 'Usuario');
+    final userEmail = user?.email ?? 'sin-correo';
+    final billingEmail = _getProfileString('billingEmail') ?? '-';
+    final phoneNumber = _getProfileString('phoneNumber') ?? '-';
+    final mailingAddress = _getProfileString('mailingAddress') ?? '-';
+
     return SingleChildScrollView(
-      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+      padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 16),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -68,26 +253,25 @@ class _SettingsScreenState extends State<SettingsScreen> {
             children: [
               Expanded(
                 child: _buildPresetButton(
-                  '\$ 1.00',
+                  '\$1.00',
                   selectedPreset == '1.00',
-                  isPrimary: true,
-                  onTap: () => setState(() => selectedPreset = '1.00'),
+                  onTap: () => _selectPreset(user, 1.00),
                 ),
               ),
               const SizedBox(width: 10),
               Expanded(
                 child: _buildPresetButton(
-                  '\$ 5.00',
+                  '\$5.00',
                   selectedPreset == '5.00',
-                  onTap: () => setState(() => selectedPreset = '5.00'),
+                  onTap: () => _selectPreset(user, 5.00),
                 ),
               ),
               const SizedBox(width: 10),
               Expanded(
                 child: _buildPresetButton(
-                  '\$ 10.00',
+                  '\$10.00',
                   selectedPreset == '10.00',
-                  onTap: () => setState(() => selectedPreset = '10.00'),
+                  onTap: () => _selectPreset(user, 10.00),
                 ),
               ),
             ],
@@ -100,8 +284,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
           _buildActionButton(
             'Vaciar Manualmente',
             onTap: () {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Vaciar Pushka manualmente')),
+              Navigator.of(context, rootNavigator: true).push(
+                MaterialPageRoute(builder: (_) => const AutoEmptyScreen()),
               );
             },
           ),
@@ -122,7 +306,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
             'SONIDO',
             soundEnabled,
             orange,
-            onChanged: (value) => setState(() => soundEnabled = value),
+            onChanged: (value) {
+              setState(() => soundEnabled = value);
+              _updateSettings(user, soundEnabled: value);
+            },
           ),
           const SizedBox(height: 18),
 
@@ -131,7 +318,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
             'SONIDO DE MONEDA',
             coinJingleEnabled,
             orange,
-            onChanged: (value) => setState(() => coinJingleEnabled = value),
+            onChanged: (value) {
+              setState(() => coinJingleEnabled = value);
+              _updateSettings(user, coinJingleEnabled: value);
+            },
           ),
           const SizedBox(height: 18),
 
@@ -140,7 +330,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
             'VIBRACIÓN',
             vibrationEnabled,
             orange,
-            onChanged: (value) => setState(() => vibrationEnabled = value),
+            onChanged: (value) {
+              setState(() => vibrationEnabled = value);
+              _updateSettings(user, vibrationEnabled: value);
+            },
           ),
           const SizedBox(height: 18),
 
@@ -148,8 +341,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
           _buildToggleRow(
             'PAGOS PARCIALES',
             partialPaymentsEnabled,
-            Colors.grey,
-            onChanged: (value) => setState(() => partialPaymentsEnabled = value),
+            orange,
+            onChanged: (value) {
+              setState(() => partialPaymentsEnabled = value);
+              _updateSettings(user, partialPaymentsEnabled: value);
+            },
           ),
           const SizedBox(height: 18),
 
@@ -158,54 +354,136 @@ class _SettingsScreenState extends State<SettingsScreen> {
             'OPCIONES DE PAGO ADICIONALES',
             'Incluyendo cheque, transferencia, DAF',
             additionalPaymentOptionsEnabled,
-            Colors.grey,
-            onChanged: (value) => setState(() => additionalPaymentOptionsEnabled = value),
+            orange,
+            labelFontSize: 14,
+            onChanged: (value) {
+              setState(() => additionalPaymentOptionsEnabled = value);
+              _updateSettings(user, additionalPaymentOptionsEnabled: value);
+            },
           ),
           const SizedBox(height: 18),
 
-          // BIOMETRIC AUTHENTICATION
           _buildToggleRow(
             'AUTENTICACIÓN BIOMÉTRICA',
             biometricAuthenticationEnabled,
-            Colors.grey,
-            onChanged: (value) => setState(() => biometricAuthenticationEnabled = value),
+            orange,
+            onChanged: (value) async {
+              if (value) {
+                final success = await _authenticateWithBiometrics();
+                if (!success) return;
+              }
+              setState(() => biometricAuthenticationEnabled = value);
+              _updateSettings(user, biometricAuthenticationEnabled: value);
+              if (value && mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Autenticación biométrica activada')),
+                );
+              }
+            },
           ),
-          const SizedBox(height: 32),
+          if (biometricAuthenticationEnabled)
+            Padding(
+              padding: const EdgeInsets.only(top: 8, left: 4),
+              child: FutureBuilder<List<BiometricType>>(
+                future: LocalAuthentication().getAvailableBiometrics(),
+                builder: (context, snapshot) {
+                  final biometrics = snapshot.data ?? [];
+                  if (biometrics.isEmpty) return const SizedBox.shrink();
+                  return Wrap(spacing: 8, runSpacing: 6, children: [
+                    if (biometrics.contains(BiometricType.fingerprint))
+                      _biometricChip(Icons.fingerprint, 'Huella digital'),
+                    if (biometrics.contains(BiometricType.face))
+                      _biometricChip(Icons.face, 'Reconocimiento facial'),
+                    if (biometrics.contains(BiometricType.strong) || biometrics.contains(BiometricType.weak))
+                      _biometricChip(Icons.lock_outline, 'PIN / Patrón'),
+                  ]);
+                },
+              ),
+            ),
+          const SizedBox(height: 18),
+          Container(
+            height: 10,
+            width: double.infinity,
+            color: const Color(0xFFF1F1F1),
+          ),
+          const SizedBox(height: 22),
 
           // MY PUSHKAS Section
-          _buildSectionTitle('MIS PUSHKAS'),
-          const SizedBox(height: 12),
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              const Expanded(child: SizedBox()),
+              const Text(
+                'MI PUSHKA',
+                style: TextStyle(
+                  fontSize: 40 / 2,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 0.5,
+                  color: Color(0xFF101010),
+                ),
+              ),
+              const SizedBox(width: 10),
               ElevatedButton(
-                onPressed: () {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Agregar nueva Pushka')),
-                  );
-                },
+                onPressed: _showAddPushkaDialog,
                 style: ElevatedButton.styleFrom(
                   backgroundColor: red,
                   foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                  elevation: 0,
+                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
                   shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(8),
+                    borderRadius: BorderRadius.circular(999),
                   ),
                 ),
                 child: const Text(
-                  '+ AGREGAR PUSHKA',
+                  '+ Agregar Pushka',
                   style: TextStyle(
                     fontWeight: FontWeight.w700,
-                    fontSize: 14,
+                    fontSize: 16,
+                    letterSpacing: 0.2,
                   ),
                 ),
               ),
             ],
           ),
-          const SizedBox(height: 12),
-          ...myPushkas.map((pushka) => _buildPushkaItem(pushka)),
-          const SizedBox(height: 32),
+          const SizedBox(height: 16),
+          if (user == null)
+            const Text('Inicia sesión para ver tus Pushkas')
+          else
+            StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+              stream: _pushkasStream(user.uid),
+              builder: (context, snapshot) {
+                if (snapshot.hasError) {
+                  return const Text('No se pudieron cargar las Pushkas');
+                }
+                if (!snapshot.hasData) {
+                  return const Center(child: CircularProgressIndicator());
+                }
+                final docs = snapshot.data!.docs;
+                if (docs.isEmpty) {
+                  return _buildPushkaItem(const {
+                    'name': 'Colel Jabad Pushka',
+                    'id': 'colel-chabad-pushka',
+                  });
+                }
+                return Column(
+                  children: docs.map((doc) {
+                    final data = doc.data();
+                    return _buildPushkaItem({
+                      'name': (data['displayName'] as String?)?.trim().isNotEmpty == true
+                          ? data['displayName'] as String
+                          : 'Pushka',
+                      'id': (data['walletId'] as String?) ?? doc.id,
+                    });
+                  }).toList(),
+                );
+              },
+            ),
+          const SizedBox(height: 18),
+          Container(
+            height: 10,
+            width: double.infinity,
+            color: const Color(0xFFF1F1F1),
+          ),
+          const SizedBox(height: 22),
 
           // PROFILE Section
           _buildSectionTitle('PERFIL'),
@@ -216,28 +494,49 @@ class _SettingsScreenState extends State<SettingsScreen> {
           const SizedBox(height: 16),
           _buildEditableField(
             'CORREO DE FACTURACIÓN',
-            billingEmail ?? '-',
-            onEdit: () => _showEditDialog('Correo de Facturación', billingEmail ?? '', (value) {
-              setState(() => billingEmail = value.isEmpty ? null : value);
-            }),
+            billingEmail,
+            onEdit: () => _showEditDialog(
+              'Correo de facturación',
+              billingEmail == '-' ? '' : billingEmail,
+              (value) => _updateProfileField(
+                user,
+                billingEmail: value,
+              ),
+            ),
           ),
           const SizedBox(height: 16),
           _buildEditableField(
             'NÚMERO DE TELÉFONO',
-            phoneNumber ?? '-',
-            onEdit: () => _showEditDialog('Número de Teléfono', phoneNumber ?? '', (value) {
-              setState(() => phoneNumber = value.isEmpty ? null : value);
-            }),
+            phoneNumber,
+            onEdit: () => _showEditDialog(
+              'Número de teléfono',
+              phoneNumber == '-' ? '' : phoneNumber,
+              (value) => _updateProfileField(
+                user,
+                phoneNumber: value,
+              ),
+            ),
           ),
           const SizedBox(height: 16),
           _buildEditableField(
             'DIRECCIÓN POSTAL',
-            mailingAddress ?? '-',
-            onEdit: () => _showEditDialog('Dirección Postal', mailingAddress ?? '', (value) {
-              setState(() => mailingAddress = value.isEmpty ? null : value);
-            }),
+            mailingAddress,
+            onEdit: () => _showEditDialog(
+              'Dirección postal',
+              mailingAddress == '-' ? '' : mailingAddress,
+              (value) => _updateProfileField(
+                user,
+                mailingAddress: value,
+              ),
+            ),
           ),
-          const SizedBox(height: 32),
+          const SizedBox(height: 16),
+          Container(
+            height: 10,
+            width: double.infinity,
+            color: const Color(0xFFF1F1F1),
+          ),
+          const SizedBox(height: 22),
 
           // MANAGE ACCOUNT Section
           _buildSectionTitle('ADMINISTRAR CUENTA'),
@@ -246,13 +545,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
             onTap: () => _showDeleteAccountDialog(),
             child: Row(
               children: [
-                Icon(Icons.delete_outline, color: purple, size: 20),
+                Icon(Icons.delete_outline, color: const Color(0xFF8B1A1A), size: 20),
                 const SizedBox(width: 8),
                 Text(
                   '¿Eliminar cuenta?',
-                  style: TextStyle(
+                  style: const TextStyle(
                     fontSize: 16,
-                    color: purple,
+                    color: Color(0xFF8B1A1A),
                     fontWeight: FontWeight.w500,
                   ),
                 ),
@@ -267,16 +566,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
             child: OutlinedButton(
               onPressed: () => _showLogoutDialog(),
               style: OutlinedButton.styleFrom(
-                side: const BorderSide(color: orange, width: 2),
+                side: const BorderSide(color: red, width: 2),
                 padding: const EdgeInsets.symmetric(vertical: 14),
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(8),
                 ),
               ),
               child: const Text(
-                'CERRAR SESIÓN',
+                'Cerrar sesión',
                 style: TextStyle(
-                  color: orange,
+                  color: red,
                   fontWeight: FontWeight.w700,
                   fontSize: 16,
                 ),
@@ -293,10 +592,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
     return Text(
       title,
       style: const TextStyle(
-        fontSize: 12,
+        fontSize: 40 / 2,
         fontWeight: FontWeight.w700,
-        letterSpacing: 1.2,
-        color: Colors.black87,
+        letterSpacing: 0.5,
+        color: Color(0xFF101010),
       ),
     );
   }
@@ -355,56 +654,58 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Widget _buildPresetButton(
     String label,
     bool isSelected, {
-    bool isPrimary = false,
     required VoidCallback onTap,
   }) {
     const blue = Color(0xFF2F60C5);
     return InkWell(
+      borderRadius: BorderRadius.circular(14),
       onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.symmetric(vertical: 14),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          border: Border.all(
-            color: isSelected ? blue : Colors.grey.shade300,
-            width: isSelected ? 2 : 1,
-          ),
-          borderRadius: BorderRadius.circular(8),
-        ),
-        child: Stack(
-          alignment: Alignment.topCenter,
-          children: [
-            if (isPrimary && isSelected)
-              Positioned(
-                top: -8,
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                  decoration: BoxDecoration(
-                    color: blue,
-                    borderRadius: BorderRadius.circular(4),
-                  ),
-                  child: const Text(
-                    'Principal',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 10,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ),
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          AnimatedContainer(
+            duration: const Duration(milliseconds: 180),
+            curve: Curves.easeOut,
+            height: 56,
+            decoration: BoxDecoration(
+              color: isSelected ? blue.withOpacity(0.06) : Colors.white,
+              border: Border.all(
+                color: isSelected ? blue : Colors.grey.shade300,
+                width: isSelected ? 2 : 1.2,
               ),
-            Center(
-              child: Text(
-                label,
-                style: TextStyle(
-                  fontSize: 14,
-                  fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
-                  color: isSelected ? blue : Colors.black87,
+              borderRadius: BorderRadius.circular(14),
+            ),
+            alignment: Alignment.center,
+            child: Text(
+              label,
+              style: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.w600,
+                color: isSelected ? blue : Colors.black87,
+              ),
+            ),
+          ),
+          if (isSelected)
+            Positioned(
+              top: -9,
+              left: 10,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                decoration: BoxDecoration(
+                  color: blue,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: const Text(
+                  'Principal',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                  ),
                 ),
               ),
             ),
-          ],
-        ),
+        ],
       ),
     );
   }
@@ -453,20 +754,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ),
         child: Row(
           children: [
-            Container(
-              width: 24,
-              height: 24,
-              decoration: BoxDecoration(
-                color: Colors.blue.shade700,
-                borderRadius: BorderRadius.circular(4),
-              ),
-              child: const Center(
-                child: Text(
-                  '🇺🇸',
-                  style: TextStyle(fontSize: 16),
-                ),
-              ),
-            ),
+            Text(selectedFlag, style: const TextStyle(fontSize: 22)),
             const SizedBox(width: 12),
             Expanded(
               child: Column(
@@ -515,8 +803,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
         Switch(
           value: value,
           onChanged: onChanged,
-          activeColor: activeColor,
-          activeTrackColor: activeColor.withOpacity(0.5),
+          activeThumbColor: activeColor,
+          activeTrackColor: activeColor.withValues(alpha: 0.45),
+          inactiveThumbColor: Colors.white,
+          inactiveTrackColor: Colors.grey.shade300,
         ),
       ],
     );
@@ -527,6 +817,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     String subtitle,
     bool value,
     Color activeColor, {
+    double labelFontSize = 16,
     required ValueChanged<bool> onChanged,
   }) {
     return Row(
@@ -539,8 +830,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
             children: [
               Text(
                 label,
-                style: const TextStyle(
-                  fontSize: 16,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: labelFontSize,
                   fontWeight: FontWeight.w500,
                 ),
               ),
@@ -558,8 +851,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
         Switch(
           value: value,
           onChanged: onChanged,
-          activeColor: activeColor,
-          activeTrackColor: activeColor.withOpacity(0.5),
+          activeThumbColor: activeColor,
+          activeTrackColor: activeColor.withValues(alpha: 0.45),
+          inactiveThumbColor: Colors.white,
+          inactiveTrackColor: Colors.grey.shade300,
         ),
       ],
     );
@@ -567,22 +862,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   Widget _buildPushkaItem(Map<String, String> pushka) {
     return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        border: Border.all(color: Colors.grey.shade200),
-        borderRadius: BorderRadius.circular(8),
-      ),
+      margin: const EdgeInsets.only(bottom: 14),
       child: Row(
         children: [
           // Icono de pushka
           Container(
-            width: 48,
-            height: 48,
+            width: 52,
+            height: 52,
             decoration: BoxDecoration(
               color: const Color(0xFFF0F0F0),
-              borderRadius: BorderRadius.circular(8),
+              borderRadius: BorderRadius.circular(12),
             ),
             child: Center(
               child: Container(
@@ -631,7 +920,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 Text(
                   pushka['name']!,
                   style: const TextStyle(
-                    fontSize: 16,
+                    fontSize: 18,
                     fontWeight: FontWeight.w600,
                   ),
                 ),
@@ -639,7 +928,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 Text(
                   'ID: ${pushka['id']!}',
                   style: TextStyle(
-                    fontSize: 12,
+                    fontSize: 14,
                     color: Colors.grey.shade600,
                   ),
                 ),
@@ -652,98 +941,241 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Widget _buildProfileField(String label, String value) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          label,
-          style: const TextStyle(
-            fontSize: 11,
-            fontWeight: FontWeight.w600,
-            letterSpacing: 0.5,
-            color: Colors.black54,
-          ),
-        ),
-        const SizedBox(height: 6),
-        Text(
-          value,
-          style: const TextStyle(
-            fontSize: 16,
-            fontWeight: FontWeight.w400,
-            color: Colors.black87,
-          ),
-        ),
-      ],
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 2),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(label, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500, letterSpacing: 0.6, color: Color(0xFF888888))),
+          const SizedBox(height: 4),
+          Text(value, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w500, color: Color(0xFF111111))),
+        ],
+      ),
     );
   }
 
   Widget _buildEditableField(String label, String value, {required VoidCallback onEdit}) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+    return InkWell(
+      borderRadius: BorderRadius.circular(8),
+      onTap: onEdit,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 2),
+        child: Row(
           children: [
-            Text(
-              label,
-              style: const TextStyle(
-                fontSize: 11,
-                fontWeight: FontWeight.w600,
-                letterSpacing: 0.5,
-                color: Colors.black54,
-              ),
-            ),
-            IconButton(
-              icon: const Icon(Icons.edit, size: 18),
-              color: Colors.grey,
-              padding: EdgeInsets.zero,
-              constraints: const BoxConstraints(),
-              onPressed: onEdit,
-            ),
+            Expanded(child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(label, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500, letterSpacing: 0.6, color: Color(0xFF888888))),
+                const SizedBox(height: 4),
+                Text(value, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w500, color: Color(0xFF111111))),
+              ],
+            )),
+            Icon(Icons.edit_outlined, size: 18, color: Colors.grey.shade500),
           ],
         ),
-        const SizedBox(height: 6),
-        Text(
-          value,
-          style: const TextStyle(
-            fontSize: 16,
-            fontWeight: FontWeight.w400,
-            color: Colors.black87,
-          ),
-        ),
-      ],
+      ),
+    );
+  }
+
+  Future<bool> _authenticateWithBiometrics() async {
+    final auth = LocalAuthentication();
+    try {
+      final canAuth = await auth.canCheckBiometrics || await auth.isDeviceSupported();
+      if (!canAuth) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Tu dispositivo no soporta autenticación biométrica')),
+          );
+        }
+        return false;
+      }
+
+      final biometrics = await auth.getAvailableBiometrics();
+      if (biometrics.isEmpty) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text(
+              'Configura un PIN, huella digital o reconocimiento facial en los ajustes de tu dispositivo primero',
+            ), duration: Duration(seconds: 4)),
+          );
+        }
+        return false;
+      }
+
+      return await auth.authenticate(
+        localizedReason: 'Confirma tu identidad para activar la autenticación biométrica',
+        biometricOnly: false,
+      );
+    } catch (e) {
+      final msg = e.toString();
+      if (msg.contains('NoCredentialSet') || msg.contains('notEnrolled') || msg.contains('notAvailable')) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text(
+              'Configura un PIN, huella digital o reconocimiento facial en los ajustes de tu dispositivo primero',
+            ), duration: Duration(seconds: 4)),
+          );
+        }
+      } else {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('No se pudo completar la autenticación')),
+          );
+        }
+      }
+      return false;
+    }
+  }
+
+  Widget _biometricChip(IconData icon, String label) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFF9500).withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(mainAxisSize: MainAxisSize.min, children: [
+        Icon(icon, size: 16, color: const Color(0xFFFF9500)),
+        const SizedBox(width: 5),
+        Text(label, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500, color: Color(0xFFFF9500))),
+      ]),
     );
   }
 
   Future<void> _showEditDialog(String title, String currentValue, Function(String) onSave) async {
-    final controller = TextEditingController(text: currentValue == '-' ? '' : currentValue);
+    final controller =
+        TextEditingController(text: currentValue == '-' ? '' : currentValue);
+    String? errorText;
+    String phonePrefix = '+1';
+    String phoneFlag = '🇺🇸';
+    if (title.toLowerCase() == 'número de teléfono') {
+      final match = RegExp(r'^\\+\\d+').firstMatch(controller.text.trim());
+      if (match != null) {
+        phonePrefix = match.group(0) ?? '+1';
+        controller.text = controller.text.trim().replaceFirst(phonePrefix, '').trim();
+      }
+    }
 
-    final result = await showDialog<String>(
+    final result = await showModalBottomSheet<String>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: Text(title),
-        content: TextField(
-          controller: controller,
-          decoration: InputDecoration(
-            hintText: 'Ingrese $title',
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setState) => Padding(
+          padding: EdgeInsets.only(bottom: MediaQuery.of(ctx).viewInsets.bottom),
+          child: Container(
+            decoration: const BoxDecoration(color: Colors.white, borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+            child: SafeArea(top: false, child: SingleChildScrollView(
+              padding: const EdgeInsets.fromLTRB(20, 8, 20, 16),
+              child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Center(child: Container(width: 36, height: 4, margin: const EdgeInsets.only(bottom: 14), decoration: BoxDecoration(color: Colors.grey.shade300, borderRadius: BorderRadius.circular(2)))),
+                Text(title, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
+                const SizedBox(height: 14),
+                if (title.toLowerCase() == 'número de teléfono') ...[
+                  Row(children: [
+                    OutlinedButton(
+                      onPressed: () {
+                        showCountryPicker(context: ctx, showPhoneCode: true,
+                          countryListTheme: CountryListThemeData(inputDecoration: const InputDecoration(labelText: 'Buscar país', hintText: 'Nombre o código', prefixIcon: Icon(Icons.search))),
+                          onSelect: (Country country) { setState(() { phonePrefix = '+${country.phoneCode}'; phoneFlag = country.flagEmoji; }); },
+                        );
+                      },
+                      child: Text('$phoneFlag $phonePrefix'),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(child: TextField(
+                      controller: controller, keyboardType: TextInputType.phone,
+                      decoration: InputDecoration(hintText: 'Número de teléfono', errorText: errorText,
+                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                        focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: Color(0xFFE05A4F), width: 1.6)),
+                      ),
+                    )),
+                  ]),
+                ] else ...[
+                  TextField(
+                    controller: controller, keyboardType: _keyboardTypeForTitle(title),
+                    decoration: InputDecoration(hintText: 'Ingresa ${title.toLowerCase()}', errorText: errorText,
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                      focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: Color(0xFFE05A4F), width: 1.6)),
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 16),
+                SizedBox(width: double.infinity, height: 48, child: ElevatedButton(
+                  style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFE05A4F), foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
+                  onPressed: () {
+                    final value = title.toLowerCase() == 'número de teléfono' ? '$phonePrefix ${controller.text.trim()}'.trim() : controller.text.trim();
+                    final validationError = _validateByTitle(title, value);
+                    if (validationError != null) { setState(() => errorText = validationError); return; }
+                    Navigator.pop(ctx, value);
+                  },
+                  child: const Text('Guardar', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+                )),
+                const SizedBox(height: 8),
+                SizedBox(width: double.infinity, height: 44, child: TextButton(
+                  onPressed: () => Navigator.pop(ctx),
+                  child: Text('Cancelar', style: TextStyle(color: Colors.grey.shade600, fontWeight: FontWeight.w500)),
+                )),
+              ]),
+            )),
           ),
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancelar'),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(context, controller.text),
-            child: const Text('Guardar'),
-          ),
-        ],
       ),
     );
 
     if (result != null) {
       onSave(result);
     }
+  }
+
+  Future<void> _updateProfileField(
+    User? user, {
+    String? billingEmail,
+    String? phoneNumber,
+    String? mailingAddress,
+  }) async {
+    if (user == null) return;
+
+    await ref.read(userRepositoryProvider).updateProfile(
+          uid: user.uid,
+          billingEmail: billingEmail,
+          phoneNumber: phoneNumber,
+          mailingAddress: mailingAddress,
+        );
+  }
+
+  void _selectPreset(User? user, double amount) {
+    setState(() => selectedPreset = amount.toStringAsFixed(2));
+    _updateSettings(user, presetAmount: amount);
+  }
+
+  Future<void> _updateSettings(
+    User? user, {
+    double? pushkaGoal,
+    double? presetAmount,
+    bool? soundEnabled,
+    bool? coinJingleEnabled,
+    bool? vibrationEnabled,
+    bool? partialPaymentsEnabled,
+    bool? additionalPaymentOptionsEnabled,
+    bool? biometricAuthenticationEnabled,
+    String? currencyCountry,
+    String? currencyCode,
+  }) async {
+    if (user == null) return;
+    await ref.read(userRepositoryProvider).updateSettings(
+          uid: user.uid,
+          pushkaGoal: pushkaGoal,
+          presetAmount: presetAmount,
+          soundEnabled: soundEnabled,
+          coinJingleEnabled: coinJingleEnabled,
+          vibrationEnabled: vibrationEnabled,
+          partialPaymentsEnabled: partialPaymentsEnabled,
+          additionalPaymentOptionsEnabled: additionalPaymentOptionsEnabled,
+          biometricAuthenticationEnabled: biometricAuthenticationEnabled,
+          currencyCountry: currencyCountry,
+          currencyCode: currencyCode,
+        );
   }
 
   Future<void> _showDeleteAccountDialog() async {
@@ -798,6 +1230,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
 
     if (result == true) {
+      await ref.read(authControllerProvider).signOut();
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Sesión cerrada')),
       );
@@ -808,40 +1241,58 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final controller = TextEditingController(
       text: pushkaGoal.toStringAsFixed(2),
     );
+    String? errorText;
 
-    final result = await showDialog<double>(
+    final result = await showModalBottomSheet<double>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Meta de Pushka'),
-        content: TextField(
-          controller: controller,
-          keyboardType: const TextInputType.numberWithOptions(decimal: true),
-          decoration: const InputDecoration(
-            labelText: 'Monto',
-            prefixText: '\$ ',
-            hintText: 'Ej: 3600.00',
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setState) => Padding(
+          padding: EdgeInsets.only(bottom: MediaQuery.of(ctx).viewInsets.bottom),
+          child: Container(
+            decoration: const BoxDecoration(color: Colors.white, borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+            child: SafeArea(top: false, child: SingleChildScrollView(
+              padding: const EdgeInsets.fromLTRB(20, 8, 20, 16),
+              child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Center(child: Container(width: 36, height: 4, margin: const EdgeInsets.only(bottom: 14), decoration: BoxDecoration(color: Colors.grey.shade300, borderRadius: BorderRadius.circular(2)))),
+                const Text('Meta de Pushka', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
+                const SizedBox(height: 14),
+                TextField(
+                  controller: controller,
+                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                  textInputAction: TextInputAction.done,
+                  decoration: InputDecoration(
+                    labelText: 'Monto', prefixText: '\$ ', hintText: 'Ej: 3600.00', errorText: errorText,
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                    focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: Color(0xFFE05A4F), width: 1.6)),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                SizedBox(width: double.infinity, height: 48, child: ElevatedButton(
+                  style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFE05A4F), foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
+                  onPressed: () {
+                    final value = double.tryParse(controller.text.replaceAll(',', '.'));
+                    if (value == null || value <= 0) { setState(() => errorText = 'Ingresa un monto válido'); return; }
+                    Navigator.pop(ctx, value);
+                  },
+                  child: const Text('Guardar', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+                )),
+                const SizedBox(height: 8),
+                SizedBox(width: double.infinity, height: 44, child: TextButton(
+                  onPressed: () => Navigator.pop(ctx),
+                  child: Text('Cancelar', style: TextStyle(color: Colors.grey.shade600, fontWeight: FontWeight.w500)),
+                )),
+              ]),
+            )),
           ),
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancelar'),
-          ),
-          ElevatedButton(
-            onPressed: () {
-              final value = double.tryParse(controller.text.replaceAll(',', '.'));
-              if (value != null && value > 0) {
-                Navigator.pop(context, value);
-              }
-            },
-            child: const Text('Guardar'),
-          ),
-        ],
       ),
     );
 
     if (result != null) {
       setState(() => pushkaGoal = result);
+      _updateSettings(ref.read(currentUserProvider), pushkaGoal: result);
     }
   }
 
@@ -857,16 +1308,24 @@ class _SettingsScreenState extends State<SettingsScreen> {
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Seleccionar Moneda'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: currencies.map((currency) {
-            return ListTile(
-              leading: Text(currency['flag']!, style: const TextStyle(fontSize: 24)),
-              title: Text(currency['country']!),
-              subtitle: Text('\$ ${currency['currency']!}'),
-              onTap: () => Navigator.pop(context, currency),
-            );
-          }).toList(),
+        content: ConstrainedBox(
+          constraints: BoxConstraints(
+            maxHeight: MediaQuery.of(context).size.height * 0.55,
+            maxWidth: 360,
+          ),
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: currencies.map((currency) {
+                return ListTile(
+                  leading: Text(currency['flag']!, style: const TextStyle(fontSize: 24)),
+                  title: Text(currency['country']!),
+                  subtitle: Text('\$ ${currency['currency']!}'),
+                  onTap: () => Navigator.pop(context, currency),
+                );
+              }).toList(),
+            ),
+          ),
         ),
       ),
     );
@@ -875,7 +1334,129 @@ class _SettingsScreenState extends State<SettingsScreen> {
       setState(() {
         selectedCountry = result['country']!;
         selectedCurrency = result['currency']!;
+        selectedFlag = result['flag'] ?? _flagForCountry(selectedCountry);
       });
+      _updateSettings(
+        ref.read(currentUserProvider),
+        currencyCountry: result['country']!,
+        currencyCode: result['currency']!,
+      );
     }
+  }
+
+
+  String _flagForCountry(String country) {
+    switch (country) {
+      case 'México':
+        return '🇲🇽';
+      case 'España':
+        return '🇪🇸';
+      case 'Argentina':
+        return '🇦🇷';
+      case 'Estados Unidos':
+      default:
+        return '🇺🇸';
+    }
+  }
+
+  TextInputType _keyboardTypeForTitle(String title) {
+    switch (title.toLowerCase()) {
+      case 'correo de facturación':
+        return TextInputType.emailAddress;
+      case 'número de teléfono':
+        return TextInputType.phone;
+      default:
+        return TextInputType.text;
+    }
+  }
+
+  String? _validateByTitle(String title, String value) {
+    if (value.isEmpty) return 'Campo requerido';
+    switch (title.toLowerCase()) {
+      case 'correo de facturación':
+        final isValid =
+            RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$').hasMatch(value);
+        return isValid ? null : 'Correo inválido';
+      case 'número de teléfono':
+        final isValid = RegExp(r'^[0-9+\-\s]{7,}$').hasMatch(value);
+        return isValid ? null : 'Número inválido';
+      default:
+        return null;
+    }
+  }
+}
+
+class _SettingsQrScannerScreen extends StatefulWidget {
+  const _SettingsQrScannerScreen();
+
+  @override
+  State<_SettingsQrScannerScreen> createState() => _SettingsQrScannerScreenState();
+}
+
+class _SettingsQrScannerScreenState extends State<_SettingsQrScannerScreen> {
+  bool _handled = false;
+  bool _torchEnabled = false;
+
+  String _normalizeWalletId(String raw) {
+    final value = raw.trim();
+    final match = RegExp(r'[A-Za-z0-9-]{4,20}').firstMatch(value);
+    return (match?.group(0) ?? value).trim();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Escanear código QR'),
+      ),
+      body: Stack(
+        children: [
+          MobileScanner(
+            controller: MobileScannerController(torchEnabled: _torchEnabled),
+            onDetect: (capture) {
+              if (_handled) return;
+              final raw = capture.barcodes.isNotEmpty ? capture.barcodes.first.rawValue : null;
+              if (raw == null || raw.trim().isEmpty) return;
+              final normalized = _normalizeWalletId(raw);
+              if (normalized.isEmpty) return;
+              _handled = true;
+              Navigator.of(context).pop(normalized);
+            },
+          ),
+          Center(
+            child: Container(
+              width: 260,
+              height: 260,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(2),
+                border: Border.all(color: Colors.white, width: 2),
+              ),
+            ),
+          ),
+          Positioned.fill(
+            child: Center(
+              child: Container(
+                width: 260,
+                height: 2,
+                color: const Color(0xFFE84324),
+              ),
+            ),
+          ),
+          Positioned(
+            left: 0,
+            right: 0,
+            bottom: 24,
+            child: IconButton(
+              onPressed: () => setState(() => _torchEnabled = !_torchEnabled),
+              iconSize: 28,
+              icon: Icon(
+                _torchEnabled ? Icons.flash_on_rounded : Icons.flash_off_rounded,
+                color: Colors.white,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'router.dart';
+import 'theme/app_theme.dart';
 
 class PushkaApp extends StatelessWidget {
   const PushkaApp({super.key});
@@ -10,10 +11,7 @@ class PushkaApp extends StatelessWidget {
       title: 'Pushka',
       debugShowCheckedModeBanner: false,
       routerConfig: router,
-      theme: ThemeData(
-        useMaterial3: true,
-        colorSchemeSeed: Colors.blue,
-      ),
+      theme: AppTheme.light(),
     );
   }
 }

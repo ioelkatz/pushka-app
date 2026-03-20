@@ -1,17 +1,27 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+
+import '../../users/presentation/user_profile_provider.dart';
 
 enum DrawerItem { pushka, wallet, reminders, history, settings, prayers, support, about }
 
-class AppDrawer extends StatelessWidget {
+class AppDrawer extends ConsumerWidget {
   final DrawerItem current;
-  final String userName;
 
-  const AppDrawer({super.key, required this.current, this.userName = 'Ioel'});
+  const AppDrawer({super.key, required this.current});
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     const blue = Color(0xFF2F60C5);
+    final user = ref.watch(currentUserProvider);
+    final profile = ref.watch(userProfileProvider).valueOrNull;
+    final displayName =
+        (profile?['displayName'] as String?)?.trim().isNotEmpty == true
+            ? (profile?['displayName'] as String)
+            : (user?.displayName?.trim().isNotEmpty == true
+                ? user!.displayName!
+                : 'Usuario');
     
     return Drawer(
       child: Column(
@@ -25,7 +35,7 @@ class AppDrawer extends StatelessWidget {
               child: Align(
                 alignment: Alignment.centerLeft,
                 child: Text(
-                  'HI ${userName.toUpperCase()}',
+                  'HOLA ${displayName.toUpperCase()}',
                   style: const TextStyle(
                     color: Colors.white,
                     fontSize: 24,

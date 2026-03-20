@@ -1,6 +1,16 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import '../../history/providers/history_provider.dart';
+import 'package:flutter_stripe/flutter_stripe.dart';
+import 'package:go_router/go_router.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+
+import '../../analytics/analytics_service.dart';
+import '../../payments/stripe_service.dart';
+import '../data/wallet_service.dart';
+import '../../users/data/user_repository.dart';
+import '../../users/presentation/user_profile_provider.dart';
+import '../../../app/theme/app_tokens.dart';
 
 class WalletScreen extends ConsumerStatefulWidget {
   const WalletScreen({super.key});
@@ -10,32 +20,189 @@ class WalletScreen extends ConsumerStatefulWidget {
 }
 
 class _WalletScreenState extends ConsumerState<WalletScreen> {
-  void _addFunds() {
-    // Por ahora, agregamos un monto de ejemplo. Más adelante se puede hacer un diálogo para ingresar el monto
-    const amount = 50.0;
-    ref.read(historyProvider.notifier).addWalletFill(amount);
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Fondos agregados: \$${amount.toStringAsFixed(2)}')),
+  bool _processing = false;
+
+  void _showInfo(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  Future<double?> _showAmountDialog({
+    String hint = 'Ej: 50',
+  }) async {
+    final controller = TextEditingController();
+    String? error;
+    return showModalBottomSheet<double>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setSheetState) => Padding(
+          padding: EdgeInsets.only(bottom: MediaQuery.of(ctx).viewInsets.bottom),
+          child: Container(
+            decoration: const BoxDecoration(color: Colors.white, borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+            child: SafeArea(top: false, child: SingleChildScrollView(
+              padding: const EdgeInsets.fromLTRB(20, 8, 20, 16),
+              child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+                Center(child: Container(width: 36, height: 4, margin: const EdgeInsets.only(bottom: 14), decoration: BoxDecoration(color: Colors.grey.shade300, borderRadius: BorderRadius.circular(2)))),
+                const Text('Agregar fondos', textAlign: TextAlign.center, style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
+                const SizedBox(height: 20),
+                const Text('Ingresa monto', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: Color(0xFF5A5A5A))),
+                const SizedBox(height: 10),
+                TextField(
+                  controller: controller,
+                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                  textInputAction: TextInputAction.done,
+                  decoration: InputDecoration(
+                    hintText: hint, prefixText: '\$ ', errorText: error,
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                    focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: Color(0xFFE05A4F), width: 1.6)),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                SizedBox(width: double.infinity, height: 48, child: ElevatedButton(
+                  style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFE05A4F), foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
+                  onPressed: () {
+                    final value = double.tryParse(controller.text.trim().replaceAll(',', '.'));
+                    if (value == null || value <= 0) { setSheetState(() => error = 'Ingresa un monto válido'); return; }
+                    Navigator.pop(ctx, value);
+                  },
+                  child: const Text('Agregar al saldo', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+                )),
+                const SizedBox(height: 8),
+                SizedBox(width: double.infinity, height: 44, child: TextButton(
+                  onPressed: () => Navigator.pop(ctx),
+                  child: Text('Cancelar', style: TextStyle(color: Colors.grey.shade600, fontWeight: FontWeight.w500)),
+                )),
+              ]),
+            )),
+          ),
+        ),
+      ),
     );
+  }
+
+  int _minAmountCentsForCurrency(String currency) {
+    switch (currency.toLowerCase()) {
+      case 'mxn':
+        return 1000;
+      case 'usd':
+      case 'eur':
+      case 'gbp':
+      default:
+        return 50;
+    }
+  }
+
+  String _walletPaymentErrorMessage(Object error) {
+    if (error is StripeException) {
+      if (error.error.code == FailureCode.Canceled) {
+        return 'Pago cancelado';
+      }
+      final message = error.error.localizedMessage ?? error.error.message;
+      if (message != null && message.trim().isNotEmpty) {
+        return message;
+      }
+    }
+    final raw = error.toString();
+    if (raw.startsWith('Exception: ')) {
+      return raw.replaceFirst('Exception: ', '');
+    }
+    return 'No se pudo procesar el pago. Intenta nuevamente.';
+  }
+
+  Future<void> _addFunds() async {
+    if (_processing) return;
+    final amount = await _showAmountDialog();
+    if (amount == null) return;
+
+    final user = ref.read(currentUserProvider);
+    final profile = ref.read(userProfileProvider).valueOrNull;
+    if (user == null) {
+      _showInfo('Inicia sesión para continuar');
+      return;
+    }
+
+    setState(() => _processing = true);
+    try {
+      final currency = ((profile?['currencyCode'] as String?) ?? 'USD').toLowerCase();
+      final amountCents = (amount * 100).round();
+      final minCents = _minAmountCentsForCurrency(currency);
+      if (amountCents < minCents) {
+        final minAmount = (minCents / 100).toStringAsFixed(2);
+        _showInfo('Monto mínimo para ${currency.toUpperCase()} es \$$minAmount');
+        return;
+      }
+
+      final paymentIntentId = await StripeService.instance.pay(
+        amountCents: amountCents,
+        currency: currency,
+        customerEmail: user.email,
+        purpose: 'wallet_topup',
+      );
+
+      await WalletService.instance.confirmTopUpFromPaymentIntent(paymentIntentId);
+      await AnalyticsService.instance.logWalletFill(amount);
+      _showInfo('Fondos agregados: \$${amount.toStringAsFixed(2)}');
+    } catch (error) {
+      _showInfo(_walletPaymentErrorMessage(error));
+    } finally {
+      if (mounted) setState(() => _processing = false);
+    }
+  }
+
+  Future<void> _copyWalletId(String walletId) async {
+    await Clipboard.setData(ClipboardData(text: walletId));
+    _showInfo('ID de billetera copiado: $walletId');
   }
 
   @override
   Widget build(BuildContext context) {
     const red = Color(0xFFE05A4F);
     const blue = Color(0xFF2F60C5);
+    final profile = ref.watch(userProfileProvider).valueOrNull;
+    final uid = ref.watch(currentUserProvider)?.uid;
+    final walletId =
+        (profile?['walletId'] as String?)?.trim().isNotEmpty == true
+            ? (profile?['walletId'] as String).trim()
+            : (uid != null ? UserRepository.walletIdFromUid(uid) : '------');
+    final walletBalance = (profile?['walletBalance'] as num?)?.toDouble() ?? 0.0;
+    final autoEnabled = (profile?['walletAutoTopUpEnabled'] as bool?) ?? false;
+    final autoAmount = (profile?['walletAutoTopUpAmount'] as num?)?.toDouble() ?? 0.0;
+    final autoFrequency = (profile?['walletAutoTopUpFrequency'] as String?) ?? 'weekly';
+    final autoNextRunTs = profile?['walletAutoTopUpNextRunAt'];
+    final autoNextRun =
+        autoNextRunTs is Timestamp ? autoNextRunTs.toDate() : null;
+    final autoLabel = autoEnabled
+        ? 'ACTIVA - \$${autoAmount.toStringAsFixed(2)} '
+            '${autoFrequency == 'monthly' ? 'mensual' : 'semanal'}'
+        : 'RECARGA AUTOMÁTICA INACTIVA';
+    final autoNextRunLabel = autoEnabled && autoNextRun != null
+        ? 'Próxima: ${autoNextRun.day.toString().padLeft(2, '0')}/${autoNextRun.month.toString().padLeft(2, '0')}'
+        : autoLabel;
 
-    return SingleChildScrollView(
-      padding: const EdgeInsets.fromLTRB(18, 12, 18, 18),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final compact = constraints.maxHeight < 760;
+        final topPadding = compact ? 8.0 : 14.0;
+        final sectionGap = compact ? 12.0 : 20.0;
+        final walletCardGap = compact ? 10.0 : 14.0;
+        final balanceSize = compact ? 46.0 : 54.0;
+        final walletIdSize = compact ? 24.0 : 28.0;
+
+        final content = Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
           // texto superior
           Text(
             'Aparta fondos ahora para vaciar tu Pushka después',
             textAlign: TextAlign.center,
-            style: TextStyle(color: Colors.black.withOpacity(.55)),
+            style: TextStyle(
+              color: Colors.black.withValues(alpha: 0.62),
+              fontSize: compact ? 13 : 14,
+            ),
           ),
-          const SizedBox(height: 6),
+          SizedBox(height: compact ? 4 : 8),
           Text(
             'Aprender más',
             textAlign: TextAlign.center,
@@ -47,36 +214,46 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
             ),
           ),
 
-          const SizedBox(height: 18),
+          SizedBox(height: sectionGap),
 
           // Wallet ID pill
-          Container(
-            padding: const EdgeInsets.symmetric(vertical: 18, horizontal: 18),
-            decoration: BoxDecoration(
-              color: const Color(0xFFF0F0F0),
+          Material(
+            color: Colors.transparent,
+            child: InkWell(
               borderRadius: BorderRadius.circular(18),
-            ),
-            child: Column(
-              children: const [
-                Text(
-                  'Tu ID de billetera',
-                  style: TextStyle(fontWeight: FontWeight.w600),
+              onTap: () => _copyWalletId(walletId),
+              child: Container(
+                padding: EdgeInsets.symmetric(
+                  vertical: compact ? 14 : 18,
+                  horizontal: 18,
                 ),
-                SizedBox(height: 6),
-                Text(
-                  '220-988',
-                  style: TextStyle(
-                    color: blue,
-                    fontSize: 28,
-                    letterSpacing: 2,
-                    fontWeight: FontWeight.w800,
-                  ),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF0F0F0),
+                  borderRadius: BorderRadius.circular(18),
                 ),
-              ],
+                child: Column(
+                  children: [
+                    const Text(
+                      'Tu ID de billetera',
+                      style: TextStyle(fontWeight: FontWeight.w600),
+                    ),
+                    SizedBox(height: compact ? 4 : 6),
+                    Text(
+                      walletId,
+                      style: TextStyle(
+                        color: blue,
+                        fontSize: walletIdSize,
+                        letterSpacing: 2,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
             ),
           ),
 
-          const SizedBox(height: 26),
+          SizedBox(height: sectionGap),
 
           // Balance
           const Text(
@@ -84,40 +261,38 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
             textAlign: TextAlign.center,
             style: TextStyle(letterSpacing: 2, fontWeight: FontWeight.w700),
           ),
-          const SizedBox(height: 10),
-          const Text(
-            r'$0.00',
+          SizedBox(height: compact ? 4 : 10),
+          Text(
+            '\$${walletBalance.toStringAsFixed(2)}',
             textAlign: TextAlign.center,
             style: TextStyle(
               color: blue,
-              fontSize: 64,
+              fontSize: balanceSize,
               fontWeight: FontWeight.w800,
             ),
           ),
 
-          const SizedBox(height: 18),
+          SizedBox(height: sectionGap),
 
           // Add funds button
-          SizedBox(
-            height: 50,
-            child: OutlinedButton(
-              onPressed: _addFunds,
-              style: OutlinedButton.styleFrom(
-                side: const BorderSide(color: red, width: 2),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(14),
-                ),
-                foregroundColor: red,
-                textStyle: const TextStyle(
-                  fontWeight: FontWeight.w800,
-                  letterSpacing: 1,
-                ),
+          OutlinedButton(
+            onPressed: _processing ? null : _addFunds,
+            style: OutlinedButton.styleFrom(
+              side: const BorderSide(color: red, width: 2),
+              minimumSize: Size(0, compact ? 48 : AppTokens.buttonHeight),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(14),
               ),
-              child: const Text('+ AGREGAR FONDOS'),
+              foregroundColor: red,
+              textStyle: const TextStyle(
+                fontWeight: FontWeight.w700,
+                letterSpacing: 0.3,
+              ),
             ),
+            child: const Text('+ Agregar fondos'),
           ),
 
-          const SizedBox(height: 22),
+          SizedBox(height: sectionGap),
 
           // Cards
           _WalletCard(
@@ -125,23 +300,53 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
             iconBg: red,
             title: 'Enviar / Solicitar entre billeteras',
             subtitle: 'Empodera a familia y amigos con tzedaká',
+            onTap: () => context.go('/wallet/send-request'),
+            compact: compact,
           ),
-          const SizedBox(height: 14),
+          SizedBox(height: walletCardGap),
           _WalletCard(
             icon: Icons.settings,
             iconBg: red,
             title: 'Administrar recarga automática',
-            subtitle: 'RECARGA AUTOMÁTICA INACTIVA',
+            subtitle: autoNextRunLabel,
+            onTap: () => context.go('/wallet-auto-refill'),
+            compact: compact,
           ),
-          const SizedBox(height: 14),
+          SizedBox(height: walletCardGap),
           _WalletCard(
             icon: Icons.receipt_long,
             iconBg: red,
             title: 'Historial de transacciones',
             subtitle: '',
+            onTap: () => context.go('/history'),
+            compact: compact,
           ),
-        ],
-      ),
+          ],
+        );
+
+        return Padding(
+          padding: EdgeInsets.fromLTRB(18, topPadding, 18, compact ? 14 : 20),
+          child: LayoutBuilder(
+            builder: (context, innerConstraints) {
+              return SizedBox(
+                width: innerConstraints.maxWidth,
+                height: innerConstraints.maxHeight,
+                child: Align(
+                  alignment: Alignment.topCenter,
+                  child: FittedBox(
+                    fit: BoxFit.scaleDown,
+                    alignment: Alignment.topCenter,
+                    child: SizedBox(
+                      width: innerConstraints.maxWidth,
+                      child: content,
+                    ),
+                  ),
+                ),
+              );
+            },
+          ),
+        );
+      },
     );
   }
 }
@@ -151,56 +356,77 @@ class _WalletCard extends StatelessWidget {
   final Color iconBg;
   final String title;
   final String subtitle;
+  final VoidCallback? onTap;
+  final bool compact;
 
   const _WalletCard({
     required this.icon,
     required this.iconBg,
     required this.title,
     required this.subtitle,
+    this.onTap,
+    this.compact = false,
   });
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: const Color(0xFFF3F3F3),
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
         borderRadius: BorderRadius.circular(18),
-      ),
-      child: Row(
-        children: [
-          Container(
-            width: 54,
-            height: 54,
-            decoration: BoxDecoration(
-              color: iconBg,
-              borderRadius: BorderRadius.circular(16),
-            ),
-            child: Icon(icon, color: Colors.white),
+        onTap: onTap,
+        child: Container(
+          padding: EdgeInsets.all(compact ? 11 : 14),
+          decoration: BoxDecoration(
+            color: const Color(0xFFF3F3F3),
+            borderRadius: BorderRadius.circular(18),
           ),
-          const SizedBox(width: 14),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  title,
-                  style: const TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.w800,
-                  ),
+          child: Row(
+            children: [
+              Container(
+                width: compact ? 46 : 54,
+                height: compact ? 46 : 54,
+                decoration: BoxDecoration(
+                  color: iconBg,
+                  borderRadius: BorderRadius.circular(compact ? 13 : 16),
                 ),
-                if (subtitle.isNotEmpty) ...[
-                  const SizedBox(height: 4),
-                  Text(
-                    subtitle,
-                    style: TextStyle(color: Colors.black.withOpacity(.55)),
-                  ),
-                ],
-              ],
-            ),
+                child: Icon(icon, color: Colors.white, size: compact ? 22 : 24),
+              ),
+              SizedBox(width: compact ? 10 : 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: TextStyle(
+                        fontSize: compact ? 14 : 15,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    if (subtitle.isNotEmpty) ...[
+                      SizedBox(height: compact ? 2 : 4),
+                      Text(
+                        subtitle,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: Colors.black.withValues(alpha: 0.55),
+                          fontSize: compact ? 13 : 14,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              SizedBox(width: compact ? 4 : 6),
+              Icon(
+                Icons.chevron_right_rounded,
+                size: compact ? 22 : 24,
+              ),
+            ],
           ),
-        ],
+        ),
       ),
     );
   }

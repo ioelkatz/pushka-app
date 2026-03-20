@@ -1,7 +1,20 @@
 enum TransactionType {
-  tzedaka,      // Mi Tzedaka
-  pushkaEmpty,  // Pushka Vacía
-  walletFill,   // Billetera Rellena
+  tzedaka,
+  pushkaEmpty,
+  walletFill,
+}
+
+enum PaymentMethod {
+  card,
+  check,
+  transfer,
+  daf,
+}
+
+enum PaymentStatus {
+  completed,
+  pending,
+  confirmed,
 }
 
 class Transaction {
@@ -10,6 +23,8 @@ class Transaction {
   final double amount;
   final DateTime dateTime;
   final String? description;
+  final PaymentMethod paymentMethod;
+  final PaymentStatus status;
 
   Transaction({
     required this.id,
@@ -17,6 +32,8 @@ class Transaction {
     required this.amount,
     required this.dateTime,
     this.description,
+    this.paymentMethod = PaymentMethod.card,
+    this.status = PaymentStatus.completed,
   });
 
   String get typeLabel {
@@ -29,6 +46,32 @@ class Transaction {
         return 'Billetera Rellena';
     }
   }
+
+  String get paymentMethodLabel {
+    switch (paymentMethod) {
+      case PaymentMethod.card:
+        return 'Tarjeta';
+      case PaymentMethod.check:
+        return 'Cheque';
+      case PaymentMethod.transfer:
+        return 'Transferencia';
+      case PaymentMethod.daf:
+        return 'DAF';
+    }
+  }
+
+  String get statusLabel {
+    switch (status) {
+      case PaymentStatus.completed:
+        return 'Completado';
+      case PaymentStatus.pending:
+        return 'Pendiente';
+      case PaymentStatus.confirmed:
+        return 'Confirmado';
+    }
+  }
+
+  bool get isPending => status == PaymentStatus.pending;
 
   String get formattedDate {
     final months = [

@@ -1,36 +1,21 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-class RemindersScreen extends StatefulWidget {
+import '../../analytics/analytics_service.dart';
+import '../../notifications/notification_service.dart';
+import '../../users/presentation/user_profile_provider.dart';
+import '../data/reminder_repository.dart';
+import '../domain/reminder.dart';
+import '../providers/reminders_provider.dart';
+
+class RemindersScreen extends ConsumerStatefulWidget {
   const RemindersScreen({super.key});
 
   @override
-  State<RemindersScreen> createState() => _RemindersScreenState();
+  ConsumerState<RemindersScreen> createState() => _RemindersScreenState();
 }
 
-class _RemindersScreenState extends State<RemindersScreen> {
-  // Lista de recordatorios
-  final List<ReminderItem> reminders = [
-    ReminderItem(
-      id: '1',
-      title: 'Antes del Encendido de Velas',
-      time: const TimeOfDay(hour: 17, minute: 45),
-      days: [DateTime.friday],
-      isHoliday: true,
-      minutesBefore: 15,
-      isEnabled: false,
-    ),
-    ReminderItem(
-      id: '2',
-      title: 'Recordatorio de Racha',
-      time: const TimeOfDay(hour: 20, minute: 0),
-      days: [DateTime.monday, DateTime.tuesday, DateTime.wednesday, DateTime.thursday],
-      isHoliday: false,
-      isEnabled: true,
-      secondTime: const TimeOfDay(hour: 13, minute: 0),
-      secondDays: [DateTime.friday],
-      secondIsHoliday: true,
-    ),
-  ];
+class _RemindersScreenState extends ConsumerState<RemindersScreen> {
 
   @override
   Widget build(BuildContext context) {
@@ -40,40 +25,74 @@ class _RemindersScreenState extends State<RemindersScreen> {
     return Column(
       children: [
         Expanded(
-          child: reminders.isEmpty
-              ? const Center(
-                  child: Text(
-                    'No hay recordatorios\nToca el botón para agregar uno',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(fontSize: 16, color: Colors.grey),
-                  ),
-                )
-              : ListView.separated(
-                  padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
-                  itemCount: reminders.length,
-                  separatorBuilder: (context, index) => Divider(
-                    height: 1,
-                    thickness: 1,
-                    color: Colors.grey.shade200,
-                  ),
-                  itemBuilder: (context, index) {
-                    final reminder = reminders[index];
-                    return _buildReminderItem(
-                      reminder: reminder,
-                      onToggle: (value) {
-                        setState(() {
-                          reminders[index].isEnabled = value;
-                        });
-                      },
-                      onEdit: () => _showEditReminderDialog(index),
-                      activeColor: orange,
+          child: ref.watch(userRemindersProvider).when(
+                data: (reminders) {
+                  if (reminders.isEmpty) {
+                    return Center(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            Icons.notifications_none_rounded,
+                            size: 54,
+                            color: Colors.grey.shade400,
+                          ),
+                          const SizedBox(height: 10),
+                          const Text(
+                            'No hay recordatorios',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w600,
+                              color: Colors.black87,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            'Toca el botón para agregar uno',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              fontSize: 14,
+                              color: Colors.grey.shade600,
+                            ),
+                          ),
+                        ],
+                      ),
                     );
-                  },
+                  }
+
+                  return ListView.separated(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+                    itemCount: reminders.length,
+                    separatorBuilder: (context, index) => Divider(
+                      height: 1,
+                      thickness: 1,
+                      color: Colors.grey.shade200,
+                    ),
+                    itemBuilder: (context, index) {
+                      final reminder = reminders[index];
+                      return _buildReminderItem(
+                        reminder: reminder,
+                        onToggle: (value) => _toggleReminder(reminder, value),
+                        onEdit: () => _showEditReminderDialog(reminder),
+                        onDelete: () => _deleteReminder(reminder),
+                        activeColor: orange,
+                      );
+                    },
+                  );
+                },
+                loading: () => const Center(
+                  child: CircularProgressIndicator(),
                 ),
+                error: (_, __) => const Center(
+                  child: Text('Error cargando recordatorios'),
+                ),
+              ),
         ),
         // Botón agregar recordatorio
         Container(
-          padding: const EdgeInsets.all(18),
+          padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
             color: Colors.white,
             boxShadow: [
@@ -85,28 +104,42 @@ class _RemindersScreenState extends State<RemindersScreen> {
             ],
           ),
           child: SafeArea(
-            child: SizedBox(
-              width: double.infinity,
-              height: 50,
-              child: ElevatedButton(
-                onPressed: () => _showAddReminderDialog(),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: red,
-                  foregroundColor: Colors.white,
-                  elevation: 0,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(10),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton(
+                    onPressed: () => _showAddReminderDialog(),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: red,
+                      foregroundColor: Colors.white,
+                      elevation: 0,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                    ),
+                    child: const Text(
+                      '+ Agregar recordatorio',
+                      style: TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: 0.2,
+                      ),
+                    ),
                   ),
                 ),
-                child: const Text(
-                  '+ AGREGAR RECORDATORIO',
-                  style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.w700,
-                    letterSpacing: 0.5,
+                const SizedBox(height: 10),
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton(
+                    onPressed: () async {
+                      await NotificationService.instance.showTestNotification();
+                    },
+                    child: const Text('Probar notificación'),
                   ),
                 ),
-              ),
+              ],
             ),
           ),
         ),
@@ -115,13 +148,14 @@ class _RemindersScreenState extends State<RemindersScreen> {
   }
 
   Widget _buildReminderItem({
-    required ReminderItem reminder,
+    required Reminder reminder,
     required ValueChanged<bool> onToggle,
     required VoidCallback onEdit,
+    required VoidCallback onDelete,
     required Color activeColor,
   }) {
-    final subtitle = reminder.generateSubtitle();
-    final subtitle2 = reminder.generateSubtitle2();
+    final subtitle = reminder.subtitle;
+    final subtitle2 = reminder.subtitleSecondary;
 
     return InkWell(
       onTap: onEdit,
@@ -166,11 +200,22 @@ class _RemindersScreenState extends State<RemindersScreen> {
               ),
             ),
             const SizedBox(width: 16),
-            Switch(
-              value: reminder.isEnabled,
-              onChanged: onToggle,
-              activeColor: activeColor,
-              activeTrackColor: activeColor.withOpacity(0.5),
+            Column(
+              children: [
+                Switch(
+                  value: reminder.isEnabled,
+                  onChanged: onToggle,
+                  activeThumbColor: activeColor,
+                  activeTrackColor: activeColor.withValues(alpha: 0.45),
+                  inactiveThumbColor: Colors.white,
+                  inactiveTrackColor: Colors.grey.shade300,
+                ),
+                const SizedBox(height: 8),
+                IconButton(
+                  icon: const Icon(Icons.delete_outline, color: Colors.grey),
+                  onPressed: onDelete,
+                ),
+              ],
             ),
           ],
         ),
@@ -179,15 +224,15 @@ class _RemindersScreenState extends State<RemindersScreen> {
   }
 
   Future<void> _showAddReminderDialog() async {
-    final result = await showDialog<ReminderItem>(
+    final result = await showModalBottomSheet<ReminderDraft>(
       context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
       builder: (context) => const _ReminderDialog(),
     );
 
     if (result != null) {
-      setState(() {
-        reminders.add(result);
-      });
+      await _saveReminder(result);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Recordatorio agregado')),
@@ -196,17 +241,16 @@ class _RemindersScreenState extends State<RemindersScreen> {
     }
   }
 
-  Future<void> _showEditReminderDialog(int index) async {
-    final reminder = reminders[index];
-    final result = await showDialog<ReminderItem>(
+  Future<void> _showEditReminderDialog(Reminder reminder) async {
+    final result = await showModalBottomSheet<ReminderDraft>(
       context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
       builder: (context) => _ReminderDialog(reminder: reminder),
     );
 
     if (result != null) {
-      setState(() {
-        reminders[index] = result;
-      });
+      await _saveReminder(result, existingId: reminder.id);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Recordatorio actualizado')),
@@ -214,10 +258,93 @@ class _RemindersScreenState extends State<RemindersScreen> {
       }
     }
   }
+
+  Future<void> _saveReminder(ReminderDraft draft, {String? existingId}) async {
+    final user = ref.read(currentUserProvider);
+    if (user == null) {
+      _showMessage('Inicia sesión para guardar recordatorios');
+      return;
+    }
+    final repo = ref.read(reminderRepositoryProvider);
+
+    final reminder = Reminder(
+      id: existingId ?? '',
+      title: draft.title,
+      time: draft.time,
+      days: draft.days,
+      isHoliday: draft.isHoliday,
+      minutesBefore: draft.minutesBefore,
+      isEnabled: draft.isEnabled,
+      secondTime: draft.secondTime,
+      secondDays: draft.secondDays,
+      secondIsHoliday: draft.secondIsHoliday,
+    );
+
+    if (existingId == null) {
+      try {
+        final id = await repo.addReminder(user.uid, reminder);
+        await NotificationService.instance.scheduleReminder(
+          reminder.copyWith(id: id),
+        );
+        await AnalyticsService.instance.logReminderCreated();
+      } catch (_) {
+        _showMessage('No se pudo guardar el recordatorio');
+      }
+    } else {
+      try {
+        await repo.updateReminder(user.uid, reminder.copyWith(id: existingId));
+        await NotificationService.instance.scheduleReminder(
+          reminder.copyWith(id: existingId),
+        );
+        await AnalyticsService.instance.logReminderUpdated();
+      } catch (_) {
+        _showMessage('No se pudo actualizar el recordatorio');
+      }
+    }
+  }
+
+  Future<void> _toggleReminder(Reminder reminder, bool value) async {
+    final user = ref.read(currentUserProvider);
+    if (user == null) {
+      _showMessage('Inicia sesión para modificar recordatorios');
+      return;
+    }
+    final repo = ref.read(reminderRepositoryProvider);
+    final updated = reminder.copyWith(isEnabled: value);
+    try {
+      await repo.updateReminder(user.uid, updated);
+      await NotificationService.instance.scheduleReminder(updated);
+    } catch (_) {
+      _showMessage('No se pudo actualizar el recordatorio');
+    }
+  }
+
+  Future<void> _deleteReminder(Reminder reminder) async {
+    final user = ref.read(currentUserProvider);
+    if (user == null) {
+      _showMessage('Inicia sesión para eliminar recordatorios');
+      return;
+    }
+    final repo = ref.read(reminderRepositoryProvider);
+    try {
+      await repo.deleteReminder(user.uid, reminder.id);
+      await NotificationService.instance.cancelReminder(reminder);
+      await AnalyticsService.instance.logReminderDeleted();
+    } catch (_) {
+      _showMessage('No se pudo eliminar el recordatorio');
+    }
+  }
+
+  void _showMessage(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message)),
+    );
+  }
 }
 
 class _ReminderDialog extends StatefulWidget {
-  final ReminderItem? reminder;
+  final Reminder? reminder;
 
   const _ReminderDialog({this.reminder});
 
@@ -226,6 +353,7 @@ class _ReminderDialog extends StatefulWidget {
 }
 
 class _ReminderDialogState extends State<_ReminderDialog> {
+  final _formKey = GlobalKey<FormState>();
   late final TextEditingController _titleController;
   late TimeOfDay _selectedTime;
   late final Set<int> _selectedDays;
@@ -249,7 +377,7 @@ class _ReminderDialogState extends State<_ReminderDialog> {
       _minutesBefore = reminder.minutesBefore;
       _hasSecondTime = reminder.secondTime != null;
       _secondTime = reminder.secondTime;
-      _secondDays = reminder.secondDays?.toSet() ?? {};
+      _secondDays = reminder.secondDays.toSet();
       _secondIsHoliday = reminder.secondIsHoliday;
     } else {
       // Modo creación - valores por defecto
@@ -271,69 +399,55 @@ class _ReminderDialogState extends State<_ReminderDialog> {
 
   @override
   Widget build(BuildContext context) {
-    return Dialog(
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+    final bottomInset = MediaQuery.of(context).viewInsets.bottom;
+    return Padding(
+      padding: EdgeInsets.only(bottom: bottomInset),
       child: Container(
-        constraints: const BoxConstraints(maxWidth: 500, maxHeight: 700),
+        constraints: BoxConstraints(maxHeight: MediaQuery.of(context).size.height * 0.88),
+        decoration: const BoxDecoration(color: Colors.white, borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            // Header
+            // Handle + Header
             Container(
-              padding: const EdgeInsets.all(20),
+              padding: const EdgeInsets.fromLTRB(20, 8, 8, 14),
               decoration: BoxDecoration(
                 color: const Color(0xFF2F60C5),
-                borderRadius: const BorderRadius.only(
-                  topLeft: Radius.circular(16),
-                  topRight: Radius.circular(16),
-                ),
+                borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
               ),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      widget.reminder != null ? 'Editar Recordatorio' : 'Nuevo Recordatorio',
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 20,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                  ),
-                  IconButton(
-                    icon: const Icon(Icons.close, color: Colors.white),
-                    onPressed: () => Navigator.pop(context),
-                  ),
-                ],
-              ),
+              child: Column(children: [
+                Center(child: Container(width: 36, height: 4, margin: const EdgeInsets.only(bottom: 12), decoration: BoxDecoration(color: Colors.white.withValues(alpha: 0.4), borderRadius: BorderRadius.circular(2)))),
+                Row(children: [
+                  Expanded(child: Text(
+                    widget.reminder != null ? 'Editar Recordatorio' : 'Nuevo Recordatorio',
+                    style: const TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.w700),
+                  )),
+                  IconButton(icon: const Icon(Icons.close, color: Colors.white), onPressed: () => Navigator.pop(context)),
+                ]),
+              ]),
             ),
-            // Content
             Flexible(
               child: SingleChildScrollView(
-                padding: const EdgeInsets.all(20),
+                padding: const EdgeInsets.fromLTRB(20, 18, 20, 14),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    // Título
-                    const Text(
-                      'Título',
-                      style: TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w600,
-                        color: Colors.black87,
-                      ),
-                    ),
+                    const Text('Título', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: Colors.black87)),
                     const SizedBox(height: 8),
-                    TextField(
-                      controller: _titleController,
-                      decoration: InputDecoration(
-                        hintText: 'Ej: Antes del Encendido de Velas',
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(8),
+                    Form(
+                      key: _formKey,
+                      child: TextFormField(
+                        controller: _titleController,
+                        textInputAction: TextInputAction.next,
+                        validator: _validateTitle,
+                        decoration: InputDecoration(
+                          hintText: 'Ej: Antes del Encendido de Velas',
+                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                          focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: Color(0xFF2F60C5), width: 1.6)),
                         ),
                       ),
                     ),
-                    const SizedBox(height: 24),
+                    const SizedBox(height: 20),
 
                     // Hora
                     const Text(
@@ -373,7 +487,7 @@ class _ReminderDialogState extends State<_ReminderDialog> {
                         ),
                       ),
                     ),
-                    const SizedBox(height: 24),
+                    const SizedBox(height: 20),
 
                     // Días de la semana
                     const Text(
@@ -398,7 +512,7 @@ class _ReminderDialogState extends State<_ReminderDialog> {
                         _buildDayChip('D', DateTime.sunday),
                       ],
                     ),
-                    const SizedBox(height: 16),
+                    const SizedBox(height: 14),
 
                     // Festivos
                     CheckboxListTile(
@@ -433,7 +547,7 @@ class _ReminderDialogState extends State<_ReminderDialog> {
                         },
                       ),
                     ],
-                    const SizedBox(height: 16),
+                    const SizedBox(height: 14),
 
                     // Segunda hora opcional
                     CheckboxListTile(
@@ -450,7 +564,7 @@ class _ReminderDialogState extends State<_ReminderDialog> {
                       contentPadding: EdgeInsets.zero,
                     ),
                     if (_hasSecondTime) ...[
-                      const SizedBox(height: 16),
+                      const SizedBox(height: 14),
                       const Text(
                         'Segunda Hora',
                         style: TextStyle(
@@ -490,7 +604,7 @@ class _ReminderDialogState extends State<_ReminderDialog> {
                           ),
                         ),
                       ),
-                      const SizedBox(height: 16),
+                      const SizedBox(height: 14),
                       const Text(
                         'Días para Segunda Hora',
                         style: TextStyle(
@@ -525,31 +639,21 @@ class _ReminderDialogState extends State<_ReminderDialog> {
                 ),
               ),
             ),
-            // Footer buttons
-            Container(
-              padding: const EdgeInsets.all(20),
-              decoration: BoxDecoration(
-                border: Border(top: BorderSide(color: Colors.grey.shade200)),
-              ),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.end,
-                children: [
-                  TextButton(
-                    onPressed: () => Navigator.pop(context),
-                    child: const Text('Cancelar'),
-                  ),
-                  const SizedBox(width: 12),
-                  ElevatedButton(
-                    onPressed: _validateAndSave,
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF2F60C5),
-                      foregroundColor: Colors.white,
-                    ),
-                    child: const Text('Guardar'),
-                  ),
-                ],
-              ),
-            ),
+            SafeArea(top: false, child: Padding(
+              padding: const EdgeInsets.fromLTRB(20, 12, 20, 16),
+              child: Column(mainAxisSize: MainAxisSize.min, children: [
+                SizedBox(width: double.infinity, height: 48, child: ElevatedButton(
+                  style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF2F60C5), foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
+                  onPressed: _validateAndSave,
+                  child: const Text('Guardar', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+                )),
+                const SizedBox(height: 8),
+                SizedBox(width: double.infinity, height: 44, child: TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: Text('Cancelar', style: TextStyle(color: Colors.grey.shade600, fontWeight: FontWeight.w500)),
+                )),
+              ]),
+            )),
           ],
         ),
       ),
@@ -596,12 +700,8 @@ class _ReminderDialogState extends State<_ReminderDialog> {
   }
 
   void _validateAndSave() {
-    if (_titleController.text.trim().isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Por favor ingresa un título')),
-      );
-      return;
-    }
+    final form = _formKey.currentState;
+    if (form == null || !form.validate()) return;
 
     if (_selectedDays.isEmpty && !_isHoliday) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -617,8 +717,7 @@ class _ReminderDialogState extends State<_ReminderDialog> {
       return;
     }
 
-    final reminder = ReminderItem(
-      id: widget.reminder?.id ?? DateTime.now().millisecondsSinceEpoch.toString(),
+    final reminder = ReminderDraft(
       title: _titleController.text.trim(),
       time: _selectedTime,
       days: _selectedDays.toList(),
@@ -626,116 +725,41 @@ class _ReminderDialogState extends State<_ReminderDialog> {
       minutesBefore: _minutesBefore,
       isEnabled: widget.reminder?.isEnabled ?? true,
       secondTime: _hasSecondTime ? _secondTime : null,
-      secondDays: _hasSecondTime ? _secondDays.toList() : null,
+      secondDays: _hasSecondTime ? _secondDays.toList() : <int>[],
       secondIsHoliday: _hasSecondTime ? _secondIsHoliday : false,
     );
 
     Navigator.pop(context, reminder);
   }
+
+  String? _validateTitle(String? value) {
+    final text = value?.trim() ?? '';
+    if (text.isEmpty) return 'Ingresa un título';
+    if (text.length < 3) return 'Título muy corto';
+    return null;
+  }
 }
 
-class ReminderItem {
-  final String id;
+class ReminderDraft {
+  const ReminderDraft({
+    required this.title,
+    required this.time,
+    required this.days,
+    required this.isHoliday,
+    required this.minutesBefore,
+    required this.isEnabled,
+    required this.secondTime,
+    required this.secondDays,
+    required this.secondIsHoliday,
+  });
+
   final String title;
   final TimeOfDay time;
   final List<int> days;
   final bool isHoliday;
   final int? minutesBefore;
-  bool isEnabled;
+  final bool isEnabled;
   final TimeOfDay? secondTime;
-  final List<int>? secondDays;
+  final List<int> secondDays;
   final bool secondIsHoliday;
-
-  ReminderItem({
-    required this.id,
-    required this.title,
-    required this.time,
-    required this.days,
-    required this.isHoliday,
-    this.minutesBefore,
-    required this.isEnabled,
-    this.secondTime,
-    this.secondDays,
-    this.secondIsHoliday = false,
-  });
-
-  String generateSubtitle() {
-    final timeStr = _formatTime(time);
-    final dayNames = _getDayNames(days);
-    
-    String subtitle = '';
-    if (dayNames.isNotEmpty) {
-      subtitle = '$dayNames - $timeStr';
-    } else if (isHoliday) {
-      subtitle = 'Festivos - $timeStr';
-    }
-    
-    if (minutesBefore != null) {
-      subtitle += ' - $minutesBefore Min Antes';
-    }
-    
-    return subtitle;
-  }
-
-  String? generateSubtitle2() {
-    if (secondTime == null) return null;
-    
-    final timeStr = _formatTime(secondTime!);
-    final dayNames = secondDays != null && secondDays!.isNotEmpty
-        ? _getDayNames(secondDays!)
-        : '';
-    
-    String subtitle = '';
-    if (dayNames.isNotEmpty) {
-      subtitle = '$dayNames - $timeStr';
-    } else if (secondIsHoliday) {
-      subtitle = 'Festivos - $timeStr';
-    }
-    
-    return subtitle;
-  }
-
-  String _formatTime(TimeOfDay time) {
-    final hour = time.hourOfPeriod == 0 ? 12 : time.hourOfPeriod;
-    final minute = time.minute.toString().padLeft(2, '0');
-    final period = time.period == DayPeriod.am ? 'AM' : 'PM';
-    return '$hour:$minute $period';
-  }
-
-  String _getDayNames(List<int> dayNumbers) {
-    const dayNames = ['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom'];
-    const fullDayNames = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo'];
-    
-    if (dayNumbers.length == 1) {
-      return fullDayNames[dayNumbers[0] - 1];
-    }
-    
-    if (dayNumbers.length == 5 && 
-        dayNumbers.contains(DateTime.monday) &&
-        dayNumbers.contains(DateTime.tuesday) &&
-        dayNumbers.contains(DateTime.wednesday) &&
-        dayNumbers.contains(DateTime.thursday) &&
-        dayNumbers.contains(DateTime.friday)) {
-      return 'Días de Semana';
-    }
-    
-    if (dayNumbers.length == 7) {
-      return 'Todos los Días';
-    }
-    
-    if (dayNumbers.contains(DateTime.friday) && dayNumbers.length == 1) {
-      return 'Viernes';
-    }
-    
-    if (dayNumbers.contains(DateTime.friday) && dayNumbers.length <= 3) {
-      final otherDays = dayNumbers.where((d) => d != DateTime.friday).toList();
-      if (otherDays.isEmpty) {
-        return 'Viernes';
-      }
-      return 'Viernes y ${_getDayNames(otherDays)}';
-    }
-    
-    final names = dayNumbers.map((d) => dayNames[d - 1]).join(', ');
-    return names;
-  }
 }

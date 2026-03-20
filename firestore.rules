@@ -1,0 +1,247 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(uid) {
+      return isSignedIn() && request.auth.uid == uid;
+    }
+
+    function validFrequency(value) {
+      return value == 'manual' ||
+          value == 'weekly' ||
+          value == 'monthly' ||
+          value == 'erev_rosh_chodesh';
+    }
+
+    function validUserDoc(uid) {
+      return request.resource.data.keys().hasOnly([
+            'uid',
+            'email',
+            'displayName',
+            'createdAt',
+            'lastLoginAt',
+            'billingEmail',
+            'phoneNumber',
+            'mailingAddress',
+            'walletId',
+            'walletBalance',
+            'walletAutoTopUpEnabled',
+            'walletAutoTopUpAmount',
+            'walletAutoTopUpFrequency',
+            'walletAutoTopUpWeekday',
+            'walletAutoTopUpDayOfMonth',
+            'walletAutoTopUpNextRunAt',
+            'pushkaAmount',
+            'pushkaGoal',
+            'presetAmount',
+            'soundEnabled',
+            'coinJingleEnabled',
+            'vibrationEnabled',
+            'partialPaymentsEnabled',
+            'additionalPaymentOptionsEnabled',
+            'biometricAuthenticationEnabled',
+            'currencyCountry',
+            'currencyCode',
+            'autoEmptyFrequency',
+            'autoEmptyWeekday',
+            'autoEmptyDayOfMonth',
+            'autoEmptyTopOffEnabled',
+            'autoEmptyTopOffAmount',
+            'updatedAt'
+          ]) &&
+          request.resource.data.uid is string &&
+          request.resource.data.uid == uid &&
+          (!('walletId' in request.resource.data) ||
+              (request.resource.data.walletId is string &&
+                  request.resource.data.walletId.size() >= 4 &&
+                  request.resource.data.walletId.size() <= 16)) &&
+          (!('walletBalance' in request.resource.data) ||
+              request.resource.data.walletBalance is number) &&
+          (!('walletAutoTopUpEnabled' in request.resource.data) ||
+              request.resource.data.walletAutoTopUpEnabled is bool) &&
+          (!('walletAutoTopUpAmount' in request.resource.data) ||
+              (request.resource.data.walletAutoTopUpAmount is number &&
+                  request.resource.data.walletAutoTopUpAmount >= 0)) &&
+          (!('walletAutoTopUpFrequency' in request.resource.data) ||
+              (request.resource.data.walletAutoTopUpFrequency is string &&
+                  (request.resource.data.walletAutoTopUpFrequency == 'weekly' ||
+                      request.resource.data.walletAutoTopUpFrequency == 'monthly'))) &&
+          (!('walletAutoTopUpWeekday' in request.resource.data) ||
+              (request.resource.data.walletAutoTopUpWeekday is int &&
+                  request.resource.data.walletAutoTopUpWeekday >= 1 &&
+                  request.resource.data.walletAutoTopUpWeekday <= 7)) &&
+          (!('walletAutoTopUpDayOfMonth' in request.resource.data) ||
+              (request.resource.data.walletAutoTopUpDayOfMonth is int &&
+                  request.resource.data.walletAutoTopUpDayOfMonth >= 1 &&
+                  request.resource.data.walletAutoTopUpDayOfMonth <= 31)) &&
+          (!('walletAutoTopUpNextRunAt' in request.resource.data) ||
+              request.resource.data.walletAutoTopUpNextRunAt is timestamp ||
+              request.resource.data.walletAutoTopUpNextRunAt == null) &&
+          (!('pushkaAmount' in request.resource.data) ||
+              (request.resource.data.pushkaAmount is number &&
+                  request.resource.data.pushkaAmount >= 0)) &&
+          (!('pushkaGoal' in request.resource.data) ||
+              (request.resource.data.pushkaGoal is number &&
+                  request.resource.data.pushkaGoal > 0)) &&
+          (!('presetAmount' in request.resource.data) ||
+              (request.resource.data.presetAmount is number &&
+                  request.resource.data.presetAmount > 0)) &&
+          (!('soundEnabled' in request.resource.data) ||
+              request.resource.data.soundEnabled is bool) &&
+          (!('coinJingleEnabled' in request.resource.data) ||
+              request.resource.data.coinJingleEnabled is bool) &&
+          (!('vibrationEnabled' in request.resource.data) ||
+              request.resource.data.vibrationEnabled is bool) &&
+          (!('partialPaymentsEnabled' in request.resource.data) ||
+              request.resource.data.partialPaymentsEnabled is bool) &&
+          (!('additionalPaymentOptionsEnabled' in request.resource.data) ||
+              request.resource.data.additionalPaymentOptionsEnabled is bool) &&
+          (!('biometricAuthenticationEnabled' in request.resource.data) ||
+              request.resource.data.biometricAuthenticationEnabled is bool) &&
+          (!('currencyCountry' in request.resource.data) ||
+              request.resource.data.currencyCountry is string) &&
+          (!('currencyCode' in request.resource.data) ||
+              (request.resource.data.currencyCode is string &&
+                  request.resource.data.currencyCode.size() == 3)) &&
+          (!('autoEmptyFrequency' in request.resource.data) ||
+              (request.resource.data.autoEmptyFrequency is string &&
+                  validFrequency(request.resource.data.autoEmptyFrequency))) &&
+          (!('autoEmptyWeekday' in request.resource.data) ||
+              (request.resource.data.autoEmptyWeekday is int &&
+                  request.resource.data.autoEmptyWeekday >= 1 &&
+                  request.resource.data.autoEmptyWeekday <= 7)) &&
+          (!('autoEmptyDayOfMonth' in request.resource.data) ||
+              (request.resource.data.autoEmptyDayOfMonth is int &&
+                  request.resource.data.autoEmptyDayOfMonth >= 1 &&
+                  request.resource.data.autoEmptyDayOfMonth <= 31)) &&
+          (!('autoEmptyTopOffEnabled' in request.resource.data) ||
+              request.resource.data.autoEmptyTopOffEnabled is bool) &&
+          (!('autoEmptyTopOffAmount' in request.resource.data) ||
+              (request.resource.data.autoEmptyTopOffAmount is number &&
+                  request.resource.data.autoEmptyTopOffAmount >= 0));
+    }
+
+    function validTransactionDoc() {
+      return request.resource.data.keys().hasOnly([
+            'type',
+            'amount',
+            'description',
+            'createdAt'
+          ]) &&
+          (request.resource.data.type == 'tzedaka' ||
+              request.resource.data.type == 'pushkaEmpty' ||
+              request.resource.data.type == 'walletFill') &&
+          request.resource.data.amount is number &&
+          (!('description' in request.resource.data) ||
+              request.resource.data.description is string);
+    }
+
+    function validReminderDoc() {
+      return request.resource.data.keys().hasOnly([
+            'title',
+            'timeHour',
+            'timeMinute',
+            'days',
+            'isHoliday',
+            'minutesBefore',
+            'isEnabled',
+            'secondTimeHour',
+            'secondTimeMinute',
+            'secondDays',
+            'secondIsHoliday',
+            'createdAt'
+          ]) &&
+          request.resource.data.title is string &&
+          request.resource.data.timeHour is int &&
+          request.resource.data.timeHour >= 0 &&
+          request.resource.data.timeHour <= 23 &&
+          request.resource.data.timeMinute is int &&
+          request.resource.data.timeMinute >= 0 &&
+          request.resource.data.timeMinute <= 59 &&
+          request.resource.data.days is list &&
+          request.resource.data.isHoliday is bool &&
+          (!('minutesBefore' in request.resource.data) ||
+              (request.resource.data.minutesBefore is int &&
+                  request.resource.data.minutesBefore >= 0 &&
+                  request.resource.data.minutesBefore <= 1440)) &&
+          request.resource.data.isEnabled is bool &&
+          request.resource.data.secondDays is list &&
+          request.resource.data.secondIsHoliday is bool &&
+          (
+            (
+              !('secondTimeHour' in request.resource.data) &&
+              !('secondTimeMinute' in request.resource.data)
+            ) ||
+            (
+              request.resource.data.secondTimeHour is int &&
+              request.resource.data.secondTimeHour >= 0 &&
+              request.resource.data.secondTimeHour <= 23 &&
+              request.resource.data.secondTimeMinute is int &&
+              request.resource.data.secondTimeMinute >= 0 &&
+              request.resource.data.secondTimeMinute <= 59
+            )
+          );
+    }
+
+    function validTokenDoc(tokenId) {
+      return request.resource.data.keys().hasOnly([
+            'token',
+            'platform',
+            'createdAt',
+            'lastUsedAt'
+          ]) &&
+          request.resource.data.token is string &&
+          request.resource.data.token == tokenId &&
+          request.resource.data.platform is string;
+    }
+
+    match /users/{uid} {
+      allow read: if isOwner(uid);
+      allow create: if isOwner(uid) && validUserDoc(uid);
+      allow update: if isOwner(uid) &&
+          validUserDoc(uid) &&
+          (
+            request.resource.data.walletId == resource.data.walletId ||
+            !('walletId' in resource.data)
+          ) &&
+          (
+            request.resource.data.walletBalance == resource.data.walletBalance ||
+            !('walletBalance' in resource.data)
+          );
+      allow delete: if false;
+
+      match /transactions/{transactionId} {
+        allow read: if isOwner(uid);
+        allow create: if isOwner(uid) &&
+            validTransactionDoc() &&
+            request.resource.data.type == 'pushkaEmpty';
+        allow update, delete: if false;
+      }
+
+      match /reminders/{reminderId} {
+        allow read: if isOwner(uid);
+        allow create, update: if isOwner(uid) && validReminderDoc();
+        allow delete: if isOwner(uid);
+      }
+
+      match /fcmTokens/{tokenId} {
+        allow read: if isOwner(uid);
+        allow create, update: if isOwner(uid) && validTokenDoc(tokenId);
+        allow delete: if isOwner(uid);
+      }
+
+      match /paymentEvents/{eventId} {
+        allow read: if isOwner(uid);
+        allow write: if false;
+      }
+
+      match /walletContacts/{contactId} {
+        allow read: if isOwner(uid);
+        allow write: if false;
+      }
+    }
+  }
+}

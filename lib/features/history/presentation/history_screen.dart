@@ -1,7 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+
 import '../domain/transaction.dart';
-import '../providers/history_provider.dart';
+import '../providers/transactions_provider.dart';
+
+enum _HistoryFilter {
+  all,
+  tzedaka,
+  pushkaEmpty,
+  walletFill,
+}
 
 class HistoryScreen extends ConsumerStatefulWidget {
   const HistoryScreen({super.key});
@@ -11,14 +19,11 @@ class HistoryScreen extends ConsumerStatefulWidget {
 }
 
 class _HistoryScreenState extends ConsumerState<HistoryScreen> {
-  TransactionType? selectedFilter;
+  _HistoryFilter selectedFilter = _HistoryFilter.all;
 
   @override
   Widget build(BuildContext context) {
-    final transactions = ref.watch(historyProvider);
-    final filteredTransactions = selectedFilter == null
-        ? transactions
-        : transactions.where((t) => t.type == selectedFilter).toList();
+    final transactionsAsync = ref.watch(userTransactionsProvider);
 
     const blue = Color(0xFF2F60C5);
 
@@ -26,13 +31,13 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
       children: [
         // Filtro dropdown
         Container(
-          margin: const EdgeInsets.all(18),
+          margin: const EdgeInsets.fromLTRB(18, 14, 18, 10),
           decoration: BoxDecoration(
             color: Colors.white,
             borderRadius: BorderRadius.circular(12),
             border: Border.all(color: Colors.grey.shade300),
           ),
-          child: PopupMenuButton<TransactionType?>(
+          child: PopupMenuButton<_HistoryFilter>(
             offset: const Offset(0, 50),
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(12),
@@ -56,20 +61,20 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
             ),
             itemBuilder: (context) => [
               PopupMenuItem(
-                value: TransactionType.tzedaka,
+                value: _HistoryFilter.tzedaka,
                 child: const Text('Mi Tzedaka'),
               ),
               PopupMenuItem(
-                value: TransactionType.pushkaEmpty,
+                value: _HistoryFilter.pushkaEmpty,
                 child: const Text('Pushka Vacía'),
               ),
               PopupMenuItem(
-                value: TransactionType.walletFill,
+                value: _HistoryFilter.walletFill,
                 child: const Text('Billetera Rellena'),
               ),
               const PopupMenuDivider(),
-              const PopupMenuItem(
-                value: null,
+              PopupMenuItem(
+                value: _HistoryFilter.all,
                 child: Text('Todos'),
               ),
             ],
@@ -83,35 +88,64 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
 
         // Lista de transacciones
         Expanded(
-          child: filteredTransactions.isEmpty
-              ? Center(
+          child: transactionsAsync.when(
+            data: (transactions) {
+              final filtered = transactions.where((t) {
+                switch (selectedFilter) {
+                  case _HistoryFilter.all:
+                    return true;
+                  case _HistoryFilter.tzedaka:
+                    return t.type == TransactionType.tzedaka;
+                  case _HistoryFilter.pushkaEmpty:
+                    return t.type == TransactionType.pushkaEmpty;
+                  case _HistoryFilter.walletFill:
+                    return t.type == TransactionType.walletFill;
+                }
+              }).toList();
+
+              if (filtered.isEmpty) {
+                return Center(
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
                       Icon(
-                        Icons.history,
-                        size: 64,
-                        color: Colors.grey.shade300,
+                        Icons.receipt_long_outlined,
+                        size: 54,
+                        color: Colors.grey.shade400,
                       ),
-                      const SizedBox(height: 16),
+                      const SizedBox(height: 10),
                       Text(
                         'No hay transacciones',
                         style: TextStyle(
                           fontSize: 16,
-                          color: Colors.grey.shade600,
+                          fontWeight: FontWeight.w600,
+                          color: Colors.grey.shade700,
                         ),
                       ),
                     ],
                   ),
-                )
-              : ListView.builder(
-                  padding: const EdgeInsets.symmetric(horizontal: 18),
-                  itemCount: filteredTransactions.length,
-                  itemBuilder: (context, index) {
-                    final transaction = filteredTransactions[index];
-                    return _buildTransactionItem(transaction, blue);
-                  },
-                ),
+                );
+              }
+
+              return ListView.builder(
+                padding: const EdgeInsets.fromLTRB(18, 4, 18, 18),
+                itemCount: filtered.length,
+                itemBuilder: (context, index) {
+                  final transaction = filtered[index];
+                  return _buildTransactionItem(transaction, blue);
+                },
+              );
+            },
+            loading: () => const Center(
+              child: CircularProgressIndicator(),
+            ),
+            error: (error, _) => Center(
+              child: Text(
+                'Error cargando historial',
+                style: TextStyle(color: Colors.grey.shade600),
+              ),
+            ),
+          ),
         ),
       ],
     );
@@ -119,48 +153,89 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
 
   String _getFilterLabel() {
     switch (selectedFilter) {
-      case TransactionType.tzedaka:
+      case _HistoryFilter.tzedaka:
         return 'Mi Tzedaka';
-      case TransactionType.pushkaEmpty:
+      case _HistoryFilter.pushkaEmpty:
         return 'Pushka Vacía';
-      case TransactionType.walletFill:
+      case _HistoryFilter.walletFill:
         return 'Billetera Rellena';
-      case null:
-        return 'Mi Tzedaka';
+      case _HistoryFilter.all:
+        return 'Todos';
     }
   }
 
   Widget _buildTransactionItem(Transaction transaction, Color blue) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 16),
+    final amount = transaction.amount;
+    final amountLabel = amount < 0
+        ? '-\$${amount.abs().toStringAsFixed(2)}'
+        : '\$${amount.toStringAsFixed(2)}';
+    final amountColor = amount < 0 ? const Color(0xFFE05A4F) : blue;
+
+    final showMethodBadge = transaction.paymentMethod != PaymentMethod.card;
+    final showStatusBadge = transaction.isPending;
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: transaction.isPending ? Colors.orange.shade200 : Colors.grey.shade200),
+      ),
       child: Row(
         children: [
-          // Icono de Pushka
           _buildPushkaIcon(),
-          const SizedBox(width: 16),
-          // Fecha y hora
+          const SizedBox(width: 14),
           Expanded(
-            child: Text(
-              transaction.formattedDate,
-              style: const TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.w400,
-                color: Colors.black87,
-              ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  transaction.formattedDate,
+                  style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w500, color: Colors.black87),
+                ),
+                if (showMethodBadge || showStatusBadge) ...[
+                  const SizedBox(height: 4),
+                  Row(children: [
+                    if (showMethodBadge)
+                      _buildBadge(transaction.paymentMethodLabel, _iconForMethod(transaction.paymentMethod), const Color(0xFF2F60C5)),
+                    if (showMethodBadge && showStatusBadge) const SizedBox(width: 6),
+                    if (showStatusBadge)
+                      _buildBadge('Pendiente', Icons.schedule, Colors.orange.shade700),
+                  ]),
+                ],
+              ],
             ),
           ),
-          // Monto
-          Text(
-            '\$${transaction.amount.toStringAsFixed(2)}',
-            style: TextStyle(
-              fontSize: 16,
-              fontWeight: FontWeight.w700,
-              color: blue,
-            ),
-          ),
+          Text(amountLabel, style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: amountColor)),
         ],
       ),
     );
+  }
+
+  Widget _buildBadge(String label, IconData icon, Color color) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+      decoration: BoxDecoration(color: color.withValues(alpha: 0.1), borderRadius: BorderRadius.circular(6)),
+      child: Row(mainAxisSize: MainAxisSize.min, children: [
+        Icon(icon, size: 12, color: color),
+        const SizedBox(width: 3),
+        Text(label, style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: color)),
+      ]),
+    );
+  }
+
+  IconData _iconForMethod(PaymentMethod method) {
+    switch (method) {
+      case PaymentMethod.card:
+        return Icons.credit_card;
+      case PaymentMethod.check:
+        return Icons.mail_outline;
+      case PaymentMethod.transfer:
+        return Icons.account_balance;
+      case PaymentMethod.daf:
+        return Icons.volunteer_activism;
+    }
   }
 
   Widget _buildPushkaIcon() {
