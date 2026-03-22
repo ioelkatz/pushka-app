@@ -85,7 +85,7 @@ class _RemindersScreenState extends ConsumerState<RemindersScreen> {
                 loading: () => const Center(
                   child: CircularProgressIndicator(),
                 ),
-                error: (_, __) => const Center(
+                error: (_, _) => const Center(
                   child: Text('Error cargando recordatorios'),
                 ),
               ),
@@ -97,7 +97,7 @@ class _RemindersScreenState extends ConsumerState<RemindersScreen> {
             color: Colors.white,
             boxShadow: [
               BoxShadow(
-                color: Colors.black.withOpacity(0.05),
+                color: Colors.black.withValues(alpha: 0.05),
                 blurRadius: 10,
                 offset: const Offset(0, -2),
               ),
@@ -182,17 +182,17 @@ class _RemindersScreenState extends ConsumerState<RemindersScreen> {
                     style: TextStyle(
                       fontSize: 14,
                       fontWeight: FontWeight.w400,
-                      color: Colors.black.withOpacity(0.6),
+                      color: Colors.black.withValues(alpha: 0.6),
                     ),
                   ),
                   if (subtitle2 != null) ...[
                     const SizedBox(height: 2),
                     Text(
-                      subtitle2!,
+                      subtitle2,
                       style: TextStyle(
                         fontSize: 14,
                         fontWeight: FontWeight.w400,
-                        color: Colors.black.withOpacity(0.6),
+                        color: Colors.black.withValues(alpha: 0.6),
                       ),
                     ),
                   ],

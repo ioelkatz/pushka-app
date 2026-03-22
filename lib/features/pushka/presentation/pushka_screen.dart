@@ -25,7 +25,7 @@ class PushkaScreen extends ConsumerStatefulWidget {
 class _PushkaScreenState extends ConsumerState<PushkaScreen> {
   double pushkaAmount = 0;
   double pushkaGoal = 3600.00; // Meta de la pushka
-  double _presetAmount = 1.00;
+  List<double> _presetAmounts = [];
   bool _loadedRemote = false;
   bool _isProcessing = false;
 
@@ -41,11 +41,15 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
       await _addTransaction(TransactionType.pushkaEmpty, pushkaAmount);
       await AnalyticsService.instance.logPushkaEmpty(pushkaAmount);
       await _persistPushkaAmount(resetToZero: true);
+      if (!mounted) return;
       setState(() => pushkaAmount = 0);
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Pushka vaciada')),
       );
-    } catch (_) {
+    } catch (error, stack) {
+      debugPrint('emptyPushka error: $error');
+      debugPrint('$stack');
+      if (!mounted) return;
       _showError('No se pudo vaciar la Pushka');
     } finally {
       if (mounted) setState(() => _isProcessing = false);
@@ -69,7 +73,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
 
     if (_additionalPaymentOptionsEnabled()) {
       final method = await _showPaymentMethodSelector();
-      if (method == null) return;
+      if (method == null || !mounted) return;
       if (method == PaymentMethod.card) {
         await _processCardPayment(donationAmount);
       } else {
@@ -91,8 +95,8 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
       final currency = _currencyCodeFromProfile();
       final minCents = _minAmountCentsForCurrency(currency);
       if (amountCents < minCents) {
-        final minLabel = _formatAmountFromCents(minCents);
-        _showError('Monto mínimo para ${currency.toUpperCase()} es $minLabel');
+        if (!mounted) return;
+        _showMinAmountDialog(currency, minCents, donationAmount);
         return;
       }
       await StripeService.instance.pay(
@@ -133,6 +137,8 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
         );
       }
     } catch (error) {
+      debugPrint('Card payment error: $error');
+      if (!mounted) return;
       _showError(_donationErrorMessage(error));
     } finally {
       if (mounted) setState(() => _isProcessing = false);
@@ -178,7 +184,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
         );
       }
     } catch (error) {
-      _showError('No se pudo registrar la donación');
+      if (mounted) _showError('No se pudo registrar la donación');
     } finally {
       if (mounted) setState(() => _isProcessing = false);
     }
@@ -199,7 +205,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
     final userProfile = ref.watch(userProfileProvider).valueOrNull;
     final remoteGoal = userProfile?['pushkaGoal'];
     final remoteAmount = userProfile?['pushkaAmount'];
-    final remotePreset = userProfile?['presetAmount'];
+    final remotePresets = userProfile?['presetAmounts'];
 
     if (!_loadedRemote && userProfile != null) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -207,7 +213,9 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
         setState(() {
           if (remoteGoal is num) pushkaGoal = remoteGoal.toDouble();
           if (remoteAmount is num) pushkaAmount = remoteAmount.toDouble();
-          if (remotePreset is num) _presetAmount = remotePreset.toDouble();
+          if (remotePresets is List && remotePresets.length == 3) {
+            _presetAmounts = remotePresets.map((e) => (e as num).toDouble()).toList();
+          }
           _loadedRemote = true;
         });
       });
@@ -257,8 +265,8 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
                                     begin: Alignment.bottomCenter,
                                     end: Alignment.topCenter,
                                     colors: [
-                                      lightBlue.withOpacity(0.6),
-                                      lightBlue.withOpacity(0.3),
+                                      lightBlue.withValues(alpha: 0.6),
+                                      lightBlue.withValues(alpha: 0.3),
                                     ],
                                   ),
                                 ),
@@ -361,19 +369,19 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
             Row(
               children: [
                 _moneyBtn(
-                  '\$${quickAmounts[0].toStringAsFixed(2)}',
+                  _formatQuickAmount(quickAmounts[0]),
                   red,
                   () => addAmount(quickAmounts[0]),
                 ),
                 const SizedBox(width: 10),
                 _moneyBtn(
-                  '\$${quickAmounts[1].toStringAsFixed(2)}',
+                  _formatQuickAmount(quickAmounts[1]),
                   red,
                   () => addAmount(quickAmounts[1]),
                 ),
                 const SizedBox(width: 10),
                 _moneyBtn(
-                  '\$${quickAmounts[2].toStringAsFixed(2)}',
+                  _formatQuickAmount(quickAmounts[2]),
                   red,
                   () => addAmount(quickAmounts[2]),
                 ),
@@ -556,6 +564,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
       ),
     );
 
+    controller.dispose();
     if (result != null) await addAmount(result);
   }
 
@@ -591,10 +600,89 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
     );
   }
 
+  String _currencySymbol(String code) {
+    const symbols = {
+      'usd': 'US\$', 'eur': '€', 'gbp': '£', 'cad': 'CA\$',
+      'mxn': 'MX\$', 'ars': 'ARS\$', 'brl': 'R\$', 'ils': '₪',
+      'clp': 'CL\$', 'cop': 'CO\$',
+    };
+    return symbols[code.toLowerCase()] ?? '\$';
+  }
+
+  void _showMinAmountDialog(String currency, int minCents, double attempted) {
+    final symbol = _currencySymbol(currency);
+    final minAmount = _formatAmountFromCents(minCents);
+    final code = currency.toUpperCase();
+
+    showDialog(
+      context: context,
+      builder: (ctx) => Dialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        insetPadding: const EdgeInsets.symmetric(horizontal: 28),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(24, 24, 24, 20),
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            Container(
+              width: 56, height: 56,
+              decoration: BoxDecoration(
+                color: const Color(0xFFFFF3E0),
+                borderRadius: BorderRadius.circular(16),
+              ),
+              child: const Icon(Icons.info_outline_rounded, color: Color(0xFFFF9500), size: 30),
+            ),
+            const SizedBox(height: 16),
+            const Text(
+              'Monto mínimo',
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
+            ),
+            const SizedBox(height: 10),
+            Text(
+              'Para procesar pagos en $code, el monto mínimo es de $symbol$minAmount.',
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 14, color: Colors.grey.shade700, height: 1.4),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              'Puedes aumentar el monto o cambiar la moneda en Configuración.',
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 13, color: Colors.grey.shade500, height: 1.4),
+            ),
+            const SizedBox(height: 20),
+            SizedBox(
+              width: double.infinity,
+              height: 46,
+              child: ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFFE05A4F),
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  elevation: 0,
+                ),
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('Entendido', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
+              ),
+            ),
+          ]),
+        ),
+      ),
+    );
+  }
+
   String _donationErrorMessage(Object error) {
     if (error is FirebaseFunctionsException) {
-      final msg = error.message ?? error.code;
-      return 'Error de pago: $msg';
+      return switch (error.code) {
+        'unauthenticated' =>
+          'Tu sesión no es válida. Cierra sesión e inicia de nuevo.',
+        'failed-precondition' =>
+          'Verificación de seguridad fallida. Intenta de nuevo.',
+        'permission-denied' =>
+          'Acceso denegado por seguridad. Intenta de nuevo.',
+        'internal' =>
+          'Error del servidor de pagos. Verifica tu conexión e intenta de nuevo.',
+        'unavailable' =>
+          'El servidor de pagos no está disponible. Intenta más tarde.',
+        _ => error.message ?? 'No se pudo iniciar el pago',
+      };
     }
     if (error is StripeException) {
       if (error.error.code == FailureCode.Canceled) {
@@ -603,6 +691,12 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
       final msg = error.error.localizedMessage ?? error.error.message;
       if (msg != null && msg.trim().isNotEmpty) {
         return 'No se pudo completar el pago: $msg';
+      }
+    }
+    if (error is Exception) {
+      final msg = error.toString().replaceFirst('Exception: ', '');
+      if (msg.isNotEmpty && msg != 'null') {
+        return msg;
       }
     }
     return 'No se pudo completar la donación';
@@ -638,36 +732,32 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
   }
 
   Future<PaymentMethod?> _showPaymentMethodSelector() async {
-    return showModalBottomSheet<PaymentMethod>(
+    return showDialog<PaymentMethod>(
       context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (ctx) => Container(
-        decoration: const BoxDecoration(color: Colors.white, borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
-        child: SafeArea(
-          top: false,
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(20, 8, 20, 16),
-            child: Column(mainAxisSize: MainAxisSize.min, children: [
-              Center(child: Container(width: 36, height: 4, margin: const EdgeInsets.only(bottom: 14), decoration: BoxDecoration(color: Colors.grey.shade300, borderRadius: BorderRadius.circular(2)))),
-              const Text('Método de pago', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
-              const SizedBox(height: 6),
-              Text('Selecciona cómo deseas realizar tu donación', style: TextStyle(fontSize: 14, color: Colors.grey.shade600)),
-              const SizedBox(height: 18),
-              _paymentMethodTile(ctx, PaymentMethod.card, Icons.credit_card, 'Tarjeta de crédito/débito', 'Pago inmediato vía Stripe'),
-              const SizedBox(height: 10),
-              _paymentMethodTile(ctx, PaymentMethod.check, Icons.mail_outline, 'Cheque', 'Envía un cheque por correo'),
-              const SizedBox(height: 10),
-              _paymentMethodTile(ctx, PaymentMethod.transfer, Icons.account_balance, 'Transferencia bancaria', 'Transferencia o wire'),
-              const SizedBox(height: 10),
-              _paymentMethodTile(ctx, PaymentMethod.daf, Icons.volunteer_activism, 'DAF', 'Donor Advised Fund'),
-              const SizedBox(height: 12),
-              SizedBox(width: double.infinity, height: 44, child: TextButton(
-                onPressed: () => Navigator.pop(ctx),
-                child: Text('Cancelar', style: TextStyle(color: Colors.grey.shade600, fontWeight: FontWeight.w500)),
-              )),
-            ]),
-          ),
+      barrierDismissible: true,
+      builder: (ctx) => Dialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 20, 20, 16),
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            const Text('Método de pago', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
+            const SizedBox(height: 6),
+            Text('Selecciona cómo deseas realizar tu donación', style: TextStyle(fontSize: 14, color: Colors.grey.shade600)),
+            const SizedBox(height: 18),
+            _paymentMethodTile(ctx, PaymentMethod.card, Icons.credit_card, 'Tarjeta de crédito/débito', 'Pago inmediato vía Stripe'),
+            const SizedBox(height: 10),
+            _paymentMethodTile(ctx, PaymentMethod.check, Icons.mail_outline, 'Cheque', 'Envía un cheque por correo'),
+            const SizedBox(height: 10),
+            _paymentMethodTile(ctx, PaymentMethod.transfer, Icons.account_balance, 'Transferencia bancaria', 'Transferencia electrónica'),
+            const SizedBox(height: 10),
+            _paymentMethodTile(ctx, PaymentMethod.daf, Icons.volunteer_activism, 'DAF', 'Donor Advised Fund'),
+            const SizedBox(height: 12),
+            SizedBox(width: double.infinity, height: 44, child: TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: Text('Cancelar', style: TextStyle(color: Colors.grey.shade600, fontWeight: FontWeight.w500)),
+            )),
+          ]),
         ),
       ),
     );
@@ -816,40 +906,98 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
 
   int _minAmountCentsForCurrency(String currency) {
     switch (currency.toLowerCase()) {
+      case 'ars':
+        return 100000; // 1000 ARS (~$0.80 USD)
       case 'mxn':
-        return 1000; // 10.00 MXN
+        return 1000; // 10 MXN (~$0.50 USD)
+      case 'brl':
+        return 100; // 1.00 BRL (~$0.20 USD)
+      case 'clp':
+        return 50000; // 500 CLP (~$0.55 USD, zero-decimal)
+      case 'cop':
+        return 200000; // 2000 COP (~$0.50 USD)
+      case 'ils':
+        return 200; // 2.00 ILS (~$0.55 USD)
+      case 'gbp':
+        return 30; // 0.30 GBP (Stripe's actual min)
       case 'usd':
       case 'eur':
-      case 'gbp':
+      case 'cad':
+        return 50; // 0.50
       default:
-        return 50; // 0.50 in minor units
+        return 100; // 1.00 safe default
     }
   }
 
   String _formatAmountFromCents(int cents) {
     final value = cents / 100;
+    if (value == value.roundToDouble() && value >= 1) {
+      return value.toStringAsFixed(0);
+    }
     return value.toStringAsFixed(2);
   }
 
+  List<double> _presetsForCurrency(String currency) {
+    switch (currency.toLowerCase()) {
+      case 'mxn':
+        return [20, 100, 200];
+      case 'ars':
+        return [1000, 5000, 10000];
+      case 'brl':
+        return [5, 25, 50];
+      case 'clp':
+        return [1000, 5000, 10000];
+      case 'cop':
+        return [5000, 20000, 50000];
+      case 'ils':
+        return [5, 20, 40];
+      case 'eur':
+        return [1, 5, 10];
+      case 'gbp':
+        return [1, 5, 10];
+      case 'cad':
+        return [1, 5, 10];
+      case 'usd':
+      default:
+        return [1, 5, 10];
+    }
+  }
+
+  String _shortSymbol(String code) {
+    const symbols = {
+      'usd': '\$', 'eur': '€', 'gbp': '£', 'cad': 'C\$',
+      'mxn': '\$', 'ars': '\$', 'brl': 'R\$', 'ils': '₪',
+      'clp': '\$', 'cop': '\$',
+    };
+    return symbols[code.toLowerCase()] ?? '\$';
+  }
+
+  String _formatPresetValue(double amount) {
+    if (amount == amount.roundToDouble()) return amount.toInt().toString();
+    return amount.toStringAsFixed(2);
+  }
+
+  String _formatQuickAmount(double amount) {
+    final currency = _currencyCodeFromProfile();
+    final symbol = _shortSymbol(currency);
+    if (amount == amount.roundToDouble()) {
+      return '$symbol${amount.toInt()}';
+    }
+    return '$symbol${amount.toStringAsFixed(2)}';
+  }
+
   List<double> _buildQuickAmounts() {
-    final base = _presetAmount > 0 ? _presetAmount : 1.0;
-    const candidates = <double>[1, 5, 10, 18, 36, 50];
-    final values = <double>[base];
-    for (final candidate in candidates) {
-      final exists = values.any((v) => (v - candidate).abs() < 0.001);
-      if (!exists) values.add(candidate);
-      if (values.length == 3) break;
+    if (_presetAmounts.length == 3 && _presetAmounts.every((v) => v > 0)) {
+      return _presetAmounts;
     }
-    while (values.length < 3) {
-      values.add(1);
-    }
-    return values;
+    final currency = _currencyCodeFromProfile();
+    return _presetsForCurrency(currency);
   }
 
   Future<void> _syncTzedakahSettings({
     required String uid,
     required double goal,
-    required double preset,
+    required List<double> presets,
   }) async {
     try {
       await ref
@@ -857,7 +1005,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
           .updateSettings(
             uid: uid,
             pushkaGoal: goal,
-            presetAmount: preset,
+            presetAmounts: presets,
           )
           .timeout(const Duration(seconds: 8));
     } on TimeoutException {
@@ -893,10 +1041,19 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
       goalOptions.sort();
     }
 
+    final currency = _currencyCodeFromProfile();
+    final defaults = _presetsForCurrency(currency);
+    final currentPresets = (_presetAmounts.length == 3 && _presetAmounts.every((v) => v > 0))
+        ? _presetAmounts
+        : defaults;
+    final symbol = _shortSymbol(currency);
+
+    final ctrl1 = TextEditingController(text: _formatPresetValue(currentPresets[0]));
+    final ctrl2 = TextEditingController(text: _formatPresetValue(currentPresets[1]));
+    final ctrl3 = TextEditingController(text: _formatPresetValue(currentPresets[2]));
+
     double selectedGoal = pushkaGoal;
-    double selectedPreset = _presetAmount > 0 ? _presetAmount : 1.0;
     bool isSaving = false;
-    const presetOptions = <double>[1, 5, 10];
 
     final saved = await showDialog<bool>(
       context: context,
@@ -943,7 +1100,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
                 ),
                 const SizedBox(height: 8),
                 DropdownButtonFormField<double>(
-                  value: selectedGoal,
+                  initialValue: selectedGoal,
                   icon: const Icon(Icons.keyboard_arrow_down_rounded),
                   isExpanded: true,
                   menuMaxHeight: 620,
@@ -1005,71 +1162,48 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
                     letterSpacing: 0.8,
                   ),
                 ),
+                const SizedBox(height: 4),
+                Text(
+                  'Edita los montos que aparecen como botones rápidos',
+                  style: TextStyle(fontSize: 12, color: Colors.grey.shade500),
+                ),
                 const SizedBox(height: 10),
                 Row(
-                  children: presetOptions.map((value) {
-                    final isPrimary = (selectedPreset - value).abs() < 0.001;
+                  children: [ctrl1, ctrl2, ctrl3].asMap().entries.map((entry) {
+                    final idx = entry.key;
+                    final ctrl = entry.value;
                     return Expanded(
                       child: Padding(
-                        padding: EdgeInsets.only(
-                          right: value == presetOptions.last ? 0 : 8,
-                        ),
-                        child: InkWell(
-                          borderRadius: BorderRadius.circular(14),
-                          onTap: () => setDialogState(() => selectedPreset = value),
-                          child: Stack(
-                            clipBehavior: Clip.none,
-                            children: [
-                              AnimatedContainer(
-                                duration: const Duration(milliseconds: 180),
-                                curve: Curves.easeOut,
-                                height: 56,
-                                decoration: BoxDecoration(
-                                  color: isPrimary
-                                      ? const Color(0xFF2F60C5).withOpacity(0.06)
-                                      : Colors.white,
-                                  borderRadius: BorderRadius.circular(14),
-                                  border: Border.all(
-                                    color: isPrimary
-                                        ? const Color(0xFF2F60C5)
-                                        : Colors.grey.shade300,
-                                    width: isPrimary ? 2 : 1.2,
-                                  ),
-                                ),
-                                alignment: Alignment.center,
-                                child: Text(
-                                  '\$${value.toStringAsFixed(2)}',
-                                  style: const TextStyle(
-                                    fontSize: 16,
-                                    color: Color(0xFF2F60C5),
-                                    fontWeight: FontWeight.w600,
-                                  ),
-                                ),
-                              ),
-                              if (isPrimary)
-                                Positioned(
-                                  top: -9,
-                                  left: 10,
-                                  child: Container(
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 8,
-                                      vertical: 2,
-                                    ),
-                                    decoration: BoxDecoration(
-                                      color: const Color(0xFF2F60C5),
-                                      borderRadius: BorderRadius.circular(8),
-                                    ),
-                                    child: const Text(
-                                      'Principal',
-                                      style: TextStyle(
-                                        color: Colors.white,
-                                        fontWeight: FontWeight.w700,
-                                        fontSize: 11,
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                            ],
+                        padding: EdgeInsets.only(right: idx < 2 ? 8 : 0),
+                        child: TextField(
+                          controller: ctrl,
+                          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(
+                            fontSize: 16,
+                            color: Color(0xFF2F60C5),
+                            fontWeight: FontWeight.w600,
+                          ),
+                          decoration: InputDecoration(
+                            prefixText: symbol,
+                            prefixStyle: TextStyle(
+                              fontSize: 15,
+                              color: Colors.grey.shade600,
+                              fontWeight: FontWeight.w600,
+                            ),
+                            contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 14),
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(14),
+                              borderSide: BorderSide(color: Colors.grey.shade300, width: 1.2),
+                            ),
+                            enabledBorder: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(14),
+                              borderSide: BorderSide(color: Colors.grey.shade300, width: 1.2),
+                            ),
+                            focusedBorder: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(14),
+                              borderSide: const BorderSide(color: Color(0xFF2F60C5), width: 2),
+                            ),
                           ),
                         ),
                       ),
@@ -1091,11 +1225,19 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
                     onPressed: isSaving
                         ? null
                         : () async {
+                            final p1 = double.tryParse(ctrl1.text.replaceAll(',', '.')) ?? 0;
+                            final p2 = double.tryParse(ctrl2.text.replaceAll(',', '.')) ?? 0;
+                            final p3 = double.tryParse(ctrl3.text.replaceAll(',', '.')) ?? 0;
+                            if (p1 <= 0 || p2 <= 0 || p3 <= 0) {
+                              _showError('Todos los montos deben ser mayores a 0');
+                              return;
+                            }
+                            final newPresets = [p1, p2, p3];
                             setDialogState(() => isSaving = true);
                             if (!mounted) return;
                             setState(() {
                               pushkaGoal = selectedGoal;
-                              _presetAmount = selectedPreset;
+                              _presetAmounts = newPresets;
                             });
                             if (dialogContext.mounted) {
                               Navigator.of(dialogContext).pop(true);
@@ -1104,7 +1246,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
                               _syncTzedakahSettings(
                                 uid: user.uid,
                                 goal: selectedGoal,
-                                preset: selectedPreset,
+                                presets: newPresets,
                               ),
                             );
                           },
@@ -1152,7 +1294,11 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
       ),
     );
 
-    if (saved == true) {
+    ctrl1.dispose();
+    ctrl2.dispose();
+    ctrl3.dispose();
+
+    if (saved == true && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Configuración aplicada')),
       );
@@ -1162,7 +1308,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
   Future<double?> _showCustomGoalDialog() async {
     final controller = TextEditingController();
     String? error;
-    return showModalBottomSheet<double>(
+    final result = await showModalBottomSheet<double>(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
@@ -1209,6 +1355,8 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
         ),
       ),
     );
+    controller.dispose();
+    return result;
   }
 }
 

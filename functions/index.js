@@ -17,10 +17,16 @@ function minAmountForCurrency(currency) {
   const minimums = {
     usd: 50,
     eur: 50,
-    gbp: 50,
+    gbp: 30,
+    cad: 50,
+    ils: 200,
     mxn: 1000,
+    brl: 100,
+    ars: 100000,
+    clp: 50000,
+    cop: 200000,
   };
-  return minimums[code] ?? 50;
+  return minimums[code] ?? 100;
 }
 
 function formatAmount(cents) {
@@ -269,6 +275,9 @@ exports.createPaymentIntent = onCall(
   if (!Number.isFinite(amount) || amount <= 0) {
     throw new HttpsError("invalid-argument", "Monto inválido.");
   }
+  if (amount > 99999999) {
+    throw new HttpsError("invalid-argument", "El monto excede el límite permitido.");
+  }
   const minAmount = minAmountForCurrency(currency);
   if (amount < minAmount) {
     throw new HttpsError(
@@ -277,20 +286,38 @@ exports.createPaymentIntent = onCall(
     );
   }
 
-  const stripe = require("stripe")(stripeSecret.value());
-  const paymentIntent = await stripe.paymentIntents.create({
-    amount,
-    currency,
-    receipt_email: customerEmail || undefined,
-    automatic_payment_methods: { enabled: true },
-    metadata: {
-      uid: request.auth.uid,
-      source: "pushka_app",
+  let paymentIntent;
+  try {
+    const stripe = require("stripe")(stripeSecret.value());
+    paymentIntent = await stripe.paymentIntents.create({
+      amount,
       currency,
-      amount: String(amount),
-      purpose,
-    },
-  });
+      receipt_email: customerEmail || undefined,
+      automatic_payment_methods: { enabled: true },
+      metadata: {
+        uid: request.auth.uid,
+        source: "pushka_app",
+        currency,
+        amount: String(amount),
+        purpose,
+      },
+    });
+  } catch (err) {
+    console.error("createPaymentIntent: Stripe API error", {
+      uid: request.auth.uid,
+      amount,
+      currency,
+      errorType: err?.type,
+      errorCode: err?.code,
+      errorMessage: err?.message,
+    });
+    const userMessage = err?.type === "StripeAuthenticationError"
+      ? "Error de configuración del servidor de pagos."
+      : err?.type === "StripeCardError"
+        ? (err.message || "Tu tarjeta fue rechazada.")
+        : "No se pudo procesar el pago. Intenta de nuevo.";
+    throw new HttpsError("internal", userMessage);
+  }
 
   return { clientSecret: paymentIntent.client_secret };
 });
@@ -585,6 +612,9 @@ exports.walletTransfer = onCall(
     }
     if (!Number.isFinite(amount) || amount <= 0) {
       throw new HttpsError("invalid-argument", "Monto inválido.");
+    }
+    if (amount > 1000000) {
+      throw new HttpsError("invalid-argument", "El monto excede el límite permitido.");
     }
 
     const targetQuery = await db

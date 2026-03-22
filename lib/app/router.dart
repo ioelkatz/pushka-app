@@ -68,41 +68,38 @@ Future<void> _openWalletQrDialog(BuildContext context) async {
     barrierDismissible: true,
     builder: (dialogContext) {
       return Dialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-        insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 18),
-        child: ConstrainedBox(
-          constraints: BoxConstraints(
-            maxWidth: 420,
-            maxHeight: MediaQuery.of(dialogContext).size.height * 0.86,
-          ),
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 18),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        insetPadding: const EdgeInsets.symmetric(horizontal: 32, vertical: 24),
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.fromLTRB(20, 8, 20, 20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
               Align(
                 alignment: Alignment.centerRight,
                 child: IconButton(
                   onPressed: () => Navigator.of(dialogContext).pop(),
-                  icon: const Icon(Icons.close_rounded),
+                  icon: const Icon(Icons.close_rounded, size: 22),
                   color: const Color(0xFF1A1A1A),
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(),
                   tooltip: 'Cerrar',
                 ),
               ),
-              const SizedBox(height: 2),
+              const SizedBox(height: 4),
               const Text(
                 'Tu billetera',
                 style: TextStyle(
-                  fontSize: 29,
-                  fontWeight: FontWeight.w800,
+                  fontSize: 22,
+                  fontWeight: FontWeight.w700,
                   color: Color(0xFF121212),
                 ),
               ),
-              const SizedBox(height: 16),
+              const SizedBox(height: 14),
               QrImageView(
                 data: walletId,
                 version: QrVersions.auto,
-                size: 230,
+                size: 180,
                 backgroundColor: Colors.white,
                 eyeStyle: const QrEyeStyle(
                   eyeShape: QrEyeShape.square,
@@ -113,22 +110,20 @@ Future<void> _openWalletQrDialog(BuildContext context) async {
                   color: Colors.black,
                 ),
               ),
-              const SizedBox(height: 18),
-              const Text(
+              const SizedBox(height: 14),
+              Text(
                 'Tu código de 6 dígitos',
                 style: TextStyle(
-                  fontSize: 18,
-                  color: Color(0xFF2C2C2C),
+                  fontSize: 14,
+                  color: Colors.grey.shade600,
                 ),
               ),
-              const SizedBox(height: 12),
+              const SizedBox(height: 8),
               Material(
-                color: const Color(0xFFE9EDF3),
-                borderRadius: BorderRadius.circular(13),
-                elevation: 0,
-                shadowColor: Colors.transparent,
+                color: const Color(0xFFF2F3F5),
+                borderRadius: BorderRadius.circular(10),
                 child: InkWell(
-                  borderRadius: BorderRadius.circular(13),
+                  borderRadius: BorderRadius.circular(10),
                   onTap: () async {
                     final message = _walletShareMessage(walletId);
                     await Clipboard.setData(ClipboardData(text: message));
@@ -144,29 +139,29 @@ Future<void> _openWalletQrDialog(BuildContext context) async {
                     );
                   },
                   child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 13),
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
                     child: Row(
                       mainAxisAlignment: MainAxisAlignment.center,
+                      mainAxisSize: MainAxisSize.min,
                       children: [
                         Text(
                           walletId,
                           style: const TextStyle(
-                            fontSize: 36,
+                            fontSize: 26,
                             fontWeight: FontWeight.w800,
                             letterSpacing: 1.0,
                             color: Color(0xFF090909),
                             height: 1,
                           ),
                         ),
-                        const SizedBox(width: 10),
-                        const Icon(Icons.share_rounded, size: 27),
+                        const SizedBox(width: 8),
+                        const Icon(Icons.share_rounded, size: 20, color: Color(0xFF555555)),
                       ],
                     ),
                   ),
                 ),
               ),
-              ],
-            ),
+            ],
           ),
         ),
       );

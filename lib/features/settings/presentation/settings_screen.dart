@@ -78,7 +78,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     final result = await Navigator.of(context, rootNavigator: true).push<String>(
       MaterialPageRoute(builder: (_) => const _SettingsQrScannerScreen()),
     );
-    if (result == null || result.isEmpty) return;
+    if (result == null || result.isEmpty || !mounted) return;
     await _addPushkaByWalletId(result);
   }
 
@@ -159,26 +159,25 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     const orange = Color(0xFFFF9500);
     const red = Color(0xFFE05A4F);
     const blue = Color(0xFF2F60C5);
-    const purple = Color(0xFF9C27B0);
 
     final user = ref.watch(currentUserProvider);
     final userProfile = ref.watch(userProfileProvider).valueOrNull;
 
-    String? _getProfileString(String key) {
+    String? getProfileString(String key) {
       if (userProfile == null) return null;
       final value = userProfile[key] as String?;
       if (value == null || value.trim().isEmpty) return null;
       return value;
     }
 
-    double? _getProfileDouble(String key) {
+    double? getProfileDouble(String key) {
       if (userProfile == null) return null;
       final value = userProfile[key];
       if (value is num) return value.toDouble();
       return null;
     }
 
-    bool? _getProfileBool(String key) {
+    bool? getProfileBool(String key) {
       if (userProfile == null) return null;
       final value = userProfile[key];
       if (value is bool) return value;
@@ -189,43 +188,43 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
         setState(() {
-          pushkaGoal = _getProfileDouble('pushkaGoal') ?? pushkaGoal;
-          final preset = _getProfileDouble('presetAmount');
+          pushkaGoal = getProfileDouble('pushkaGoal') ?? pushkaGoal;
+          final preset = getProfileDouble('presetAmount');
           if (preset != null) {
             selectedPreset = preset.toStringAsFixed(2);
           }
-          soundEnabled = _getProfileBool('soundEnabled') ?? soundEnabled;
+          soundEnabled = getProfileBool('soundEnabled') ?? soundEnabled;
           coinJingleEnabled =
-              _getProfileBool('coinJingleEnabled') ?? coinJingleEnabled;
+              getProfileBool('coinJingleEnabled') ?? coinJingleEnabled;
           vibrationEnabled =
-              _getProfileBool('vibrationEnabled') ?? vibrationEnabled;
+              getProfileBool('vibrationEnabled') ?? vibrationEnabled;
           partialPaymentsEnabled =
-              _getProfileBool('partialPaymentsEnabled') ??
+              getProfileBool('partialPaymentsEnabled') ??
                   partialPaymentsEnabled;
           additionalPaymentOptionsEnabled =
-              _getProfileBool('additionalPaymentOptionsEnabled') ??
+              getProfileBool('additionalPaymentOptionsEnabled') ??
                   additionalPaymentOptionsEnabled;
           biometricAuthenticationEnabled =
-              _getProfileBool('biometricAuthenticationEnabled') ??
+              getProfileBool('biometricAuthenticationEnabled') ??
                   biometricAuthenticationEnabled;
           selectedCountry =
-              _getProfileString('currencyCountry') ?? selectedCountry;
+              getProfileString('currencyCountry') ?? selectedCountry;
           selectedCurrency =
-              _getProfileString('currencyCode') ?? selectedCurrency;
+              getProfileString('currencyCode') ?? selectedCurrency;
           selectedFlag = _flagForCountry(selectedCountry);
           _loadedProfile = true;
         });
       });
     }
 
-    final userName = _getProfileString('displayName') ??
+    final userName = getProfileString('displayName') ??
         (user?.displayName?.trim().isNotEmpty == true
             ? user!.displayName!
             : 'Usuario');
     final userEmail = user?.email ?? 'sin-correo';
-    final billingEmail = _getProfileString('billingEmail') ?? '-';
-    final phoneNumber = _getProfileString('phoneNumber') ?? '-';
-    final mailingAddress = _getProfileString('mailingAddress') ?? '-';
+    final billingEmail = getProfileString('billingEmail') ?? '-';
+    final phoneNumber = getProfileString('phoneNumber') ?? '-';
+    final mailingAddress = getProfileString('mailingAddress') ?? '-';
 
     return SingleChildScrollView(
       padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 16),
@@ -370,7 +369,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             onChanged: (value) async {
               if (value) {
                 final success = await _authenticateWithBiometrics();
-                if (!success) return;
+                if (!success || !mounted) return;
               }
               setState(() => biometricAuthenticationEnabled = value);
               _updateSettings(user, biometricAuthenticationEnabled: value);
@@ -668,7 +667,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             curve: Curves.easeOut,
             height: 56,
             decoration: BoxDecoration(
-              color: isSelected ? blue.withOpacity(0.06) : Colors.white,
+              color: isSelected ? blue.withValues(alpha: 0.06) : Colors.white,
               border: Border.all(
                 color: isSelected ? blue : Colors.grey.shade300,
                 width: isSelected ? 2 : 1.2,
@@ -1123,6 +1122,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       ),
     );
 
+    controller.dispose();
     if (result != null) {
       onSave(result);
     }
@@ -1203,7 +1203,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       ),
     );
 
-    if (result == true) {
+    if (result == true && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Cuenta eliminada')),
       );
@@ -1231,6 +1231,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
     if (result == true) {
       await ref.read(authControllerProvider).signOut();
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Sesión cerrada')),
       );
@@ -1290,6 +1291,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       ),
     );
 
+    controller.dispose();
     if (result != null) {
       setState(() => pushkaGoal = result);
       _updateSettings(ref.read(currentUserProvider), pushkaGoal: result);
@@ -1297,11 +1299,69 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   }
 
   Future<void> _showCurrencyDialog() async {
+    final profile = ref.read(userProfileProvider).valueOrNull;
+    final currentAmount = (profile?['pushkaAmount'] as num?)?.toDouble() ?? 0;
+    if (currentAmount > 0) {
+      if (!mounted) return;
+      showDialog(
+        context: context,
+        builder: (ctx) => Dialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          insetPadding: const EdgeInsets.symmetric(horizontal: 28),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(24, 24, 24, 20),
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+              Container(
+                width: 56, height: 56,
+                decoration: BoxDecoration(
+                  color: const Color(0xFFFFF3E0),
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: const Icon(Icons.savings_outlined, color: Color(0xFFFF9500), size: 30),
+              ),
+              const SizedBox(height: 16),
+              const Text(
+                'Vacía tu Pushka primero',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
+              ),
+              const SizedBox(height: 10),
+              Text(
+                'Para cambiar de moneda, primero debes vaciar o donar el saldo actual de tu Pushka.',
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 14, color: Colors.grey.shade700, height: 1.4),
+              ),
+              const SizedBox(height: 20),
+              SizedBox(
+                width: double.infinity, height: 46,
+                child: ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFFE05A4F),
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    elevation: 0,
+                  ),
+                  onPressed: () => Navigator.pop(ctx),
+                  child: const Text('Entendido', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
+                ),
+              ),
+            ]),
+          ),
+        ),
+      );
+      return;
+    }
+
     final currencies = [
       {'country': 'Estados Unidos', 'currency': 'USD', 'flag': '🇺🇸'},
       {'country': 'México', 'currency': 'MXN', 'flag': '🇲🇽'},
       {'country': 'España', 'currency': 'EUR', 'flag': '🇪🇸'},
       {'country': 'Argentina', 'currency': 'ARS', 'flag': '🇦🇷'},
+      {'country': 'Brasil', 'currency': 'BRL', 'flag': '🇧🇷'},
+      {'country': 'Israel', 'currency': 'ILS', 'flag': '🇮🇱'},
+      {'country': 'Chile', 'currency': 'CLP', 'flag': '🇨🇱'},
+      {'country': 'Colombia', 'currency': 'COP', 'flag': '🇨🇴'},
+      {'country': 'Reino Unido', 'currency': 'GBP', 'flag': '🇬🇧'},
+      {'country': 'Canadá', 'currency': 'CAD', 'flag': '🇨🇦'},
     ];
 
     final result = await showDialog<Map<String, String>>(
@@ -1341,6 +1401,13 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         currencyCountry: result['country']!,
         currencyCode: result['currency']!,
       );
+      final user = ref.read(currentUserProvider);
+      if (user != null) {
+        ref.read(userRepositoryProvider).updateSettings(
+              uid: user.uid,
+              presetAmounts: <double>[],
+            );
+      }
     }
   }
 

@@ -94,7 +94,7 @@ class Transaction {
     final minute = dateTime.minute;
     final period = hour >= 12 ? 'PM' : 'AM';
     final displayHour = hour > 12 ? hour - 12 : (hour == 0 ? 12 : hour);
-    return '$month. $day - ${displayHour}:${minute.toString().padLeft(2, '0')}$period';
+    return '$month. $day - $displayHour:${minute.toString().padLeft(2, '0')}$period';
   }
 }
 

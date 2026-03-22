@@ -23,73 +23,89 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
   bool _processing = false;
 
   void _showInfo(String message) {
+    if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
   }
 
   Future<double?> _showAmountDialog({
     String hint = 'Ej: 50',
   }) async {
-    final controller = TextEditingController();
-    String? error;
-    return showModalBottomSheet<double>(
+    return showDialog<double>(
       context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setSheetState) => Padding(
-          padding: EdgeInsets.only(bottom: MediaQuery.of(ctx).viewInsets.bottom),
-          child: Container(
-            decoration: const BoxDecoration(color: Colors.white, borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
-            child: SafeArea(top: false, child: SingleChildScrollView(
-              padding: const EdgeInsets.fromLTRB(20, 8, 20, 16),
-              child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-                Center(child: Container(width: 36, height: 4, margin: const EdgeInsets.only(bottom: 14), decoration: BoxDecoration(color: Colors.grey.shade300, borderRadius: BorderRadius.circular(2)))),
-                const Text('Agregar fondos', textAlign: TextAlign.center, style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
-                const SizedBox(height: 20),
-                const Text('Ingresa monto', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: Color(0xFF5A5A5A))),
-                const SizedBox(height: 10),
-                TextField(
-                  controller: controller,
-                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                  textInputAction: TextInputAction.done,
-                  decoration: InputDecoration(
-                    hintText: hint, prefixText: '\$ ', errorText: error,
-                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                    focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: Color(0xFFE05A4F), width: 1.6)),
-                  ),
+      barrierDismissible: true,
+      builder: (ctx) {
+        final controller = TextEditingController();
+        String? error;
+        return StatefulBuilder(
+          builder: (ctx, setDialogState) => AlertDialog(
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(22)),
+            scrollable: true,
+            contentPadding: const EdgeInsets.fromLTRB(20, 22, 20, 0),
+            actionsPadding: const EdgeInsets.fromLTRB(20, 0, 20, 18),
+            content: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+              const Text('Agregar fondos', textAlign: TextAlign.center, style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
+              const SizedBox(height: 20),
+              const Text('Ingresa monto', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: Color(0xFF5A5A5A))),
+              const SizedBox(height: 10),
+              TextField(
+                controller: controller,
+                autofocus: true,
+                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                textInputAction: TextInputAction.done,
+                onSubmitted: (_) {
+                  final value = double.tryParse(controller.text.trim().replaceAll(',', '.'));
+                  if (value != null && value > 0) Navigator.pop(ctx, value);
+                },
+                decoration: InputDecoration(
+                  hintText: hint, prefixText: '\$ ', errorText: error,
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                  focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: Color(0xFFE05A4F), width: 1.6)),
                 ),
-                const SizedBox(height: 16),
-                SizedBox(width: double.infinity, height: 48, child: ElevatedButton(
-                  style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFE05A4F), foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
-                  onPressed: () {
-                    final value = double.tryParse(controller.text.trim().replaceAll(',', '.'));
-                    if (value == null || value <= 0) { setSheetState(() => error = 'Ingresa un monto válido'); return; }
-                    Navigator.pop(ctx, value);
-                  },
-                  child: const Text('Agregar al saldo', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
-                )),
-                const SizedBox(height: 8),
-                SizedBox(width: double.infinity, height: 44, child: TextButton(
-                  onPressed: () => Navigator.pop(ctx),
-                  child: Text('Cancelar', style: TextStyle(color: Colors.grey.shade600, fontWeight: FontWeight.w500)),
-                )),
-              ]),
-            )),
+              ),
+            ]),
+            actions: [
+              SizedBox(width: double.infinity, height: 48, child: ElevatedButton(
+                style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFE05A4F), foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
+                onPressed: () {
+                  final value = double.tryParse(controller.text.trim().replaceAll(',', '.'));
+                  if (value == null || value <= 0) { setDialogState(() => error = 'Ingresa un monto válido'); return; }
+                  Navigator.pop(ctx, value);
+                },
+                child: const Text('Agregar al saldo', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+              )),
+              SizedBox(width: double.infinity, height: 44, child: TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: Text('Cancelar', style: TextStyle(color: Colors.grey.shade600, fontWeight: FontWeight.w500)),
+              )),
+            ],
           ),
-        ),
-      ),
+        );
+      },
     );
   }
 
   int _minAmountCentsForCurrency(String currency) {
     switch (currency.toLowerCase()) {
+      case 'ars':
+        return 100000;
       case 'mxn':
         return 1000;
+      case 'brl':
+        return 100;
+      case 'clp':
+        return 50000;
+      case 'cop':
+        return 200000;
+      case 'ils':
+        return 200;
+      case 'gbp':
+        return 30;
       case 'usd':
       case 'eur':
-      case 'gbp':
-      default:
+      case 'cad':
         return 50;
+      default:
+        return 100;
     }
   }
 
@@ -113,7 +129,7 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
   Future<void> _addFunds() async {
     if (_processing) return;
     final amount = await _showAmountDialog();
-    if (amount == null) return;
+    if (!mounted || amount == null) return;
 
     final user = ref.read(currentUserProvider);
     final profile = ref.read(userProfileProvider).valueOrNull;

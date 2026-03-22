@@ -48,7 +48,6 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
       });
     }
 
-    const blue = Color(0xFF2F60C5);
     const red = Color(0xFFE05A4F);
 
     return Scaffold(
@@ -72,7 +71,7 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
               ),
               const SizedBox(height: 8),
               DropdownButtonFormField<String>(
-                value: _frequency,
+                initialValue: _frequency,
                 decoration: InputDecoration(
                   border: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(8),
@@ -311,7 +310,7 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
           child: ListView.separated(
             shrinkWrap: true,
             itemCount: days.length,
-            separatorBuilder: (_, __) =>
+            separatorBuilder: (_, _) =>
                 Divider(height: 1, color: Colors.grey.shade200),
             itemBuilder: (context, index) {
               final item = days[index];

@@ -89,7 +89,7 @@ class _WalletSendRequestScreenState
     final result = await Navigator.of(context, rootNavigator: true).push<String>(
       MaterialPageRoute(builder: (_) => const _WalletScannerScreen()),
     );
-    if (result == null || result.isEmpty) return;
+    if (result == null || result.isEmpty || !mounted) return;
     await _addContact(result);
   }
 

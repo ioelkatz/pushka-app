@@ -46,6 +46,7 @@ class UserRepository {
       'pushkaAmount': 0.0,
       'pushkaGoal': 3600.00,
       'presetAmount': 1.00,
+      'presetAmounts': <double>[],
       'soundEnabled': true,
       'coinJingleEnabled': true,
       'vibrationEnabled': true,
@@ -243,6 +244,7 @@ class UserRepository {
     required String uid,
     double? pushkaGoal,
     double? presetAmount,
+    List<double>? presetAmounts,
     bool? soundEnabled,
     bool? coinJingleEnabled,
     bool? vibrationEnabled,
@@ -270,6 +272,7 @@ class UserRepository {
 
     if (pushkaGoal != null) data['pushkaGoal'] = pushkaGoal;
     if (presetAmount != null) data['presetAmount'] = presetAmount;
+    if (presetAmounts != null) data['presetAmounts'] = presetAmounts;
     if (soundEnabled != null) data['soundEnabled'] = soundEnabled;
     if (coinJingleEnabled != null) data['coinJingleEnabled'] = coinJingleEnabled;
     if (vibrationEnabled != null) data['vibrationEnabled'] = vibrationEnabled;

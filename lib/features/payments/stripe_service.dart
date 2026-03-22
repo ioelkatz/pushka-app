@@ -1,4 +1,5 @@
 import 'package:cloud_functions/cloud_functions.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_stripe/flutter_stripe.dart';
 
 class StripeService {
@@ -24,22 +25,16 @@ class StripeService {
         'purpose': purpose,
       });
     } on FirebaseFunctionsException catch (error) {
-      final message = switch (error.code) {
-        'unauthenticated' =>
-          'Tu sesión no es válida o falta App Check. Cierra sesión e inicia de nuevo.',
-        'failed-precondition' =>
-          'App Check no está configurado en este proyecto. Actívalo en Firebase Console.',
-        'permission-denied' =>
-          'Acceso denegado por seguridad. Verifica App Check y vuelve a intentar.',
-        _ => error.message ?? 'No se pudo iniciar el pago',
-      };
-      throw Exception(message);
+      debugPrint('[StripeService] Firebase function error: ${error.code} - ${error.message}');
+      rethrow;
     }
 
     final clientSecret = result.data['clientSecret'] as String?;
     if (clientSecret == null || clientSecret.isEmpty) {
       throw Exception('No se pudo iniciar el pago');
     }
+
+    debugPrint('[StripeService] PaymentIntent created, initializing sheet...');
 
     await Stripe.instance.initPaymentSheet(
       paymentSheetParameters: SetupPaymentSheetParameters(
@@ -49,7 +44,11 @@ class StripeService {
       ),
     );
 
+    debugPrint('[StripeService] Sheet initialized, presenting...');
+
     await Stripe.instance.presentPaymentSheet();
+
+    debugPrint('[StripeService] Payment completed successfully');
 
     const separator = '_secret_';
     final index = clientSecret.indexOf(separator);
