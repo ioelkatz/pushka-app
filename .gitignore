@@ -1,4 +1,4 @@
-# Miscellaneous
+﻿# Miscellaneous
 *.class
 *.log
 *.pyc
@@ -43,3 +43,19 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# Secrets & credentials - NEVER commit these
+lib/firebase_options.dart
+android/app/google-services.json
+ios/Runner/GoogleService-Info.plist
+macos/Runner/GoogleService-Info.plist
+.env
+.env.local
+.env.production
+.env.*.local
+*.keystore
+*.jks
+key.properties
+credentials.json
+service-account*.json
+**/firebase_options.dart.bak
