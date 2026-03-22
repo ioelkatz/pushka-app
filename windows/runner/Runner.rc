@@ -1,4 +1,4 @@
-// Microsoft Visual C++ generated resource script.
+﻿// Microsoft Visual C++ generated resource script.
 //
 #pragma code_page(65001)
 #include "resource.h"
@@ -89,13 +89,13 @@ BEGIN
     BEGIN
         BLOCK "040904e4"
         BEGIN
-            VALUE "CompanyName", "com.example" "\0"
-            VALUE "FileDescription", "pushka_app" "\0"
+            VALUE "CompanyName", "Pushka" "\0"
+            VALUE "FileDescription", "Pushka" "\0"
             VALUE "FileVersion", VERSION_AS_STRING "\0"
-            VALUE "InternalName", "pushka_app" "\0"
-            VALUE "LegalCopyright", "Copyright (C) 2025 com.example. All rights reserved." "\0"
-            VALUE "OriginalFilename", "pushka_app.exe" "\0"
-            VALUE "ProductName", "pushka_app" "\0"
+            VALUE "InternalName", "Pushka" "\0"
+            VALUE "LegalCopyright", "Copyright (C) 2025 Pushka. All rights reserved." "\0"
+            VALUE "OriginalFilename", "Pushka.exe" "\0"
+            VALUE "ProductName", "Pushka" "\0"
             VALUE "ProductVersion", VERSION_AS_STRING "\0"
         END
     END

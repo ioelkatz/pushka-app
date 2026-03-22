@@ -1,6 +1,6 @@
-{
-    "name": "pushka_app",
-    "short_name": "pushka_app",
+﻿{
+    "name": "Pushka",
+    "short_name": "Pushka",
     "start_url": ".",
     "display": "standalone",
     "background_color": "#0175C2",

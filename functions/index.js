@@ -1,4 +1,4 @@
-const admin = require("firebase-admin");
+﻿const admin = require("firebase-admin");
 const { onCall, onRequest, HttpsError } = require("firebase-functions/v2/https");
 const { onDocumentCreated } = require("firebase-functions/v2/firestore");
 const { onSchedule } = require("firebase-functions/v2/scheduler");
@@ -234,12 +234,12 @@ async function summarizeRecentWebhookEvents(hours = 24, limit = 600) {
 
 exports.sendTestNotification = onCall({ enforceAppCheck: true }, async (request) => {
   if (!request.auth?.uid) {
-    throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
+    throw new HttpsError("unauthenticated", "Debes iniciar sesiÃ³n.");
   }
 
   const uid = request.auth.uid;
   const title = request.data?.title || "Pushka";
-  const body = request.data?.body || "Notificación de prueba";
+  const body = request.data?.body || "NotificaciÃ³n de prueba";
 
   const response = await sendToUser(uid, {
     notification: { title, body },
@@ -258,7 +258,7 @@ exports.createPaymentIntent = onCall(
   { secrets: [stripeSecret], enforceAppCheck: true },
   async (request) => {
   if (!request.auth?.uid) {
-    throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
+    throw new HttpsError("unauthenticated", "Debes iniciar sesiÃ³n.");
   }
   if (!stripeSecret.value()) {
     throw new HttpsError("failed-precondition", "Stripe no configurado.");
@@ -269,20 +269,20 @@ exports.createPaymentIntent = onCall(
   const customerEmail = request.data?.customerEmail || null;
   const purpose = String(request.data?.purpose || "donation").toLowerCase();
   if (purpose !== "donation" && purpose !== "wallet_topup") {
-    throw new HttpsError("invalid-argument", "Propósito de pago inválido.");
+    throw new HttpsError("invalid-argument", "PropÃ³sito de pago invÃ¡lido.");
   }
 
   if (!Number.isFinite(amount) || amount <= 0) {
-    throw new HttpsError("invalid-argument", "Monto inválido.");
+    throw new HttpsError("invalid-argument", "Monto invÃ¡lido.");
   }
   if (amount > 99999999) {
-    throw new HttpsError("invalid-argument", "El monto excede el límite permitido.");
+    throw new HttpsError("invalid-argument", "El monto excede el lÃ­mite permitido.");
   }
   const minAmount = minAmountForCurrency(currency);
   if (amount < minAmount) {
     throw new HttpsError(
       "invalid-argument",
-      `Monto mínimo para ${currency.toUpperCase()} es ${formatAmount(minAmount)}.`
+      `Monto mÃ­nimo para ${currency.toUpperCase()} es ${formatAmount(minAmount)}.`
     );
   }
 
@@ -296,7 +296,7 @@ exports.createPaymentIntent = onCall(
       automatic_payment_methods: { enabled: true },
       metadata: {
         uid: request.auth.uid,
-        source: "pushka_app",
+        source: "pushka",
         currency,
         amount: String(amount),
         purpose,
@@ -312,7 +312,7 @@ exports.createPaymentIntent = onCall(
       errorMessage: err?.message,
     });
     const userMessage = err?.type === "StripeAuthenticationError"
-      ? "Error de configuración del servidor de pagos."
+      ? "Error de configuraciÃ³n del servidor de pagos."
       : err?.type === "StripeCardError"
         ? (err.message || "Tu tarjeta fue rechazada.")
         : "No se pudo procesar el pago. Intenta de nuevo.";
@@ -380,7 +380,7 @@ exports.stripeWebhook = onRequest(
           .set({
             type: "tzedaka",
             amount,
-            description: "Donación Stripe",
+            description: "DonaciÃ³n Stripe",
             createdAt: admin.firestore.FieldValue.serverTimestamp(),
           });
 
@@ -496,9 +496,9 @@ exports.onTransactionCreated = onDocumentCreated(
     const amount = data.amount ?? 0;
     const title = "Pushka";
 
-    let body = "Nueva transacción registrada";
+    let body = "Nueva transacciÃ³n registrada";
     if (type === "tzedaka") {
-      body = `¡Gracias por tu donación! \$${amount}`;
+      body = `Â¡Gracias por tu donaciÃ³n! \$${amount}`;
     } else if (type === "pushkaEmpty") {
       body = "Tu Pushka fue vaciada";
     } else if (type === "walletFill") {
@@ -519,7 +519,7 @@ exports.walletTopUpFromPaymentIntent = onCall(
   { secrets: [stripeSecret], enforceAppCheck: true },
   async (request) => {
     if (!request.auth?.uid) {
-      throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
+      throw new HttpsError("unauthenticated", "Debes iniciar sesiÃ³n.");
     }
     if (!stripeSecret.value()) {
       throw new HttpsError("failed-precondition", "Stripe no configurado.");
@@ -528,14 +528,14 @@ exports.walletTopUpFromPaymentIntent = onCall(
     const uid = request.auth.uid;
     const paymentIntentId = String(request.data?.paymentIntentId || "").trim();
     if (!paymentIntentId.startsWith("pi_")) {
-      throw new HttpsError("invalid-argument", "paymentIntentId inválido.");
+      throw new HttpsError("invalid-argument", "paymentIntentId invÃ¡lido.");
     }
 
     const stripe = require("stripe")(stripeSecret.value());
     const intent = await stripe.paymentIntents.retrieve(paymentIntentId);
 
     if (!intent || intent.status !== "succeeded") {
-      throw new HttpsError("failed-precondition", "El pago aún no fue confirmado.");
+      throw new HttpsError("failed-precondition", "El pago aÃºn no fue confirmado.");
     }
     if (String(intent.metadata?.uid || "") !== uid) {
       throw new HttpsError("permission-denied", "El pago no pertenece a este usuario.");
@@ -546,7 +546,7 @@ exports.walletTopUpFromPaymentIntent = onCall(
 
     const amount = Number(intent.amount_received || intent.amount || 0) / 100;
     if (!Number.isFinite(amount) || amount <= 0) {
-      throw new HttpsError("failed-precondition", "Monto de recarga inválido.");
+      throw new HttpsError("failed-precondition", "Monto de recarga invÃ¡lido.");
     }
 
     const consumeRef = db.collection("_walletTopUpIntents").doc(paymentIntentId);
@@ -561,7 +561,7 @@ exports.walletTopUpFromPaymentIntent = onCall(
 
       const userSnap = await tx.get(userRef);
       if (!userSnap.exists) {
-        throw new HttpsError("not-found", "No se encontró el usuario.");
+        throw new HttpsError("not-found", "No se encontrÃ³ el usuario.");
       }
       const userData = userSnap.data() || {};
       const currentBalance = Number(userData.walletBalance || 0);
@@ -600,7 +600,7 @@ exports.walletTransfer = onCall(
   { enforceAppCheck: true },
   async (request) => {
     if (!request.auth?.uid) {
-      throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
+      throw new HttpsError("unauthenticated", "Debes iniciar sesiÃ³n.");
     }
 
     const senderUid = request.auth.uid;
@@ -608,13 +608,13 @@ exports.walletTransfer = onCall(
     const amount = Number(request.data?.amount || 0);
 
     if (!targetWalletId) {
-      throw new HttpsError("invalid-argument", "ID destino inválido.");
+      throw new HttpsError("invalid-argument", "ID destino invÃ¡lido.");
     }
     if (!Number.isFinite(amount) || amount <= 0) {
-      throw new HttpsError("invalid-argument", "Monto inválido.");
+      throw new HttpsError("invalid-argument", "Monto invÃ¡lido.");
     }
     if (amount > 1000000) {
-      throw new HttpsError("invalid-argument", "El monto excede el límite permitido.");
+      throw new HttpsError("invalid-argument", "El monto excede el lÃ­mite permitido.");
     }
 
     const targetQuery = await db
@@ -695,18 +695,18 @@ exports.addWalletContact = onCall(
   { enforceAppCheck: true },
   async (request) => {
     if (!request.auth?.uid) {
-      throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
+      throw new HttpsError("unauthenticated", "Debes iniciar sesiÃ³n.");
     }
 
     const uid = request.auth.uid;
     const walletId = String(request.data?.walletId || "").trim();
     if (!walletId) {
-      throw new HttpsError("invalid-argument", "ID de billetera inválido.");
+      throw new HttpsError("invalid-argument", "ID de billetera invÃ¡lido.");
     }
 
     const ownSnap = await db.collection("users").doc(uid).get();
     if (!ownSnap.exists) {
-      throw new HttpsError("not-found", "No se encontró el usuario.");
+      throw new HttpsError("not-found", "No se encontrÃ³ el usuario.");
     }
     const ownWalletId = String(ownSnap.data()?.walletId || "");
     if (ownWalletId && ownWalletId === walletId) {
@@ -935,7 +935,7 @@ exports.processWalletAutoTopUps = onSchedule(
           tx.set(movementRef, {
             type: "walletFill",
             amount,
-            description: "Recarga automática de billetera",
+            description: "Recarga automÃ¡tica de billetera",
             createdAt: admin.firestore.Timestamp.now(),
           });
         });

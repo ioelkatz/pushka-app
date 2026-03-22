@@ -1,4 +1,4 @@
-package com.example.pushka_app
+﻿package com.pushka.app
 
 import io.flutter.embedding.android.FlutterFragmentActivity
 
