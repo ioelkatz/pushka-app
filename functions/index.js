@@ -954,7 +954,36 @@ exports.processWalletAutoTopUps = onSchedule(
 );
 
 
-// ─── Pushka Auto Empty (scheduled) ──────────────────────────
+// --- Erev Rosh Chodesh lookup (Gregorian dates for years 2025-2030) ---
+const erevRoshChodeshDates = {
+  2025: [[0,29],[1,27],[2,29],[3,27],[4,27],[5,25],[6,25],[7,23],[9,21],[10,20],[11,19]],
+  2026: [[0,18],[1,16],[2,18],[3,16],[4,16],[5,14],[6,14],[7,12],[9,10],[10,9],[11,9]],
+  2027: [[0,8],[1,6],[2,8],[3,7],[4,6],[5,5],[6,4],[7,3],[8,1],[9,30],[10,29],[11,29]],
+  2028: [[0,28],[1,26],[2,27],[3,25],[4,25],[5,23],[6,23],[7,21],[9,19],[10,18],[11,17]],
+  2029: [[0,16],[1,14],[2,16],[3,14],[4,14],[5,12],[6,12],[7,10],[9,8],[10,7],[11,6]],
+  2030: [[0,4],[1,2],[2,4],[3,3],[4,2],[5,1],[5,30],[6,30],[7,28],[9,26],[10,25],[11,25]],
+};
+
+function computeNextErevRoshChodesh(baseDate) {
+  const now = new Date(baseDate);
+  const year = now.getUTCFullYear();
+  const candidates = [];
+  for (const y of [year, year + 1]) {
+    const dates = erevRoshChodeshDates[y];
+    if (!dates) continue;
+    for (const [m, d] of dates) {
+      candidates.push(new Date(Date.UTC(y, m, d, 8, 0, 0)));
+    }
+  }
+  for (const d of candidates) {
+    if (d > now) return d;
+  }
+  const fallback = new Date(now);
+  fallback.setUTCDate(fallback.getUTCDate() + 30);
+  return fallback;
+}
+
+// --- Pushka Auto Empty (scheduled) ---
 exports.processPushkaAutoEmpty = onSchedule(
   {
     schedule: "every 60 minutes",
@@ -990,63 +1019,46 @@ exports.processPushkaAutoEmpty = onSchedule(
           const nextRun = data.autoEmptyNextRunAt;
           if (!nextRun || nextRun.toMillis() > Date.now()) return;
 
-          const pushkaBalance = Number(data.pushkaBalance || 0);
+          const currentAmount = Number(data.pushkaAmount || 0);
           const minBalance = 5;
-          if (pushkaBalance < minBalance) {
-            // Balance too low, skip but schedule next run
-            const weekday = Number(data.autoEmptyWeekday || 1);
-            const dayOfMonth = Number(data.autoEmptyDayOfMonth || 1);
-            const nextDate = computeNextWalletTopUpDate({
-              frequency: freq === "erev_rosh_chodesh" ? "monthly" : freq,
+
+          const weekday = Number(data.autoEmptyWeekday || 1);
+          const dayOfMonth = Number(data.autoEmptyDayOfMonth || 1);
+          let nextDate;
+          if (freq === "erev_rosh_chodesh") {
+            nextDate = computeNextErevRoshChodesh(new Date());
+          } else {
+            nextDate = computeNextWalletTopUpDate({
+              frequency: freq,
               weekday,
               dayOfMonth,
               baseDate: new Date(),
             });
-            tx.set(
-              userRef,
-              {
-                autoEmptyNextRunAt: admin.firestore.Timestamp.fromDate(nextDate),
-                updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-              },
-              { merge: true },
-            );
+          }
+
+          if (currentAmount < minBalance) {
+            tx.set(userRef, {
+              autoEmptyNextRunAt: admin.firestore.Timestamp.fromDate(nextDate),
+              updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            }, { merge: true });
             return;
           }
 
-          const topOffEnabled = data.autoEmptyTopOffEnabled === true;
-          const topOffAmount = Number(data.autoEmptyTopOffAmount || 0);
+          const amountToEmpty = currentAmount;
 
-          let amountToEmpty = pushkaBalance;
-          let newBalance = 0;
-          if (topOffEnabled && topOffAmount > 0 && topOffAmount < pushkaBalance) {
-            amountToEmpty = pushkaBalance;
-            newBalance = 0;
-          }
-
-          const weekday = Number(data.autoEmptyWeekday || 1);
-          const dayOfMonth = Number(data.autoEmptyDayOfMonth || 1);
-          const nextDate = computeNextWalletTopUpDate({
-            frequency: freq === "erev_rosh_chodesh" ? "monthly" : freq,
-            weekday,
-            dayOfMonth,
-            baseDate: new Date(),
-          });
-
-          tx.set(
-            userRef,
-            {
-              pushkaBalance: newBalance,
-              autoEmptyNextRunAt: admin.firestore.Timestamp.fromDate(nextDate),
-              updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-            },
-            { merge: true },
-          );
+          tx.set(userRef, {
+            pushkaAmount: 0,
+            autoEmptyNextRunAt: admin.firestore.Timestamp.fromDate(nextDate),
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          }, { merge: true });
 
           const movementRef = userRef.collection("transactions").doc();
           tx.set(movementRef, {
             type: "pushkaEmpty",
             amount: amountToEmpty,
             description: "Vaciado automatico de Pushka",
+            paymentMethod: "auto",
+            status: "completed",
             createdAt: admin.firestore.Timestamp.now(),
           });
         });

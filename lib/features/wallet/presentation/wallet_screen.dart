@@ -35,7 +35,6 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
     String? error;
     return showKeyboardSafeSheet<double>(
       context: context,
-      heightFactor: 0.55,
       builder: (ctx, setDialogState) => Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
                       Center(child: Container(width: 36, height: 4, margin: const EdgeInsets.only(bottom: 12), decoration: BoxDecoration(color: Colors.grey.shade300, borderRadius: BorderRadius.circular(2)))),
                       const Text('Agregar fondos', textAlign: TextAlign.center, style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),

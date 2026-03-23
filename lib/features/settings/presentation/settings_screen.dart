@@ -92,7 +92,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
     final manualWalletId = await showKeyboardSafeSheet<String>(
       context: context,
-      heightFactor: 0.5,
       contentPadding: const EdgeInsets.fromLTRB(20, 8, 20, 16),
       builder: (ctx, setSheetState) => Column(
                     mainAxisSize: MainAxisSize.min,
@@ -1043,7 +1042,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     }
     final result = await showKeyboardSafeSheet<String>(
       context: context,
-      heightFactor: 0.55,
       builder: (ctx, setDialogState) => Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
                       Center(child: Container(width: 36, height: 4, margin: const EdgeInsets.only(bottom: 12), decoration: BoxDecoration(color: Colors.grey.shade300, borderRadius: BorderRadius.circular(2)))),
                       Text(title, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
@@ -1219,7 +1217,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     String? errorText;
     final result = await showKeyboardSafeSheet<double>(
       context: context,
-      heightFactor: 0.55,
       builder: (ctx, setDialogState) => Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
                       Center(child: Container(width: 36, height: 4, margin: const EdgeInsets.only(bottom: 12), decoration: BoxDecoration(color: Colors.grey.shade300, borderRadius: BorderRadius.circular(2)))),
                       const Text('Meta de Pushka', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),

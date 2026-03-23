@@ -1,4 +1,4 @@
-rules_version = '2';
+﻿rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     function isSignedIn() {
@@ -51,6 +51,8 @@ service cloud.firestore {
             'autoEmptyDayOfMonth',
             'autoEmptyTopOffEnabled',
             'autoEmptyTopOffAmount',
+            'autoEmptyNextRunAt',
+            'lastStreakDate',
             'updatedAt'
           ]) &&
           request.resource.data.uid is string &&
@@ -125,7 +127,10 @@ service cloud.firestore {
               request.resource.data.autoEmptyTopOffEnabled is bool) &&
           (!('autoEmptyTopOffAmount' in request.resource.data) ||
               (request.resource.data.autoEmptyTopOffAmount is number &&
-                  request.resource.data.autoEmptyTopOffAmount >= 0));
+                  request.resource.data.autoEmptyTopOffAmount >= 0)) &&
+          (!('autoEmptyNextRunAt' in request.resource.data) ||
+              request.resource.data.autoEmptyNextRunAt is timestamp ||
+              request.resource.data.autoEmptyNextRunAt == null);
     }
 
     function validTransactionDoc() {

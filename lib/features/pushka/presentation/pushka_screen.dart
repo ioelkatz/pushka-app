@@ -34,7 +34,16 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
   bool _loadedRemote = false;
   bool _isProcessing = false;
   int _streakCount = 0;
+  bool _showCelebration = false;
 
+
+  void _triggerCelebration() {
+    setState(() => _showCelebration = true);
+    FeedbackService.instance.playSuccess();
+    Future.delayed(const Duration(seconds: 3), () {
+      if (mounted) setState(() => _showCelebration = false);
+    });
+  }
 
   Future<void> _updateStreak() async {
     final user = ref.read(currentUserProvider);
@@ -77,7 +86,10 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
     } catch (_) {}
   }
   Future<void> addAmount(double amount) async {
+    final wasFull = pushkaGoal > 0 && pushkaAmount >= pushkaGoal;
     setState(() => pushkaAmount += amount);
+    final nowFull = pushkaGoal > 0 && pushkaAmount >= pushkaGoal;
+    if (!wasFull && nowFull) _triggerCelebration();
     _pushkaKey.currentState?.triggerCoinDrop();
     FeedbackService.instance.playCoinDrop();
     await _persistPushkaAmount();
@@ -184,7 +196,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
                         ),
                       ),
                       const SizedBox(height: 10),
-                      const Text('Donaci\u00f3n instant\u00e1nea. No afecta el balance de tu Pushka.', style: TextStyle(color: Color(0xFF888888), fontSize: 12), textAlign: TextAlign.center),
+                      const Text('Donaci\u00f3n instant\u00e1nea. No reduce ni afecta el balance de tu Pushka.', style: TextStyle(color: Color(0xFF888888), fontSize: 12), textAlign: TextAlign.center),
                       const SizedBox(height: 14),
                       SizedBox(width: double.infinity, height: 48, child: ElevatedButton(
                         style: ElevatedButton.styleFrom(backgroundColor: AppTokens.primaryBlue, foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
@@ -603,8 +615,13 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
             ],
               ],
             );
-            return SingleChildScrollView(
-              child: content,
+            return Stack(
+              children: [
+                SingleChildScrollView(child: content),
+                if (_showCelebration) const Positioned.fill(
+                  child: IgnorePointer(child: _CelebrationOverlay()),
+                ),
+              ],
             );
           },
         ),
@@ -649,7 +666,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
   }
   String _holidayEmoji(String name) {
     final lower = name.toLowerCase();
-    if (lower.contains('pesaj') || lower.contains('jitim') || lower.contains('maos')) return '\uD83E\uDED3\uD83E\uDED3';
+    if (lower.contains('pesaj') || lower.contains('jitim') || lower.contains('ma\u0027ot')) return '\uD83E\uDED3\uD83E\uDED3';
     if (lower.contains('shavuot')) return '\uD83C\uDF3E';
     if (lower.contains('rosh')) return '\uD83C\uDF4E\uD83C\uDF6F';
     if (lower.contains('kipur')) return '\uD83D\uDD4A\uFE0F';
@@ -709,7 +726,6 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
     double? selectedPreset;
     result = await showKeyboardSafeSheet<Map<String, dynamic>>(
       context: context,
-      heightFactor: 0.8,
       builder: (ctx, setDialogState) {
             double currentAmount() {
               if (selectedPreset != null) return selectedPreset!;
@@ -1418,7 +1434,6 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
     bool? saved;
     saved = await showKeyboardSafeSheet<bool>(
       context: context,
-      heightFactor: 0.85,
       builder: (ctx, setDialogState) => Column(
                       mainAxisSize: MainAxisSize.min,
                       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1651,7 +1666,6 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
     double? result;
     result = await showKeyboardSafeSheet<double>(
       context: context,
-      heightFactor: 0.5,
       builder: (ctx, setDialogState) => Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
                       Center(child: Container(width: 36, height: 4, margin: const EdgeInsets.only(bottom: 12), decoration: BoxDecoration(color: Colors.grey.shade300, borderRadius: BorderRadius.circular(2)))),
                       const Text('Meta personalizada', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
@@ -1946,7 +1960,7 @@ class _HolidayInfo {
   static final List<_HolidayInfo> _holidays = [
     // 5786 (2025-2026)
     _HolidayInfo(
-      nameEs: 'Maos Jitim',
+      nameEs: 'Ma\u0027ot Jitim',
       descriptionEs: 'Fondos para los necesitados de Israel para sus necesidades de P\u00e9saj',
       presetAmounts: [54, 180, 1800],
       startDate: DateTime(2026, 4, 2),
@@ -1971,8 +1985,8 @@ class _HolidayInfo {
       durationDays: 2,
     ),
     _HolidayInfo(
-      nameEs: 'Yom Kipur',
-      descriptionEs: 'D\u00eda de la Expiaci\u00f3n. La tzedak\u00e1 es un m\u00e9rito especial antes de Yom Kipur',
+      nameEs: 'Yom Kippur',
+      descriptionEs: 'D\u00eda de la Expiaci\u00f3n. La tzedak\u00e1 es un m\u00e9rito especial antes de Yom Kippur',
       presetAmounts: [36, 180, 360],
       startDate: DateTime(2026, 9, 21),
       showDaysBefore: 14,
@@ -1995,13 +2009,13 @@ class _HolidayInfo {
     ),
     _HolidayInfo(
       nameEs: 'Purim',
-      descriptionEs: 'Matanot LaEvionim: regalos a los necesitados, una mitzv\u00e1 central de Purim',
+      descriptionEs: "Matanot la'Evionim: regalos a los necesitados, una mitzv\u00e1 central de Purim",
       presetAmounts: [18, 54, 180],
       startDate: DateTime(2027, 3, 23),
       showDaysBefore: 21,
     ),
     _HolidayInfo(
-      nameEs: 'Maos Jitim',
+      nameEs: 'Ma\u0027ot Jitim',
       descriptionEs: 'Fondos para los necesitados de Israel para sus necesidades de P\u00e9saj',
       presetAmounts: [54, 180, 1800],
       startDate: DateTime(2027, 4, 22),
@@ -2009,4 +2023,112 @@ class _HolidayInfo {
       durationDays: 8,
     ),
   ];
+}
+class _CelebrationOverlay extends StatefulWidget {
+  const _CelebrationOverlay();
+
+  @override
+  State<_CelebrationOverlay> createState() => _CelebrationOverlayState();
+}
+
+class _CelebrationOverlayState extends State<_CelebrationOverlay>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _ctrl;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 2800),
+    )..forward();
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _ctrl,
+      builder: (context, _) {
+        return CustomPaint(
+          painter: _ConfettiPainter(progress: _ctrl.value),
+        );
+      },
+    );
+  }
+}
+
+class _ConfettiPainter extends CustomPainter {
+  final double progress;
+  _ConfettiPainter({required this.progress});
+
+  static const _colors = [
+    Color(0xFFFFD700), Color(0xFFFF6B35), Color(0xFF2563EB),
+    Color(0xFF60A5FA), Color(0xFF10B981), Color(0xFFE040FB),
+    Color(0xFFFF1744), Color(0xFF00E5FF), Color(0xFFFFC107),
+  ];
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final rng = _SeededRandom(77);
+    const count = 120;
+    final fadeOut = progress > 0.65 ? (1.0 - (progress - 0.65) / 0.35) : 1.0;
+
+    for (int i = 0; i < count; i++) {
+      final startX = rng.next() * size.width;
+      final startY = -30.0 - rng.next() * 120;
+      final speed = 0.3 + rng.next() * 0.7;
+      final drift = (rng.next() - 0.5) * 160;
+      final wobble = (rng.next() - 0.5) * 40 * (0.5 + 0.5 * rng.next());
+      final pSize = 3.0 + rng.next() * 10.0;
+      final delay = rng.next() * 0.2;
+      final p = ((progress - delay) / (1.0 - delay)).clamp(0.0, 1.0);
+
+      final x = startX + drift * p + wobble * (p * 3.14).clamp(0.0, 3.14);
+      final y = startY + size.height * 1.2 * p * speed;
+
+      if (y < -30 || y > size.height + 30 || p <= 0) continue;
+
+      final paint = Paint()
+        ..color = _colors[i % _colors.length].withValues(alpha: fadeOut * 0.9)
+        ..style = PaintingStyle.fill;
+
+      final shape = i % 4;
+      if (shape == 0) {
+        canvas.drawCircle(Offset(x, y), pSize / 2, paint);
+      } else if (shape == 1) {
+        canvas.drawRect(Rect.fromCenter(center: Offset(x, y), width: pSize, height: pSize * 0.5), paint);
+      } else if (shape == 2) {
+        canvas.save();
+        canvas.translate(x, y);
+        canvas.rotate(p * 8.0 * (0.5 + rng.next()));
+        canvas.drawRect(Rect.fromCenter(center: Offset.zero, width: pSize * 1.3, height: pSize * 0.3), paint);
+        canvas.restore();
+      } else {
+        final path = Path()
+          ..moveTo(x, y - pSize * 0.5)
+          ..lineTo(x + pSize * 0.4, y + pSize * 0.3)
+          ..lineTo(x - pSize * 0.4, y + pSize * 0.3)
+          ..close();
+        canvas.drawPath(path, paint);
+      }
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _ConfettiPainter old) => old.progress != progress;
+}
+
+class _SeededRandom {
+  int _state;
+  _SeededRandom(this._state);
+  double next() {
+    _state = (_state * 1103515245 + 12345) & 0x7fffffff;
+    return _state / 0x7fffffff;
+  }
 }

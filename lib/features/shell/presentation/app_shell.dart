@@ -27,6 +27,7 @@ class AppShell extends StatelessWidget {
     }
 
     return Scaffold(
+      resizeToAvoidBottomInset: false,
       backgroundColor: AppTokens.surface,
       drawer: drawer,
       appBar: appBar,
