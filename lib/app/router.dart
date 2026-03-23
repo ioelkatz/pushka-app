@@ -25,6 +25,7 @@ import '../features/prayers/presentation/prayers_screen.dart';
 import '../features/support/presentation/support_screen.dart';
 import '../features/about/presentation/about_screen.dart';
 import '../features/users/data/user_repository.dart';
+import 'theme/app_tokens.dart';
 
 final _auth = FirebaseAuth.instance;
 final _firestore = FirebaseFirestore.instance;
@@ -80,7 +81,7 @@ Future<void> _openWalletQrDialog(BuildContext context) async {
                 child: IconButton(
                   onPressed: () => Navigator.of(dialogContext).pop(),
                   icon: const Icon(Icons.close_rounded, size: 22),
-                  color: const Color(0xFF1A1A1A),
+                  color: AppTokens.textPrimary,
                   padding: EdgeInsets.zero,
                   constraints: const BoxConstraints(),
                   tooltip: 'Cerrar',
@@ -92,7 +93,7 @@ Future<void> _openWalletQrDialog(BuildContext context) async {
                 style: TextStyle(
                   fontSize: 22,
                   fontWeight: FontWeight.w700,
-                  color: Color(0xFF121212),
+                  color: AppTokens.textPrimary,
                 ),
               ),
               const SizedBox(height: 14),
@@ -115,12 +116,12 @@ Future<void> _openWalletQrDialog(BuildContext context) async {
                 'Tu código de 6 dígitos',
                 style: TextStyle(
                   fontSize: 14,
-                  color: Colors.grey.shade600,
+                  color: AppTokens.mutedText,
                 ),
               ),
               const SizedBox(height: 8),
               Material(
-                color: const Color(0xFFF2F3F5),
+                color: AppTokens.cardSilver,
                 borderRadius: BorderRadius.circular(10),
                 child: InkWell(
                   borderRadius: BorderRadius.circular(10),
@@ -150,12 +151,12 @@ Future<void> _openWalletQrDialog(BuildContext context) async {
                             fontSize: 26,
                             fontWeight: FontWeight.w800,
                             letterSpacing: 1.0,
-                            color: Color(0xFF090909),
+                            color: AppTokens.textPrimary,
                             height: 1,
                           ),
                         ),
                         const SizedBox(width: 8),
-                        const Icon(Icons.share_rounded, size: 20, color: Color(0xFF555555)),
+                        const Icon(Icons.share_rounded, size: 20, color: AppTokens.mutedText),
                       ],
                     ),
                   ),
@@ -240,7 +241,7 @@ PreferredSizeWidget? _buildAppBar(BuildContext context, String location) {
     return AppBar(
       elevation: 0,
       backgroundColor: Colors.white,
-      foregroundColor: Colors.black,
+      foregroundColor: AppTokens.textPrimary,
       title: const Text(
         'Mi Pushka',
         style: TextStyle(fontWeight: FontWeight.w600),
@@ -313,7 +314,7 @@ PreferredSizeWidget? _buildAppBar(BuildContext context, String location) {
     );
   } else if (location == '/prayers') {
     return AppBar(
-      title: const Text('Segulot y Rezós'),
+      title: const Text('Segulot y Rezos'),
       centerTitle: true,
     );
   } else if (location == '/support') {

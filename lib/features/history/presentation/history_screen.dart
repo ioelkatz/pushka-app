@@ -1,4 +1,5 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
+import '../../../app/theme/app_tokens.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../domain/transaction.dart';
@@ -25,8 +26,6 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
   Widget build(BuildContext context) {
     final transactionsAsync = ref.watch(userTransactionsProvider);
 
-    const blue = Color(0xFF2F60C5);
-
     return Column(
       children: [
         // Filtro dropdown
@@ -49,7 +48,7 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
                   Text(
                     _getFilterLabel(),
                     style: TextStyle(
-                      color: blue,
+                      color: AppTokens.primaryBlue,
                       fontSize: 16,
                       fontWeight: FontWeight.w500,
                     ),
@@ -132,7 +131,7 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
                 itemCount: filtered.length,
                 itemBuilder: (context, index) {
                   final transaction = filtered[index];
-                  return _buildTransactionItem(transaction, blue);
+                  return _buildTransactionItem(transaction);
                 },
               );
             },
@@ -164,12 +163,12 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
     }
   }
 
-  Widget _buildTransactionItem(Transaction transaction, Color blue) {
+  Widget _buildTransactionItem(Transaction transaction) {
     final amount = transaction.amount;
     final amountLabel = amount < 0
         ? '-\$${amount.abs().toStringAsFixed(2)}'
         : '\$${amount.toStringAsFixed(2)}';
-    final amountColor = amount < 0 ? const Color(0xFFE05A4F) : blue;
+    final amountColor = amount < 0 ? AppTokens.primaryBlue : AppTokens.primaryBlue;
 
     final showMethodBadge = transaction.paymentMethod != PaymentMethod.card;
     final showStatusBadge = transaction.isPending;
@@ -180,7 +179,7 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: transaction.isPending ? Colors.orange.shade200 : Colors.grey.shade200),
+        border: Border.all(color: transaction.isPending ? AppTokens.skyBlue : Colors.grey.shade200),
       ),
       child: Row(
         children: [
@@ -192,16 +191,16 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
               children: [
                 Text(
                   transaction.formattedDate,
-                  style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w500, color: Colors.black87),
+                  style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w500, color: AppTokens.textPrimary),
                 ),
                 if (showMethodBadge || showStatusBadge) ...[
                   const SizedBox(height: 4),
                   Row(children: [
                     if (showMethodBadge)
-                      _buildBadge(transaction.paymentMethodLabel, _iconForMethod(transaction.paymentMethod), const Color(0xFF2F60C5)),
+                      _buildBadge(transaction.paymentMethodLabel, _iconForMethod(transaction.paymentMethod), AppTokens.primaryBlue),
                     if (showMethodBadge && showStatusBadge) const SizedBox(width: 6),
                     if (showStatusBadge)
-                      _buildBadge('Pendiente', Icons.schedule, Colors.orange.shade700),
+                      _buildBadge('Pendiente', Icons.schedule, AppTokens.skyBlue),
                   ]),
                 ],
               ],
@@ -277,7 +276,7 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
                     _buildColoredLetter('צ', Colors.red),
-                    _buildColoredLetter('ד', Colors.orange),
+                    _buildColoredLetter('ד', AppTokens.skyBlue),
                     _buildColoredLetter('ק', Colors.yellow.shade700),
                     _buildColoredLetter('ה', Colors.green),
                   ],

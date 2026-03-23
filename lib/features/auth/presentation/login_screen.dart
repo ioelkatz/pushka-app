@@ -1,5 +1,7 @@
-import 'package:firebase_auth/firebase_auth.dart';
+﻿import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import '../../../app/theme/app_tokens.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:flutter/services.dart';
@@ -31,7 +33,10 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       body: SafeArea(
-        child: SingleChildScrollView(
+        child: Center(
+          child: ConstrainedBox(
+            constraints: BoxConstraints(maxWidth: kIsWeb ? 480 : double.infinity),
+            child: SingleChildScrollView(
           padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -44,7 +49,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
               const SizedBox(height: 6),
               const Text(
                 'Inicia sesión para continuar',
-                style: TextStyle(fontSize: 16, color: Colors.black54),
+                style: TextStyle(fontSize: 16, color: AppTokens.mutedText),
               ),
               const SizedBox(height: 24),
 
@@ -150,6 +155,8 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                 ],
               ),
             ],
+          ),
+        ),
           ),
         ),
       ),

@@ -1,4 +1,4 @@
-import 'package:flutter/foundation.dart';
+﻿import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:firebase_core/firebase_core.dart';
@@ -12,39 +12,54 @@ import 'firebase_options.dart';
 import 'app/app.dart';
 import 'features/notifications/notification_service.dart';
 import 'config/stripe_config.dart';
+import 'features/feedback/feedback_service.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  await Firebase.initializeApp(
-    options: DefaultFirebaseOptions.currentPlatform,
-  );
+  try {
+    await Firebase.initializeApp(
+      options: DefaultFirebaseOptions.currentPlatform,
+    );
+  } catch (_) {
+    // Already initialized by native google-services plugin
+  }
 
-  await FirebaseAppCheck.instance.activate(
-    androidProvider:
-        kReleaseMode ? AndroidProvider.playIntegrity : AndroidProvider.debug,
-    appleProvider: kReleaseMode ? AppleProvider.deviceCheck : AppleProvider.debug,
-  );
+  if (kIsWeb) {
+    await FirebaseAppCheck.instance.activate(
+      webProvider: ReCaptchaV3Provider('6LcXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX'),
+    );
+  } else {
+    await FirebaseAppCheck.instance.activate(
+      androidProvider:
+          kReleaseMode ? AndroidProvider.playIntegrity : AndroidProvider.debug,
+      appleProvider: kReleaseMode ? AppleProvider.deviceCheck : AppleProvider.debug,
+    );
+  }
 
   FirebaseFirestore.instance.settings = const Settings(
     persistenceEnabled: true,
     cacheSizeBytes: Settings.CACHE_SIZE_UNLIMITED,
   );
 
-  FlutterError.onError = FirebaseCrashlytics.instance.recordFlutterFatalError;
-  PlatformDispatcher.instance.onError = (error, stack) {
-    FirebaseCrashlytics.instance.recordError(error, stack, fatal: true);
-    return true;
-  };
-
-  await NotificationService.instance.initialize();
-  final user = FirebaseAuth.instance.currentUser;
-  if (user != null) {
-    await NotificationService.instance.syncFcmToken(user.uid);
-    NotificationService.instance.listenForTokenRefresh(user.uid);
+  if (!kIsWeb) {
+    FlutterError.onError = FirebaseCrashlytics.instance.recordFlutterFatalError;
+    PlatformDispatcher.instance.onError = (error, stack) {
+      FirebaseCrashlytics.instance.recordError(error, stack, fatal: true);
+      return true;
+    };
   }
 
-  if (StripeConfig.publishableKey.isNotEmpty) {
+  if (!kIsWeb) {
+    await NotificationService.instance.initialize();
+    final user = FirebaseAuth.instance.currentUser;
+    if (user != null) {
+      await NotificationService.instance.syncFcmToken(user.uid);
+      NotificationService.instance.listenForTokenRefresh(user.uid);
+    }
+  }
+
+  if (!kIsWeb && StripeConfig.publishableKey.isNotEmpty) {
     Stripe.publishableKey = StripeConfig.publishableKey;
     if (StripeConfig.merchantIdentifier.isNotEmpty) {
       Stripe.merchantIdentifier = StripeConfig.merchantIdentifier;
@@ -52,9 +67,13 @@ Future<void> main() async {
     await Stripe.instance.applySettings();
   }
 
+  await FeedbackService.instance.init();
+
   runApp(
     const ProviderScope(
       child: PushkaApp(),
     ),
   );
 }
+
+

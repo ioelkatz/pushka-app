@@ -1,4 +1,5 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
+import '../../../app/theme/app_tokens.dart';
 
 class PrayersScreen extends StatelessWidget {
   const PrayersScreen({super.key});
@@ -15,20 +16,20 @@ class PrayersScreen extends StatelessWidget {
             padding: const EdgeInsets.all(12),
             margin: const EdgeInsets.only(bottom: 20),
             decoration: BoxDecoration(
-              color: Colors.orange.shade50,
-              border: Border.all(color: Colors.orange.shade200),
+              color: AppTokens.cardSilver,
+              border: Border.all(color: AppTokens.border),
               borderRadius: BorderRadius.circular(8),
             ),
             child: Row(
               children: [
-                Icon(Icons.info_outline, color: Colors.orange.shade700, size: 20),
+                Icon(Icons.info_outline, color: AppTokens.skyBlue, size: 20),
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(
                     'Nota: Este es un ejemplo. Los textos se mejorarán y perfeccionarán más adelante.',
                     style: TextStyle(
                       fontSize: 12,
-                      color: Colors.orange.shade900,
+                      color: AppTokens.mutedText,
                       fontStyle: FontStyle.italic,
                     ),
                   ),

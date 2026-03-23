@@ -1,7 +1,8 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../users/data/user_repository.dart';
+import '../../../app/theme/app_tokens.dart';
 import '../../users/presentation/user_profile_provider.dart';
 
 class AutoEmptyScreen extends ConsumerStatefulWidget {
@@ -48,8 +49,6 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
       });
     }
 
-    const red = Color(0xFFE05A4F);
-
     return Scaffold(
       appBar: AppBar(
         title: const Text('Auto Vaciar'),
@@ -66,12 +65,11 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
                 style: TextStyle(
                   fontSize: 14,
                   fontWeight: FontWeight.w600,
-                  color: Colors.black87,
+                  color: AppTokens.textPrimary,
                 ),
               ),
               const SizedBox(height: 8),
-              DropdownButtonFormField<String>(
-                initialValue: _frequency,
+              DropdownButtonFormField<String>(initialValue: _frequency,
                 decoration: InputDecoration(
                   border: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(8),
@@ -107,13 +105,13 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
               Container(
                 padding: const EdgeInsets.all(14),
                 decoration: BoxDecoration(
-                  color: const Color(0xFFF4F7FB),
+                  color: AppTokens.cardSilver,
                   borderRadius: BorderRadius.circular(12),
                 ),
                 child: const Text(
                   'Saldo mínimo para activar el auto vaciado:\n'
                   'Si el saldo de la Pushka es menor a \$5, no se vaciará en ese momento.',
-                  style: TextStyle(color: Colors.black87),
+                  style: TextStyle(color: AppTokens.textPrimary),
                 ),
               ),
               const SizedBox(height: 20),
@@ -167,8 +165,8 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
                           });
                         }
                       },
-                      activeThumbColor: const Color(0xFFFF9500),
-                      activeTrackColor: const Color(0xFFFF9500).withValues(alpha: 0.45),
+                      activeThumbColor: AppTokens.skyBlue,
+                      activeTrackColor: AppTokens.skyBlue.withValues(alpha: 0.45),
                       inactiveThumbColor: Colors.white,
                       inactiveTrackColor: Colors.grey.shade300,
                     ),
@@ -220,17 +218,23 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
                       onPressed: user == null
                           ? null
                           : () async {
-                              await _saveConfig(user.uid);
+                              try {
+                                await _saveConfig(user.uid);
                               if (mounted) {
                                 ScaffoldMessenger.of(context).showSnackBar(
-                                  const SnackBar(
-                                    content: Text('Configuración guardada'),
-                                  ),
+                                  const SnackBar(content: Text('Configuración guardada')),
                                 );
+                              }
+                              } catch (_) {
+                                if (mounted) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    const SnackBar(content: Text('Error al guardar. Intenta nuevamente.')),
+                                  );
+                                }
                               }
                             },
                       style: OutlinedButton.styleFrom(
-                        side: const BorderSide(color: red, width: 2),
+                        side: const BorderSide(color: AppTokens.primaryBlue, width: 2),
                         padding: const EdgeInsets.symmetric(vertical: 14),
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(10),
@@ -239,7 +243,7 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
                       child: const Text(
                         'GUARDAR',
                         style: TextStyle(
-                          color: red,
+                          color: AppTokens.primaryBlue,
                           fontWeight: FontWeight.w700,
                         ),
                       ),
@@ -386,3 +390,5 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
     }
   }
 }
+
+

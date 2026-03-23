@@ -1,4 +1,6 @@
+﻿import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import '../../../app/theme/app_tokens.dart';
 
 class AppShell extends StatelessWidget {
   final Widget child;
@@ -14,10 +16,21 @@ class AppShell extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    Widget body = child;
+    if (kIsWeb) {
+      body = Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 480),
+          child: child,
+        ),
+      );
+    }
+
     return Scaffold(
+      backgroundColor: AppTokens.surface,
       drawer: drawer,
       appBar: appBar,
-      body: child,
+      body: body,
     );
   }
 }

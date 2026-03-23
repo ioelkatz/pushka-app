@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_stripe/flutter_stripe.dart';
@@ -11,6 +11,7 @@ import '../data/wallet_service.dart';
 import '../../users/data/user_repository.dart';
 import '../../users/presentation/user_profile_provider.dart';
 import '../../../app/theme/app_tokens.dart';
+import '../../../core/keyboard_safe_sheet.dart';
 
 class WalletScreen extends ConsumerStatefulWidget {
   const WalletScreen({super.key});
@@ -30,57 +31,46 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
   Future<double?> _showAmountDialog({
     String hint = 'Ej: 50',
   }) async {
-    return showDialog<double>(
+    final controller = TextEditingController();
+    String? error;
+    return showKeyboardSafeSheet<double>(
       context: context,
-      barrierDismissible: true,
-      builder: (ctx) {
-        final controller = TextEditingController();
-        String? error;
-        return StatefulBuilder(
-          builder: (ctx, setDialogState) => AlertDialog(
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(22)),
-            scrollable: true,
-            contentPadding: const EdgeInsets.fromLTRB(20, 22, 20, 0),
-            actionsPadding: const EdgeInsets.fromLTRB(20, 0, 20, 18),
-            content: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-              const Text('Agregar fondos', textAlign: TextAlign.center, style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
-              const SizedBox(height: 20),
-              const Text('Ingresa monto', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: Color(0xFF5A5A5A))),
-              const SizedBox(height: 10),
-              TextField(
-                controller: controller,
-                autofocus: true,
-                keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                textInputAction: TextInputAction.done,
-                onSubmitted: (_) {
-                  final value = double.tryParse(controller.text.trim().replaceAll(',', '.'));
-                  if (value != null && value > 0) Navigator.pop(ctx, value);
-                },
-                decoration: InputDecoration(
-                  hintText: hint, prefixText: '\$ ', errorText: error,
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                  focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: Color(0xFFE05A4F), width: 1.6)),
-                ),
-              ),
-            ]),
-            actions: [
-              SizedBox(width: double.infinity, height: 48, child: ElevatedButton(
-                style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFE05A4F), foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
-                onPressed: () {
-                  final value = double.tryParse(controller.text.trim().replaceAll(',', '.'));
-                  if (value == null || value <= 0) { setDialogState(() => error = 'Ingresa un monto válido'); return; }
-                  Navigator.pop(ctx, value);
-                },
-                child: const Text('Agregar al saldo', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
-              )),
-              SizedBox(width: double.infinity, height: 44, child: TextButton(
-                onPressed: () => Navigator.pop(ctx),
-                child: Text('Cancelar', style: TextStyle(color: Colors.grey.shade600, fontWeight: FontWeight.w500)),
-              )),
-            ],
-          ),
-        );
-      },
+      heightFactor: 0.55,
+      builder: (ctx, setDialogState) => Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+                      Center(child: Container(width: 36, height: 4, margin: const EdgeInsets.only(bottom: 12), decoration: BoxDecoration(color: Colors.grey.shade300, borderRadius: BorderRadius.circular(2)))),
+                      const Text('Agregar fondos', textAlign: TextAlign.center, style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
+                      const SizedBox(height: 20),
+                      const Text('Ingresa monto', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: AppTokens.mutedText)),
+                      const SizedBox(height: 10),
+                      TextField(
+                        controller: controller,
+                        keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                        textInputAction: TextInputAction.done,
+                        onSubmitted: (_) {
+                          final value = double.tryParse(controller.text.trim().replaceAll(',', '.'));
+                          if (value != null && value > 0) Navigator.pop(ctx, value);
+                        },
+                        decoration: InputDecoration(
+                          hintText: hint, prefixText: '\$ ', errorText: error,
+                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                          focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: AppTokens.primaryBlue, width: 1.6)),
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      SizedBox(width: double.infinity, height: 48, child: ElevatedButton(
+                        style: ElevatedButton.styleFrom(backgroundColor: AppTokens.primaryBlue, foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
+                        onPressed: () {
+                          final value = double.tryParse(controller.text.trim().replaceAll(',', '.'));
+                          if (value == null || value <= 0) { setDialogState(() => error = 'Ingresa un monto v\u00e1lido'); return; }
+                          Navigator.pop(ctx, value);
+                        },
+                        child: const Text('Agregar al saldo', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+                      )),
+                      SizedBox(width: double.infinity, height: 44, child: TextButton(
+                        onPressed: () => Navigator.pop(ctx),
+                        child: Text('Cancelar', style: TextStyle(color: Colors.grey.shade600, fontWeight: FontWeight.w500)),
+                      )),
+                    ]),
     );
   }
 
@@ -141,7 +131,7 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
     setState(() => _processing = true);
     try {
       final currency = ((profile?['currencyCode'] as String?) ?? 'USD').toLowerCase();
-      final amountCents = (amount * 100).round();
+      final amountCents = ((amount * 100) + 0.001).round();
       final minCents = _minAmountCentsForCurrency(currency);
       if (amountCents < minCents) {
         final minAmount = (minCents / 100).toStringAsFixed(2);
@@ -173,8 +163,6 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
 
   @override
   Widget build(BuildContext context) {
-    const red = Color(0xFFE05A4F);
-    const blue = Color(0xFF2F60C5);
     final profile = ref.watch(userProfileProvider).valueOrNull;
     final uid = ref.watch(currentUserProvider)?.uid;
     final walletId =
@@ -214,7 +202,7 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
             'Aparta fondos ahora para vaciar tu Pushka después',
             textAlign: TextAlign.center,
             style: TextStyle(
-              color: Colors.black.withValues(alpha: 0.62),
+              color: AppTokens.mutedText,
               fontSize: compact ? 13 : 14,
             ),
           ),
@@ -223,7 +211,7 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
             'Aprender más',
             textAlign: TextAlign.center,
             style: const TextStyle(
-              color: blue,
+              color: AppTokens.primaryBlue,
               fontWeight: FontWeight.w600,
               decoration: TextDecoration.underline,
               decorationThickness: 1.2,
@@ -244,7 +232,7 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
                   horizontal: 18,
                 ),
                 decoration: BoxDecoration(
-                  color: const Color(0xFFF0F0F0),
+                  color: AppTokens.cardSilver,
                   borderRadius: BorderRadius.circular(18),
                 ),
                 child: Column(
@@ -257,7 +245,7 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
                     Text(
                       walletId,
                       style: TextStyle(
-                        color: blue,
+                        color: AppTokens.primaryBlue,
                         fontSize: walletIdSize,
                         letterSpacing: 2,
                         fontWeight: FontWeight.w800,
@@ -282,7 +270,7 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
             '\$${walletBalance.toStringAsFixed(2)}',
             textAlign: TextAlign.center,
             style: TextStyle(
-              color: blue,
+              color: AppTokens.primaryBlue,
               fontSize: balanceSize,
               fontWeight: FontWeight.w800,
             ),
@@ -294,12 +282,12 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
           OutlinedButton(
             onPressed: _processing ? null : _addFunds,
             style: OutlinedButton.styleFrom(
-              side: const BorderSide(color: red, width: 2),
+              side: const BorderSide(color: AppTokens.primaryBlue, width: 2),
               minimumSize: Size(0, compact ? 48 : AppTokens.buttonHeight),
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(14),
               ),
-              foregroundColor: red,
+              foregroundColor: AppTokens.primaryBlue,
               textStyle: const TextStyle(
                 fontWeight: FontWeight.w700,
                 letterSpacing: 0.3,
@@ -313,7 +301,7 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
           // Cards
           _WalletCard(
             icon: Icons.swap_vert,
-            iconBg: red,
+            iconBg: AppTokens.primaryBlue,
             title: 'Enviar / Solicitar entre billeteras',
             subtitle: 'Empodera a familia y amigos con tzedaká',
             onTap: () => context.go('/wallet/send-request'),
@@ -322,7 +310,7 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
           SizedBox(height: walletCardGap),
           _WalletCard(
             icon: Icons.settings,
-            iconBg: red,
+            iconBg: AppTokens.primaryBlue,
             title: 'Administrar recarga automática',
             subtitle: autoNextRunLabel,
             onTap: () => context.go('/wallet-auto-refill'),
@@ -331,7 +319,7 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
           SizedBox(height: walletCardGap),
           _WalletCard(
             icon: Icons.receipt_long,
-            iconBg: red,
+            iconBg: AppTokens.primaryBlue,
             title: 'Historial de transacciones',
             subtitle: '',
             onTap: () => context.go('/history'),
@@ -394,7 +382,7 @@ class _WalletCard extends StatelessWidget {
         child: Container(
           padding: EdgeInsets.all(compact ? 11 : 14),
           decoration: BoxDecoration(
-            color: const Color(0xFFF3F3F3),
+            color: AppTokens.cardSilver,
             borderRadius: BorderRadius.circular(18),
           ),
           child: Row(
@@ -427,7 +415,7 @@ class _WalletCard extends StatelessWidget {
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
-                          color: Colors.black.withValues(alpha: 0.55),
+                          color: AppTokens.mutedText,
                           fontSize: compact ? 13 : 14,
                         ),
                       ),

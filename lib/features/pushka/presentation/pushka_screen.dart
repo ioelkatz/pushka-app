@@ -1,4 +1,7 @@
-import 'dart:async';
+﻿import 'dart:async';
+import '../../../app/theme/app_tokens.dart';
+import '../../../core/keyboard_safe_sheet.dart';
+import 'pushka_3d_widget.dart';
 
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -11,6 +14,7 @@ import '../../auth/biometric_service.dart';
 import '../../history/data/transaction_repository.dart';
 import '../../history/domain/transaction.dart';
 import '../../payments/stripe_service.dart';
+import '../../feedback/feedback_service.dart';
 import '../../users/data/user_repository.dart';
 import '../../users/presentation/user_profile_provider.dart';
 import '../../../config/stripe_config.dart';
@@ -23,28 +27,119 @@ class PushkaScreen extends ConsumerStatefulWidget {
 }
 
 class _PushkaScreenState extends ConsumerState<PushkaScreen> {
+  final _pushkaKey = GlobalKey<Pushka3DWidgetState>();
   double pushkaAmount = 0;
   double pushkaGoal = 3600.00; // Meta de la pushka
   List<double> _presetAmounts = [];
   bool _loadedRemote = false;
   bool _isProcessing = false;
+  int _streakCount = 0;
 
+
+  Future<void> _updateStreak() async {
+    final user = ref.read(currentUserProvider);
+    if (user == null) return;
+    final profile = ref.read(userProfileProvider).valueOrNull;
+    if (profile == null) return;
+
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final lastDateRaw = profile['lastStreakDate'];
+    DateTime? lastDate;
+    if (lastDateRaw is Timestamp) {
+      lastDate = lastDateRaw.toDate();
+    }
+
+    if (lastDate != null) {
+      final lastDay = DateTime(lastDate.year, lastDate.month, lastDate.day);
+      if (lastDay == today) return;
+
+      DateTime prevWeekday = today.subtract(const Duration(days: 1));
+      while (prevWeekday.weekday == DateTime.saturday || prevWeekday.weekday == DateTime.sunday) {
+        prevWeekday = prevWeekday.subtract(const Duration(days: 1));
+      }
+
+      if (lastDay == prevWeekday || lastDay.isAfter(prevWeekday)) {
+        _streakCount = (_streakCount > 0 ? _streakCount : 1) + 1;
+      } else {
+        _streakCount = 1;
+      }
+    } else {
+      _streakCount = 1;
+    }
+
+    if (mounted) setState(() {});
+    try {
+      await FirebaseFirestore.instance.collection('users').doc(user.uid).update({
+        'streakCount': _streakCount,
+        'lastStreakDate': Timestamp.fromDate(today),
+      });
+    } catch (_) {}
+  }
   Future<void> addAmount(double amount) async {
     setState(() => pushkaAmount += amount);
+    _pushkaKey.currentState?.triggerCoinDrop();
+    FeedbackService.instance.playCoinDrop();
     await _persistPushkaAmount();
+    _updateStreak();
   }
   
   Future<void> emptyPushka() async {
     if (pushkaAmount <= 0 || _isProcessing) return;
     setState(() => _isProcessing = true);
     try {
-      await _addTransaction(TransactionType.pushkaEmpty, pushkaAmount);
-      await AnalyticsService.instance.logPushkaEmpty(pushkaAmount);
+      if (StripeConfig.publishableKey.isEmpty) {
+        throw Exception('Stripe no está configurado');
+      }
+
+      final amountToEmpty = pushkaAmount;
+      final currency = _currencyCodeFromProfile();
+      final amountCents = ((amountToEmpty * 100) + 0.001).round();
+      final minCents = _minAmountCentsForCurrency(currency);
+
+      if (amountCents < minCents) {
+        if (!mounted) return;
+        _showMinAmountDialog(currency, minCents, amountToEmpty);
+        return;
+      }
+
+      if (_biometricEnabled()) {
+        final authenticated = await BiometricService.instance.authenticate(
+          reason: 'Confirma tu identidad para vaciar la Pushka',
+        );
+        if (!authenticated) {
+          _showError('Autenticación requerida para vaciar la Pushka');
+          return;
+        }
+      }
+
+      await StripeService.instance.pay(
+        amountCents: amountCents,
+        currency: currency,
+        customerEmail: ref.read(currentUserProvider)?.email,
+        purpose: 'pushka_empty',
+      );
+
+      await AnalyticsService.instance.logPushkaEmpty(amountToEmpty);
+
+      final user = ref.read(currentUserProvider);
+      if (user != null) {
+        await ref.read(transactionRepositoryProvider).addTransaction(
+          uid: user.uid,
+          type: TransactionType.pushkaEmpty,
+          amount: amountToEmpty,
+          description: 'Pushka vaciada - pago con tarjeta',
+          paymentMethod: PaymentMethod.card,
+          status: PaymentStatus.completed,
+        );
+      }
+
       await _persistPushkaAmount(resetToZero: true);
       if (!mounted) return;
       setState(() => pushkaAmount = 0);
+      FeedbackService.instance.playSuccess();
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Pushka vaciada')),
+        const SnackBar(content: Text('Pushka vaciada. El pago fue procesado.')),
       );
     } catch (error, stack) {
       debugPrint('emptyPushka error: $error');
@@ -57,41 +152,127 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
   }
   
   Future<void> _donateNow() async {
-    if (pushkaAmount <= 0 || _isProcessing) return;
-    final donationAmount = await _resolveDonationAmount();
-    if (donationAmount == null || donationAmount <= 0) return;
+    if (_isProcessing) return;
+    final amountCtrl = TextEditingController();
+    final messageCtrl = TextEditingController();
+    Map<String, dynamic>? result;
+    String? error;
+    result = await showKeyboardSafeSheet<Map<String, dynamic>>(
+      context: context,
+      builder: (ctx, setDialogState) => Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+                      Center(child: Container(width: 36, height: 4, margin: const EdgeInsets.only(bottom: 12), decoration: BoxDecoration(color: Colors.grey.shade300, borderRadius: BorderRadius.circular(2)))),
+                      const Center(child: Text('Donar Ahora', style: TextStyle(fontSize: 22, fontWeight: FontWeight.w700))),
+                      const SizedBox(height: 16),
+                      TextField(
+                        controller: amountCtrl,
+                        keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                        decoration: InputDecoration(
+                          labelText: 'Monto', hintText: '0', prefixText: '\$ ', errorText: error,
+                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                          focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: AppTokens.primaryBlue, width: 1.6)),
+                        ),
+                        onChanged: (_) { if (error != null) setDialogState(() => error = null); },
+                      ),
+                      const SizedBox(height: 14),
+                      TextField(
+                        controller: messageCtrl,
+                        decoration: InputDecoration(
+                          labelText: 'Mensaje personal (opcional)',
+                          hintText: 'Escribe un mensaje...',
+                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                          focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: AppTokens.primaryBlue, width: 1.6)),
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      const Text('Donaci\u00f3n instant\u00e1nea. No afecta el balance de tu Pushka.', style: TextStyle(color: Color(0xFF888888), fontSize: 12), textAlign: TextAlign.center),
+                      const SizedBox(height: 14),
+                      SizedBox(width: double.infinity, height: 48, child: ElevatedButton(
+                        style: ElevatedButton.styleFrom(backgroundColor: AppTokens.primaryBlue, foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
+                        onPressed: () {
+                          final value = double.tryParse(amountCtrl.text.trim().replaceAll(',', '.'));
+                          if (value == null || value <= 0) { setDialogState(() => error = 'Ingresa un monto v\u00e1lido'); return; }
+                          Navigator.pop(ctx, {'amount': value, 'message': messageCtrl.text.trim()});
+                        },
+                        child: const Text('DONAR AHORA', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16)),
+                      )),
+                    ]),
+    );
+    if (result == null || !mounted) return;
+    final donationAmount = result['amount'] as double;
 
-    if (_biometricEnabled()) {
-      final authenticated = await BiometricService.instance.authenticate(
-        reason: 'Confirma tu identidad para procesar la donación',
-      );
-      if (!authenticated) {
-        _showError('Autenticación requerida para donar');
+    setState(() => _isProcessing = true);
+    try {
+      if (_biometricEnabled()) {
+        final authenticated = await BiometricService.instance.authenticate(
+          reason: 'Confirma tu identidad para procesar la donaci\u00f3n',
+        );
+        if (!authenticated) {
+          _showError('Autenticaci\u00f3n requerida para donar');
+          return;
+        }
+      }
+      if (!mounted) return;
+
+      if (StripeConfig.publishableKey.isEmpty) {
+        throw Exception('Stripe no est\u00e1 configurado');
+      }
+
+      final currency = _currencyCodeFromProfile();
+      final amountCents = ((donationAmount * 100) + 0.001).round();
+      final minCents = _minAmountCentsForCurrency(currency);
+      if (amountCents < minCents) {
+        if (!mounted) return;
+        _showMinAmountDialog(currency, minCents, donationAmount);
         return;
       }
-    }
 
-    if (_additionalPaymentOptionsEnabled()) {
-      final method = await _showPaymentMethodSelector();
-      if (method == null || !mounted) return;
-      if (method == PaymentMethod.card) {
-        await _processCardPayment(donationAmount);
-      } else {
-        await _processAlternativePayment(donationAmount, method);
+      await StripeService.instance.pay(
+        amountCents: amountCents,
+        currency: currency,
+        customerEmail: ref.read(currentUserProvider)?.email,
+        purpose: 'donation',
+      );
+
+      await AnalyticsService.instance.logDonation(donationAmount, currency);
+
+      final user = ref.read(currentUserProvider);
+      if (user != null) {
+        await ref.read(transactionRepositoryProvider).addTransaction(
+          uid: user.uid,
+          type: TransactionType.tzedaka,
+          amount: donationAmount,
+          description: result['message']?.toString().isNotEmpty == true
+              ? result['message'] as String
+              : 'Donaci\u00f3n instant\u00e1nea',
+          paymentMethod: PaymentMethod.card,
+          status: PaymentStatus.completed,
+        );
       }
-    } else {
-      await _processCardPayment(donationAmount);
+
+      FeedbackService.instance.playSuccess();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Donaci\u00f3n de \$${donationAmount.toStringAsFixed(2)} procesada exitosamente')),
+        );
+      }
+    } catch (error) {
+      debugPrint('Instant donation error: $error');
+      if (!mounted) return;
+      _showError(_donationErrorMessage(error));
+    } finally {
+      if (mounted) setState(() => _isProcessing = false);
     }
   }
 
   Future<void> _processCardPayment(double donationAmount) async {
+    if (!mounted) return;
     setState(() => _isProcessing = true);
     try {
       if (StripeConfig.publishableKey.isEmpty) {
         throw Exception('Stripe no está configurado');
       }
 
-      final amountCents = (donationAmount * 100).round();
+      final amountCents = ((donationAmount * 100) + 0.001).round();
       final currency = _currencyCodeFromProfile();
       final minCents = _minAmountCentsForCurrency(currency);
       if (amountCents < minCents) {
@@ -125,6 +306,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
         );
       }
 
+      FeedbackService.instance.playSuccess();
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -149,6 +331,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
     final confirmed = await _showPaymentInstructions(method, amount);
     if (confirmed != true) return;
 
+    if (!mounted) return;
     setState(() => _isProcessing = true);
     try {
       final remaining = (pushkaAmount - amount).clamp(0.0, double.infinity);
@@ -190,7 +373,33 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
     }
   }
 
-  double get fillPercentage {
+  Future<void> _processDirectDonation(double amount) async {
+    if (amount <= 0 || _isProcessing) return;
+
+    if (_biometricEnabled()) {
+      final authenticated = await BiometricService.instance.authenticate(
+        reason: 'Confirma tu identidad para procesar la donaci\u00f3n',
+      );
+      if (!authenticated) {
+        _showError('Autenticaci\u00f3n requerida para donar');
+        return;
+      }
+    }
+    if (!mounted) return;
+
+    if (_additionalPaymentOptionsEnabled()) {
+      final method = await _showPaymentMethodSelector();
+      if (method == null || !mounted) return;
+      if (method == PaymentMethod.card) {
+        await _processCardPayment(amount);
+      } else {
+        await _processAlternativePayment(amount, method);
+      }
+    } else {
+      await _processCardPayment(amount);
+    }
+  }
+    double get fillPercentage {
     if (pushkaGoal <= 0) return 0;
     final percentage = (pushkaAmount / pushkaGoal).clamp(0.0, 1.0);
     return percentage;
@@ -198,9 +407,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
 
   @override
   Widget build(BuildContext context) {
-    const red = Color(0xFFE05A4F);
-    const blue = Color(0xFF2F60C5);
-    const lightBlue = Color(0xFFE3F2FD);
+
 
     final userProfile = ref.watch(userProfileProvider).valueOrNull;
     final remoteGoal = userProfile?['pushkaGoal'];
@@ -214,9 +421,20 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
           if (remoteGoal is num) pushkaGoal = remoteGoal.toDouble();
           if (remoteAmount is num) pushkaAmount = remoteAmount.toDouble();
           if (remotePresets is List && remotePresets.length == 3) {
-            _presetAmounts = remotePresets.map((e) => (e as num).toDouble()).toList();
+            try {
+              _presetAmounts = remotePresets.whereType<num>().map((e) => e.toDouble()).toList();
+              if (_presetAmounts.length != 3) _presetAmounts = [];
+            } catch (_) {
+              _presetAmounts = [];
+            }
           }
           _loadedRemote = true;
+          _streakCount = (userProfile['streakCount'] as int?) ?? 0;
+          FeedbackService.instance.updatePreferences(
+            sound: (userProfile['soundEnabled'] as bool?) ?? true,
+            coinJingle: (userProfile['coinJingleEnabled'] as bool?) ?? true,
+            vibration: (userProfile['vibrationEnabled'] as bool?) ?? true,
+          );
         });
       });
     }
@@ -225,255 +443,417 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
 
     return SafeArea(
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(18, 6, 18, 18),
+        padding: const EdgeInsets.fromLTRB(16, 2, 16, 10),
         child: LayoutBuilder(
           builder: (context, constraints) {
             final isCompact = constraints.maxHeight < 560;
-            final imageHeight = isCompact ? 250.0 : 450.0;
-            final topGap = isCompact ? 10.0 : 16.0;
-            final titleSize = isCompact ? 23.0 : 28.0;
+            final availableForImage = constraints.maxHeight - 260;
+            final imageHeight = availableForImage.clamp(220.0, 440.0);
+            final topGap = isCompact ? 4.0 : 8.0;
+            final titleSize = isCompact ? 20.0 : 24.0;
             final subtitleSize = isCompact ? 14.0 : 16.0;
-            final titleBottomGap = isCompact ? 14.0 : 24.0;
-            final actionsTopGap = isCompact ? 12.0 : 16.0;
+            final titleBottomGap = isCompact ? 6.0 : 10.0;
+            final actionsTopGap = isCompact ? 6.0 : 10.0;
 
-            Widget pushkaStack() {
-              return Stack(
-                alignment: Alignment.center,
-                children: [
-                  SizedBox(
-                    height: imageHeight,
-                    child: Stack(
-                      alignment: Alignment.bottomCenter,
-                      children: [
-                        Image.asset(
-                          'assets/images/pushka.png',
-                          height: imageHeight,
-                          fit: BoxFit.contain,
-                        ),
-                        Positioned(
-                          bottom: 0,
-                          left: 0,
-                          right: 0,
-                          child: ClipRect(
-                            child: Align(
-                              alignment: Alignment.bottomCenter,
-                              heightFactor: fillPercentage,
-                              child: Container(
-                                height: imageHeight,
-                                decoration: BoxDecoration(
-                                  gradient: LinearGradient(
-                                    begin: Alignment.bottomCenter,
-                                    end: Alignment.topCenter,
-                                    colors: [
-                                      lightBlue.withValues(alpha: 0.6),
-                                      lightBlue.withValues(alpha: 0.3),
-                                    ],
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  Positioned(
-                    top: isCompact ? 8 : 20,
-                    left: 0,
-                    child: Row(
-                      children: [
-                        Container(
-                          width: 8,
-                          height: 8,
-                          decoration: const BoxDecoration(
-                            color: blue,
-                            shape: BoxShape.circle,
-                          ),
-                        ),
-                        const SizedBox(width: 6),
-                        Text(
-                          "\$${pushkaGoal.toStringAsFixed(2)}",
-                          style: TextStyle(
-                            color: blue,
-                            fontSize: isCompact ? 14 : 16,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  Positioned(
-                    bottom: isCompact ? 8 : 20,
-                    right: 0,
-                    child: Row(
-                      children: [
-                        Container(
-                          width: 8,
-                          height: 8,
-                          decoration: const BoxDecoration(
-                            color: blue,
-                            shape: BoxShape.circle,
-                          ),
-                        ),
-                        const SizedBox(width: 6),
-                        Text(
-                          "\$${pushkaAmount.toStringAsFixed(2)}",
-                          style: TextStyle(
-                            color: blue,
-                            fontSize: isCompact ? 14 : 16,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              );
-            }
+                        final activeHoliday = _HolidayInfo.getActiveHoliday();
+            final bool isFull = pushkaGoal > 0 && pushkaAmount >= pushkaGoal;
 
             final content = Column(
-              mainAxisSize: isCompact ? MainAxisSize.min : MainAxisSize.max,
+              mainAxisSize: MainAxisSize.min,
               children: [
-            // Banner de Streak
-            _buildStreakBanner(lightBlue, blue),
-            
+            Center(child: _buildStreakBanner(AppTokens.cardSilver, AppTokens.primaryBlue)),
+            if (activeHoliday != null) Center(child: _buildHolidayBanner(activeHoliday)),
+
             SizedBox(height: topGap),
 
-            // Títulos
-            Text(
-              "¡Llénala!",
-              style: TextStyle(
-                fontSize: titleSize,
-                fontWeight: FontWeight.w700,
-                color: blue,
+            if (isFull) ...[
+              Text(
+                "Tu Pushka est\u00e1 llena",
+                style: TextStyle(
+                  fontSize: titleSize,
+                  fontWeight: FontWeight.w700,
+                  color: AppTokens.primaryBlue,
+                ),
+                textAlign: TextAlign.center,
               ),
-            ),
-            const SizedBox(height: 6),
-            Text(
-              "Sigamos adelante",
-              style: TextStyle(color: Colors.black54, fontSize: subtitleSize),
-            ),
-            SizedBox(height: titleBottomGap),
-
-            // Pushka con efecto de llenado
-            if (isCompact)
-              Center(child: pushkaStack())
-            else
-              Expanded(
-                child: Center(child: pushkaStack()),
+              const SizedBox(height: 6),
+              Text(
+                "\u00a1Alcanzaste tu Meta de Donaci\u00f3n!",
+                style: TextStyle(color: AppTokens.mutedText, fontSize: subtitleSize),
+                textAlign: TextAlign.center,
               ),
+              SizedBox(height: titleBottomGap),
 
-            SizedBox(height: actionsTopGap),
-
-            // Botones de monto
-            Row(
-              children: [
-                _moneyBtn(
-                  _formatQuickAmount(quickAmounts[0]),
-                  red,
-                  () => addAmount(quickAmounts[0]),
-                ),
-                const SizedBox(width: 10),
-                _moneyBtn(
-                  _formatQuickAmount(quickAmounts[1]),
-                  red,
-                  () => addAmount(quickAmounts[1]),
-                ),
-                const SizedBox(width: 10),
-                _moneyBtn(
-                  _formatQuickAmount(quickAmounts[2]),
-                  red,
-                  () => addAmount(quickAmounts[2]),
-                ),
-                const SizedBox(width: 10),
-                _moneyBtn('OTRO', red, _otherAmount),
-              ],
-            ),
-
-            const SizedBox(height: 18),
-
-            // Botones de acción
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                TextButton(
-                  onPressed: _donateNow,
-                  child: const Text(
-                    'DONAR AHORA',
-                    style: TextStyle(color: red, fontWeight: FontWeight.w700),
+              RepaintBoundary(
+                child: SizedBox(
+                  height: imageHeight,
+                  child: Pushka3DWidget(
+                    key: _pushkaKey,
+                    fillPercentage: fillPercentage,
+                    goal: pushkaGoal,
+                    amount: pushkaAmount,
+                    currencySymbol: _currencySymbol(_currencyCodeFromProfile()),
                   ),
                 ),
-                TextButton(
+              ),
+
+              SizedBox(height: actionsTopGap),
+
+              SizedBox(
+                width: double.infinity,
+                height: 50,
+                child: ElevatedButton(
                   onPressed: emptyPushka,
-                  child: const Text(
-                    'VACIAR PUSHKA',
-                    style: TextStyle(color: red, fontWeight: FontWeight.w700),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppTokens.primaryBlue,
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  ),
+                  child: const Text('VACIAR PUSHKA', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16)),
+                ),
+              ),
+              const SizedBox(height: 10),
+              TextButton(
+                onPressed: _showTzedakahSettingsDialog,
+                child: Text(
+                  'CAMBIAR META DE PUSHKA',
+                  style: TextStyle(color: AppTokens.primaryBlue, fontWeight: FontWeight.w700, fontSize: 15),
+                ),
+              ),
+            ] else ...[
+              Text(
+                "\u00a1Ll\u00e9nala!",
+                style: TextStyle(
+                  fontSize: titleSize,
+                  fontWeight: FontWeight.w700,
+                  color: AppTokens.primaryBlue,
+                ),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                "Sigamos adelante",
+                style: TextStyle(color: AppTokens.mutedText, fontSize: subtitleSize),
+              ),
+              SizedBox(height: titleBottomGap),
+
+              RepaintBoundary(
+                child: SizedBox(
+                  height: imageHeight,
+                  child: Pushka3DWidget(
+                    key: _pushkaKey,
+                    fillPercentage: fillPercentage,
+                    goal: pushkaGoal,
+                    amount: pushkaAmount,
+                    currencySymbol: _currencySymbol(_currencyCodeFromProfile()),
                   ),
                 ),
-                IconButton(
-                  icon: const Icon(Icons.settings, color: Colors.grey),
-                  onPressed: _showTzedakahSettingsDialog,
-                ),
-              ],
-            ),
+              ),
+
+              SizedBox(height: actionsTopGap),
+
+              Row(
+                children: [
+                  _moneyBtn(
+                    _formatQuickAmount(quickAmounts[0]),
+                    AppTokens.primaryBlue,
+                    () => addAmount(quickAmounts[0]),
+                  ),
+                  const SizedBox(width: 10),
+                  _moneyBtn(
+                    _formatQuickAmount(quickAmounts[1]),
+                    AppTokens.primaryBlue,
+                    () => addAmount(quickAmounts[1]),
+                  ),
+                  const SizedBox(width: 10),
+                  _moneyBtn(
+                    _formatQuickAmount(quickAmounts[2]),
+                    AppTokens.primaryBlue,
+                    () => addAmount(quickAmounts[2]),
+                  ),
+                  const SizedBox(width: 10),
+                  _moneyBtn('OTRO', AppTokens.primaryBlue, _otherAmount),
+                ],
+              ),
+
+              const SizedBox(height: 18),
+
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  TextButton(
+                    onPressed: _donateNow,
+                    child: const Text(
+                      'DONAR AHORA',
+                      style: TextStyle(color: AppTokens.primaryBlue, fontWeight: FontWeight.w700),
+                    ),
+                  ),
+                  TextButton(
+                    onPressed: emptyPushka,
+                    child: const Text(
+                      'VACIAR PUSHKA',
+                      style: TextStyle(color: AppTokens.primaryBlue, fontWeight: FontWeight.w700),
+                    ),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.settings, color: Colors.grey),
+                    onPressed: _showTzedakahSettingsDialog,
+                  ),
+                ],
+              ),
+            ],
               ],
             );
-
-            if (isCompact) {
-              return SingleChildScrollView(
-                child: content,
-              );
-            }
-            return content;
+            return SingleChildScrollView(
+              child: content,
+            );
           },
         ),
       ),
     );
   }
 
-  Widget _buildStreakBanner(Color lightBlue, Color blue) {
+  Widget _buildStreakBanner(Color bgColor, Color brandBlue) {
     return Container(
-      height: 40,
+      height: 34,
+      padding: const EdgeInsets.symmetric(horizontal: 12),
       decoration: BoxDecoration(
-        color: blue,
-        borderRadius: BorderRadius.circular(8),
+        gradient: const LinearGradient(
+          colors: [Color(0xFFD4A017), Color(0xFFC59B08)],
+        ),
+        borderRadius: BorderRadius.circular(20),
       ),
       child: Row(
+        mainAxisSize: MainAxisSize.min,
         children: [
-          // Hexágono con número
           Container(
-            width: 40,
-            height: 40,
+            width: 24,
+            height: 24,
             decoration: BoxDecoration(
-              color: lightBlue,
-              borderRadius: BorderRadius.circular(6),
+              color: Colors.white.withValues(alpha: 0.25),
+              shape: BoxShape.circle,
             ),
-            margin: const EdgeInsets.all(4),
             child: Center(
-              child: Text(
-                '1',
-                style: TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.w700,
-                  color: blue,
-                ),
-              ),
+              child: Text('${_streakCount > 0 ? _streakCount : 0}', style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w800, color: Colors.white)),
             ),
           ),
-          const SizedBox(width: 12),
-          const Expanded(
-            child: Text(
-              'Racha de Días de Semana',
-              style: TextStyle(
-                color: Colors.white,
-                fontSize: 16,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
+          const SizedBox(width: 8),
+          const Text(
+            'Racha de D\u00edas de Semana',
+            style: TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600),
           ),
+          const SizedBox(width: 6),
+          const Icon(Icons.local_fire_department, color: Colors.white, size: 16),
         ],
       ),
     );
+  }
+  String _holidayEmoji(String name) {
+    final lower = name.toLowerCase();
+    if (lower.contains('pesaj') || lower.contains('jitim') || lower.contains('maos')) return '\uD83E\uDED3\uD83E\uDED3';
+    if (lower.contains('shavuot')) return '\uD83C\uDF3E';
+    if (lower.contains('rosh')) return '\uD83C\uDF4E\uD83C\uDF6F';
+    if (lower.contains('kipur')) return '\uD83D\uDD4A\uFE0F';
+    if (lower.contains('sucot')) return '\uD83C\uDF34';
+    if (lower.contains('januc')) return '\uD83D\uDD6F\uFE0F';
+    if (lower.contains('purim')) return '\uD83C\uDF89';
+    return '\u2728';
+  }
+
+  Widget _buildHolidayBanner(_HolidayInfo holiday) {
+    final emoji = _holidayEmoji(holiday.nameEs);
+    return GestureDetector(
+      onTap: () { if (_isProcessing) return; _showHolidayDonationDialog(holiday); },
+      child: Container(
+        margin: const EdgeInsets.only(top: 6),
+        height: 34,
+        padding: const EdgeInsets.symmetric(horizontal: 12),
+        decoration: BoxDecoration(
+          gradient: const LinearGradient(
+            colors: [Color(0xFFE8912D), Color(0xFFD4790A)],
+          ),
+          borderRadius: BorderRadius.circular(20),
+          boxShadow: [
+            BoxShadow(
+              color: const Color(0xFFE8912D).withValues(alpha: 0.25),
+              blurRadius: 6,
+              offset: const Offset(0, 2),
+            ),
+          ],
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(emoji, style: const TextStyle(fontSize: 15)),
+            const SizedBox(width: 8),
+            Flexible(
+              child: Text(
+                holiday.nameEs,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w700,
+                ),
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            const SizedBox(width: 6),
+            const Icon(Icons.chevron_right, color: Colors.white, size: 18),
+          ],
+        ),
+      ),
+    );
+  }
+  Future<void> _showHolidayDonationDialog(_HolidayInfo holiday) async {
+    final amountCtrl = TextEditingController();
+    Map<String, dynamic>? result;
+    double? selectedPreset;
+    result = await showKeyboardSafeSheet<Map<String, dynamic>>(
+      context: context,
+      heightFactor: 0.8,
+      builder: (ctx, setDialogState) {
+            double currentAmount() {
+              if (selectedPreset != null) return selectedPreset!;
+              final parsed = double.tryParse(amountCtrl.text.trim().replaceAll(',', '.'));
+              return parsed ?? 0;
+            }
+            return Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Center(child: Container(width: 36, height: 4, margin: const EdgeInsets.only(bottom: 8), decoration: BoxDecoration(color: Colors.grey.shade300, borderRadius: BorderRadius.circular(2)))),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.end,
+                          children: [
+                            IconButton(
+                              icon: const Icon(Icons.close),
+                              onPressed: () => Navigator.pop(ctx),
+                            ),
+                          ],
+                        ),
+                        Text(
+                          holiday.nameEs,
+                          style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w700, color: Color(0xFFE8912D)),
+                        ),
+                        const SizedBox(height: 10),
+                        Text(
+                          holiday.descriptionEs,
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(color: AppTokens.mutedText, fontSize: 14),
+                        ),
+                        const SizedBox(height: 18),
+                        const Align(
+                          alignment: Alignment.centerLeft,
+                          child: Text('Elige un monto', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 16)),
+                        ),
+                        const SizedBox(height: 12),
+                        Wrap(
+                          spacing: 10,
+                          runSpacing: 8,
+                          alignment: WrapAlignment.center,
+                          children: holiday.presetAmounts.map((amt) {
+                            final isSelected = selectedPreset == amt;
+                            return OutlinedButton(
+                              onPressed: () {
+                                setDialogState(() {
+                                  selectedPreset = isSelected ? null : amt;
+                                  if (!isSelected) amountCtrl.clear();
+                                });
+                              },
+                              style: OutlinedButton.styleFrom(
+                                backgroundColor: isSelected ? const Color(0xFFE8912D) : null,
+                                foregroundColor: isSelected ? Colors.white : const Color(0xFFE8912D),
+                                side: const BorderSide(color: Color(0xFFE8912D), width: 2),
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                                minimumSize: Size.zero,
+                                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                              ),
+                              child: Text('\${amt.toInt()}', style: const TextStyle(fontWeight: FontWeight.w700)),
+                            );
+                          }).toList(),
+                        ),
+                        const SizedBox(height: 16),
+                        GestureDetector(
+                          onTap: () => setDialogState(() => selectedPreset = null),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                            decoration: BoxDecoration(
+                              border: Border.all(color: Colors.grey.shade300),
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Expanded(
+                                  child: TextField(
+                                    controller: amountCtrl,
+                                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                                    textAlign: TextAlign.center,
+                                    style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w700),
+                                    decoration: const InputDecoration(
+                                      border: InputBorder.none,
+                                      hintText: '0',
+                                      hintStyle: TextStyle(color: Colors.grey),
+                                    ),
+                                    onChanged: (_) => setDialogState(() => selectedPreset = null),
+                                  ),
+                                ),
+                                const Icon(Icons.edit, color: Colors.grey, size: 18),
+                              ],
+                            ),
+                          ),
+                        ),
+                        const Text('Toca para editar el monto', style: TextStyle(color: Colors.grey, fontSize: 12)),
+                        const SizedBox(height: 18),
+                        SizedBox(
+                          width: double.infinity,
+                          child: ElevatedButton(
+                            onPressed: () {
+                              final amt = currentAmount();
+                              if (amt > 0) Navigator.pop(ctx, {'action': 'donate', 'amount': amt});
+                            },
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: AppTokens.primaryBlue,
+                              foregroundColor: Colors.white,
+                              padding: const EdgeInsets.symmetric(vertical: 14),
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                            ),
+                            child: const Text('DONAR AHORA', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16)),
+                          ),
+                        ),
+                        const SizedBox(height: 10),
+                        SizedBox(
+                          width: double.infinity,
+                          child: OutlinedButton(
+                            onPressed: () {
+                              final amt = currentAmount();
+                              if (amt > 0) Navigator.pop(ctx, {'action': 'pushka', 'amount': amt});
+                            },
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: AppTokens.primaryBlue,
+                              side: const BorderSide(color: AppTokens.primaryBlue, width: 2),
+                              padding: const EdgeInsets.symmetric(vertical: 14),
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                            ),
+                            child: const Text('AGREGAR A PUSHKA', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16)),
+                          ),
+                        ),
+                      ],
+                    );
+      },
+    );
+
+    if (result == null || !mounted) return;
+    final amount = result['amount'] as double;
+    if (result['action'] == 'pushka') {
+      await addAmount(amount);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('\${amount.toStringAsFixed(2)} agregado a tu Pushka')),
+        );
+      }
+    } else {
+      await _processDirectDonation(amount);
+    }
   }
 
   Expanded _moneyBtn(String label, Color border, VoidCallback onTap) {
@@ -505,67 +885,47 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
   Future<void> _otherAmount() async {
     final controller = TextEditingController();
     String? error;
-
-    final result = await showModalBottomSheet<double>(
+    double? result;
+    result = await showKeyboardSafeSheet<double>(
       context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setSheetState) => Padding(
-          padding: EdgeInsets.only(bottom: MediaQuery.of(ctx).viewInsets.bottom),
-          child: Container(
-            decoration: const BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-            ),
-            child: SafeArea(
-              top: false,
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.fromLTRB(20, 8, 20, 16),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Center(child: Container(width: 36, height: 4, margin: const EdgeInsets.only(bottom: 14), decoration: BoxDecoration(color: Colors.grey.shade300, borderRadius: BorderRadius.circular(2)))),
-                    const Text('Otro monto', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
-                    const SizedBox(height: 14),
-                    TextField(
-                      controller: controller,
-                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                      textInputAction: TextInputAction.done,
-                      decoration: InputDecoration(
-                        hintText: 'Ej: 12.50', prefixText: '\$ ', errorText: error,
-                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                        focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: Color(0xFFE05A4F), width: 1.6)),
+      builder: (ctx, setDialogState) => Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      Center(child: Container(width: 36, height: 4, margin: const EdgeInsets.only(bottom: 12), decoration: BoxDecoration(color: Colors.grey.shade300, borderRadius: BorderRadius.circular(2)))),
+                      const Text('Otro monto', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
+                      const SizedBox(height: 14),
+                      TextField(
+                        controller: controller,
+                        keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                        textInputAction: TextInputAction.done,
+                        onSubmitted: (_) {
+                          final value = double.tryParse(controller.text.trim().replaceAll(',', '.'));
+                          if (value != null && value > 0) Navigator.pop(ctx, value);
+                        },
+                        decoration: InputDecoration(
+                          hintText: 'Ej: 12.50', prefixText: '\$ ', errorText: error,
+                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                          focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: AppTokens.primaryBlue, width: 1.6)),
+                        ),
+                        onChanged: (_) { if (error != null) setDialogState(() => error = null); },
                       ),
-                      onChanged: (_) { if (error != null) setSheetState(() => error = null); },
-                    ),
-                    const SizedBox(height: 16),
-                    SizedBox(width: double.infinity, height: 48, child: ElevatedButton(
-                      style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFE05A4F), foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
-                      onPressed: () {
-                        final value = double.tryParse(controller.text.replaceAll(',', '.'));
-                        if (value == null || value <= 0) { setSheetState(() => error = 'Ingresa un monto válido'); return; }
-                        Navigator.pop(ctx, value);
-                      },
-                      child: const Text('Agregar', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
-                    )),
-                    const SizedBox(height: 8),
-                    SizedBox(width: double.infinity, height: 44, child: TextButton(
-                      onPressed: () => Navigator.pop(ctx),
-                      child: Text('Cancelar', style: TextStyle(color: Colors.grey.shade600, fontWeight: FontWeight.w500)),
-                    )),
-                  ],
-                ),
-              ),
-            ),
-          ),
-        ),
-      ),
+                      const SizedBox(height: 16),
+                      SizedBox(width: double.infinity, height: 48, child: ElevatedButton(
+                        style: ElevatedButton.styleFrom(backgroundColor: AppTokens.primaryBlue, foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
+                        onPressed: () {
+                          final value = double.tryParse(controller.text.trim().replaceAll(',', '.'));
+                          if (value == null || value <= 0) { setDialogState(() => error = 'Ingresa un monto v\u00e1lido'); return; }
+                          Navigator.pop(ctx, value);
+                        },
+                        child: const Text('Agregar', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+                      )),
+                      SizedBox(width: double.infinity, height: 44, child: TextButton(
+                        onPressed: () => Navigator.pop(ctx),
+                        child: Text('Cancelar', style: TextStyle(color: Colors.grey.shade600, fontWeight: FontWeight.w500)),
+                      )),
+                    ]),
     );
 
-    controller.dispose();
-    if (result != null) await addAmount(result);
+    if (!mounted || result == null) return;
+    await addAmount(result);
   }
 
   Future<void> _addTransaction(TransactionType type, double amount) async {
@@ -595,6 +955,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
   }
 
   void _showError(String message) {
+    if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(message)),
     );
@@ -653,7 +1014,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
               height: 46,
               child: ElevatedButton(
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFFE05A4F),
+                  backgroundColor: AppTokens.primaryBlue,
                   foregroundColor: Colors.white,
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                   elevation: 0,
@@ -764,7 +1125,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
   }
 
   Widget _paymentMethodTile(BuildContext ctx, PaymentMethod method, IconData icon, String title, String subtitle) {
-    const red = Color(0xFFE05A4F);
+
     return InkWell(
       borderRadius: BorderRadius.circular(12),
       onTap: () => Navigator.pop(ctx, method),
@@ -777,8 +1138,8 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
         child: Row(children: [
           Container(
             width: 44, height: 44,
-            decoration: BoxDecoration(color: red.withValues(alpha: 0.1), borderRadius: BorderRadius.circular(10)),
-            child: Icon(icon, color: red, size: 22),
+            decoration: BoxDecoration(color: AppTokens.primaryBlue.withValues(alpha: 0.1), borderRadius: BorderRadius.circular(10)),
+            child: Icon(icon, color: AppTokens.primaryBlue, size: 22),
           ),
           const SizedBox(width: 14),
           Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -852,14 +1213,14 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
                 padding: const EdgeInsets.fromLTRB(20, 8, 20, 0),
                 child: Column(children: [
                   Center(child: Container(width: 36, height: 4, margin: const EdgeInsets.only(bottom: 14), decoration: BoxDecoration(color: Colors.grey.shade300, borderRadius: BorderRadius.circular(2)))),
-                  Icon(icon, size: 40, color: const Color(0xFFE05A4F)),
+                  Icon(icon, size: 40, color: AppTokens.primaryBlue),
                   const SizedBox(height: 10),
                   Text(title, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
                   const SizedBox(height: 4),
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                    decoration: BoxDecoration(color: const Color(0xFFE05A4F).withValues(alpha: 0.1), borderRadius: BorderRadius.circular(20)),
-                    child: Text('\$${amount.toStringAsFixed(2)}', style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w800, color: Color(0xFFE05A4F))),
+                    decoration: BoxDecoration(color: AppTokens.primaryBlue.withValues(alpha: 0.1), borderRadius: BorderRadius.circular(20)),
+                    child: Text('\$${amount.toStringAsFixed(2)}', style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w800, color: AppTokens.primaryBlue)),
                   ),
                 ]),
               ),
@@ -877,7 +1238,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
                 padding: const EdgeInsets.fromLTRB(20, 14, 20, 8),
                 child: Column(children: [
                   SizedBox(width: double.infinity, height: 48, child: ElevatedButton(
-                    style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFE05A4F), foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
+                    style: ElevatedButton.styleFrom(backgroundColor: AppTokens.primaryBlue, foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
                     onPressed: () => Navigator.pop(ctx, true),
                     child: const Text('Confirmar donación', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
                   )),
@@ -1031,7 +1392,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
   Future<void> _showTzedakahSettingsDialog() async {
     final user = ref.read(currentUserProvider);
     if (user == null) {
-      _showError('Inicia sesión para continuar');
+      _showError('Inicia sesi\u00f3n para continuar');
       return;
     }
 
@@ -1048,259 +1409,238 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
         : defaults;
     final symbol = _shortSymbol(currency);
 
-    final ctrl1 = TextEditingController(text: _formatPresetValue(currentPresets[0]));
-    final ctrl2 = TextEditingController(text: _formatPresetValue(currentPresets[1]));
-    final ctrl3 = TextEditingController(text: _formatPresetValue(currentPresets[2]));
-
     double selectedGoal = pushkaGoal;
     bool isSaving = false;
 
-    final saved = await showDialog<bool>(
+    final ctrl1 = TextEditingController(text: _formatPresetValue(currentPresets[0]));
+    final ctrl2 = TextEditingController(text: _formatPresetValue(currentPresets[1]));
+    final ctrl3 = TextEditingController(text: _formatPresetValue(currentPresets[2]));
+    bool? saved;
+    saved = await showKeyboardSafeSheet<bool>(
       context: context,
-      builder: (dialogContext) => StatefulBuilder(
-        builder: (dialogContext, setDialogState) => AlertDialog(
-          insetPadding: EdgeInsets.fromLTRB(
-            16,
-            20,
-            16,
-            MediaQuery.of(dialogContext).viewInsets.bottom + 14,
-          ),
-          contentPadding: const EdgeInsets.fromLTRB(20, 20, 20, 18),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(22)),
-          content: ConstrainedBox(
-            constraints: BoxConstraints(
-              maxWidth: 360,
-              maxHeight: MediaQuery.of(dialogContext).size.height * 0.82,
-            ),
-            child: SingleChildScrollView(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                const Center(
-                  child: Text(
-                    'Configuración de Tzedaká',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                      fontSize: 28,
-                      fontWeight: FontWeight.w800,
-                      letterSpacing: -0.3,
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 18),
-                Text(
-                  'META DE PUSHKA',
-                  style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w700,
-                    color: Colors.grey.shade700,
-                    letterSpacing: 0.8,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                DropdownButtonFormField<double>(
-                  initialValue: selectedGoal,
-                  icon: const Icon(Icons.keyboard_arrow_down_rounded),
-                  isExpanded: true,
-                  menuMaxHeight: 620,
-                  dropdownColor: Colors.white,
-                  borderRadius: BorderRadius.circular(16),
-                  itemHeight: 52,
-                  decoration: InputDecoration(
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(14),
-                    ),
-                    contentPadding: const EdgeInsets.symmetric(
-                      horizontal: 14,
-                      vertical: 14,
-                    ),
-                  ),
-                  items: goalOptions.map((value) {
-                    return DropdownMenuItem<double>(
-                      value: value,
-                      child: Text(
-                        '\$${value.toStringAsFixed(0)}',
-                        style: const TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w500,
-                        ),
+      heightFactor: 0.85,
+      builder: (ctx, setDialogState) => Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Center(child: Container(width: 36, height: 4, margin: const EdgeInsets.only(bottom: 12), decoration: BoxDecoration(color: Colors.grey.shade300, borderRadius: BorderRadius.circular(2)))),
+                  const Center(
+                    child: Text(
+                      'Configuraci\u00f3n de Tzedak\u00e1',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontSize: 28,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: -0.3,
                       ),
-                    );
-                  }).toList()
-                    ..add(
-                      const DropdownMenuItem<double>(
-                        value: -1,
+                    ),
+                  ),
+                  const SizedBox(height: 18),
+                  Text(
+                    'META DE PUSHKA',
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                      color: Colors.grey.shade700,
+                      letterSpacing: 0.8,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  DropdownButtonFormField<double>(
+                    initialValue: goalOptions.contains(selectedGoal) ? selectedGoal : null,
+                    icon: const Icon(Icons.keyboard_arrow_down_rounded),
+                    isExpanded: true,
+                    menuMaxHeight: 620,
+                    dropdownColor: Colors.white,
+                    borderRadius: BorderRadius.circular(16),
+                    itemHeight: 52,
+                    decoration: InputDecoration(
+                      hintText: '\$${selectedGoal.toStringAsFixed(0)}',
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 14,
+                        vertical: 14,
+                      ),
+                    ),
+                    items: goalOptions.map((value) {
+                      return DropdownMenuItem<double>(
+                        value: value,
                         child: Text(
-                          'OTRO',
-                          style: TextStyle(
+                          '\$${value.toStringAsFixed(0)}',
+                          style: const TextStyle(
                             fontSize: 16,
                             fontWeight: FontWeight.w500,
                           ),
                         ),
-                      ),
-                    ),
-                  onChanged: (value) async {
-                    if (value == null) return;
-                    if (value == -1) {
-                      final custom = await _showCustomGoalDialog();
-                      if (custom != null) {
-                        setDialogState(() => selectedGoal = custom);
-                      }
-                      return;
-                    }
-                    setDialogState(() => selectedGoal = value);
-                  },
-                ),
-                const SizedBox(height: 18),
-                Text(
-                  'MONTOS PREDEFINIDOS',
-                  style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w700,
-                    color: Colors.grey.shade700,
-                    letterSpacing: 0.8,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  'Edita los montos que aparecen como botones rápidos',
-                  style: TextStyle(fontSize: 12, color: Colors.grey.shade500),
-                ),
-                const SizedBox(height: 10),
-                Row(
-                  children: [ctrl1, ctrl2, ctrl3].asMap().entries.map((entry) {
-                    final idx = entry.key;
-                    final ctrl = entry.value;
-                    return Expanded(
-                      child: Padding(
-                        padding: EdgeInsets.only(right: idx < 2 ? 8 : 0),
-                        child: TextField(
-                          controller: ctrl,
-                          keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                          textAlign: TextAlign.center,
-                          style: const TextStyle(
-                            fontSize: 16,
-                            color: Color(0xFF2F60C5),
-                            fontWeight: FontWeight.w600,
-                          ),
-                          decoration: InputDecoration(
-                            prefixText: symbol,
-                            prefixStyle: TextStyle(
-                              fontSize: 15,
-                              color: Colors.grey.shade600,
-                              fontWeight: FontWeight.w600,
-                            ),
-                            contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 14),
-                            border: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(14),
-                              borderSide: BorderSide(color: Colors.grey.shade300, width: 1.2),
-                            ),
-                            enabledBorder: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(14),
-                              borderSide: BorderSide(color: Colors.grey.shade300, width: 1.2),
-                            ),
-                            focusedBorder: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(14),
-                              borderSide: const BorderSide(color: Color(0xFF2F60C5), width: 2),
+                      );
+                    }).toList()
+                      ..add(
+                        const DropdownMenuItem<double>(
+                          value: -1,
+                          child: Text(
+                            'OTRO',
+                            style: TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w500,
                             ),
                           ),
                         ),
                       ),
-                    );
-                  }).toList(),
-                ),
-                const SizedBox(height: 22),
-                SizedBox(
-                  width: double.infinity,
-                  child: ElevatedButton(
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFFE05A4F),
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(vertical: 14),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
+                    onChanged: (value) async {
+                      if (value == null) return;
+                      if (value == -1) {
+                        final custom = await _showCustomGoalDialog();
+                        if (custom != null && ctx.mounted) {
+                          setDialogState(() => selectedGoal = custom);
+                        }
+                        return;
+                      }
+                      setDialogState(() => selectedGoal = value);
+                    },
+                  ),
+                  const SizedBox(height: 18),
+                  Text(
+                    'MONTOS PREDEFINIDOS',
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                      color: Colors.grey.shade700,
+                      letterSpacing: 0.8,
                     ),
-                    onPressed: isSaving
-                        ? null
-                        : () async {
-                            final p1 = double.tryParse(ctrl1.text.replaceAll(',', '.')) ?? 0;
-                            final p2 = double.tryParse(ctrl2.text.replaceAll(',', '.')) ?? 0;
-                            final p3 = double.tryParse(ctrl3.text.replaceAll(',', '.')) ?? 0;
-                            if (p1 <= 0 || p2 <= 0 || p3 <= 0) {
-                              _showError('Todos los montos deben ser mayores a 0');
-                              return;
-                            }
-                            final newPresets = [p1, p2, p3];
-                            setDialogState(() => isSaving = true);
-                            if (!mounted) return;
-                            setState(() {
-                              pushkaGoal = selectedGoal;
-                              _presetAmounts = newPresets;
-                            });
-                            if (dialogContext.mounted) {
-                              Navigator.of(dialogContext).pop(true);
-                            }
-                            unawaited(
-                              _syncTzedakahSettings(
-                                uid: user.uid,
-                                goal: selectedGoal,
-                                presets: newPresets,
-                              ),
-                            );
-                          },
-                    child: isSaving
-                        ? const SizedBox(
-                            height: 18,
-                            width: 18,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2.4,
-                              valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Edita los montos que aparecen como botones r\u00e1pidos',
+                    style: TextStyle(fontSize: 12, color: Colors.grey.shade500),
+                  ),
+                  const SizedBox(height: 10),
+                  Row(
+                    children: [ctrl1, ctrl2, ctrl3].asMap().entries.map((entry) {
+                      final idx = entry.key;
+                      final ctrl = entry.value;
+                      return Expanded(
+                        child: Padding(
+                          padding: EdgeInsets.only(right: idx < 2 ? 8 : 0),
+                          child: TextField(
+                            controller: ctrl,
+                            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                            textAlign: TextAlign.center,
+                            style: const TextStyle(
+                              fontSize: 16,
+                              color: Color(0xFF2F60C5),
+                              fontWeight: FontWeight.w600,
                             ),
-                          )
-                        : const Text(
-                            'GUARDAR',
-                            style: TextStyle(fontWeight: FontWeight.w700),
+                            decoration: InputDecoration(
+                              prefixText: symbol,
+                              prefixStyle: TextStyle(
+                                fontSize: 15,
+                                color: Colors.grey.shade600,
+                                fontWeight: FontWeight.w600,
+                              ),
+                              contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 14),
+                              border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(14),
+                                borderSide: BorderSide(color: Colors.grey.shade300, width: 1.2),
+                              ),
+                              enabledBorder: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(14),
+                                borderSide: BorderSide(color: Colors.grey.shade300, width: 1.2),
+                              ),
+                              focusedBorder: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(14),
+                                borderSide: const BorderSide(color: Color(0xFF2F60C5), width: 2),
+                              ),
+                            ),
                           ),
+                        ),
+                      );
+                    }).toList(),
                   ),
-                ),
-                const SizedBox(height: 10),
-                SizedBox(
-                  width: double.infinity,
-                  child: OutlinedButton(
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: const Color(0xFFE05A4F),
-                      side: const BorderSide(color: Color(0xFFE05A4F), width: 2),
-                      padding: const EdgeInsets.symmetric(vertical: 14),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
+                  const SizedBox(height: 22),
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppTokens.primaryBlue,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                      onPressed: isSaving
+                          ? null
+                          : () async {
+                              final p1 = double.tryParse(ctrl1.text.replaceAll(',', '.')) ?? 0;
+                              final p2 = double.tryParse(ctrl2.text.replaceAll(',', '.')) ?? 0;
+                              final p3 = double.tryParse(ctrl3.text.replaceAll(',', '.')) ?? 0;
+                              if (p1 <= 0 || p2 <= 0 || p3 <= 0) {
+                                _showError('Todos los montos deben ser mayores a 0');
+                                return;
+                              }
+                              final newPresets = [p1, p2, p3];
+                              setDialogState(() => isSaving = true);
+                              if (ctx.mounted) {
+                                Navigator.of(ctx).pop(true);
+                              }
+                              if (!mounted) return;
+                              setState(() {
+                                pushkaGoal = selectedGoal;
+                                _presetAmounts = newPresets;
+                              });
+                              unawaited(
+                                _syncTzedakahSettings(
+                                  uid: user.uid,
+                                  goal: selectedGoal,
+                                  presets: newPresets,
+                                ),
+                              );
+                            },
+                      child: isSaving
+                          ? const SizedBox(
+                              height: 18,
+                              width: 18,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2.4,
+                                valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                              ),
+                            )
+                          : const Text(
+                              'GUARDAR',
+                              style: TextStyle(fontWeight: FontWeight.w700),
+                            ),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton(
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: AppTokens.primaryBlue,
+                        side: const BorderSide(color: AppTokens.primaryBlue, width: 2),
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                      onPressed: isSaving
+                          ? null
+                          : () => Navigator.of(ctx).pop(false),
+                      child: const Text(
+                        'CANCELAR',
+                        style: TextStyle(fontWeight: FontWeight.w700),
                       ),
                     ),
-                    onPressed: isSaving
-                        ? null
-                        : () => Navigator.of(dialogContext).pop(false),
-                    child: const Text(
-                      'CANCELAR',
-                      style: TextStyle(fontWeight: FontWeight.w700),
-                    ),
                   ),
-                ),
-                ],
-              ),
-            ),
-          ),
-        ),
-      ),
+                      ],
+                    ),
     );
-
-    ctrl1.dispose();
-    ctrl2.dispose();
-    ctrl3.dispose();
 
     if (saved == true && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Configuración aplicada')),
+        const SnackBar(content: Text('Configuraci\u00f3n aplicada')),
       );
     }
   }
@@ -1308,54 +1648,45 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
   Future<double?> _showCustomGoalDialog() async {
     final controller = TextEditingController();
     String? error;
-    final result = await showModalBottomSheet<double>(
+    double? result;
+    result = await showKeyboardSafeSheet<double>(
       context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setSheetState) => Padding(
-          padding: EdgeInsets.only(bottom: MediaQuery.of(ctx).viewInsets.bottom),
-          child: Container(
-            decoration: const BoxDecoration(color: Colors.white, borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
-            child: SafeArea(top: false, child: SingleChildScrollView(
-              padding: const EdgeInsets.fromLTRB(20, 8, 20, 16),
-              child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Center(child: Container(width: 36, height: 4, margin: const EdgeInsets.only(bottom: 14), decoration: BoxDecoration(color: Colors.grey.shade300, borderRadius: BorderRadius.circular(2)))),
-                const Text('Meta personalizada', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
-                const SizedBox(height: 14),
-                TextField(
-                  controller: controller,
-                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                  textInputAction: TextInputAction.done,
-                  decoration: InputDecoration(
-                    hintText: 'Ej: 4500', prefixText: '\$ ', errorText: error,
-                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                    focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: Color(0xFFE05A4F), width: 1.6)),
-                  ),
-                  onChanged: (_) { if (error != null) setSheetState(() => error = null); },
-                ),
-                const SizedBox(height: 16),
-                SizedBox(width: double.infinity, height: 48, child: ElevatedButton(
-                  style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFE05A4F), foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
-                  onPressed: () {
-                    final value = double.tryParse(controller.text.replaceAll(',', '.'));
-                    if (value == null || value <= 0) { setSheetState(() => error = 'Ingresa un monto válido'); return; }
-                    Navigator.pop(ctx, value);
-                  },
-                  child: const Text('Aceptar', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
-                )),
-                const SizedBox(height: 8),
-                SizedBox(width: double.infinity, height: 44, child: TextButton(
-                  onPressed: () => Navigator.pop(ctx),
-                  child: Text('Cancelar', style: TextStyle(color: Colors.grey.shade600, fontWeight: FontWeight.w500)),
-                )),
-              ]),
-            )),
-          ),
-        ),
-      ),
+      heightFactor: 0.5,
+      builder: (ctx, setDialogState) => Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      Center(child: Container(width: 36, height: 4, margin: const EdgeInsets.only(bottom: 12), decoration: BoxDecoration(color: Colors.grey.shade300, borderRadius: BorderRadius.circular(2)))),
+                      const Text('Meta personalizada', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
+                      const SizedBox(height: 14),
+                      TextField(
+                        controller: controller,
+                        keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                        textInputAction: TextInputAction.done,
+                        onSubmitted: (_) {
+                          final value = double.tryParse(controller.text.trim().replaceAll(',', '.'));
+                          if (value != null && value > 0) Navigator.pop(ctx, value);
+                        },
+                        decoration: InputDecoration(
+                          hintText: 'Ej: 4500', prefixText: '\$ ', errorText: error,
+                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                          focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: AppTokens.primaryBlue, width: 1.6)),
+                        ),
+                        onChanged: (_) { if (error != null) setDialogState(() => error = null); },
+                      ),
+                      const SizedBox(height: 16),
+                      SizedBox(width: double.infinity, height: 48, child: ElevatedButton(
+                        style: ElevatedButton.styleFrom(backgroundColor: AppTokens.primaryBlue, foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
+                        onPressed: () {
+                          final value = double.tryParse(controller.text.trim().replaceAll(',', '.'));
+                          if (value == null || value <= 0) { setDialogState(() => error = 'Ingresa un monto v\u00e1lido'); return; }
+                          Navigator.pop(ctx, value);
+                        },
+                        child: const Text('Aceptar', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+                      )),
+                      SizedBox(width: double.infinity, height: 44, child: TextButton(
+                        onPressed: () => Navigator.pop(ctx),
+                        child: Text('Cancelar', style: TextStyle(color: Colors.grey.shade600, fontWeight: FontWeight.w500)),
+                      )),
+                    ]),
     );
-    controller.dispose();
     return result;
   }
 }
@@ -1428,11 +1759,7 @@ class _PartialDonationSheetState extends State<_PartialDonationSheet> {
 
   @override
   Widget build(BuildContext context) {
-    final bottomInset = MediaQuery.of(context).viewInsets.bottom;
-
-    return Padding(
-      padding: EdgeInsets.only(bottom: bottomInset),
-      child: Container(
+    return Container(
         decoration: const BoxDecoration(
           color: Colors.white,
           borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
@@ -1501,7 +1828,7 @@ class _PartialDonationSheetState extends State<_PartialDonationSheet> {
                     ),
                     focusedBorder: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(12),
-                      borderSide: const BorderSide(color: Color(0xFFE05A4F), width: 1.6),
+                      borderSide: const BorderSide(color: AppTokens.primaryBlue, width: 1.6),
                     ),
                   ),
                   onChanged: (_) {
@@ -1516,7 +1843,7 @@ class _PartialDonationSheetState extends State<_PartialDonationSheet> {
                   height: 48,
                   child: ElevatedButton(
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFFE05A4F),
+                      backgroundColor: AppTokens.primaryBlue,
                       foregroundColor: Colors.white,
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(12),
@@ -1548,7 +1875,6 @@ class _PartialDonationSheetState extends State<_PartialDonationSheet> {
             ),
           ),
         ),
-      ),
     );
   }
 
@@ -1563,11 +1889,11 @@ class _PartialDonationSheetState extends State<_PartialDonationSheet> {
         alignment: Alignment.center,
         decoration: BoxDecoration(
           color: isSelected
-              ? const Color(0xFFE05A4F).withValues(alpha: 0.12)
+              ? AppTokens.primaryBlue.withValues(alpha: 0.12)
               : Colors.white,
           borderRadius: BorderRadius.circular(12),
           border: Border.all(
-            color: isSelected ? const Color(0xFFE05A4F) : Colors.grey.shade300,
+            color: isSelected ? AppTokens.primaryBlue : Colors.grey.shade300,
             width: isSelected ? 1.8 : 1.2,
           ),
         ),
@@ -1575,10 +1901,112 @@ class _PartialDonationSheetState extends State<_PartialDonationSheet> {
           '$percent%',
           style: TextStyle(
             fontWeight: FontWeight.w700,
-            color: isSelected ? const Color(0xFFE05A4F) : const Color(0xFF2A2A2A),
+            color: isSelected ? AppTokens.primaryBlue : AppTokens.textPrimary,
           ),
         ),
       ),
     );
   }
+}
+
+
+class _HolidayInfo {
+  final String nameEs;
+  final String descriptionEs;
+  final List<double> presetAmounts;
+  final DateTime startDate;
+  final int showDaysBefore;
+  final int durationDays;
+  final String? iconAsset;
+
+  const _HolidayInfo({
+    required this.nameEs,
+    required this.descriptionEs,
+    required this.presetAmounts,
+    required this.startDate,
+    required this.showDaysBefore,
+    this.durationDays = 1,
+    this.iconAsset,
+  });
+
+  bool get isActive {
+    final now = DateTime.now();
+    final showFrom = startDate.subtract(Duration(days: showDaysBefore));
+    final hideAfter = startDate.add(Duration(days: durationDays));
+    return now.isAfter(showFrom) && now.isBefore(hideAfter);
+  }
+
+  static _HolidayInfo? getActiveHoliday() {
+    for (final h in _holidays) {
+      if (h.isActive) return h;
+    }
+    return null;
+  }
+
+  static final List<_HolidayInfo> _holidays = [
+    // 5786 (2025-2026)
+    _HolidayInfo(
+      nameEs: 'Maos Jitim',
+      descriptionEs: 'Fondos para los necesitados de Israel para sus necesidades de P\u00e9saj',
+      presetAmounts: [54, 180, 1800],
+      startDate: DateTime(2026, 4, 2),
+      showDaysBefore: 30,
+      durationDays: 8,
+    ),
+    _HolidayInfo(
+      nameEs: 'Shavuot',
+      descriptionEs: 'Celebramos la entrega de la Tor\u00e1. Dona tzedak\u00e1 en honor a esta festividad',
+      presetAmounts: [18, 36, 180],
+      startDate: DateTime(2026, 5, 22),
+      showDaysBefore: 21,
+      durationDays: 2,
+    ),
+    // 5787 (2026-2027)
+    _HolidayInfo(
+      nameEs: 'Rosh Hashan\u00e1',
+      descriptionEs: 'A\u00f1o Nuevo jud\u00edo. Comienza el a\u00f1o con tzedak\u00e1 y buenas acciones',
+      presetAmounts: [36, 180, 360],
+      startDate: DateTime(2026, 9, 12),
+      showDaysBefore: 30,
+      durationDays: 2,
+    ),
+    _HolidayInfo(
+      nameEs: 'Yom Kipur',
+      descriptionEs: 'D\u00eda de la Expiaci\u00f3n. La tzedak\u00e1 es un m\u00e9rito especial antes de Yom Kipur',
+      presetAmounts: [36, 180, 360],
+      startDate: DateTime(2026, 9, 21),
+      showDaysBefore: 14,
+    ),
+    _HolidayInfo(
+      nameEs: 'Sucot',
+      descriptionEs: 'Fiesta de las Caba\u00f1as. Comparte alegr\u00eda con quienes m\u00e1s lo necesitan',
+      presetAmounts: [18, 54, 180],
+      startDate: DateTime(2026, 9, 26),
+      showDaysBefore: 14,
+      durationDays: 7,
+    ),
+    _HolidayInfo(
+      nameEs: 'Januc\u00e1',
+      descriptionEs: 'Festival de las Luces. Ilumina vidas con tu donaci\u00f3n de tzedak\u00e1',
+      presetAmounts: [18, 54, 180],
+      startDate: DateTime(2026, 12, 5),
+      showDaysBefore: 21,
+      durationDays: 8,
+    ),
+    _HolidayInfo(
+      nameEs: 'Purim',
+      descriptionEs: 'Matanot LaEvionim: regalos a los necesitados, una mitzv\u00e1 central de Purim',
+      presetAmounts: [18, 54, 180],
+      startDate: DateTime(2027, 3, 23),
+      showDaysBefore: 21,
+    ),
+    _HolidayInfo(
+      nameEs: 'Maos Jitim',
+      descriptionEs: 'Fondos para los necesitados de Israel para sus necesidades de P\u00e9saj',
+      presetAmounts: [54, 180, 1800],
+      startDate: DateTime(2027, 4, 22),
+      showDaysBefore: 30,
+      durationDays: 8,
+    ),
+  ];
 }

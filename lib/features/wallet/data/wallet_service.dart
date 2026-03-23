@@ -1,4 +1,4 @@
-import 'package:cloud_functions/cloud_functions.dart';
+﻿import 'package:cloud_functions/cloud_functions.dart';
 
 class WalletService {
   WalletService._();
@@ -33,7 +33,23 @@ class WalletService {
     }
   }
 
-  Future<void> addContact(String walletId) async {
+  Future<void> requestTransfer({
+    required String fromWalletId,
+    required double amount,
+  }) async {
+    final callable = FirebaseFunctions.instance.httpsCallable('walletRequestTransfer');
+    try {
+      await callable.call({
+        'fromWalletId': fromWalletId,
+        'amount': amount,
+      });
+    } on FirebaseFunctionsException catch (error) {
+      final message = error.message ?? 'No se pudo enviar la solicitud.';
+      throw Exception(message);
+    }
+  }
+
+    Future<void> addContact(String walletId) async {
     final callable = FirebaseFunctions.instance.httpsCallable('addWalletContact');
     try {
       await callable.call({'walletId': walletId});
@@ -43,3 +59,4 @@ class WalletService {
     }
   }
 }
+

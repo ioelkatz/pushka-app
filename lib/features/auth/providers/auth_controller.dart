@@ -63,6 +63,9 @@ class AuthController {
   }
 
   Future<void> signOut() async {
+    try {
+      await GoogleSignIn().signOut();
+    } catch (_) {}
     await _auth.signOut();
     await AnalyticsService.instance.setUserId(null);
     await NotificationService.instance.stopTokenRefresh();

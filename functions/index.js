@@ -268,7 +268,7 @@ exports.createPaymentIntent = onCall(
   const currency = (request.data?.currency || "usd").toLowerCase();
   const customerEmail = request.data?.customerEmail || null;
   const purpose = String(request.data?.purpose || "donation").toLowerCase();
-  if (purpose !== "donation" && purpose !== "wallet_topup") {
+  if (purpose !== "donation" && purpose !== "wallet_topup" && purpose !== "pushka_empty") {
     throw new HttpsError("invalid-argument", "PropÃ³sito de pago invÃ¡lido.");
   }
 
@@ -371,7 +371,7 @@ exports.stripeWebhook = onRequest(
       const amount = (intent.amount || 0) / 100;
       const docId = intent.id;
 
-      if (uid && purpose === "donation") {
+      if (uid && (purpose === "donation" || purpose === "pushka_empty")) {
         await db
           .collection("users")
           .doc(uid)
@@ -950,5 +950,116 @@ exports.processWalletAutoTopUps = onSchedule(
     }
 
     console.info("processWalletAutoTopUps: completed", { processed, failed });
+  },
+);
+
+
+// ─── Pushka Auto Empty (scheduled) ──────────────────────────
+exports.processPushkaAutoEmpty = onSchedule(
+  {
+    schedule: "every 60 minutes",
+    timeZone: "Etc/UTC",
+  },
+  async () => {
+    const nowTs = admin.firestore.Timestamp.now();
+    const dueUsers = await db
+      .collection("users")
+      .where("autoEmptyNextRunAt", "<=", nowTs)
+      .limit(150)
+      .get();
+
+    if (dueUsers.empty) {
+      console.info("processPushkaAutoEmpty: no_due_users");
+      return;
+    }
+
+    let processed = 0;
+    let failed = 0;
+
+    for (const doc of dueUsers.docs) {
+      try {
+        await db.runTransaction(async (tx) => {
+          const userRef = doc.ref;
+          const snap = await tx.get(userRef);
+          if (!snap.exists) return;
+
+          const data = snap.data() || {};
+          const freq = data.autoEmptyFrequency || "manual";
+          if (freq === "manual") return;
+
+          const nextRun = data.autoEmptyNextRunAt;
+          if (!nextRun || nextRun.toMillis() > Date.now()) return;
+
+          const pushkaBalance = Number(data.pushkaBalance || 0);
+          const minBalance = 5;
+          if (pushkaBalance < minBalance) {
+            // Balance too low, skip but schedule next run
+            const weekday = Number(data.autoEmptyWeekday || 1);
+            const dayOfMonth = Number(data.autoEmptyDayOfMonth || 1);
+            const nextDate = computeNextWalletTopUpDate({
+              frequency: freq === "erev_rosh_chodesh" ? "monthly" : freq,
+              weekday,
+              dayOfMonth,
+              baseDate: new Date(),
+            });
+            tx.set(
+              userRef,
+              {
+                autoEmptyNextRunAt: admin.firestore.Timestamp.fromDate(nextDate),
+                updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+              },
+              { merge: true },
+            );
+            return;
+          }
+
+          const topOffEnabled = data.autoEmptyTopOffEnabled === true;
+          const topOffAmount = Number(data.autoEmptyTopOffAmount || 0);
+
+          let amountToEmpty = pushkaBalance;
+          let newBalance = 0;
+          if (topOffEnabled && topOffAmount > 0 && topOffAmount < pushkaBalance) {
+            amountToEmpty = pushkaBalance;
+            newBalance = 0;
+          }
+
+          const weekday = Number(data.autoEmptyWeekday || 1);
+          const dayOfMonth = Number(data.autoEmptyDayOfMonth || 1);
+          const nextDate = computeNextWalletTopUpDate({
+            frequency: freq === "erev_rosh_chodesh" ? "monthly" : freq,
+            weekday,
+            dayOfMonth,
+            baseDate: new Date(),
+          });
+
+          tx.set(
+            userRef,
+            {
+              pushkaBalance: newBalance,
+              autoEmptyNextRunAt: admin.firestore.Timestamp.fromDate(nextDate),
+              updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            },
+            { merge: true },
+          );
+
+          const movementRef = userRef.collection("transactions").doc();
+          tx.set(movementRef, {
+            type: "pushkaEmpty",
+            amount: amountToEmpty,
+            description: "Vaciado automatico de Pushka",
+            createdAt: admin.firestore.Timestamp.now(),
+          });
+        });
+        processed += 1;
+      } catch (err) {
+        failed += 1;
+        console.error("processPushkaAutoEmpty: user_failed", {
+          uid: doc.id,
+          error: String(err?.message || err),
+        });
+      }
+    }
+
+    console.info("processPushkaAutoEmpty: completed", { processed, failed });
   },
 );

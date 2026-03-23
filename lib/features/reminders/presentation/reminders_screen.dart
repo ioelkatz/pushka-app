@@ -1,4 +1,5 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
+import '../../../app/theme/app_tokens.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../analytics/analytics_service.dart';
@@ -19,8 +20,6 @@ class _RemindersScreenState extends ConsumerState<RemindersScreen> {
 
   @override
   Widget build(BuildContext context) {
-    const orange = Color(0xFFFF9500);
-    const red = Color(0xFFE05A4F);
 
     return Column(
       children: [
@@ -44,7 +43,7 @@ class _RemindersScreenState extends ConsumerState<RemindersScreen> {
                             style: TextStyle(
                               fontSize: 16,
                               fontWeight: FontWeight.w600,
-                              color: Colors.black87,
+                              color: AppTokens.textPrimary,
                             ),
                           ),
                           const SizedBox(height: 4),
@@ -77,7 +76,7 @@ class _RemindersScreenState extends ConsumerState<RemindersScreen> {
                         onToggle: (value) => _toggleReminder(reminder, value),
                         onEdit: () => _showEditReminderDialog(reminder),
                         onDelete: () => _deleteReminder(reminder),
-                        activeColor: orange,
+                        activeColor: AppTokens.skyBlue,
                       );
                     },
                   );
@@ -112,7 +111,7 @@ class _RemindersScreenState extends ConsumerState<RemindersScreen> {
                   child: ElevatedButton(
                     onPressed: () => _showAddReminderDialog(),
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: red,
+                      backgroundColor: AppTokens.primaryBlue,
                       foregroundColor: Colors.white,
                       elevation: 0,
                       shape: RoundedRectangleBorder(
@@ -173,7 +172,7 @@ class _RemindersScreenState extends ConsumerState<RemindersScreen> {
                     style: const TextStyle(
                       fontSize: 16,
                       fontWeight: FontWeight.w700,
-                      color: Colors.black87,
+                      color: AppTokens.textPrimary,
                     ),
                   ),
                   const SizedBox(height: 4),
@@ -182,7 +181,7 @@ class _RemindersScreenState extends ConsumerState<RemindersScreen> {
                     style: TextStyle(
                       fontSize: 14,
                       fontWeight: FontWeight.w400,
-                      color: Colors.black.withValues(alpha: 0.6),
+                      color: AppTokens.mutedText,
                     ),
                   ),
                   if (subtitle2 != null) ...[
@@ -192,7 +191,7 @@ class _RemindersScreenState extends ConsumerState<RemindersScreen> {
                       style: TextStyle(
                         fontSize: 14,
                         fontWeight: FontWeight.w400,
-                        color: Colors.black.withValues(alpha: 0.6),
+                        color: AppTokens.mutedText,
                       ),
                     ),
                   ],
@@ -412,7 +411,7 @@ class _ReminderDialogState extends State<_ReminderDialog> {
             Container(
               padding: const EdgeInsets.fromLTRB(20, 8, 8, 14),
               decoration: BoxDecoration(
-                color: const Color(0xFF2F60C5),
+                color: AppTokens.primaryBlue,
                 borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
               ),
               child: Column(children: [
@@ -432,7 +431,7 @@ class _ReminderDialogState extends State<_ReminderDialog> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text('Título', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: Colors.black87)),
+                    const Text('Título', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: AppTokens.textPrimary)),
                     const SizedBox(height: 8),
                     Form(
                       key: _formKey,
@@ -443,7 +442,7 @@ class _ReminderDialogState extends State<_ReminderDialog> {
                         decoration: InputDecoration(
                           hintText: 'Ej: Antes del Encendido de Velas',
                           border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                          focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: Color(0xFF2F60C5), width: 1.6)),
+                          focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: AppTokens.primaryBlue, width: 1.6)),
                         ),
                       ),
                     ),
@@ -455,7 +454,7 @@ class _ReminderDialogState extends State<_ReminderDialog> {
                       style: TextStyle(
                         fontSize: 14,
                         fontWeight: FontWeight.w600,
-                        color: Colors.black87,
+                        color: AppTokens.textPrimary,
                       ),
                     ),
                     const SizedBox(height: 8),
@@ -495,7 +494,7 @@ class _ReminderDialogState extends State<_ReminderDialog> {
                       style: TextStyle(
                         fontSize: 14,
                         fontWeight: FontWeight.w600,
-                        color: Colors.black87,
+                        color: AppTokens.textPrimary,
                       ),
                     ),
                     const SizedBox(height: 8),
@@ -570,7 +569,7 @@ class _ReminderDialogState extends State<_ReminderDialog> {
                         style: TextStyle(
                           fontSize: 14,
                           fontWeight: FontWeight.w600,
-                          color: Colors.black87,
+                          color: AppTokens.textPrimary,
                         ),
                       ),
                       const SizedBox(height: 8),
@@ -610,7 +609,7 @@ class _ReminderDialogState extends State<_ReminderDialog> {
                         style: TextStyle(
                           fontSize: 14,
                           fontWeight: FontWeight.w600,
-                          color: Colors.black87,
+                          color: AppTokens.textPrimary,
                         ),
                       ),
                       const SizedBox(height: 8),
@@ -643,7 +642,7 @@ class _ReminderDialogState extends State<_ReminderDialog> {
               padding: const EdgeInsets.fromLTRB(20, 12, 20, 16),
               child: Column(mainAxisSize: MainAxisSize.min, children: [
                 SizedBox(width: double.infinity, height: 48, child: ElevatedButton(
-                  style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF2F60C5), foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
+                  style: ElevatedButton.styleFrom(backgroundColor: AppTokens.primaryBlue, foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
                   onPressed: _validateAndSave,
                   child: const Text('Guardar', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
                 )),

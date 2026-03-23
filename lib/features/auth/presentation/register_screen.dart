@@ -1,5 +1,7 @@
-import 'package:firebase_auth/firebase_auth.dart';
+﻿import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import '../../../app/theme/app_tokens.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../providers/auth_controller.dart';
@@ -32,7 +34,10 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
     return Scaffold(
       appBar: AppBar(title: const Text('Crear cuenta')),
       body: SafeArea(
-        child: SingleChildScrollView(
+        child: Center(
+          child: ConstrainedBox(
+            constraints: BoxConstraints(maxWidth: kIsWeb ? 480 : double.infinity),
+            child: SingleChildScrollView(
           padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -44,7 +49,7 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
               const SizedBox(height: 8),
               const Text(
                 'Completa tus datos para comenzar',
-                style: TextStyle(fontSize: 16, color: Colors.black54),
+                style: TextStyle(fontSize: 16, color: AppTokens.mutedText),
               ),
               const SizedBox(height: 24),
 
@@ -104,6 +109,8 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
                 ),
               ),
             ],
+          ),
+        ),
           ),
         ),
       ),

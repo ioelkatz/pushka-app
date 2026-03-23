@@ -1,14 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
+import '../../../app/theme/app_tokens.dart';
 
 class SupportScreen extends StatelessWidget {
   const SupportScreen({super.key});
 
   @override
   Widget build(BuildContext context) {
-    const red = Color(0xFFE05A4F);
-    const green = Color(0xFF25D366); // Color de WhatsApp
-    const blue = Color(0xFF2F60C5);
+    const green = Color(0xFF25D366);
 
     return SingleChildScrollView(
       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
@@ -42,7 +41,7 @@ class SupportScreen extends StatelessWidget {
                     style: TextStyle(
                       fontSize: 30,
                       fontWeight: FontWeight.w700,
-                      color: Colors.black87,
+                      color: AppTokens.textPrimary,
                       letterSpacing: 0.5,
                     ),
                   ),
@@ -52,7 +51,7 @@ class SupportScreen extends StatelessWidget {
                     'Cuidando a los necesitados de Israel desde 1788',
                     style: TextStyle(
                       fontSize: 14,
-                      color: Colors.grey.shade600,
+                      color: AppTokens.mutedText,
                       fontWeight: FontWeight.w400,
                     ),
                   ),
@@ -93,7 +92,7 @@ class SupportScreen extends StatelessWidget {
               fontSize: 11,
               fontWeight: FontWeight.w600,
               letterSpacing: 1.2,
-              color: Colors.black87,
+              color: AppTokens.textPrimary,
             ),
           ),
           const SizedBox(height: 8),
@@ -102,7 +101,7 @@ class SupportScreen extends StatelessWidget {
             style: TextStyle(
               fontSize: 18,
               fontWeight: FontWeight.w600,
-              color: Colors.black87,
+              color: AppTokens.textPrimary,
             ),
           ),
 
@@ -115,7 +114,7 @@ class SupportScreen extends StatelessWidget {
               fontSize: 11,
               fontWeight: FontWeight.w600,
               letterSpacing: 1.2,
-              color: Colors.black87,
+              color: AppTokens.textPrimary,
             ),
           ),
           const SizedBox(height: 16),
@@ -127,7 +126,7 @@ class SupportScreen extends StatelessWidget {
               'app@colelchabad.org',
               style: const TextStyle(
                 fontSize: 16,
-                color: red,
+                color: AppTokens.primaryBlue,
                 decoration: TextDecoration.underline,
               ),
             ),
@@ -144,7 +143,7 @@ class SupportScreen extends StatelessWidget {
                   '+1 (718) 774-5446',
                   style: const TextStyle(
                     fontSize: 16,
-                    color: red,
+                    color: AppTokens.primaryBlue,
                     decoration: TextDecoration.underline,
                   ),
                 ),
@@ -181,7 +180,7 @@ class SupportScreen extends StatelessWidget {
               textAlign: TextAlign.center,
               style: TextStyle(
                 fontSize: 14,
-                color: blue,
+                color: AppTokens.primaryBlue,
                 decoration: TextDecoration.underline,
               ),
             ),
@@ -196,7 +195,7 @@ class SupportScreen extends StatelessWidget {
               fontSize: 11,
               fontWeight: FontWeight.w600,
               letterSpacing: 1.2,
-              color: Colors.black87,
+              color: AppTokens.textPrimary,
             ),
           ),
           const SizedBox(height: 16),
@@ -210,7 +209,7 @@ class SupportScreen extends StatelessWidget {
                 width: 32,
                 height: 32,
                 decoration: BoxDecoration(
-                  color: const Color(0xFF6B46C1), // Púrpura
+                  color: AppTokens.primaryBlue,
                   borderRadius: BorderRadius.circular(6),
                 ),
                 child: const Center(
@@ -230,7 +229,7 @@ class SupportScreen extends StatelessWidget {
                 style: TextStyle(
                   fontSize: 18,
                   fontWeight: FontWeight.w600,
-                  color: Colors.black87,
+                  color: AppTokens.textPrimary,
                 ),
               ),
             ],
@@ -249,7 +248,7 @@ class SupportScreen extends StatelessWidget {
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: Colors.grey.shade300, width: 1),
+        border: Border.all(color: AppTokens.border, width: 1),
       ),
       child: Stack(
         children: [
@@ -261,12 +260,12 @@ class SupportScreen extends StatelessWidget {
             child: Container(
               height: 60,
               decoration: BoxDecoration(
-                color: const Color(0xFFF5F5F5),
+                color: AppTokens.cardSilver,
                 borderRadius: const BorderRadius.only(
                   bottomLeft: Radius.circular(8),
                   bottomRight: Radius.circular(8),
                 ),
-                border: Border.all(color: Colors.grey.shade300, width: 1.5),
+                border: Border.all(color: AppTokens.border, width: 1.5),
               ),
               child: Stack(
                 children: [
@@ -278,7 +277,7 @@ class SupportScreen extends StatelessWidget {
                     child: Container(
                       height: 3,
                       decoration: BoxDecoration(
-                        color: Colors.grey.shade500,
+                        color: AppTokens.mutedText,
                         borderRadius: BorderRadius.circular(2),
                       ),
                     ),
@@ -288,10 +287,10 @@ class SupportScreen extends StatelessWidget {
                     child: Column(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        _buildColoredLetter('צ', Colors.blue),
+                        _buildColoredLetter('צ', AppTokens.primaryBlue),
                         _buildColoredLetter('ד', Colors.yellow.shade700),
-                        _buildColoredLetter('ק', Colors.orange),
-                        _buildColoredLetter('ה', Colors.red),
+                        _buildColoredLetter('ק', AppTokens.skyBlue),
+                        _buildColoredLetter('ה', AppTokens.destructive),
                       ],
                     ),
                   ),
@@ -307,7 +306,7 @@ class SupportScreen extends StatelessWidget {
             child: Container(
               height: 12,
               decoration: BoxDecoration(
-                color: Colors.grey.shade400,
+                color: AppTokens.mutedText,
                 borderRadius: const BorderRadius.only(
                   topLeft: Radius.circular(4),
                   topRight: Radius.circular(4),

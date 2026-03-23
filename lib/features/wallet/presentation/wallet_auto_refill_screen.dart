@@ -1,7 +1,8 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../users/data/user_repository.dart';
+import '../../../app/theme/app_tokens.dart';
 import '../../users/presentation/user_profile_provider.dart';
 
 class WalletAutoRefillScreen extends ConsumerStatefulWidget {
@@ -48,8 +49,10 @@ class _WalletAutoRefillScreenState extends ConsumerState<WalletAutoRefillScreen>
       return runDate;
     }
 
+    final safeWeekday = weekday.clamp(1, 7);
     var runDate = DateTime(now.year, now.month, now.day, 8);
-    while (runDate.weekday != weekday || !runDate.isAfter(now)) {
+    var guard = 0;
+    while ((runDate.weekday != safeWeekday || !runDate.isAfter(now)) && guard < 400) {
       runDate = runDate.add(const Duration(days: 1));
     }
     return runDate;
@@ -112,7 +115,7 @@ class _WalletAutoRefillScreenState extends ConsumerState<WalletAutoRefillScreen>
           children: [
             Icon(
               selected ? Icons.radio_button_checked : Icons.radio_button_off,
-              color: selected ? const Color(0xFF2F60C5) : Colors.black,
+              color: selected ? AppTokens.primaryBlue : Colors.black,
               size: 30,
             ),
             const SizedBox(width: 14),
@@ -174,8 +177,7 @@ class _WalletAutoRefillScreenState extends ConsumerState<WalletAutoRefillScreen>
                     ),
                   ),
                   const SizedBox(height: 10),
-                  DropdownButtonFormField<int>(
-                    initialValue: _frequency == 'weekly' ? _weekday : _dayOfMonth,
+                  DropdownButtonFormField<int>(initialValue: _frequency == 'weekly' ? _weekday : _dayOfMonth,
                     decoration: InputDecoration(
                       hintText: 'Seleccionar',
                       contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
@@ -260,7 +262,7 @@ class _WalletAutoRefillScreenState extends ConsumerState<WalletAutoRefillScreen>
                           onPressed: _saving ? null : _save,
                           style: OutlinedButton.styleFrom(
                             minimumSize: const Size(0, 52),
-                            side: const BorderSide(color: Color(0xFFE05A4F), width: 2),
+                            side: const BorderSide(color: AppTokens.primaryBlue, width: 2),
                             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
                           ),
                           child: _saving
@@ -272,7 +274,7 @@ class _WalletAutoRefillScreenState extends ConsumerState<WalletAutoRefillScreen>
                               : const Text(
                                   'GUARDAR',
                                   style: TextStyle(
-                                    color: Color(0xFFE05A4F),
+                                    color: AppTokens.primaryBlue,
                                     fontWeight: FontWeight.w700,
                                     letterSpacing: 0.2,
                                   ),
@@ -281,6 +283,18 @@ class _WalletAutoRefillScreenState extends ConsumerState<WalletAutoRefillScreen>
                       ),
                     ],
                   ),
+                const SizedBox(height: 16),
+                TextButton(
+                  onPressed: _saving ? null : _disableAutoRefill,
+                  child: const Text(
+                    'DESACTIVAR RECARGA AUTOM\u00c1TICA',
+                    style: TextStyle(
+                      color: Colors.grey,
+                      fontWeight: FontWeight.w600,
+                      fontSize: 13,
+                    ),
+                  ),
+                ),
                 ],
               ),
             ),
@@ -289,5 +303,31 @@ class _WalletAutoRefillScreenState extends ConsumerState<WalletAutoRefillScreen>
       ),
     );
   }
-}
 
+  Future<void> _disableAutoRefill() async {
+    final user = ref.read(currentUserProvider);
+    if (user == null) return;
+    setState(() => _saving = true);
+    try {
+      await ref.read(userRepositoryProvider).updateSettings(
+        uid: user.uid,
+        walletAutoTopUpEnabled: false,
+        walletAutoTopUpClearNextRunAt: true,
+      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Recarga automática desactivada')),
+        );
+        Navigator.of(context).pop();
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error: $e')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+}

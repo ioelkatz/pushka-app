@@ -1,4 +1,4 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
+﻿import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -60,6 +60,8 @@ class UserRepository {
       'autoEmptyDayOfMonth': null,
       'autoEmptyTopOffEnabled': false,
       'autoEmptyTopOffAmount': null,
+      'streakCount': 0,
+      'lastStreakDate': null,
     }, SetOptions(merge: true));
   }
 
@@ -258,6 +260,8 @@ class UserRepository {
     int? autoEmptyDayOfMonth,
     bool? autoEmptyTopOffEnabled,
     double? autoEmptyTopOffAmount,
+    DateTime? autoEmptyNextRunAt,
+    bool autoEmptyClearNextRunAt = false,
     bool? walletAutoTopUpEnabled,
     double? walletAutoTopUpAmount,
     String? walletAutoTopUpFrequency,
@@ -299,6 +303,12 @@ class UserRepository {
     }
     if (autoEmptyTopOffAmount != null) {
       data['autoEmptyTopOffAmount'] = autoEmptyTopOffAmount;
+    }
+    if (autoEmptyNextRunAt != null) {
+      data['autoEmptyNextRunAt'] = Timestamp.fromDate(autoEmptyNextRunAt);
+    }
+    if (autoEmptyClearNextRunAt) {
+      data['autoEmptyNextRunAt'] = null;
     }
     if (walletAutoTopUpEnabled != null) {
       data['walletAutoTopUpEnabled'] = walletAutoTopUpEnabled;

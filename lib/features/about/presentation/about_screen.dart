@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../../../app/theme/app_tokens.dart';
 
 class AboutScreen extends StatelessWidget {
   const AboutScreen({super.key});
@@ -17,7 +18,7 @@ class AboutScreen extends StatelessWidget {
             'Acerca de | Colel Jabad',
             style: TextStyle(
               fontSize: 13,
-              color: Colors.grey.shade600,
+              color: AppTokens.mutedText,
               fontWeight: FontWeight.w400,
             ),
           ),
@@ -30,7 +31,7 @@ class AboutScreen extends StatelessWidget {
             style: TextStyle(
               fontSize: 30,
               fontWeight: FontWeight.w700,
-              color: Colors.black87,
+              color: AppTokens.textPrimary,
               letterSpacing: 0.5,
             ),
           ),
@@ -43,7 +44,7 @@ class AboutScreen extends StatelessWidget {
             style: TextStyle(
               fontSize: 22,
               fontWeight: FontWeight.w700,
-              color: Colors.black87,
+              color: AppTokens.textPrimary,
             ),
           ),
 
@@ -55,7 +56,7 @@ class AboutScreen extends StatelessWidget {
             style: TextStyle(
               fontSize: 16,
               height: 1.6,
-              color: Colors.black87,
+              color: AppTokens.textPrimary,
               fontWeight: FontWeight.w400,
             ),
           ),
@@ -68,7 +69,7 @@ class AboutScreen extends StatelessWidget {
             style: TextStyle(
               fontSize: 16,
               height: 1.6,
-              color: Colors.black87,
+              color: AppTokens.textPrimary,
               fontWeight: FontWeight.w400,
             ),
           ),
@@ -81,7 +82,7 @@ class AboutScreen extends StatelessWidget {
             style: TextStyle(
               fontSize: 16,
               height: 1.6,
-              color: Colors.black87,
+              color: AppTokens.textPrimary,
               fontWeight: FontWeight.w400,
             ),
           ),
@@ -94,7 +95,7 @@ class AboutScreen extends StatelessWidget {
               '© 2025 Colel Jabad. Todos los derechos reservados.',
               style: TextStyle(
                 fontSize: 14,
-                color: Colors.grey.shade600,
+                color: AppTokens.mutedText,
                 fontWeight: FontWeight.w400,
               ),
             ),
