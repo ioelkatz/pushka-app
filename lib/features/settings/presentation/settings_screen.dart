@@ -11,7 +11,6 @@ import '../../users/data/user_repository.dart';
 import '../../users/presentation/user_profile_provider.dart';
 import '../../wallet/data/wallet_service.dart';
 import '../../../core/format_utils.dart';
-import '../../../core/l10n/s.dart';
 import '../../../core/l10n/locale_provider.dart';
 import 'auto_empty_screen.dart';
 

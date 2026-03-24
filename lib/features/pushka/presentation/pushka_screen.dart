@@ -1,9 +1,10 @@
-﻿import 'dart:async';
+import 'dart:async';
 import 'dart:math' as math;
 import '../../../core/format_utils.dart';
 import '../../../app/theme/app_tokens.dart';
 import '../../../core/keyboard_safe_sheet.dart';
 import 'pushka_3d_widget.dart';
+import '../../../core/l10n/s.dart';
 
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -103,7 +104,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
     setState(() => _isProcessing = true);
     try {
       if (StripeConfig.publishableKey.isEmpty) {
-        throw Exception('Stripe no está configurado');
+        throw Exception(S.of(context).stripeNotConfigured);
       }
 
       final amountToEmpty = pushkaAmount;
@@ -119,10 +120,10 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
 
       if (_biometricEnabled()) {
         final authenticated = await BiometricService.instance.authenticate(
-          reason: 'Confirma tu identidad para vaciar la Pushka',
+          reason: S.of(context).biometricReasonEmpty,
         );
         if (!authenticated) {
-          _showError('Autenticación requerida para vaciar la Pushka');
+          _showError(S.of(context).authRequired);
           return;
         }
       }
@@ -142,7 +143,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
           uid: user.uid,
           type: TransactionType.pushkaEmpty,
           amount: amountToEmpty,
-          description: 'Pushka vaciada - pago con tarjeta',
+          description: S.of(context).pushkaEmptyCardDesc,
           paymentMethod: PaymentMethod.card,
           status: PaymentStatus.completed,
           docId: paymentIntentId,
@@ -154,13 +155,13 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
       setState(() => pushkaAmount = 0);
       FeedbackService.instance.playSuccess();
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Pushka vaciada. El pago fue procesado.')),
+        SnackBar(content: Text(S.of(context).pushkaEmptied)),
       );
     } catch (error, stack) {
       debugPrint('emptyPushka error: $error');
       debugPrint('$stack');
       if (!mounted) return;
-      _showError('No se pudo vaciar la Pushka');
+      _showError(S.of(context).couldNotEmpty);
     } finally {
       if (mounted) setState(() => _isProcessing = false);
     }
@@ -168,6 +169,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
   
   Future<void> _donateNow() async {
     if (_isProcessing) return;
+    final tr = S.of(context);
     final amountCtrl = TextEditingController();
     final messageCtrl = TextEditingController();
     Map<String, dynamic>? result;
@@ -176,13 +178,13 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
       context: context,
       builder: (ctx, setDialogState) => Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
                       Center(child: Container(width: 36, height: 4, margin: const EdgeInsets.only(bottom: 12), decoration: BoxDecoration(color: Colors.grey.shade300, borderRadius: BorderRadius.circular(2)))),
-                      const Center(child: Text('Donar Ahora', style: TextStyle(fontSize: 22, fontWeight: FontWeight.w700))),
+                      Center(child: Text(tr.donateNowTitle, style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w700))),
                       const SizedBox(height: 16),
                       TextField(
                         controller: amountCtrl,
                         keyboardType: const TextInputType.numberWithOptions(decimal: true),
                         decoration: InputDecoration(
-                          labelText: 'Monto', hintText: '0', prefixText: '\$ ', errorText: error,
+                          labelText: tr.amount, hintText: '0', prefixText: '\$ ', errorText: error,
                           border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
                           focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: AppTokens.primaryBlue, width: 1.6)),
                         ),
@@ -192,23 +194,23 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
                       TextField(
                         controller: messageCtrl,
                         decoration: InputDecoration(
-                          labelText: 'Mensaje personal (opcional)',
-                          hintText: 'Escribe un mensaje...',
+                          labelText: tr.optionalMessage,
+                          hintText: tr.writeMessage,
                           border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
                           focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: AppTokens.primaryBlue, width: 1.6)),
                         ),
                       ),
                       const SizedBox(height: 10),
-                      const Text('Donaci\u00f3n instant\u00e1nea. No reduce ni afecta el balance de tu Pushka.', style: TextStyle(color: Color(0xFF888888), fontSize: 12), textAlign: TextAlign.center),
+                      Text(tr.instantDonationNote, style: const TextStyle(color: Color(0xFF888888), fontSize: 12), textAlign: TextAlign.center),
                       const SizedBox(height: 14),
                       SizedBox(width: double.infinity, height: 48, child: ElevatedButton(
                         style: ElevatedButton.styleFrom(backgroundColor: AppTokens.primaryBlue, foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
                         onPressed: () {
                           final value = double.tryParse(amountCtrl.text.trim().replaceAll(',', '.'));
-                          if (value == null || value <= 0) { setDialogState(() => error = 'Ingresa un monto v\u00e1lido'); return; }
+                          if (value == null || value <= 0) { setDialogState(() => error = tr.enterValidAmount); return; }
                           Navigator.pop(ctx, {'amount': value, 'message': messageCtrl.text.trim()});
                         },
-                        child: const Text('DONAR AHORA', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16)),
+                        child: Text(tr.donateNowBtn, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 16)),
                       )),
                     ]),
     );
@@ -219,17 +221,17 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
     try {
       if (_biometricEnabled()) {
         final authenticated = await BiometricService.instance.authenticate(
-          reason: 'Confirma tu identidad para procesar la donaci\u00f3n',
+          reason: S.of(context).biometricReasonDonate,
         );
         if (!authenticated) {
-          _showError('Autenticaci\u00f3n requerida para donar');
+          _showError(S.of(context).authRequiredDonate);
           return;
         }
       }
       if (!mounted) return;
 
       if (StripeConfig.publishableKey.isEmpty) {
-        throw Exception('Stripe no est\u00e1 configurado');
+        throw Exception(S.of(context).stripeNotConfigured);
       }
 
       final currency = _currencyCodeFromProfile();
@@ -258,7 +260,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
           amount: donationAmount,
           description: result['message']?.toString().isNotEmpty == true
               ? result['message'] as String
-              : 'Donaci\u00f3n instant\u00e1nea',
+              : S.of(context).instantDonation,
           paymentMethod: PaymentMethod.card,
           status: PaymentStatus.completed,
           docId: paymentIntentId,
@@ -268,13 +270,13 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
       FeedbackService.instance.playSuccess();
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Donaci\u00f3n de ${formatMoney(donationAmount)} procesada exitosamente')),
+          SnackBar(content: Text(S.of(context).donationProcessed(formatMoney(donationAmount)))),
         );
       }
     } catch (error) {
       debugPrint('Instant donation error: $error');
       if (!mounted) return;
-      _showError(_donationErrorMessage(error));
+      _showError(_donationErrorMessage(error, S.of(context)));
     } finally {
       if (mounted) setState(() => _isProcessing = false);
     }
@@ -285,7 +287,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
     setState(() => _isProcessing = true);
     try {
       if (StripeConfig.publishableKey.isEmpty) {
-        throw Exception('Stripe no está configurado');
+        throw Exception(S.of(context).stripeNotConfigured);
       }
 
       final amountCents = ((donationAmount * 100) + 0.001).round();
@@ -316,7 +318,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
           uid: user.uid,
           type: TransactionType.tzedaka,
           amount: donationAmount,
-          description: 'Donación con tarjeta',
+          description: S.of(context).donationWithCard,
           paymentMethod: PaymentMethod.card,
           status: PaymentStatus.completed,
           docId: paymentIntentId,
@@ -329,8 +331,8 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
           SnackBar(
             content: Text(
               remaining > 0
-                  ? 'Pago procesado. Quedaron ${formatMoney(remaining)} en la Pushka.'
-                  : 'Pago procesado. Se reflejará en el historial pronto.',
+                  ? S.of(context).paymentProcessedRemaining(formatMoney(remaining))
+                  : S.of(context).paymentProcessedHistory,
             ),
           ),
         );
@@ -338,7 +340,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
     } catch (error) {
       debugPrint('Card payment error: $error');
       if (!mounted) return;
-      _showError(_donationErrorMessage(error));
+      _showError(_donationErrorMessage(error, S.of(context)));
     } finally {
       if (mounted) setState(() => _isProcessing = false);
     }
@@ -358,15 +360,15 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
       final user = ref.read(currentUserProvider);
       if (user != null) {
         final methodLabels = {
-          PaymentMethod.check: 'cheque',
-          PaymentMethod.transfer: 'transferencia bancaria',
-          PaymentMethod.daf: 'DAF (Donor Advised Fund)',
+          PaymentMethod.check: S.of(context).methodCheckFull,
+          PaymentMethod.transfer: S.of(context).methodTransferFull,
+          PaymentMethod.daf: S.of(context).methodDafFull,
         };
         await ref.read(transactionRepositoryProvider).addTransaction(
           uid: user.uid,
           type: TransactionType.tzedaka,
           amount: amount,
-          description: 'Donación vía ${methodLabels[method] ?? method.name}',
+          description: S.of(context).donationVia(methodLabels[method] ?? method.name),
           paymentMethod: method,
           status: PaymentStatus.pending,
         );
@@ -376,15 +378,14 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
-              'Donación de ${formatMoney(amount)} registrada como pendiente. '
-              'Completa el pago según las instrucciones.',
+              S.of(context).donationPending(formatMoney(amount)),
             ),
             duration: const Duration(seconds: 4),
           ),
         );
       }
     } catch (error) {
-      if (mounted) _showError('No se pudo registrar la donación');
+      if (mounted) _showError(S.of(context).couldNotRegister);
     } finally {
       if (mounted) setState(() => _isProcessing = false);
     }
@@ -395,10 +396,10 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
 
     if (_biometricEnabled()) {
       final authenticated = await BiometricService.instance.authenticate(
-        reason: 'Confirma tu identidad para procesar la donaci\u00f3n',
+        reason: S.of(context).biometricReasonDonate,
       );
       if (!authenticated) {
-        _showError('Autenticaci\u00f3n requerida para donar');
+        _showError(S.of(context).authRequiredDonate);
         return;
       }
     }
@@ -424,7 +425,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
 
   @override
   Widget build(BuildContext context) {
-
+    final tr = S.of(context);
 
     final userProfile = ref.watch(userProfileProvider).valueOrNull;
     final remoteGoal = userProfile?['pushkaGoal'];
@@ -485,7 +486,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
 
             if (isFull) ...[
               Text(
-                "Tu Pushka est\u00e1 llena",
+                tr.pushkaFull,
                 style: TextStyle(
                   fontSize: titleSize,
                   fontWeight: FontWeight.w700,
@@ -495,7 +496,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
               ),
               const SizedBox(height: 6),
               Text(
-                "\u00a1Alcanzaste tu Meta de Donaci\u00f3n!",
+                tr.donationGoalReached,
                 style: TextStyle(color: AppTokens.mutedText, fontSize: subtitleSize),
                 textAlign: TextAlign.center,
               ),
@@ -526,20 +527,20 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
                     foregroundColor: Colors.white,
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                   ),
-                  child: const Text('VACIAR PUSHKA', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16)),
+                  child: Text(tr.emptyPushkaBtn, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 16)),
                 ),
               ),
               const SizedBox(height: 10),
               TextButton(
                 onPressed: _showTzedakahSettingsDialog,
                 child: Text(
-                  'CAMBIAR META DE PUSHKA',
+                  tr.changePushkaGoal,
                   style: TextStyle(color: AppTokens.primaryBlue, fontWeight: FontWeight.w700, fontSize: 15),
                 ),
               ),
             ] else ...[
               Text(
-                "\u00a1Ll\u00e9nala!",
+                tr.fillIt,
                 style: TextStyle(
                   fontSize: titleSize,
                   fontWeight: FontWeight.w700,
@@ -583,7 +584,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
                     () => addAmount(quickAmounts[2]),
                   ),
                   const SizedBox(width: 10),
-                  _moneyBtn('OTRO', AppTokens.primaryBlue, _otherAmount),
+                  _moneyBtn(tr.otherAmount, AppTokens.primaryBlue, _otherAmount),
                 ],
               ),
 
@@ -594,16 +595,16 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
                 children: [
                   TextButton(
                     onPressed: _donateNow,
-                    child: const Text(
-                      'DONAR AHORA',
-                      style: TextStyle(color: AppTokens.primaryBlue, fontWeight: FontWeight.w700),
+                    child: Text(
+                      tr.donateNowBtn,
+                      style: const TextStyle(color: AppTokens.primaryBlue, fontWeight: FontWeight.w700),
                     ),
                   ),
                   TextButton(
                     onPressed: emptyPushka,
-                    child: const Text(
-                      'VACIAR PUSHKA',
-                      style: TextStyle(color: AppTokens.primaryBlue, fontWeight: FontWeight.w700),
+                    child: Text(
+                      tr.emptyPushkaBtn,
+                      style: const TextStyle(color: AppTokens.primaryBlue, fontWeight: FontWeight.w700),
                     ),
                   ),
                   IconButton(
@@ -666,7 +667,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
               mainAxisSize: MainAxisSize.min,
               children: [
                 Text(
-                  'Racha de D\u00edas',
+                  S.of(context).streakDays,
                   style: TextStyle(
                     color: Colors.white,
                     fontSize: 14,
@@ -748,7 +749,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
             const SizedBox(width: 8),
             Flexible(
               child: Text(
-                holiday.nameEs,
+                holiday.localizedName(S.of(context)),
                 style: const TextStyle(
                   color: Colors.white,
                   fontSize: 13,
@@ -790,19 +791,19 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
                           ],
                         ),
                         Text(
-                          holiday.nameEs,
+                          holiday.localizedName(S.of(context)),
                           style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w700, color: Color(0xFFE8912D)),
                         ),
                         const SizedBox(height: 10),
                         Text(
-                          holiday.descriptionEs,
+                          holiday.localizedDescription(S.of(context)),
                           textAlign: TextAlign.center,
                           style: const TextStyle(color: AppTokens.mutedText, fontSize: 14),
                         ),
                         const SizedBox(height: 18),
-                        const Align(
+                        Align(
                           alignment: Alignment.centerLeft,
-                          child: Text('Elige un monto', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 16)),
+                          child: Text(S.of(context).chooseAmount, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 16)),
                         ),
                         const SizedBox(height: 12),
                         Wrap(
@@ -862,7 +863,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
                             ),
                           ),
                         ),
-                        const Text('Toca para editar el monto', style: TextStyle(color: Colors.grey, fontSize: 12)),
+                        Text(S.of(context).tapToEdit, style: const TextStyle(color: Colors.grey, fontSize: 12)),
                         const SizedBox(height: 18),
                         SizedBox(
                           width: double.infinity,
@@ -877,7 +878,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
                               padding: const EdgeInsets.symmetric(vertical: 14),
                               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                             ),
-                            child: const Text('DONAR AHORA', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16)),
+                            child: Text(S.of(context).donateNowBtn, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 16)),
                           ),
                         ),
                         const SizedBox(height: 10),
@@ -894,7 +895,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
                               padding: const EdgeInsets.symmetric(vertical: 14),
                               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                             ),
-                            child: const Text('AGREGAR A PUSHKA', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16)),
+                            child: Text(S.of(context).addToPushka, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 16)),
                           ),
                         ),
                       ],
@@ -908,7 +909,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
       await addAmount(amount);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('${formatMoney(amount)} agregado a tu Pushka')),
+          SnackBar(content: Text(S.of(context).addedToPushka(formatMoney(amount)))),
         );
       }
     } else {
@@ -950,7 +951,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
       context: context,
       builder: (ctx, setDialogState) => Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
                       Center(child: Container(width: 36, height: 4, margin: const EdgeInsets.only(bottom: 12), decoration: BoxDecoration(color: Colors.grey.shade300, borderRadius: BorderRadius.circular(2)))),
-                      const Text('Otro monto', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
+                      Text(S.of(context).otherAmountTitle, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
                       const SizedBox(height: 14),
                       TextField(
                         controller: controller,
@@ -961,7 +962,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
                           if (value != null && value > 0) Navigator.pop(ctx, value);
                         },
                         decoration: InputDecoration(
-                          hintText: 'Ej: 12.50', prefixText: '\$ ', errorText: error,
+                          hintText: S.of(context).amountHint, prefixText: '\$ ', errorText: error,
                           border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
                           focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: AppTokens.primaryBlue, width: 1.6)),
                         ),
@@ -972,14 +973,14 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
                         style: ElevatedButton.styleFrom(backgroundColor: AppTokens.primaryBlue, foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
                         onPressed: () {
                           final value = double.tryParse(controller.text.trim().replaceAll(',', '.'));
-                          if (value == null || value <= 0) { setDialogState(() => error = 'Ingresa un monto v\u00e1lido'); return; }
+                          if (value == null || value <= 0) { setDialogState(() => error = S.of(context).enterValidAmount); return; }
                           Navigator.pop(ctx, value);
                         },
-                        child: const Text('Agregar', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+                        child: Text(S.of(context).add, style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
                       )),
                       SizedBox(width: double.infinity, height: 44, child: TextButton(
                         onPressed: () => Navigator.pop(ctx),
-                        child: Text('Cancelar', style: TextStyle(color: Colors.grey.shade600, fontWeight: FontWeight.w500)),
+                        child: Text(S.of(context).cancel, style: TextStyle(color: Colors.grey.shade600, fontWeight: FontWeight.w500)),
                       )),
                     ]),
     );
@@ -992,7 +993,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
   Future<void> _persistPushkaAmount({bool resetToZero = false}) async {
     final user = ref.read(currentUserProvider);
     if (user == null) {
-      _showError('Inicia sesión para continuar');
+      _showError(S.of(context).signInToContinue);
       return;
     }
     final amount = resetToZero ? 0.0 : pushkaAmount;
@@ -1019,6 +1020,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
   }
 
   void _showMinAmountDialog(String currency, int minCents, double attempted) {
+    final tr = S.of(context);
     final symbol = _currencySymbol(currency);
     final minAmount = _formatAmountFromCents(minCents);
     final code = currency.toUpperCase();
@@ -1040,19 +1042,19 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
               child: const Icon(Icons.info_outline_rounded, color: Color(0xFFFF9500), size: 30),
             ),
             const SizedBox(height: 16),
-            const Text(
-              'Monto mínimo',
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
+            Text(
+              tr.minAmountTitle,
+              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
             ),
             const SizedBox(height: 10),
             Text(
-              'Para procesar pagos en $code, el monto mínimo es de $symbol$minAmount.',
+              tr.minAmountBody(code, symbol, minAmount),
               textAlign: TextAlign.center,
               style: TextStyle(fontSize: 14, color: Colors.grey.shade700, height: 1.4),
             ),
             const SizedBox(height: 6),
             Text(
-              'Puedes aumentar el monto o cambiar la moneda en Configuración.',
+              tr.minAmountHint,
               textAlign: TextAlign.center,
               style: TextStyle(fontSize: 13, color: Colors.grey.shade500, height: 1.4),
             ),
@@ -1068,7 +1070,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
                   elevation: 0,
                 ),
                 onPressed: () => Navigator.pop(ctx),
-                child: const Text('Entendido', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
+                child: Text(tr.understood, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
               ),
             ),
           ]),
@@ -1077,29 +1079,29 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
     );
   }
 
-  String _donationErrorMessage(Object error) {
+  String _donationErrorMessage(Object error, S tr) {
     if (error is FirebaseFunctionsException) {
       return switch (error.code) {
         'unauthenticated' =>
-          'Tu sesión no es válida. Cierra sesión e inicia de nuevo.',
+          tr.errorSessionInvalid,
         'failed-precondition' =>
-          'Verificación de seguridad fallida. Intenta de nuevo.',
+          tr.errorSecurityCheck,
         'permission-denied' =>
-          'Acceso denegado por seguridad. Intenta de nuevo.',
+          tr.errorAccessDenied,
         'internal' =>
-          'Error del servidor de pagos. Verifica tu conexión e intenta de nuevo.',
+          tr.errorPaymentServer,
         'unavailable' =>
-          'El servidor de pagos no está disponible. Intenta más tarde.',
-        _ => error.message ?? 'No se pudo iniciar el pago',
+          tr.errorServerUnavailable,
+        _ => error.message ?? tr.couldNotStartPayment,
       };
     }
     if (error is StripeException) {
       if (error.error.code == FailureCode.Canceled) {
-        return 'Pago cancelado';
+        return tr.paymentCanceled;
       }
       final msg = error.error.localizedMessage ?? error.error.message;
       if (msg != null && msg.trim().isNotEmpty) {
-        return 'No se pudo completar el pago: $msg';
+        return tr.paymentFailed(msg);
       }
     }
     if (error is Exception) {
@@ -1108,7 +1110,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
         return msg;
       }
     }
-    return 'No se pudo completar la donación';
+    return tr.couldNotCompleteDonation;
   }
 
   String _currencyCodeFromProfile() {
@@ -1137,6 +1139,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
 
 
   Future<PaymentMethod?> _showPaymentMethodSelector() async {
+    final tr = S.of(context);
     return showDialog<PaymentMethod>(
       context: context,
       barrierDismissible: true,
@@ -1146,21 +1149,21 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
         child: Padding(
           padding: const EdgeInsets.fromLTRB(20, 20, 20, 16),
           child: Column(mainAxisSize: MainAxisSize.min, children: [
-            const Text('Método de pago', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
+            Text(tr.paymentMethodTitle, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
             const SizedBox(height: 6),
-            Text('Selecciona cómo deseas realizar tu donación', style: TextStyle(fontSize: 14, color: Colors.grey.shade600)),
+            Text(tr.paymentMethodSubtitle, style: TextStyle(fontSize: 14, color: Colors.grey.shade600)),
             const SizedBox(height: 18),
-            _paymentMethodTile(ctx, PaymentMethod.card, Icons.credit_card, 'Tarjeta de crédito/débito', 'Pago inmediato vía Stripe'),
+            _paymentMethodTile(ctx, PaymentMethod.card, Icons.credit_card, tr.paymentCard, tr.paymentCardSub),
             const SizedBox(height: 10),
-            _paymentMethodTile(ctx, PaymentMethod.check, Icons.mail_outline, 'Cheque', 'Envía un cheque por correo'),
+            _paymentMethodTile(ctx, PaymentMethod.check, Icons.mail_outline, tr.paymentCheck, tr.paymentCheckSub),
             const SizedBox(height: 10),
-            _paymentMethodTile(ctx, PaymentMethod.transfer, Icons.account_balance, 'Transferencia bancaria', 'Transferencia electrónica'),
+            _paymentMethodTile(ctx, PaymentMethod.transfer, Icons.account_balance, tr.paymentTransfer, tr.paymentTransferSub),
             const SizedBox(height: 10),
-            _paymentMethodTile(ctx, PaymentMethod.daf, Icons.volunteer_activism, 'DAF', 'Donor Advised Fund'),
+            _paymentMethodTile(ctx, PaymentMethod.daf, Icons.volunteer_activism, tr.paymentDaf, tr.paymentDafSub),
             const SizedBox(height: 12),
             SizedBox(width: double.infinity, height: 44, child: TextButton(
               onPressed: () => Navigator.pop(ctx),
-              child: Text('Cancelar', style: TextStyle(color: Colors.grey.shade600, fontWeight: FontWeight.w500)),
+              child: Text(tr.cancel, style: TextStyle(color: Colors.grey.shade600, fontWeight: FontWeight.w500)),
             )),
           ]),
         ),
@@ -1198,6 +1201,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
   }
 
   Future<bool?> _showPaymentInstructions(PaymentMethod method, double amount) async {
+    final tr = S.of(context);
     if (method == PaymentMethod.card) return null;
 
     final String title;
@@ -1206,37 +1210,17 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
 
     switch (method) {
       case PaymentMethod.check:
-        title = 'Pago con Cheque';
+        title = tr.checkTitle;
         icon = Icons.mail_outline;
-        instructionText =
-            'Envía un cheque por el monto de ${formatMoney(amount)} a:\n\n'
-            'Nombre: [Nombre de la Organización]\n'
-            'Dirección: [Dirección postal]\n'
-            'Ciudad, Estado, ZIP: [Ciudad, ST 00000]\n\n'
-            'Referencia: Incluye tu email o ID de usuario en el memo del cheque.\n\n'
-            'Una vez recibido y procesado, la donación se marcará como confirmada en tu historial.';
+        instructionText = tr.checkInstructions(formatMoney(amount));
       case PaymentMethod.transfer:
-        title = 'Transferencia Bancaria';
+        title = tr.transferTitle;
         icon = Icons.account_balance;
-        instructionText =
-            'Transfiere ${formatMoney(amount)} a la siguiente cuenta:\n\n'
-            'Banco: [Nombre del Banco]\n'
-            'Número de cuenta: [XXXX-XXXX-XXXX]\n'
-            'Routing / ABA: [XXXXXXXXX]\n'
-            'Beneficiario: [Nombre de la Organización]\n\n'
-            'Referencia: Usa tu email como referencia de la transferencia.\n\n'
-            'El pago se confirmará automáticamente en 2-3 días hábiles.';
+        instructionText = tr.transferInstructions(formatMoney(amount));
       case PaymentMethod.daf:
-        title = 'Donor Advised Fund (DAF)';
+        title = tr.dafTitle;
         icon = Icons.volunteer_activism;
-        instructionText =
-            'Realiza una donación de ${formatMoney(amount)} desde tu DAF a:\n\n'
-            'Organización: [Nombre Legal de la Organización]\n'
-            'EIN: [XX-XXXXXXX]\n'
-            'Dirección: [Dirección de la Organización]\n\n'
-            'Indica tu email en el campo de notas del grant.\n\n'
-            'Proveedores comunes: Fidelity Charitable, Schwab Charitable, DAF Direct.\n\n'
-            'Una vez procesado el grant, la donación se confirmará en tu historial.';
+        instructionText = tr.dafInstructions(formatMoney(amount));
       case PaymentMethod.card:
         return null;
     }
@@ -1284,12 +1268,12 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
                   SizedBox(width: double.infinity, height: 48, child: ElevatedButton(
                     style: ElevatedButton.styleFrom(backgroundColor: AppTokens.primaryBlue, foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
                     onPressed: () => Navigator.pop(ctx, true),
-                    child: const Text('Confirmar donación', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+                    child: Text(tr.confirmDonation, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
                   )),
                   const SizedBox(height: 8),
                   SizedBox(width: double.infinity, height: 44, child: TextButton(
                     onPressed: () => Navigator.pop(ctx, false),
-                    child: Text('Cancelar', style: TextStyle(color: Colors.grey.shade600, fontWeight: FontWeight.w500)),
+                    child: Text(tr.cancel, style: TextStyle(color: Colors.grey.shade600, fontWeight: FontWeight.w500)),
                   )),
                 ]),
               ),
@@ -1415,28 +1399,24 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
           .timeout(const Duration(seconds: 8));
     } on TimeoutException {
       if (!mounted) return;
-      _showError(
-        'Sin conexión estable. Guardamos localmente y se sincronizará al reconectar.',
-      );
+      _showError(S.of(context).offlineSaved);
     } on FirebaseException catch (e) {
       if (!mounted) return;
       if (e.code == 'unavailable') {
-        _showError(
-          'No hay conexión con Firestore. Revisa internet y vuelve a intentar.',
-        );
+        _showError(S.of(context).firestoreUnavailable);
       } else {
-        _showError('No se pudo sincronizar la configuración. Intenta nuevamente.');
+        _showError(S.of(context).couldNotSync);
       }
     } catch (_) {
       if (!mounted) return;
-      _showError('No se pudo sincronizar la configuración. Intenta nuevamente.');
+      _showError(S.of(context).couldNotSync);
     }
   }
 
   Future<void> _showTzedakahSettingsDialog() async {
     final user = ref.read(currentUserProvider);
     if (user == null) {
-      _showError('Inicia sesi\u00f3n para continuar');
+      _showError(S.of(context).signInToContinue);
       return;
     }
 
@@ -1467,11 +1447,11 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Center(child: Container(width: 36, height: 4, margin: const EdgeInsets.only(bottom: 12), decoration: BoxDecoration(color: Colors.grey.shade300, borderRadius: BorderRadius.circular(2)))),
-                  const Center(
+                  Center(
                     child: Text(
-                      'Configuraci\u00f3n de Tzedak\u00e1',
+                      S.of(context).tzedakahSettings,
                       textAlign: TextAlign.center,
-                      style: TextStyle(
+                      style: const TextStyle(
                         fontSize: 28,
                         fontWeight: FontWeight.w800,
                         letterSpacing: -0.3,
@@ -1480,7 +1460,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
                   ),
                   const SizedBox(height: 18),
                   Text(
-                    'META DE PUSHKA',
+                    S.of(context).pushkaGoalLabel,
                     style: TextStyle(
                       fontSize: 13,
                       fontWeight: FontWeight.w700,
@@ -1520,10 +1500,10 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
                       );
                     }).toList()
                       ..add(
-                        const DropdownMenuItem<double>(
+                        DropdownMenuItem<double>(
                           value: -1,
                           child: Text(
-                            'OTRO',
+                            S.of(context).dropdownOther,
                             style: TextStyle(
                               fontSize: 16,
                               fontWeight: FontWeight.w500,
@@ -1545,7 +1525,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
                   ),
                   const SizedBox(height: 18),
                   Text(
-                    'MONTOS PREDEFINIDOS',
+                    S.of(context).presetAmountsLabel,
                     style: TextStyle(
                       fontSize: 13,
                       fontWeight: FontWeight.w700,
@@ -1555,7 +1535,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
                   ),
                   const SizedBox(height: 4),
                   Text(
-                    'Edita los montos que aparecen como botones r\u00e1pidos',
+                    S.of(context).editQuickAmountHint,
                     style: TextStyle(fontSize: 12, color: Colors.grey.shade500),
                   ),
                   const SizedBox(height: 10),
@@ -1620,7 +1600,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
                               final p2 = double.tryParse(ctrl2.text.replaceAll(',', '.')) ?? 0;
                               final p3 = double.tryParse(ctrl3.text.replaceAll(',', '.')) ?? 0;
                               if (p1 <= 0 || p2 <= 0 || p3 <= 0) {
-                                _showError('Todos los montos deben ser mayores a 0');
+                                _showError(S.of(context).allAmountsMustBePositive);
                                 return;
                               }
                               final newPresets = [p1, p2, p3];
@@ -1650,9 +1630,9 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
                                 valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
                               ),
                             )
-                          : const Text(
-                              'GUARDAR',
-                              style: TextStyle(fontWeight: FontWeight.w700),
+                          : Text(
+                              S.of(context).saveBtn,
+                              style: const TextStyle(fontWeight: FontWeight.w700),
                             ),
                     ),
                   ),
@@ -1671,9 +1651,9 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
                       onPressed: isSaving
                           ? null
                           : () => Navigator.of(ctx).pop(false),
-                      child: const Text(
-                        'CANCELAR',
-                        style: TextStyle(fontWeight: FontWeight.w700),
+                      child: Text(
+                        S.of(context).cancelBtn,
+                        style: const TextStyle(fontWeight: FontWeight.w700),
                       ),
                     ),
                   ),
@@ -1683,7 +1663,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
 
     if (saved == true && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Configuraci\u00f3n aplicada')),
+        SnackBar(content: Text(S.of(context).settingsApplied)),
       );
     }
   }
@@ -1696,7 +1676,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
       context: context,
       builder: (ctx, setDialogState) => Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
                       Center(child: Container(width: 36, height: 4, margin: const EdgeInsets.only(bottom: 12), decoration: BoxDecoration(color: Colors.grey.shade300, borderRadius: BorderRadius.circular(2)))),
-                      const Text('Meta personalizada', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
+                      Text(S.of(context).customGoal, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
                       const SizedBox(height: 14),
                       TextField(
                         controller: controller,
@@ -1707,7 +1687,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
                           if (value != null && value > 0) Navigator.pop(ctx, value);
                         },
                         decoration: InputDecoration(
-                          hintText: 'Ej: 4500', prefixText: '\$ ', errorText: error,
+                          hintText: S.of(context).customGoalHint, prefixText: '\$ ', errorText: error,
                           border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
                           focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: AppTokens.primaryBlue, width: 1.6)),
                         ),
@@ -1718,14 +1698,14 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
                         style: ElevatedButton.styleFrom(backgroundColor: AppTokens.primaryBlue, foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
                         onPressed: () {
                           final value = double.tryParse(controller.text.trim().replaceAll(',', '.'));
-                          if (value == null || value <= 0) { setDialogState(() => error = 'Ingresa un monto v\u00e1lido'); return; }
+                          if (value == null || value <= 0) { setDialogState(() => error = S.of(context).enterValidAmount); return; }
                           Navigator.pop(ctx, value);
                         },
-                        child: const Text('Aceptar', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+                        child: Text(S.of(context).accept, style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
                       )),
                       SizedBox(width: double.infinity, height: 44, child: TextButton(
                         onPressed: () => Navigator.pop(ctx),
-                        child: Text('Cancelar', style: TextStyle(color: Colors.grey.shade600, fontWeight: FontWeight.w500)),
+                        child: Text(S.of(context).cancel, style: TextStyle(color: Colors.grey.shade600, fontWeight: FontWeight.w500)),
                       )),
                     ]),
     );
@@ -1789,11 +1769,11 @@ class _PartialDonationSheetState extends State<_PartialDonationSheet> {
   void _submit() {
     final parsed = double.tryParse(_controller.text.replaceAll(',', '.'));
     if (parsed == null || parsed <= 0) {
-      setState(() => _error = 'Ingresa un monto válido');
+      setState(() => _error = S.of(context).enterValidAmount);
       return;
     }
     if (parsed > widget.available) {
-      setState(() => _error = 'No puede ser mayor al saldo de tu Pushka');
+      setState(() => _error = S.of(context).cannotExceedBalance);
       return;
     }
     Navigator.of(context).pop(parsed);
@@ -1801,6 +1781,7 @@ class _PartialDonationSheetState extends State<_PartialDonationSheet> {
 
   @override
   Widget build(BuildContext context) {
+    final tr = S.of(context);
     return Container(
         decoration: const BoxDecoration(
           color: Colors.white,
@@ -1825,18 +1806,18 @@ class _PartialDonationSheetState extends State<_PartialDonationSheet> {
                     ),
                   ),
                 ),
-                const Text(
-                  'Donación parcial',
-                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
+                Text(
+                  tr.partialDonationTitle,
+                  style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
                 ),
                 const SizedBox(height: 10),
                 Text(
-                  'Disponible en Pushka: ${formatMoney(widget.available)}',
+                  tr.availableInPushka(formatMoney(widget.available)),
                   style: const TextStyle(fontWeight: FontWeight.w600),
                 ),
                 const SizedBox(height: 6),
                 Text(
-                  'Selecciona rápido',
+                  tr.quickSelect,
                   style: TextStyle(
                     color: Colors.grey.shade600,
                     fontSize: 12,
@@ -1861,10 +1842,10 @@ class _PartialDonationSheetState extends State<_PartialDonationSheet> {
                   textInputAction: TextInputAction.done,
                   keyboardType: const TextInputType.numberWithOptions(decimal: true),
                   decoration: InputDecoration(
-                    labelText: 'Monto a donar ahora',
+                    labelText: tr.amountToDonate,
                     prefixText: '\$ ',
                     errorText: _error,
-                    hintText: 'Ej: 5.00',
+                    hintText: tr.amountHint,
                     border: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(12),
                     ),
@@ -1892,9 +1873,9 @@ class _PartialDonationSheetState extends State<_PartialDonationSheet> {
                       ),
                     ),
                     onPressed: _submit,
-                    child: const Text(
-                      'Donar',
-                      style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+                    child: Text(
+                      tr.donate,
+                      style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
                     ),
                   ),
                 ),
@@ -1905,7 +1886,7 @@ class _PartialDonationSheetState extends State<_PartialDonationSheet> {
                   child: TextButton(
                     onPressed: () => Navigator.of(context).pop(),
                     child: Text(
-                      'Cancelar',
+                      tr.cancel,
                       style: TextStyle(
                         color: Colors.grey.shade600,
                         fontWeight: FontWeight.w500,
@@ -1955,6 +1936,7 @@ class _PartialDonationSheetState extends State<_PartialDonationSheet> {
 class _HolidayInfo {
   final String nameEs;
   final String descriptionEs;
+  final String key;
   final List<double> presetAmounts;
   final DateTime startDate;
   final int showDaysBefore;
@@ -1964,12 +1946,35 @@ class _HolidayInfo {
   const _HolidayInfo({
     required this.nameEs,
     required this.descriptionEs,
+    required this.key,
     required this.presetAmounts,
     required this.startDate,
     required this.showDaysBefore,
     this.durationDays = 1,
     this.iconAsset,
   });
+
+  String localizedName(S tr) => switch (key) {
+    'maotJitim' => tr.holidayMaotJitim,
+    'shavuot' => tr.holidayShavuot,
+    'roshHashana' => tr.holidayRoshHashana,
+    'yomKippur' => tr.holidayYomKippur,
+    'sucot' => tr.holidaySucot,
+    'januca' => tr.holidayJanuca,
+    'purim' => tr.holidayPurim,
+    _ => nameEs,
+  };
+
+  String localizedDescription(S tr) => switch (key) {
+    'maotJitim' => tr.holidayMaotJitimDesc,
+    'shavuot' => tr.holidayShavuotDesc,
+    'roshHashana' => tr.holidayRoshHashanaDesc,
+    'yomKippur' => tr.holidayYomKippurDesc,
+    'sucot' => tr.holidaySucotDesc,
+    'januca' => tr.holidayJanucaDesc,
+    'purim' => tr.holidayPurimDesc,
+    _ => descriptionEs,
+  };
 
   bool get isActive {
     final now = DateTime.now();
@@ -1988,6 +1993,7 @@ class _HolidayInfo {
   static final List<_HolidayInfo> _holidays = [
     // 5786 (2025-2026)
     _HolidayInfo(
+      key: 'maotJitim',
       nameEs: 'Ma\u0027ot Jitim',
       descriptionEs: 'Fondos para los necesitados de Israel para sus necesidades de P\u00e9saj',
       presetAmounts: [54, 180, 1800],
@@ -1996,6 +2002,7 @@ class _HolidayInfo {
       durationDays: 8,
     ),
     _HolidayInfo(
+      key: 'shavuot',
       nameEs: 'Shavuot',
       descriptionEs: 'Celebramos la entrega de la Tor\u00e1. Dona tzedak\u00e1 en honor a esta festividad',
       presetAmounts: [18, 36, 180],
@@ -2005,6 +2012,7 @@ class _HolidayInfo {
     ),
     // 5787 (2026-2027)
     _HolidayInfo(
+      key: 'roshHashana',
       nameEs: 'Rosh Hashan\u00e1',
       descriptionEs: 'A\u00f1o Nuevo jud\u00edo. Comienza el a\u00f1o con tzedak\u00e1 y buenas acciones',
       presetAmounts: [36, 180, 360],
@@ -2013,6 +2021,7 @@ class _HolidayInfo {
       durationDays: 2,
     ),
     _HolidayInfo(
+      key: 'yomKippur',
       nameEs: 'Yom Kippur',
       descriptionEs: 'D\u00eda de la Expiaci\u00f3n. La tzedak\u00e1 es un m\u00e9rito especial antes de Yom Kippur',
       presetAmounts: [36, 180, 360],
@@ -2020,6 +2029,7 @@ class _HolidayInfo {
       showDaysBefore: 14,
     ),
     _HolidayInfo(
+      key: 'sucot',
       nameEs: 'Sucot',
       descriptionEs: 'Fiesta de las Caba\u00f1as. Comparte alegr\u00eda con quienes m\u00e1s lo necesitan',
       presetAmounts: [18, 54, 180],
@@ -2028,6 +2038,7 @@ class _HolidayInfo {
       durationDays: 7,
     ),
     _HolidayInfo(
+      key: 'januca',
       nameEs: 'Januc\u00e1',
       descriptionEs: 'Festival de las Luces. Ilumina vidas con tu donaci\u00f3n de tzedak\u00e1',
       presetAmounts: [18, 54, 180],
@@ -2036,6 +2047,7 @@ class _HolidayInfo {
       durationDays: 8,
     ),
     _HolidayInfo(
+      key: 'purim',
       nameEs: 'Purim',
       descriptionEs: "Matanot la'Evionim: regalos a los necesitados, una mitzv\u00e1 central de Purim",
       presetAmounts: [18, 54, 180],
@@ -2043,6 +2055,7 @@ class _HolidayInfo {
       showDaysBefore: 21,
     ),
     _HolidayInfo(
+      key: 'maotJitim',
       nameEs: 'Ma\u0027ot Jitim',
       descriptionEs: 'Fondos para los necesitados de Israel para sus necesidades de P\u00e9saj',
       presetAmounts: [54, 180, 1800],

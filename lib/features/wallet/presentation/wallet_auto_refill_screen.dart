@@ -27,6 +27,21 @@ class _WalletAutoRefillScreenState extends ConsumerState<WalletAutoRefillScreen>
     super.dispose();
   }
 
+  String get _currencyCode {
+    final profile = ref.read(userProfileProvider).valueOrNull;
+    final code = profile?['currencyCode'] as String?;
+    return (code != null && code.trim().isNotEmpty) ? code : 'usd';
+  }
+
+  String _currencySymbol(String code) {
+    const symbols = {
+      'usd': 'US\$', 'eur': '€', 'gbp': '£', 'cad': 'CA\$',
+      'mxn': 'MX\$', 'ars': 'ARS\$', 'brl': 'R\$', 'ils': '₪',
+      'clp': 'CL\$', 'cop': 'CO\$',
+    };
+    return symbols[code.toLowerCase()] ?? '\$';
+  }
+
   DateTime _computeNextRun({
     required String frequency,
     required int weekday,

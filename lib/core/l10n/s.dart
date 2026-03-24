@@ -190,6 +190,12 @@ class S {
   );
   String get dropdownOther => _t('OTRO', 'OTHER', 'AUTRE');
 
+  String get pushkaEmptyCardDesc => _t('Pushka vaciada - pago con tarjeta', 'Pushka emptied - card payment', 'Pushka vidée - paiement par carte');
+  String donationVia(String method) => _t('Donación vía $method', 'Donation via $method', 'Don via $method');
+  String get methodCheckFull => _t('cheque', 'check', 'chèque');
+  String get methodTransferFull => _t('transferencia bancaria', 'bank transfer', 'virement bancaire');
+  String get methodDafFull => _t('DAF (Donor Advised Fund)', 'DAF (Donor Advised Fund)', 'DAF (Donor Advised Fund)');
+
   // ---------------------------------------------------------------------------
   // HOLIDAY NAMES
   // ---------------------------------------------------------------------------
@@ -389,7 +395,6 @@ class S {
   String get couldNotUpdateReminder => _t("No se pudo actualizar el recordatorio", "Could not update reminder", "Impossible de mettre à jour le rappel");
   String get signInToModify => _t('Inicia sesión para modificar recordatorios', 'Sign in to modify reminders', 'Connectez-vous pour modifier les rappels');
   String get signInToDelete => _t('Inicia sesión para eliminar recordatorios', 'Sign in to delete reminders', 'Connectez-vous pour supprimer les rappels');
-  String get couldNotUpdateReminder => _t('No se pudo actualizar el recordatorio', 'Could not update reminder', 'Impossible de mettre à jour le rappel');
   String get couldNotDelete => _t('No se pudo eliminar el recordatorio', 'Could not delete reminder', 'Impossible de supprimer le rappel');
   String get repeatDaily => _t('Diario', 'Daily', 'Quotidien');
   String get repeatWeekdays => _t('Días de semana', 'Weekdays', 'Jours ouvrables');
@@ -629,9 +634,6 @@ class S {
   String get dayFriFull => _t('Viernes', 'Friday', 'Vendredi');
   String get daySatFull => _t('Sábado', 'Saturday', 'Samedi');
   String get daySunFull => _t('Domingo', 'Sunday', 'Dimanche');
-  String get daySatFull => _t('Sábado', 'Saturday', 'Samedi');
-  String get daySunFull => _t('Domingo', 'Sunday', 'Dimanche');
-  String get monthJan => _t('Ene', 'Jan', 'Jan');
   String get monthFeb => _t('Feb', 'Feb', 'Fév');
   String get monthMar => _t('Mar', 'Mar', 'Mar');
   String get monthApr => _t('Abr', 'Apr', 'Avr');
