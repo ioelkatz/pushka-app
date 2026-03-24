@@ -1,4 +1,4 @@
-﻿import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:country_picker/country_picker.dart';
 import 'package:flutter/material.dart';
@@ -7,13 +7,13 @@ import 'package:local_auth/local_auth.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 
 import '../../auth/providers/auth_controller.dart';
-import '../../feedback/feedback_service.dart';
 import '../../users/data/user_repository.dart';
 import '../../users/presentation/user_profile_provider.dart';
 import '../../wallet/data/wallet_service.dart';
+import '../../../core/format_utils.dart';
+import '../../../core/l10n/s.dart';
+import '../../../core/l10n/locale_provider.dart';
 import 'auto_empty_screen.dart';
-import '../../../app/theme/app_tokens.dart';
-import '../../../core/keyboard_safe_sheet.dart';
 
 class SettingsScreen extends ConsumerStatefulWidget {
   const SettingsScreen({super.key});
@@ -53,6 +53,15 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     return (match?.group(0) ?? value).trim();
   }
 
+  String _currencySymbol(String code) {
+    const symbols = {
+      'usd': 'US\$', 'eur': '€', 'gbp': '£', 'cad': 'CA\$',
+      'mxn': 'MX\$', 'ars': 'ARS\$', 'brl': 'R\$', 'ils': '₪',
+      'clp': 'CL\$', 'cop': 'CO\$',
+    };
+    return symbols[code.toLowerCase()] ?? '\$';
+  }
+
   Future<void> _addPushkaByWalletId(String rawWalletId) async {
     final walletId = _normalizeWalletId(rawWalletId);
     if (walletId.isEmpty) {
@@ -90,10 +99,20 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     String manualValue = '';
     String? error;
 
-    final manualWalletId = await showKeyboardSafeSheet<String>(
+    final manualWalletId = await showModalBottomSheet<String>(
       context: context,
-      contentPadding: const EdgeInsets.fromLTRB(20, 8, 20, 16),
-      builder: (ctx, setSheetState) => Column(
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (ctx, setSheetState) {
+            return Padding(
+              padding: EdgeInsets.only(bottom: MediaQuery.of(ctx).viewInsets.bottom),
+              child: Container(
+                decoration: const BoxDecoration(color: Colors.white, borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+                child: SafeArea(top: false, child: SingleChildScrollView(
+                  padding: const EdgeInsets.fromLTRB(20, 8, 20, 16),
+                  child: Column(
                     mainAxisSize: MainAxisSize.min,
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
@@ -101,20 +120,21 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                       const Text('Agregar nueva Pushka', textAlign: TextAlign.center, style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
                       const SizedBox(height: 18),
                       SizedBox(height: 52, child: ElevatedButton(
-                        style: ElevatedButton.styleFrom(backgroundColor: AppTokens.primaryBlue, foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
+                        style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFE05A4F), foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
                         onPressed: () => Navigator.of(ctx).pop(''),
                         child: const Text('Escanear código QR', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
                       )),
                       const SizedBox(height: 12),
                       if (!showManualEntry)
                         SizedBox(height: 52, child: OutlinedButton(
-                          style: OutlinedButton.styleFrom(foregroundColor: AppTokens.primaryBlue, side: const BorderSide(color: AppTokens.primaryBlue, width: 2), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
+                          style: OutlinedButton.styleFrom(foregroundColor: const Color(0xFFE05A4F), side: const BorderSide(color: Color(0xFFE05A4F), width: 2), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
                           onPressed: () { setSheetState(() { showManualEntry = true; error = null; }); },
                           child: const Text('Ingresar ID Pushka', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
                         )),
                       if (showManualEntry) ...[
                         TextField(
-                            textInputAction: TextInputAction.done,
+                          autofocus: true,
+                          textInputAction: TextInputAction.done,
                           onChanged: (value) { manualValue = value; if (error != null) setSheetState(() => error = null); },
                           onSubmitted: (value) {
                             if (_normalizeWalletId(value).isEmpty) { setSheetState(() => error = 'Ingresa un ID válido'); return; }
@@ -124,12 +144,18 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                             hintText: 'Ingresa ID Pushka', errorText: error,
                             contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
                             border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                            focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: AppTokens.primaryBlue, width: 1.6)),
+                            focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: Color(0xFFE05A4F), width: 1.6)),
                           ),
                         ),
                       ],
                     ],
                   ),
+                )),
+              ),
+            );
+          },
+        );
+      },
     );
 
     if (manualWalletId == null) return;
@@ -142,6 +168,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
   @override
   Widget build(BuildContext context) {
+    const orange = Color(0xFFFF9500);
+    const red = Color(0xFFE05A4F);
+    const blue = Color(0xFF2F60C5);
 
     final user = ref.watch(currentUserProvider);
     final userProfile = ref.watch(userProfileProvider).valueOrNull;
@@ -222,9 +251,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           _buildLabel('META DE PUSHKA'),
           const SizedBox(height: 6),
           _buildInputField(
-            value: '\$ ${pushkaGoal.toStringAsFixed(2)}',
+            value: formatMoney(pushkaGoal),
             onTap: () => _showPushkaGoalDialog(),
-            blue: AppTokens.primaryBlue,
+            blue: blue,
           ),
           const SizedBox(height: 18),
 
@@ -281,16 +310,21 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             currency: '\$ $selectedCurrency',
             onTap: () => _showCurrencyDialog(),
           ),
+          const SizedBox(height: 18),
+
+          // LANGUAGE
+          _buildLabel('IDIOMA'),
+          const SizedBox(height: 6),
+          _buildLanguageSelector(),
           const SizedBox(height: 32),
 
           // SOUND
           _buildToggleRow(
             'SONIDO',
             soundEnabled,
-            AppTokens.skyBlue,
+            orange,
             onChanged: (value) {
               setState(() => soundEnabled = value);
-              FeedbackService.instance.updatePreferences(sound: value);
               _updateSettings(user, soundEnabled: value);
             },
           ),
@@ -300,10 +334,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           _buildToggleRow(
             'SONIDO DE MONEDA',
             coinJingleEnabled,
-            AppTokens.skyBlue,
+            orange,
             onChanged: (value) {
               setState(() => coinJingleEnabled = value);
-              FeedbackService.instance.updatePreferences(coinJingle: value);
               _updateSettings(user, coinJingleEnabled: value);
             },
           ),
@@ -313,10 +346,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           _buildToggleRow(
             'VIBRACIÓN',
             vibrationEnabled,
-            AppTokens.skyBlue,
+            orange,
             onChanged: (value) {
               setState(() => vibrationEnabled = value);
-              FeedbackService.instance.updatePreferences(vibration: value);
               _updateSettings(user, vibrationEnabled: value);
             },
           ),
@@ -326,7 +358,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           _buildToggleRow(
             'PAGOS PARCIALES',
             partialPaymentsEnabled,
-            AppTokens.skyBlue,
+            orange,
             onChanged: (value) {
               setState(() => partialPaymentsEnabled = value);
               _updateSettings(user, partialPaymentsEnabled: value);
@@ -339,7 +371,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             'OPCIONES DE PAGO ADICIONALES',
             'Incluyendo cheque, transferencia, DAF',
             additionalPaymentOptionsEnabled,
-            AppTokens.skyBlue,
+            orange,
             labelFontSize: 14,
             onChanged: (value) {
               setState(() => additionalPaymentOptionsEnabled = value);
@@ -351,7 +383,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           _buildToggleRow(
             'AUTENTICACIÓN BIOMÉTRICA',
             biometricAuthenticationEnabled,
-            AppTokens.skyBlue,
+            orange,
             onChanged: (value) async {
               if (value) {
                 final success = await _authenticateWithBiometrics();
@@ -389,7 +421,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           Container(
             height: 10,
             width: double.infinity,
-            color: AppTokens.cardSilver,
+            color: const Color(0xFFF1F1F1),
           ),
           const SizedBox(height: 22),
 
@@ -403,14 +435,14 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   fontSize: 40 / 2,
                   fontWeight: FontWeight.w700,
                   letterSpacing: 0.5,
-                  color: AppTokens.textPrimary,
+                  color: Color(0xFF101010),
                 ),
               ),
               const SizedBox(width: 10),
               ElevatedButton(
                 onPressed: _showAddPushkaDialog,
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: AppTokens.primaryBlue,
+                  backgroundColor: red,
                   foregroundColor: Colors.white,
                   elevation: 0,
                   padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
@@ -466,7 +498,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           Container(
             height: 10,
             width: double.infinity,
-            color: AppTokens.cardSilver,
+            color: const Color(0xFFF1F1F1),
           ),
           const SizedBox(height: 22),
 
@@ -519,7 +551,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           Container(
             height: 10,
             width: double.infinity,
-            color: AppTokens.cardSilver,
+            color: const Color(0xFFF1F1F1),
           ),
           const SizedBox(height: 22),
 
@@ -530,13 +562,13 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             onTap: () => _showDeleteAccountDialog(),
             child: Row(
               children: [
-                Icon(Icons.delete_outline, color: AppTokens.destructive, size: 20),
+                Icon(Icons.delete_outline, color: const Color(0xFF8B1A1A), size: 20),
                 const SizedBox(width: 8),
                 Text(
                   '¿Eliminar cuenta?',
                   style: const TextStyle(
                     fontSize: 16,
-                    color: AppTokens.destructive,
+                    color: Color(0xFF8B1A1A),
                     fontWeight: FontWeight.w500,
                   ),
                 ),
@@ -551,7 +583,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             child: OutlinedButton(
               onPressed: () => _showLogoutDialog(),
               style: OutlinedButton.styleFrom(
-                side: const BorderSide(color: AppTokens.primaryBlue, width: 2),
+                side: const BorderSide(color: red, width: 2),
                 padding: const EdgeInsets.symmetric(vertical: 14),
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(8),
@@ -560,7 +592,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               child: const Text(
                 'Cerrar sesión',
                 style: TextStyle(
-                  color: AppTokens.primaryBlue,
+                  color: red,
                   fontWeight: FontWeight.w700,
                   fontSize: 16,
                 ),
@@ -580,7 +612,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         fontSize: 40 / 2,
         fontWeight: FontWeight.w700,
         letterSpacing: 0.5,
-        color: AppTokens.textPrimary,
+        color: Color(0xFF101010),
       ),
     );
   }
@@ -592,7 +624,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         fontSize: 11,
         fontWeight: FontWeight.w600,
         letterSpacing: 0.5,
-        color: AppTokens.mutedText,
+        color: Colors.black54,
       ),
     );
   }
@@ -641,6 +673,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     bool isSelected, {
     required VoidCallback onTap,
   }) {
+    const blue = Color(0xFF2F60C5);
     return InkWell(
       borderRadius: BorderRadius.circular(14),
       onTap: onTap,
@@ -652,9 +685,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             curve: Curves.easeOut,
             height: 56,
             decoration: BoxDecoration(
-              color: isSelected ? AppTokens.primaryBlue.withValues(alpha: 0.06) : Colors.white,
+              color: isSelected ? blue.withValues(alpha: 0.06) : Colors.white,
               border: Border.all(
-                color: isSelected ? AppTokens.primaryBlue : Colors.grey.shade300,
+                color: isSelected ? blue : Colors.grey.shade300,
                 width: isSelected ? 2 : 1.2,
               ),
               borderRadius: BorderRadius.circular(14),
@@ -665,7 +698,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               style: TextStyle(
                 fontSize: 16,
                 fontWeight: FontWeight.w600,
-                color: isSelected ? AppTokens.primaryBlue : AppTokens.textPrimary,
+                color: isSelected ? blue : Colors.black87,
               ),
             ),
           ),
@@ -676,7 +709,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               child: Container(
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                 decoration: BoxDecoration(
-                  color: AppTokens.primaryBlue,
+                  color: blue,
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: const Text(
@@ -768,6 +801,50 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     );
   }
 
+  Widget _buildLanguageSelector() {
+    final currentLocale = ref.watch(localeProvider);
+    const languages = [
+      {'label': 'Español', 'code': 'es'},
+      {'label': 'English', 'code': 'en'},
+      {'label': 'Français', 'code': 'fr'},
+    ];
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        border: Border.all(color: Colors.grey.shade300),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: DropdownButtonFormField<String>(
+        value: currentLocale.languageCode,
+        decoration: const InputDecoration(
+          border: InputBorder.none,
+          isDense: true,
+          contentPadding: EdgeInsets.symmetric(vertical: 12),
+        ),
+        icon: const Icon(Icons.keyboard_arrow_down, color: Colors.grey),
+        isExpanded: true,
+        items: languages
+            .map((lang) => DropdownMenuItem<String>(
+                  value: lang['code'],
+                  child: Text(
+                    lang['label']!,
+                    style: const TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ))
+            .toList(),
+        onChanged: (value) {
+          if (value == null) return;
+          ref.read(localeProvider.notifier).setLanguageCode(value);
+        },
+      ),
+    );
+  }
+
   Widget _buildToggleRow(
     String label,
     bool value,
@@ -854,7 +931,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             width: 52,
             height: 52,
             decoration: BoxDecoration(
-              color: AppTokens.cardSilver,
+              color: const Color(0xFFF0F0F0),
               borderRadius: BorderRadius.circular(12),
             ),
             child: Center(
@@ -862,7 +939,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 width: 32,
                 height: 32,
                 decoration: BoxDecoration(
-                  color: AppTokens.cardSilver,
+                  color: const Color(0xFFE8E8E8),
                   borderRadius: BorderRadius.circular(4),
                   border: Border.all(color: Colors.grey.shade400, width: 1.5),
                 ),
@@ -930,9 +1007,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(label, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500, letterSpacing: 0.6, color: AppTokens.mutedText)),
+          Text(label, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500, letterSpacing: 0.6, color: Color(0xFF888888))),
           const SizedBox(height: 4),
-          Text(value, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w500, color: AppTokens.textPrimary)),
+          Text(value, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w500, color: Color(0xFF111111))),
         ],
       ),
     );
@@ -949,9 +1026,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             Expanded(child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(label, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500, letterSpacing: 0.6, color: AppTokens.mutedText)),
+                Text(label, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500, letterSpacing: 0.6, color: Color(0xFF888888))),
                 const SizedBox(height: 4),
-                Text(value, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w500, color: AppTokens.textPrimary)),
+                Text(value, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w500, color: Color(0xFF111111))),
               ],
             )),
             Icon(Icons.edit_outlined, size: 18, color: Colors.grey.shade500),
@@ -1015,13 +1092,13 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
       decoration: BoxDecoration(
-        color: AppTokens.skyBlue.withValues(alpha: 0.1),
+        color: const Color(0xFFFF9500).withValues(alpha: 0.1),
         borderRadius: BorderRadius.circular(8),
       ),
       child: Row(mainAxisSize: MainAxisSize.min, children: [
-        Icon(icon, size: 16, color: AppTokens.skyBlue),
+        Icon(icon, size: 16, color: const Color(0xFFFF9500)),
         const SizedBox(width: 5),
-        Text(label, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500, color: AppTokens.skyBlue)),
+        Text(label, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500, color: Color(0xFFFF9500))),
       ]),
     );
   }
@@ -1029,72 +1106,87 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   Future<void> _showEditDialog(String title, String currentValue, Function(String) onSave) async {
     final isPhone = title.toLowerCase().contains('tel');
 
-    final controller = TextEditingController(text: currentValue == '-' ? '' : currentValue);
-    String? errorText;
-    String phonePrefix = '+1';
-    String phoneFlag = '\u{1F1FA}\u{1F1F8}';
-    if (isPhone) {
-      final match = RegExp(r'^\+\d+').firstMatch(controller.text.trim());
-      if (match != null) {
-        phonePrefix = match.group(0) ?? '+1';
-        controller.text = controller.text.trim().replaceFirst(phonePrefix, '').trim();
-      }
-    }
-    final result = await showKeyboardSafeSheet<String>(
+    final result = await showDialog<String>(
       context: context,
-      builder: (ctx, setDialogState) => Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
-                      Center(child: Container(width: 36, height: 4, margin: const EdgeInsets.only(bottom: 12), decoration: BoxDecoration(color: Colors.grey.shade300, borderRadius: BorderRadius.circular(2)))),
-                      Text(title, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
-                      const SizedBox(height: 14),
-                      if (isPhone) ...[
-                        Row(children: [
-                          OutlinedButton(
-                            onPressed: () {
-                              showCountryPicker(context: ctx, showPhoneCode: true,
-                                countryListTheme: CountryListThemeData(inputDecoration: const InputDecoration(labelText: 'Buscar pa\u00eds', hintText: 'Nombre o c\u00f3digo', prefixIcon: Icon(Icons.search))),
-                                onSelect: (Country country) { setDialogState(() { phonePrefix = '+${country.phoneCode}'; phoneFlag = country.flagEmoji; }); },
-                              );
-                            },
-                            child: Text('$phoneFlag $phonePrefix'),
-                          ),
-                          const SizedBox(width: 8),
-                          Expanded(child: TextField(
-                            controller: controller,
-                                keyboardType: TextInputType.phone,
-                            decoration: InputDecoration(hintText: 'N\u00famero de tel\u00e9fono', errorText: errorText,
-                              border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                              focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: AppTokens.primaryBlue, width: 1.6)),
-                            ),
-                            onChanged: (_) { if (errorText != null) setDialogState(() => errorText = null); },
-                          )),
-                        ]),
-                      ] else ...[
-                        TextField(
-                          controller: controller,
-                            keyboardType: _keyboardTypeForTitle(title),
-                          decoration: InputDecoration(hintText: 'Ingresa ${title.toLowerCase()}', errorText: errorText,
-                            border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                            focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: AppTokens.primaryBlue, width: 1.6)),
-                          ),
-                          onChanged: (_) { if (errorText != null) setDialogState(() => errorText = null); },
-                        ),
-                      ],
-                      const SizedBox(height: 16),
-                      SizedBox(width: double.infinity, height: 48, child: ElevatedButton(
-                        style: ElevatedButton.styleFrom(backgroundColor: AppTokens.primaryBlue, foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
-                        onPressed: () {
-                          final value = isPhone ? '$phonePrefix ${controller.text.trim()}'.trim() : controller.text.trim();
-                          final validationError = _validateByTitle(title, value);
-                          if (validationError != null) { setDialogState(() => errorText = validationError); return; }
-                          Navigator.pop(ctx, value);
-                        },
-                        child: const Text('Guardar', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
-                      )),
-                      SizedBox(width: double.infinity, height: 44, child: TextButton(
-                        onPressed: () => Navigator.pop(ctx),
-                        child: Text('Cancelar', style: TextStyle(color: Colors.grey.shade600, fontWeight: FontWeight.w500)),
-                      )),
-                    ]),
+      barrierDismissible: true,
+      builder: (ctx) {
+        final controller = TextEditingController(text: currentValue == '-' ? '' : currentValue);
+        String? errorText;
+        String phonePrefix = '+1';
+        String phoneFlag = '\u{1F1FA}\u{1F1F8}';
+
+        if (isPhone) {
+          final match = RegExp(r'^\+\d+').firstMatch(controller.text.trim());
+          if (match != null) {
+            phonePrefix = match.group(0) ?? '+1';
+            controller.text = controller.text.trim().replaceFirst(phonePrefix, '').trim();
+          }
+        }
+
+        return StatefulBuilder(
+          builder: (ctx, setDialogState) => AlertDialog(
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(22)),
+            scrollable: true,
+            contentPadding: const EdgeInsets.fromLTRB(20, 22, 20, 0),
+            actionsPadding: const EdgeInsets.fromLTRB(20, 0, 20, 18),
+            content: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(title, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
+              const SizedBox(height: 14),
+              if (isPhone) ...[
+                Row(children: [
+                  OutlinedButton(
+                    onPressed: () {
+                      showCountryPicker(context: ctx, showPhoneCode: true,
+                        countryListTheme: CountryListThemeData(inputDecoration: const InputDecoration(labelText: 'Buscar pa\u00eds', hintText: 'Nombre o c\u00f3digo', prefixIcon: Icon(Icons.search))),
+                        onSelect: (Country country) { setDialogState(() { phonePrefix = '+${country.phoneCode}'; phoneFlag = country.flagEmoji; }); },
+                      );
+                    },
+                    child: Text('$phoneFlag $phonePrefix'),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(child: TextField(
+                    controller: controller,
+                    autofocus: true,
+                    keyboardType: TextInputType.phone,
+                    decoration: InputDecoration(hintText: 'N\u00famero de tel\u00e9fono', errorText: errorText,
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                      focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: Color(0xFFE05A4F), width: 1.6)),
+                    ),
+                    onChanged: (_) { if (errorText != null) setDialogState(() => errorText = null); },
+                  )),
+                ]),
+              ] else ...[
+                TextField(
+                  controller: controller,
+                  autofocus: true,
+                  keyboardType: _keyboardTypeForTitle(title),
+                  decoration: InputDecoration(hintText: 'Ingresa ${title.toLowerCase()}', errorText: errorText,
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                    focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: Color(0xFFE05A4F), width: 1.6)),
+                  ),
+                  onChanged: (_) { if (errorText != null) setDialogState(() => errorText = null); },
+                ),
+              ],
+            ]),
+            actions: [
+              SizedBox(width: double.infinity, height: 48, child: ElevatedButton(
+                style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFE05A4F), foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
+                onPressed: () {
+                  final value = isPhone ? '$phonePrefix ${controller.text.trim()}'.trim() : controller.text.trim();
+                  final validationError = _validateByTitle(title, value);
+                  if (validationError != null) { setDialogState(() => errorText = validationError); return; }
+                  Navigator.pop(ctx, value);
+                },
+                child: const Text('Guardar', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+              )),
+              SizedBox(width: double.infinity, height: 44, child: TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: Text('Cancelar', style: TextStyle(color: Colors.grey.shade600, fontWeight: FontWeight.w500)),
+              )),
+            ],
+          ),
+        );
+      },
     );
 
     if (result != null) {
@@ -1168,7 +1260,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           ElevatedButton(
             onPressed: () => Navigator.pop(context, true),
             style: ElevatedButton.styleFrom(
-              backgroundColor: AppTokens.destructive,
+              backgroundColor: Colors.red,
               foregroundColor: Colors.white,
             ),
             child: const Text('Eliminar'),
@@ -1213,44 +1305,58 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   }
 
   Future<void> _showPushkaGoalDialog() async {
-    final controller = TextEditingController(text: pushkaGoal.toStringAsFixed(2));
-    String? errorText;
-    final result = await showKeyboardSafeSheet<double>(
+    final result = await showDialog<double>(
       context: context,
-      builder: (ctx, setDialogState) => Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
-                      Center(child: Container(width: 36, height: 4, margin: const EdgeInsets.only(bottom: 12), decoration: BoxDecoration(color: Colors.grey.shade300, borderRadius: BorderRadius.circular(2)))),
-                      const Text('Meta de Pushka', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
-                      const SizedBox(height: 14),
-                      TextField(
-                        controller: controller,
-                        keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                        textInputAction: TextInputAction.done,
-                        onSubmitted: (_) {
-                          final value = double.tryParse(controller.text.trim().replaceAll(',', '.'));
-                          if (value != null && value > 0) Navigator.pop(ctx, value);
-                        },
-                        decoration: InputDecoration(
-                          labelText: 'Monto', prefixText: '\$ ', hintText: 'Ej: 3600.00', errorText: errorText,
-                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                          focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: AppTokens.primaryBlue, width: 1.6)),
-                        ),
-                        onChanged: (_) { if (errorText != null) setDialogState(() => errorText = null); },
-                      ),
-                      const SizedBox(height: 16),
-                      SizedBox(width: double.infinity, height: 48, child: ElevatedButton(
-                        style: ElevatedButton.styleFrom(backgroundColor: AppTokens.primaryBlue, foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
-                        onPressed: () {
-                          final value = double.tryParse(controller.text.trim().replaceAll(',', '.'));
-                          if (value == null || value <= 0) { setDialogState(() => errorText = 'Ingresa un monto v\u00e1lido'); return; }
-                          Navigator.pop(ctx, value);
-                        },
-                        child: const Text('Guardar', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
-                      )),
-                      SizedBox(width: double.infinity, height: 44, child: TextButton(
-                        onPressed: () => Navigator.pop(ctx),
-                        child: Text('Cancelar', style: TextStyle(color: Colors.grey.shade600, fontWeight: FontWeight.w500)),
-                      )),
-                    ]),
+      barrierDismissible: true,
+      builder: (ctx) {
+        final controller = TextEditingController(
+          text: pushkaGoal.toStringAsFixed(2),
+        );
+        String? errorText;
+        return StatefulBuilder(
+          builder: (ctx, setDialogState) => AlertDialog(
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(22)),
+            scrollable: true,
+            contentPadding: const EdgeInsets.fromLTRB(20, 22, 20, 0),
+            actionsPadding: const EdgeInsets.fromLTRB(20, 0, 20, 18),
+            content: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+              const Text('Meta de Pushka', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
+              const SizedBox(height: 14),
+              TextField(
+                controller: controller,
+                autofocus: true,
+                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                textInputAction: TextInputAction.done,
+                onSubmitted: (_) {
+                  final value = double.tryParse(controller.text.trim().replaceAll(',', '.'));
+                  if (value != null && value > 0) Navigator.pop(ctx, value);
+                },
+                decoration: InputDecoration(
+                  labelText: 'Monto', prefixText: '\$ ', hintText: 'Ej: 3600.00', errorText: errorText,
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                  focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: Color(0xFFE05A4F), width: 1.6)),
+                ),
+                onChanged: (_) { if (errorText != null) setDialogState(() => errorText = null); },
+              ),
+            ]),
+            actions: [
+              SizedBox(width: double.infinity, height: 48, child: ElevatedButton(
+                style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFE05A4F), foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
+                onPressed: () {
+                  final value = double.tryParse(controller.text.trim().replaceAll(',', '.'));
+                  if (value == null || value <= 0) { setDialogState(() => errorText = 'Ingresa un monto v\u00e1lido'); return; }
+                  Navigator.pop(ctx, value);
+                },
+                child: const Text('Guardar', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+              )),
+              SizedBox(width: double.infinity, height: 44, child: TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: Text('Cancelar', style: TextStyle(color: Colors.grey.shade600, fontWeight: FontWeight.w500)),
+              )),
+            ],
+          ),
+        );
+      },
     );
 
     if (result != null && mounted) {
@@ -1275,10 +1381,10 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               Container(
                 width: 56, height: 56,
                 decoration: BoxDecoration(
-                  color: AppTokens.skyBlue.withValues(alpha: 0.1),
+                  color: const Color(0xFFFFF3E0),
                   borderRadius: BorderRadius.circular(16),
                 ),
-                child: const Icon(Icons.savings_outlined, color: AppTokens.skyBlue, size: 30),
+                child: const Icon(Icons.savings_outlined, color: Color(0xFFFF9500), size: 30),
               ),
               const SizedBox(height: 16),
               const Text(
@@ -1296,7 +1402,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 width: double.infinity, height: 46,
                 child: ElevatedButton(
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: AppTokens.primaryBlue,
+                    backgroundColor: const Color(0xFFE05A4F),
                     foregroundColor: Colors.white,
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                     elevation: 0,
@@ -1341,7 +1447,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 return ListTile(
                   leading: Text(currency['flag']!, style: const TextStyle(fontSize: 24)),
                   title: Text(currency['country']!),
-                  subtitle: Text('\$ ${currency['currency']!}'),
+                  subtitle: Text('${_currencySymbol(currency['currency']!)} ${currency['currency']!}'),
                   onTap: () => Navigator.pop(context, currency),
                 );
               }).toList(),
@@ -1478,7 +1584,7 @@ class _SettingsQrScannerScreenState extends State<_SettingsQrScannerScreen> {
               child: Container(
                 width: 260,
                 height: 2,
-                color: AppTokens.primaryBlue,
+                color: const Color(0xFFE84324),
               ),
             ),
           ),

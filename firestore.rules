@@ -53,6 +53,8 @@ service cloud.firestore {
             'autoEmptyTopOffAmount',
             'autoEmptyNextRunAt',
             'lastStreakDate',
+            'streakCount',
+            'autoEmptyEnabled',
             'updatedAt'
           ]) &&
           request.resource.data.uid is string &&

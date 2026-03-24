@@ -1,4 +1,6 @@
 ﻿import 'dart:async';
+import 'dart:math' as math;
+import '../../../core/format_utils.dart';
 import '../../../app/theme/app_tokens.dart';
 import '../../../core/keyboard_safe_sheet.dart';
 import 'pushka_3d_widget.dart';
@@ -125,7 +127,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
         }
       }
 
-      await StripeService.instance.pay(
+      final paymentIntentId = await StripeService.instance.pay(
         amountCents: amountCents,
         currency: currency,
         customerEmail: ref.read(currentUserProvider)?.email,
@@ -143,6 +145,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
           description: 'Pushka vaciada - pago con tarjeta',
           paymentMethod: PaymentMethod.card,
           status: PaymentStatus.completed,
+          docId: paymentIntentId,
         );
       }
 
@@ -238,7 +241,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
         return;
       }
 
-      await StripeService.instance.pay(
+      final paymentIntentId = await StripeService.instance.pay(
         amountCents: amountCents,
         currency: currency,
         customerEmail: ref.read(currentUserProvider)?.email,
@@ -258,13 +261,14 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
               : 'Donaci\u00f3n instant\u00e1nea',
           paymentMethod: PaymentMethod.card,
           status: PaymentStatus.completed,
+          docId: paymentIntentId,
         );
       }
 
       FeedbackService.instance.playSuccess();
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Donaci\u00f3n de \$${donationAmount.toStringAsFixed(2)} procesada exitosamente')),
+          SnackBar(content: Text('Donaci\u00f3n de ${formatMoney(donationAmount)} procesada exitosamente')),
         );
       }
     } catch (error) {
@@ -292,7 +296,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
         _showMinAmountDialog(currency, minCents, donationAmount);
         return;
       }
-      await StripeService.instance.pay(
+      final paymentIntentId = await StripeService.instance.pay(
         amountCents: amountCents,
         currency: currency,
         customerEmail: ref.read(currentUserProvider)?.email,
@@ -315,6 +319,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
           description: 'Donación con tarjeta',
           paymentMethod: PaymentMethod.card,
           status: PaymentStatus.completed,
+          docId: paymentIntentId,
         );
       }
 
@@ -324,7 +329,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
           SnackBar(
             content: Text(
               remaining > 0
-                  ? 'Pago procesado. Quedaron \$${remaining.toStringAsFixed(2)} en la Pushka.'
+                  ? 'Pago procesado. Quedaron ${formatMoney(remaining)} en la Pushka.'
                   : 'Pago procesado. Se reflejará en el historial pronto.',
             ),
           ),
@@ -371,7 +376,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
-              'Donación de \$${amount.toStringAsFixed(2)} registrada como pendiente. '
+              'Donación de ${formatMoney(amount)} registrada como pendiente. '
               'Completa el pago según las instrucciones.',
             ),
             duration: const Duration(seconds: 4),
@@ -541,11 +546,6 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
                   color: AppTokens.primaryBlue,
                 ),
               ),
-              const SizedBox(height: 6),
-              Text(
-                "Sigamos adelante",
-                style: TextStyle(color: AppTokens.mutedText, fontSize: subtitleSize),
-              ),
               SizedBox(height: titleBottomGap),
 
               RepaintBoundary(
@@ -630,39 +630,83 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
   }
 
   Widget _buildStreakBanner(Color bgColor, Color brandBlue) {
+    if (_streakCount <= 0) return const SizedBox.shrink();
+
+    final colors = _streakColors(_streakCount);
+
     return Container(
-      height: 34,
-      padding: const EdgeInsets.symmetric(horizontal: 12),
-      decoration: BoxDecoration(
-        gradient: const LinearGradient(
-          colors: [Color(0xFFD4A017), Color(0xFFC59B08)],
-        ),
-        borderRadius: BorderRadius.circular(20),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
+      margin: const EdgeInsets.only(bottom: 6),
+      child: Stack(
+        clipBehavior: Clip.none,
         children: [
           Container(
-            width: 24,
-            height: 24,
+            margin: const EdgeInsets.only(left: 18),
+            padding: const EdgeInsets.fromLTRB(28, 8, 16, 8),
             decoration: BoxDecoration(
-              color: Colors.white.withValues(alpha: 0.25),
-              shape: BoxShape.circle,
+              gradient: LinearGradient(
+                colors: [colors.$1, colors.$2],
+                begin: Alignment.centerLeft,
+                end: Alignment.centerRight,
+              ),
+              borderRadius: const BorderRadius.only(
+                topRight: Radius.circular(20),
+                bottomRight: Radius.circular(20),
+                topLeft: Radius.circular(4),
+                bottomLeft: Radius.circular(4),
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: colors.$2.withValues(alpha: 0.3),
+                  blurRadius: 8,
+                  offset: const Offset(0, 3),
+                ),
+              ],
             ),
-            child: Center(
-              child: Text('${_streakCount > 0 ? _streakCount : 0}', style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w800, color: Colors.white)),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  'Racha de D\u00edas',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 0.3,
+                    shadows: [
+                      Shadow(
+                        color: Colors.black.withValues(alpha: 0.15),
+                        blurRadius: 2,
+                        offset: const Offset(0, 1),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 6),
+                const Icon(Icons.local_fire_department, color: Colors.white, size: 16),
+              ],
             ),
           ),
-          const SizedBox(width: 8),
-          const Text(
-            'Racha de D\u00edas de Semana',
-            style: TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600),
+          Positioned(
+            left: 0,
+            top: -2,
+            child: _HexBadge(count: _streakCount, color1: colors.$1, color2: colors.$2),
           ),
-          const SizedBox(width: 6),
-          const Icon(Icons.local_fire_department, color: Colors.white, size: 16),
         ],
       ),
     );
+  }
+
+  (Color, Color) _streakColors(int count) {
+    final day = ((count - 1) % 7) + 1;
+    return switch (day) {
+      1 => (const Color(0xFFFFD54F), const Color(0xFFFFC107)),
+      2 => (const Color(0xFFFF7043), const Color(0xFFE53935)),
+      3 => (const Color(0xFF42A5F5), const Color(0xFF1E88E5)),
+      4 => (const Color(0xFF66BB6A), const Color(0xFF43A047)),
+      5 => (const Color(0xFFAB47BC), const Color(0xFF8E24AA)),
+      6 => (const Color(0xFF26C6DA), const Color(0xFF00ACC1)),
+      _ => (const Color(0xFF5C6BC0), const Color(0xFF3949AB)),
+    };
   }
   String _holidayEmoji(String name) {
     final lower = name.toLowerCase();
@@ -783,7 +827,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
                                 minimumSize: Size.zero,
                                 tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                               ),
-                              child: Text('\${amt.toInt()}', style: const TextStyle(fontWeight: FontWeight.w700)),
+                              child: Text('${_shortSymbol(_currencyCodeFromProfile())}${amt.toInt()}', style: const TextStyle(fontWeight: FontWeight.w700)),
                             );
                           }).toList(),
                         ),
@@ -864,7 +908,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
       await addAmount(amount);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('\${amount.toStringAsFixed(2)} agregado a tu Pushka')),
+          SnackBar(content: Text('${formatMoney(amount)} agregado a tu Pushka')),
         );
       }
     } else {
@@ -944,18 +988,6 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
     await addAmount(result);
   }
 
-  Future<void> _addTransaction(TransactionType type, double amount) async {
-    final user = ref.read(currentUserProvider);
-    if (user == null) {
-      _showError('Inicia sesión para continuar');
-      return;
-    }
-    await ref.read(transactionRepositoryProvider).addTransaction(
-          uid: user.uid,
-          type: type,
-          amount: amount,
-        );
-  }
 
   Future<void> _persistPushkaAmount({bool resetToZero = false}) async {
     final user = ref.read(currentUserProvider);
@@ -1103,10 +1135,6 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
     return (profile?['biometricAuthenticationEnabled'] as bool?) ?? false;
   }
 
-  Future<double?> _resolveDonationAmount() async {
-    if (!_partialPaymentsEnabled()) return pushkaAmount;
-    return _showPartialDonationDialog();
-  }
 
   Future<PaymentMethod?> _showPaymentMethodSelector() async {
     return showDialog<PaymentMethod>(
@@ -1181,7 +1209,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
         title = 'Pago con Cheque';
         icon = Icons.mail_outline;
         instructionText =
-            'Envía un cheque por el monto de \$${amount.toStringAsFixed(2)} a:\n\n'
+            'Envía un cheque por el monto de ${formatMoney(amount)} a:\n\n'
             'Nombre: [Nombre de la Organización]\n'
             'Dirección: [Dirección postal]\n'
             'Ciudad, Estado, ZIP: [Ciudad, ST 00000]\n\n'
@@ -1191,7 +1219,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
         title = 'Transferencia Bancaria';
         icon = Icons.account_balance;
         instructionText =
-            'Transfiere \$${amount.toStringAsFixed(2)} a la siguiente cuenta:\n\n'
+            'Transfiere ${formatMoney(amount)} a la siguiente cuenta:\n\n'
             'Banco: [Nombre del Banco]\n'
             'Número de cuenta: [XXXX-XXXX-XXXX]\n'
             'Routing / ABA: [XXXXXXXXX]\n'
@@ -1202,7 +1230,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
         title = 'Donor Advised Fund (DAF)';
         icon = Icons.volunteer_activism;
         instructionText =
-            'Realiza una donación de \$${amount.toStringAsFixed(2)} desde tu DAF a:\n\n'
+            'Realiza una donación de ${formatMoney(amount)} desde tu DAF a:\n\n'
             'Organización: [Nombre Legal de la Organización]\n'
             'EIN: [XX-XXXXXXX]\n'
             'Dirección: [Dirección de la Organización]\n\n'
@@ -1236,7 +1264,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                     decoration: BoxDecoration(color: AppTokens.primaryBlue.withValues(alpha: 0.1), borderRadius: BorderRadius.circular(20)),
-                    child: Text('\$${amount.toStringAsFixed(2)}', style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w800, color: AppTokens.primaryBlue)),
+                    child: Text(formatMoney(amount), style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w800, color: AppTokens.primaryBlue)),
                   ),
                 ]),
               ),
@@ -1470,7 +1498,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
                     borderRadius: BorderRadius.circular(16),
                     itemHeight: 52,
                     decoration: InputDecoration(
-                      hintText: '\$${selectedGoal.toStringAsFixed(0)}',
+                      hintText: formatMoney(selectedGoal),
                       border: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(14),
                       ),
@@ -1483,7 +1511,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
                       return DropdownMenuItem<double>(
                         value: value,
                         child: Text(
-                          '\$${value.toStringAsFixed(0)}',
+                          formatMoney(value),
                           style: const TextStyle(
                             fontSize: 16,
                             fontWeight: FontWeight.w500,
@@ -1803,7 +1831,7 @@ class _PartialDonationSheetState extends State<_PartialDonationSheet> {
                 ),
                 const SizedBox(height: 10),
                 Text(
-                  'Disponible en Pushka: \$${widget.available.toStringAsFixed(2)}',
+                  'Disponible en Pushka: ${formatMoney(widget.available)}',
                   style: const TextStyle(fontWeight: FontWeight.w600),
                 ),
                 const SizedBox(height: 6),
@@ -2132,3 +2160,87 @@ class _SeededRandom {
     return _state / 0x7fffffff;
   }
 }
+
+class _HexBadge extends StatelessWidget {
+  const _HexBadge({required this.count, required this.color1, required this.color2});
+  final int count;
+  final Color color1;
+  final Color color2;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: 40,
+      height: 40,
+      child: CustomPaint(
+        painter: _HexPainter(color1: color1, color2: color2),
+        child: Center(
+          child: Text(
+            '$count',
+            style: const TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.w900,
+              color: Colors.white,
+              height: 1,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _HexPainter extends CustomPainter {
+  final Color color1;
+  final Color color2;
+  _HexPainter({required this.color1, required this.color2});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final w = size.width;
+    final h = size.height;
+    final cx = w / 2;
+    final cy = h / 2;
+    final r = w * 0.48;
+
+    final path = Path();
+    for (int i = 0; i < 6; i++) {
+      final angle = (i * 60 - 90) * math.pi / 180;
+      final x = cx + r * math.cos(angle);
+      final y = cy + r * math.sin(angle);
+      if (i == 0) {
+        path.moveTo(x, y);
+      } else {
+        path.lineTo(x, y);
+      }
+    }
+    path.close();
+
+    canvas.drawPath(
+      path.shift(const Offset(0, 2)),
+      Paint()
+        ..color = color2.withValues(alpha: 0.35)
+        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 3),
+    );
+
+    final paint = Paint()
+      ..shader = LinearGradient(
+        begin: Alignment.topLeft,
+        end: Alignment.bottomRight,
+        colors: [color1, color2],
+      ).createShader(Rect.fromLTWH(0, 0, w, h));
+    canvas.drawPath(path, paint);
+
+    final highlightPaint = Paint()
+      ..color = Colors.white.withValues(alpha: 0.25)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.2;
+    canvas.drawPath(path, highlightPaint);
+  }
+
+  @override
+  bool shouldRepaint(covariant _HexPainter old) =>
+      old.color1 != color1 || old.color2 != color2;
+}
+
+

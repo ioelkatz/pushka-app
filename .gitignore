@@ -61,3 +61,11 @@ service-account*.json
 **/firebase_options.dart.bak
 google-services*.json
 GoogleService-Info*.plist
+
+# Temporary screenshots & test images
+screenshot_*.png
+pushka_brand_screenshot.png
+pushka_v*.png
+test1_*.png
+test2_*.png
+test_screenshots/

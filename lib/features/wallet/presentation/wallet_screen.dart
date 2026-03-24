@@ -1,4 +1,4 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_stripe/flutter_stripe.dart';
@@ -11,7 +11,8 @@ import '../data/wallet_service.dart';
 import '../../users/data/user_repository.dart';
 import '../../users/presentation/user_profile_provider.dart';
 import '../../../app/theme/app_tokens.dart';
-import '../../../core/keyboard_safe_sheet.dart';
+import '../../../core/format_utils.dart';
+import '../../../core/l10n/s.dart';
 
 class WalletScreen extends ConsumerStatefulWidget {
   const WalletScreen({super.key});
@@ -29,48 +30,71 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
   }
 
   Future<double?> _showAmountDialog({
-    String hint = 'Ej: 50',
+    String? hint,
   }) async {
-    final controller = TextEditingController();
-    String? error;
-    return showKeyboardSafeSheet<double>(
+    final tr = S.of(context);
+    final hintText = hint ?? tr.amountHint;
+    return showDialog<double>(
       context: context,
-      builder: (ctx, setDialogState) => Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-                      Center(child: Container(width: 36, height: 4, margin: const EdgeInsets.only(bottom: 12), decoration: BoxDecoration(color: Colors.grey.shade300, borderRadius: BorderRadius.circular(2)))),
-                      const Text('Agregar fondos', textAlign: TextAlign.center, style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
-                      const SizedBox(height: 20),
-                      const Text('Ingresa monto', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: AppTokens.mutedText)),
-                      const SizedBox(height: 10),
-                      TextField(
-                        controller: controller,
-                        keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                        textInputAction: TextInputAction.done,
-                        onSubmitted: (_) {
-                          final value = double.tryParse(controller.text.trim().replaceAll(',', '.'));
-                          if (value != null && value > 0) Navigator.pop(ctx, value);
-                        },
-                        decoration: InputDecoration(
-                          hintText: hint, prefixText: '\$ ', errorText: error,
-                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                          focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: AppTokens.primaryBlue, width: 1.6)),
-                        ),
-                      ),
-                      const SizedBox(height: 16),
-                      SizedBox(width: double.infinity, height: 48, child: ElevatedButton(
-                        style: ElevatedButton.styleFrom(backgroundColor: AppTokens.primaryBlue, foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
-                        onPressed: () {
-                          final value = double.tryParse(controller.text.trim().replaceAll(',', '.'));
-                          if (value == null || value <= 0) { setDialogState(() => error = 'Ingresa un monto v\u00e1lido'); return; }
-                          Navigator.pop(ctx, value);
-                        },
-                        child: const Text('Agregar al saldo', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
-                      )),
-                      SizedBox(width: double.infinity, height: 44, child: TextButton(
-                        onPressed: () => Navigator.pop(ctx),
-                        child: Text('Cancelar', style: TextStyle(color: Colors.grey.shade600, fontWeight: FontWeight.w500)),
-                      )),
-                    ]),
+      barrierDismissible: true,
+      builder: (ctx) {
+        final controller = TextEditingController();
+        String? error;
+        return StatefulBuilder(
+          builder: (ctx, setDialogState) => AlertDialog(
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(22)),
+            scrollable: true,
+            contentPadding: const EdgeInsets.fromLTRB(20, 22, 20, 0),
+            actionsPadding: const EdgeInsets.fromLTRB(20, 0, 20, 18),
+            content: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+              Text(tr.addFunds, textAlign: TextAlign.center, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
+              const SizedBox(height: 20),
+              Text(tr.enterAmount, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: Color(0xFF5A5A5A))),
+              const SizedBox(height: 10),
+              TextField(
+                controller: controller,
+                autofocus: true,
+                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                textInputAction: TextInputAction.done,
+                onSubmitted: (_) {
+                  final value = double.tryParse(controller.text.trim().replaceAll(',', '.'));
+                  if (value != null && value > 0) Navigator.pop(ctx, value);
+                },
+                decoration: InputDecoration(
+                  hintText: hintText, prefixText: '\$ ', errorText: error,
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                  focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: Color(0xFFE05A4F), width: 1.6)),
+                ),
+              ),
+            ]),
+            actions: [
+              SizedBox(width: double.infinity, height: 48, child: ElevatedButton(
+                style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFE05A4F), foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
+                onPressed: () {
+                  final value = double.tryParse(controller.text.trim().replaceAll(',', '.'));
+                  if (value == null || value <= 0) { setDialogState(() => error = tr.enterValidAmount); return; }
+                  Navigator.pop(ctx, value);
+                },
+                child: Text(tr.addToBalance, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+              )),
+              SizedBox(width: double.infinity, height: 44, child: TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: Text(tr.cancel, style: TextStyle(color: Colors.grey.shade600, fontWeight: FontWeight.w500)),
+              )),
+            ],
+          ),
+        );
+      },
     );
+  }
+
+  String _currencySymbol(String code) {
+    const symbols = {
+      'usd': 'US\$', 'eur': '€', 'gbp': '£', 'cad': 'CA\$',
+      'mxn': 'MX\$', 'ars': 'ARS\$', 'brl': 'R\$', 'ils': '₪',
+      'clp': 'CL\$', 'cop': 'CO\$',
+    };
+    return symbols[code.toLowerCase()] ?? '\$';
   }
 
   int _minAmountCentsForCurrency(String currency) {
@@ -101,7 +125,7 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
   String _walletPaymentErrorMessage(Object error) {
     if (error is StripeException) {
       if (error.error.code == FailureCode.Canceled) {
-        return 'Pago cancelado';
+        return S.of(context).paymentCanceled;
       }
       final message = error.error.localizedMessage ?? error.error.message;
       if (message != null && message.trim().isNotEmpty) {
@@ -112,7 +136,7 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
     if (raw.startsWith('Exception: ')) {
       return raw.replaceFirst('Exception: ', '');
     }
-    return 'No se pudo procesar el pago. Intenta nuevamente.';
+    return S.of(context).paymentCouldNotProcess;
   }
 
   Future<void> _addFunds() async {
@@ -123,18 +147,18 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
     final user = ref.read(currentUserProvider);
     final profile = ref.read(userProfileProvider).valueOrNull;
     if (user == null) {
-      _showInfo('Inicia sesión para continuar');
+      _showInfo(S.of(context).signInToContinue);
       return;
     }
 
     setState(() => _processing = true);
     try {
       final currency = ((profile?['currencyCode'] as String?) ?? 'USD').toLowerCase();
-      final amountCents = ((amount * 100) + 0.001).round();
+      final amountCents = (amount * 100).round();
       final minCents = _minAmountCentsForCurrency(currency);
       if (amountCents < minCents) {
-        final minAmount = (minCents / 100).toStringAsFixed(2);
-        _showInfo('Monto mínimo para ${currency.toUpperCase()} es \$$minAmount');
+        final minAmountDouble = minCents / 100;
+        _showInfo(S.of(context).minAmountCurrency(currency.toUpperCase(), formatMoney(minAmountDouble, symbol: _currencySymbol(currency))));
         return;
       }
 
@@ -147,7 +171,8 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
 
       await WalletService.instance.confirmTopUpFromPaymentIntent(paymentIntentId);
       await AnalyticsService.instance.logWalletFill(amount);
-      _showInfo('Fondos agregados: \$${amount.toStringAsFixed(2)}');
+      if (!mounted) return;
+      _showInfo(S.of(context).fundsAdded(formatMoney(amount, symbol: _currencySymbol(currency))));
     } catch (error) {
       _showInfo(_walletPaymentErrorMessage(error));
     } finally {
@@ -157,11 +182,15 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
 
   Future<void> _copyWalletId(String walletId) async {
     await Clipboard.setData(ClipboardData(text: walletId));
-    _showInfo('ID de billetera copiado: $walletId');
+    if (!mounted) return;
+    _showInfo(S.of(context).walletIdCopied(walletId));
   }
 
   @override
   Widget build(BuildContext context) {
+    final tr = S.of(context);
+    const red = Color(0xFFE05A4F);
+    const blue = Color(0xFF2F60C5);
     final profile = ref.watch(userProfileProvider).valueOrNull;
     final uid = ref.watch(currentUserProvider)?.uid;
     final walletId =
@@ -169,6 +198,7 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
             ? (profile?['walletId'] as String).trim()
             : (uid != null ? UserRepository.walletIdFromUid(uid) : '------');
     final walletBalance = (profile?['walletBalance'] as num?)?.toDouble() ?? 0.0;
+    final currencyCode = ((profile?['currencyCode'] as String?) ?? 'USD').toLowerCase();
     final autoEnabled = (profile?['walletAutoTopUpEnabled'] as bool?) ?? false;
     final autoAmount = (profile?['walletAutoTopUpAmount'] as num?)?.toDouble() ?? 0.0;
     final autoFrequency = (profile?['walletAutoTopUpFrequency'] as String?) ?? 'weekly';
@@ -176,11 +206,10 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
     final autoNextRun =
         autoNextRunTs is Timestamp ? autoNextRunTs.toDate() : null;
     final autoLabel = autoEnabled
-        ? 'ACTIVA - \$${autoAmount.toStringAsFixed(2)} '
-            '${autoFrequency == 'monthly' ? 'mensual' : 'semanal'}'
-        : 'RECARGA AUTOMÁTICA INACTIVA';
+        ? tr.autoRefillActive(formatMoney(autoAmount, symbol: _currencySymbol(currencyCode)), autoFrequency == 'monthly' ? tr.monthly : tr.weekly)
+        : tr.autoRefillInactive;
     final autoNextRunLabel = autoEnabled && autoNextRun != null
-        ? 'Próxima: ${autoNextRun.day.toString().padLeft(2, '0')}/${autoNextRun.month.toString().padLeft(2, '0')}'
+        ? tr.nextRun('${autoNextRun.day.toString().padLeft(2, '0')}/${autoNextRun.month.toString().padLeft(2, '0')}')
         : autoLabel;
 
     return LayoutBuilder(
@@ -198,19 +227,19 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
           children: [
           // texto superior
           Text(
-            'Aparta fondos ahora para vaciar tu Pushka después',
+            tr.setFundsSubtitle,
             textAlign: TextAlign.center,
             style: TextStyle(
-              color: AppTokens.mutedText,
+              color: Colors.black.withValues(alpha: 0.62),
               fontSize: compact ? 13 : 14,
             ),
           ),
           SizedBox(height: compact ? 4 : 8),
           Text(
-            'Aprender más',
+            tr.learnMore,
             textAlign: TextAlign.center,
             style: const TextStyle(
-              color: AppTokens.primaryBlue,
+              color: blue,
               fontWeight: FontWeight.w600,
               decoration: TextDecoration.underline,
               decorationThickness: 1.2,
@@ -231,20 +260,20 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
                   horizontal: 18,
                 ),
                 decoration: BoxDecoration(
-                  color: AppTokens.cardSilver,
+                  color: const Color(0xFFF0F0F0),
                   borderRadius: BorderRadius.circular(18),
                 ),
                 child: Column(
                   children: [
-                    const Text(
-                      'Tu ID de billetera',
-                      style: TextStyle(fontWeight: FontWeight.w600),
+                    Text(
+                      tr.yourWalletId,
+                      style: const TextStyle(fontWeight: FontWeight.w600),
                     ),
                     SizedBox(height: compact ? 4 : 6),
                     Text(
                       walletId,
                       style: TextStyle(
-                        color: AppTokens.primaryBlue,
+                        color: blue,
                         fontSize: walletIdSize,
                         letterSpacing: 2,
                         fontWeight: FontWeight.w800,
@@ -259,17 +288,17 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
           SizedBox(height: sectionGap),
 
           // Balance
-          const Text(
-            'SALDO',
+          Text(
+            tr.balanceLabel,
             textAlign: TextAlign.center,
-            style: TextStyle(letterSpacing: 2, fontWeight: FontWeight.w700),
+            style: const TextStyle(letterSpacing: 2, fontWeight: FontWeight.w700),
           ),
           SizedBox(height: compact ? 4 : 10),
           Text(
-            '\$${walletBalance.toStringAsFixed(2)}',
+            formatMoney(walletBalance, symbol: _currencySymbol(currencyCode)),
             textAlign: TextAlign.center,
             style: TextStyle(
-              color: AppTokens.primaryBlue,
+              color: blue,
               fontSize: balanceSize,
               fontWeight: FontWeight.w800,
             ),
@@ -281,18 +310,18 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
           OutlinedButton(
             onPressed: _processing ? null : _addFunds,
             style: OutlinedButton.styleFrom(
-              side: const BorderSide(color: AppTokens.primaryBlue, width: 2),
+              side: const BorderSide(color: red, width: 2),
               minimumSize: Size(0, compact ? 48 : AppTokens.buttonHeight),
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(14),
               ),
-              foregroundColor: AppTokens.primaryBlue,
+              foregroundColor: red,
               textStyle: const TextStyle(
                 fontWeight: FontWeight.w700,
                 letterSpacing: 0.3,
               ),
             ),
-            child: const Text('+ Agregar fondos'),
+            child: Text(tr.addFundsBtn),
           ),
 
           SizedBox(height: sectionGap),
@@ -300,17 +329,17 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
           // Cards
           _WalletCard(
             icon: Icons.swap_vert,
-            iconBg: AppTokens.primaryBlue,
-            title: 'Enviar / Solicitar entre billeteras',
-            subtitle: 'Empodera a familia y amigos con tzedaká',
+            iconBg: red,
+            title: tr.sendRequest,
+            subtitle: tr.sendRequestSub,
             onTap: () => context.go('/wallet/send-request'),
             compact: compact,
           ),
           SizedBox(height: walletCardGap),
           _WalletCard(
             icon: Icons.settings,
-            iconBg: AppTokens.primaryBlue,
-            title: 'Administrar recarga automática',
+            iconBg: red,
+            title: tr.manageAutoRefill,
             subtitle: autoNextRunLabel,
             onTap: () => context.go('/wallet-auto-refill'),
             compact: compact,
@@ -318,8 +347,8 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
           SizedBox(height: walletCardGap),
           _WalletCard(
             icon: Icons.receipt_long,
-            iconBg: AppTokens.primaryBlue,
-            title: 'Historial de transacciones',
+            iconBg: red,
+            title: tr.transactionHistory,
             subtitle: '',
             onTap: () => context.go('/history'),
             compact: compact,
@@ -381,7 +410,7 @@ class _WalletCard extends StatelessWidget {
         child: Container(
           padding: EdgeInsets.all(compact ? 11 : 14),
           decoration: BoxDecoration(
-            color: AppTokens.cardSilver,
+            color: const Color(0xFFF3F3F3),
             borderRadius: BorderRadius.circular(18),
           ),
           child: Row(
@@ -414,7 +443,7 @@ class _WalletCard extends StatelessWidget {
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
-                          color: AppTokens.mutedText,
+                          color: Colors.black.withValues(alpha: 0.55),
                           fontSize: compact ? 13 : 14,
                         ),
                       ),

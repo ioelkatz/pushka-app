@@ -1,7 +1,7 @@
-﻿import 'package:flutter/material.dart';
-import '../../../app/theme/app_tokens.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/l10n/s.dart';
 import '../domain/transaction.dart';
 import '../providers/transactions_provider.dart';
 
@@ -21,10 +21,19 @@ class HistoryScreen extends ConsumerStatefulWidget {
 
 class _HistoryScreenState extends ConsumerState<HistoryScreen> {
   _HistoryFilter selectedFilter = _HistoryFilter.all;
+  late S _tr;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _tr = S.of(context);
+  }
 
   @override
   Widget build(BuildContext context) {
     final transactionsAsync = ref.watch(userTransactionsProvider);
+
+    const blue = Color(0xFF2F60C5);
 
     return Column(
       children: [
@@ -48,7 +57,7 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
                   Text(
                     _getFilterLabel(),
                     style: TextStyle(
-                      color: AppTokens.primaryBlue,
+                      color: blue,
                       fontSize: 16,
                       fontWeight: FontWeight.w500,
                     ),
@@ -61,20 +70,20 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
             itemBuilder: (context) => [
               PopupMenuItem(
                 value: _HistoryFilter.tzedaka,
-                child: const Text('Mi Tzedaka'),
+                child: Text(_tr.filterTzedaka),
               ),
               PopupMenuItem(
                 value: _HistoryFilter.pushkaEmpty,
-                child: const Text('Pushka Vacía'),
+                child: Text(_tr.filterPushkaEmpty),
               ),
               PopupMenuItem(
                 value: _HistoryFilter.walletFill,
-                child: const Text('Billetera Rellena'),
+                child: Text(_tr.filterWalletFill),
               ),
               const PopupMenuDivider(),
               PopupMenuItem(
                 value: _HistoryFilter.all,
-                child: Text('Todos'),
+                child: Text(_tr.filterAll),
               ),
             ],
             onSelected: (value) {
@@ -114,7 +123,7 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
                       ),
                       const SizedBox(height: 10),
                       Text(
-                        'No hay transacciones',
+                        _tr.noTransactions,
                         style: TextStyle(
                           fontSize: 16,
                           fontWeight: FontWeight.w600,
@@ -131,7 +140,7 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
                 itemCount: filtered.length,
                 itemBuilder: (context, index) {
                   final transaction = filtered[index];
-                  return _buildTransactionItem(transaction);
+                  return _buildTransactionItem(transaction, blue);
                 },
               );
             },
@@ -140,7 +149,7 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
             ),
             error: (error, _) => Center(
               child: Text(
-                'Error cargando historial',
+                _tr.errorLoadingHistory,
                 style: TextStyle(color: Colors.grey.shade600),
               ),
             ),
@@ -153,22 +162,22 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
   String _getFilterLabel() {
     switch (selectedFilter) {
       case _HistoryFilter.tzedaka:
-        return 'Mi Tzedaka';
+        return _tr.filterTzedaka;
       case _HistoryFilter.pushkaEmpty:
-        return 'Pushka Vacía';
+        return _tr.filterPushkaEmpty;
       case _HistoryFilter.walletFill:
-        return 'Billetera Rellena';
+        return _tr.filterWalletFill;
       case _HistoryFilter.all:
-        return 'Todos';
+        return _tr.filterAll;
     }
   }
 
-  Widget _buildTransactionItem(Transaction transaction) {
+  Widget _buildTransactionItem(Transaction transaction, Color blue) {
     final amount = transaction.amount;
     final amountLabel = amount < 0
         ? '-\$${amount.abs().toStringAsFixed(2)}'
         : '\$${amount.toStringAsFixed(2)}';
-    final amountColor = amount < 0 ? AppTokens.primaryBlue : AppTokens.primaryBlue;
+    final amountColor = amount < 0 ? const Color(0xFFE05A4F) : blue;
 
     final showMethodBadge = transaction.paymentMethod != PaymentMethod.card;
     final showStatusBadge = transaction.isPending;
@@ -179,7 +188,7 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: transaction.isPending ? AppTokens.skyBlue : Colors.grey.shade200),
+        border: Border.all(color: transaction.isPending ? Colors.orange.shade200 : Colors.grey.shade200),
       ),
       child: Row(
         children: [
@@ -191,16 +200,16 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
               children: [
                 Text(
                   transaction.formattedDate,
-                  style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w500, color: AppTokens.textPrimary),
+                  style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w500, color: Colors.black87),
                 ),
                 if (showMethodBadge || showStatusBadge) ...[
                   const SizedBox(height: 4),
                   Row(children: [
                     if (showMethodBadge)
-                      _buildBadge(transaction.paymentMethodLabel, _iconForMethod(transaction.paymentMethod), AppTokens.primaryBlue),
+                      _buildBadge(transaction.paymentMethodLabel, _iconForMethod(transaction.paymentMethod), const Color(0xFF2F60C5)),
                     if (showMethodBadge && showStatusBadge) const SizedBox(width: 6),
                     if (showStatusBadge)
-                      _buildBadge('Pendiente', Icons.schedule, AppTokens.skyBlue),
+                      _buildBadge(_tr.pending, Icons.schedule, Colors.orange.shade700),
                   ]),
                 ],
               ],
@@ -276,7 +285,7 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
                     _buildColoredLetter('צ', Colors.red),
-                    _buildColoredLetter('ד', AppTokens.skyBlue),
+                    _buildColoredLetter('ד', Colors.orange),
                     _buildColoredLetter('ק', Colors.yellow.shade700),
                     _buildColoredLetter('ה', Colors.green),
                   ],

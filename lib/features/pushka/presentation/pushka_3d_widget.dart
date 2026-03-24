@@ -1,4 +1,5 @@
 ﻿import 'package:flutter/material.dart';
+import '../../../core/format_utils.dart';
 import '../../../app/theme/app_tokens.dart';
 import 'pushka_3d_painter.dart';
 
@@ -29,6 +30,8 @@ class Pushka3DWidgetState extends State<Pushka3DWidget>
   late Animation<double> _coinProgress;
   bool _showCoin = false;
 
+  static double _lastKnownFill = 0;
+
   @override
   void initState() {
     super.initState();
@@ -36,14 +39,21 @@ class Pushka3DWidgetState extends State<Pushka3DWidget>
       vsync: this,
       duration: const Duration(milliseconds: 800),
     );
+    final target = widget.fillPercentage.clamp(0.0, 1.0);
+    final isSameFill = (_lastKnownFill - target).abs() < 0.001;
     _fillAnimation = Tween<double>(
-      begin: 0,
-      end: widget.fillPercentage.clamp(0.0, 1.0),
+      begin: isSameFill ? target : _lastKnownFill,
+      end: target,
     ).animate(CurvedAnimation(
       parent: _fillController,
       curve: Curves.easeInOut,
     ));
-    _fillController.forward();
+    _lastKnownFill = target;
+    if (isSameFill) {
+      _fillController.value = 1.0;
+    } else {
+      _fillController.forward();
+    }
 
     _coinController = AnimationController(
       vsync: this,
@@ -114,12 +124,14 @@ class Pushka3DWidgetState extends State<Pushka3DWidget>
               CustomPaint(
                 painter: Pushka3DPainter(fillFraction: fill),
                 size: Size(canvasW, canvasH),
+                isComplex: true,
+                willChange: false,
               ),
               Positioned(
                 top: cylTop - labelH / 2 - ellipseH * 0.2,
                 left: 0,
                 child: _buildLabel(
-                  '${widget.currencySymbol}${widget.goal.toStringAsFixed(2)}',
+                  '${widget.currencySymbol}${formatAmount(widget.goal)}',
                   AppTokens.mutedText,
                 ),
               ),
@@ -127,7 +139,7 @@ class Pushka3DWidgetState extends State<Pushka3DWidget>
                 top: liquidTop - labelH / 2,
                 right: 0,
                 child: _buildLabel(
-                  '${widget.currencySymbol}${widget.amount.toStringAsFixed(2)}',
+                  '${widget.currencySymbol}${formatAmount(widget.amount)}',
                   AppTokens.primaryBlue,
                 ),
               ),

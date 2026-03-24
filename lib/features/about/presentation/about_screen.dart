@@ -1,11 +1,14 @@
 import 'package:flutter/material.dart';
-import '../../../app/theme/app_tokens.dart';
+import 'package:url_launcher/url_launcher.dart';
+
+import '../../../core/l10n/s.dart';
 
 class AboutScreen extends StatelessWidget {
   const AboutScreen({super.key});
 
   @override
   Widget build(BuildContext context) {
+    final tr = S.of(context);
     return SingleChildScrollView(
       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
       child: Column(
@@ -15,10 +18,10 @@ class AboutScreen extends StatelessWidget {
 
           // Breadcrumb
           Text(
-            'Acerca de | Colel Jabad',
+            tr.aboutBreadcrumb,
             style: TextStyle(
               fontSize: 13,
-              color: AppTokens.mutedText,
+              color: Colors.grey.shade600,
               fontWeight: FontWeight.w400,
             ),
           ),
@@ -26,12 +29,12 @@ class AboutScreen extends StatelessWidget {
           const SizedBox(height: 24),
 
           // Título principal
-          const Text(
-            'Colel Jabad',
-            style: TextStyle(
+          Text(
+            tr.aboutTitle,
+            style: const TextStyle(
               fontSize: 30,
               fontWeight: FontWeight.w700,
-              color: AppTokens.textPrimary,
+              color: Colors.black87,
               letterSpacing: 0.5,
             ),
           ),
@@ -39,24 +42,24 @@ class AboutScreen extends StatelessWidget {
           const SizedBox(height: 26),
 
           // Sección "Acerca de"
-          const Text(
-            'Acerca de',
-            style: TextStyle(
+          Text(
+            tr.aboutSection,
+            style: const TextStyle(
               fontSize: 22,
               fontWeight: FontWeight.w700,
-              color: AppTokens.textPrimary,
+              color: Colors.black87,
             ),
           ),
 
           const SizedBox(height: 18),
 
           // Párrafo 1
-          const Text(
-            'Bienvenido a Colel Jabad. Somos la organización benéfica en funcionamiento continuo más antigua de Israel, dedicada a brindar asistencia a quienes la necesitan sin importar su origen.',
-            style: TextStyle(
+          Text(
+            tr.aboutP1,
+            style: const TextStyle(
               fontSize: 16,
               height: 1.6,
-              color: AppTokens.textPrimary,
+              color: Colors.black87,
               fontWeight: FontWeight.w400,
             ),
           ),
@@ -64,12 +67,12 @@ class AboutScreen extends StatelessWidget {
           const SizedBox(height: 20),
 
           // Párrafo 2
-          const Text(
-            'Nuestra misión es alimentar a los hambrientos, apoyar a viudas y huérfanos, y elevar comunidades a través de una variedad de programas arraigados en los valores atemporales de compasión y dignidad.',
-            style: TextStyle(
+          Text(
+            tr.aboutP2,
+            style: const TextStyle(
               fontSize: 16,
               height: 1.6,
-              color: AppTokens.textPrimary,
+              color: Colors.black87,
               fontWeight: FontWeight.w400,
             ),
           ),
@@ -77,25 +80,39 @@ class AboutScreen extends StatelessWidget {
           const SizedBox(height: 20),
 
           // Párrafo 3
-          const Text(
-            'Desde nuestra fundación en 1788, Colel Jabad ha expandido sus servicios en todo Israel, operando bancos de alimentos, comedores comunitarios, programas de asistencia médica y más.',
-            style: TextStyle(
+          Text(
+            tr.aboutP3,
+            style: const TextStyle(
               fontSize: 16,
               height: 1.6,
-              color: AppTokens.textPrimary,
+              color: Colors.black87,
               fontWeight: FontWeight.w400,
             ),
           ),
 
           const SizedBox(height: 30),
 
+          // Legal links
+          _LegalLink(
+            icon: Icons.privacy_tip_outlined,
+            label: tr.privacyPolicy,
+            url: 'https://www.pushkaapp.com/privacy',
+          ),
+          const SizedBox(height: 12),
+          _LegalLink(
+            icon: Icons.description_outlined,
+            label: tr.termsOfService,
+            url: 'https://www.pushkaapp.com/terms',
+          ),
+          const SizedBox(height: 30),
+
           // Copyright
           Center(
             child: Text(
-              '© 2025 Colel Jabad. Todos los derechos reservados.',
+              tr.copyright,
               style: TextStyle(
                 fontSize: 14,
-                color: AppTokens.mutedText,
+                color: Colors.grey.shade600,
                 fontWeight: FontWeight.w400,
               ),
             ),
@@ -103,6 +120,45 @@ class AboutScreen extends StatelessWidget {
 
           const SizedBox(height: 20),
         ],
+      ),
+    );
+  }
+}
+
+class _LegalLink extends StatelessWidget {
+  const _LegalLink({required this.icon, required this.label, required this.url});
+  final IconData icon;
+  final String label;
+  final String url;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      borderRadius: BorderRadius.circular(12),
+      onTap: () => launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: Colors.grey.shade200),
+        ),
+        child: Row(
+          children: [
+            Icon(icon, size: 20, color: const Color(0xFF2563EB)),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                label,
+                style: const TextStyle(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w500,
+                  color: Color(0xFF1A1A1A),
+                ),
+              ),
+            ),
+            Icon(Icons.chevron_right, color: Colors.grey.shade400, size: 20),
+          ],
+        ),
       ),
     );
   }

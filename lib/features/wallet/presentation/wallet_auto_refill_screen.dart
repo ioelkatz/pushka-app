@@ -1,8 +1,8 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/l10n/s.dart';
 import '../../users/data/user_repository.dart';
-import '../../../app/theme/app_tokens.dart';
 import '../../users/presentation/user_profile_provider.dart';
 
 class WalletAutoRefillScreen extends ConsumerStatefulWidget {
@@ -49,10 +49,8 @@ class _WalletAutoRefillScreenState extends ConsumerState<WalletAutoRefillScreen>
       return runDate;
     }
 
-    final safeWeekday = weekday.clamp(1, 7);
     var runDate = DateTime(now.year, now.month, now.day, 8);
-    var guard = 0;
-    while ((runDate.weekday != safeWeekday || !runDate.isAfter(now)) && guard < 400) {
+    while (runDate.weekday != weekday || !runDate.isAfter(now)) {
       runDate = runDate.add(const Duration(days: 1));
     }
     return runDate;
@@ -65,7 +63,7 @@ class _WalletAutoRefillScreenState extends ConsumerState<WalletAutoRefillScreen>
     final parsedAmount = double.tryParse(_amountController.text.trim().replaceAll(',', '.'));
     if (parsedAmount == null || parsedAmount <= 0) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Ingresa un monto válido')),
+        SnackBar(content: Text(S.of(context).enterValidAmount)),
       );
       return;
     }
@@ -89,13 +87,13 @@ class _WalletAutoRefillScreenState extends ConsumerState<WalletAutoRefillScreen>
           );
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Recarga automática guardada')),
+        SnackBar(content: Text(S.of(context).autoRefillSaved)),
       );
       Navigator.of(context).pop();
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('No se pudo guardar: $e')),
+        SnackBar(content: Text(S.of(context).couldNotSaveError('$e'))),
       );
     } finally {
       if (mounted) setState(() => _saving = false);
@@ -115,7 +113,7 @@ class _WalletAutoRefillScreenState extends ConsumerState<WalletAutoRefillScreen>
           children: [
             Icon(
               selected ? Icons.radio_button_checked : Icons.radio_button_off,
-              color: selected ? AppTokens.primaryBlue : Colors.black,
+              color: selected ? const Color(0xFF2F60C5) : Colors.black,
               size: 30,
             ),
             const SizedBox(width: 14),
@@ -128,6 +126,7 @@ class _WalletAutoRefillScreenState extends ConsumerState<WalletAutoRefillScreen>
 
   @override
   Widget build(BuildContext context) {
+    final tr = S.of(context);
     final profile = ref.watch(userProfileProvider).valueOrNull;
 
     if (!_loaded && profile != null) {
@@ -156,21 +155,21 @@ class _WalletAutoRefillScreenState extends ConsumerState<WalletAutoRefillScreen>
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text(
-                    'FRECUENCIA',
-                    style: TextStyle(
+                  Text(
+                    tr.frequencyLabel,
+                    style: const TextStyle(
                       fontSize: 34 / 2,
                       fontWeight: FontWeight.w500,
                       letterSpacing: 1.1,
                     ),
                   ),
                   const SizedBox(height: 20),
-                  _buildFrequencyOption(value: 'weekly', label: 'Semanal'),
-                  _buildFrequencyOption(value: 'monthly', label: 'Mensual'),
+                  _buildFrequencyOption(value: 'weekly', label: tr.freqWeekly),
+                  _buildFrequencyOption(value: 'monthly', label: tr.freqMonthly),
                   const SizedBox(height: 24),
-                  const Text(
-                    'DÍA RECURRENTE',
-                    style: TextStyle(
+                  Text(
+                    tr.recurringDay,
+                    style: const TextStyle(
                       fontSize: 34 / 2,
                       fontWeight: FontWeight.w500,
                       letterSpacing: 1.1,
@@ -179,21 +178,21 @@ class _WalletAutoRefillScreenState extends ConsumerState<WalletAutoRefillScreen>
                   const SizedBox(height: 10),
                   DropdownButtonFormField<int>(initialValue: _frequency == 'weekly' ? _weekday : _dayOfMonth,
                     decoration: InputDecoration(
-                      hintText: 'Seleccionar',
+                      hintText: tr.selectHint,
                       contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                       border: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(14),
                       ),
                     ),
                     items: _frequency == 'weekly'
-                        ? const [
-                            DropdownMenuItem(value: DateTime.monday, child: Text('Lunes')),
-                            DropdownMenuItem(value: DateTime.tuesday, child: Text('Martes')),
-                            DropdownMenuItem(value: DateTime.wednesday, child: Text('Miércoles')),
-                            DropdownMenuItem(value: DateTime.thursday, child: Text('Jueves')),
-                            DropdownMenuItem(value: DateTime.friday, child: Text('Viernes')),
-                            DropdownMenuItem(value: DateTime.saturday, child: Text('Sábado')),
-                            DropdownMenuItem(value: DateTime.sunday, child: Text('Domingo')),
+                        ? [
+                            DropdownMenuItem(value: DateTime.monday, child: Text(tr.dayMonFull)),
+                            DropdownMenuItem(value: DateTime.tuesday, child: Text(tr.dayTueFull)),
+                            DropdownMenuItem(value: DateTime.wednesday, child: Text(tr.dayWedFull)),
+                            DropdownMenuItem(value: DateTime.thursday, child: Text(tr.dayThuFull)),
+                            DropdownMenuItem(value: DateTime.friday, child: Text(tr.dayFriFull)),
+                            DropdownMenuItem(value: DateTime.saturday, child: Text(tr.daySatFull)),
+                            DropdownMenuItem(value: DateTime.sunday, child: Text(tr.daySunFull)),
                           ]
                         : List.generate(
                             31,
@@ -214,9 +213,9 @@ class _WalletAutoRefillScreenState extends ConsumerState<WalletAutoRefillScreen>
                     },
                   ),
                   const SizedBox(height: 24),
-                  const Text(
-                    'MONTO',
-                    style: TextStyle(
+                  Text(
+                    tr.amountLabel,
+                    style: const TextStyle(
                       fontSize: 34 / 2,
                       fontWeight: FontWeight.w500,
                       letterSpacing: 1.1,
@@ -227,7 +226,7 @@ class _WalletAutoRefillScreenState extends ConsumerState<WalletAutoRefillScreen>
                     controller: _amountController,
                     keyboardType: const TextInputType.numberWithOptions(decimal: true),
                     decoration: InputDecoration(
-                      prefixText: '\$',
+                      prefixText: _currencySymbol(_currencyCode),
                       hintText: ' ',
                       contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
                       border: OutlineInputBorder(
@@ -246,9 +245,9 @@ class _WalletAutoRefillScreenState extends ConsumerState<WalletAutoRefillScreen>
                             side: BorderSide(color: Colors.grey.shade400, width: 2),
                             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
                           ),
-                          child: const Text(
-                            'CANCELAR',
-                            style: TextStyle(
+                          child: Text(
+                            tr.cancelBtn,
+                            style: const TextStyle(
                               color: Colors.black,
                               fontWeight: FontWeight.w700,
                               letterSpacing: 0.2,
@@ -262,7 +261,7 @@ class _WalletAutoRefillScreenState extends ConsumerState<WalletAutoRefillScreen>
                           onPressed: _saving ? null : _save,
                           style: OutlinedButton.styleFrom(
                             minimumSize: const Size(0, 52),
-                            side: const BorderSide(color: AppTokens.primaryBlue, width: 2),
+                            side: const BorderSide(color: Color(0xFFE05A4F), width: 2),
                             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
                           ),
                           child: _saving
@@ -271,10 +270,10 @@ class _WalletAutoRefillScreenState extends ConsumerState<WalletAutoRefillScreen>
                                   height: 18,
                                   child: CircularProgressIndicator(strokeWidth: 2),
                                 )
-                              : const Text(
-                                  'GUARDAR',
-                                  style: TextStyle(
-                                    color: AppTokens.primaryBlue,
+                              : Text(
+                                  tr.saveBtn,
+                                  style: const TextStyle(
+                                    color: Color(0xFFE05A4F),
                                     fontWeight: FontWeight.w700,
                                     letterSpacing: 0.2,
                                   ),
@@ -286,9 +285,9 @@ class _WalletAutoRefillScreenState extends ConsumerState<WalletAutoRefillScreen>
                 const SizedBox(height: 16),
                 TextButton(
                   onPressed: _saving ? null : _disableAutoRefill,
-                  child: const Text(
-                    'DESACTIVAR RECARGA AUTOM\u00c1TICA',
-                    style: TextStyle(
+                  child: Text(
+                    tr.disableAutoRefill,
+                    style: const TextStyle(
                       color: Colors.grey,
                       fontWeight: FontWeight.w600,
                       fontSize: 13,
@@ -316,14 +315,14 @@ class _WalletAutoRefillScreenState extends ConsumerState<WalletAutoRefillScreen>
       );
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Recarga automática desactivada')),
+          SnackBar(content: Text(S.of(context).autoRefillDisabled)),
         );
         Navigator.of(context).pop();
       }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error: $e')),
+          SnackBar(content: Text(S.of(context).genericError('$e'))),
         );
       }
     } finally {

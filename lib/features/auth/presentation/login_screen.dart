@@ -1,11 +1,10 @@
-﻿import 'package:firebase_auth/firebase_auth.dart';
-import 'package:flutter/foundation.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
-import '../../../app/theme/app_tokens.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:flutter/services.dart';
 
+import '../../../core/l10n/s.dart';
 import '../providers/auth_controller.dart';
 
 class LoginScreen extends ConsumerStatefulWidget {
@@ -21,6 +20,13 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   final _passwordController = TextEditingController();
   bool _isLoading = false;
   bool _obscurePassword = true;
+  late S _tr;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _tr = S.of(context);
+  }
 
   @override
   void dispose() {
@@ -33,23 +39,20 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       body: SafeArea(
-        child: Center(
-          child: ConstrainedBox(
-            constraints: BoxConstraints(maxWidth: kIsWeb ? 480 : double.infinity),
-            child: SingleChildScrollView(
+        child: SingleChildScrollView(
           padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               const SizedBox(height: 10),
-              const Text(
-                'Bienvenido',
-                style: TextStyle(fontSize: 28, fontWeight: FontWeight.w700),
+              Text(
+                _tr.welcome,
+                style: const TextStyle(fontSize: 28, fontWeight: FontWeight.w700),
               ),
               const SizedBox(height: 6),
-              const Text(
-                'Inicia sesión para continuar',
-                style: TextStyle(fontSize: 16, color: AppTokens.mutedText),
+              Text(
+                _tr.signInSubtitle,
+                style: const TextStyle(fontSize: 16, color: Colors.black54),
               ),
               const SizedBox(height: 24),
 
@@ -59,7 +62,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                   children: [
                     _buildTextField(
                       controller: _emailController,
-                      label: 'Correo electrónico',
+                      label: _tr.emailField,
                       keyboardType: TextInputType.emailAddress,
                       textInputAction: TextInputAction.next,
                       validator: _validateEmail,
@@ -67,7 +70,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                     const SizedBox(height: 16),
                     _buildTextField(
                       controller: _passwordController,
-                      label: 'Contraseña',
+                      label: _tr.passwordField,
                       obscureText: _obscurePassword,
                       textInputAction: TextInputAction.done,
                       validator: _validatePassword,
@@ -92,7 +95,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                 alignment: Alignment.centerRight,
                 child: TextButton(
                   onPressed: _isLoading ? null : _forgotPassword,
-                  child: const Text('¿Olvidaste tu contraseña?'),
+                  child: Text(_tr.forgotPassword),
                 ),
               ),
               const SizedBox(height: 12),
@@ -107,19 +110,19 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                           height: 20,
                           child: CircularProgressIndicator(strokeWidth: 2),
                         )
-                      : const Text('Iniciar sesión'),
+                      : Text(_tr.signIn),
                 ),
               ),
               const SizedBox(height: 16),
 
               Row(
-                children: const [
-                  Expanded(child: Divider()),
+                children: [
+                  const Expanded(child: Divider()),
                   Padding(
-                    padding: EdgeInsets.symmetric(horizontal: 8),
-                    child: Text('o'),
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                    child: Text(_tr.or_),
                   ),
-                  Expanded(child: Divider()),
+                  const Expanded(child: Divider()),
                 ],
               ),
               const SizedBox(height: 16),
@@ -129,7 +132,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                 child: OutlinedButton.icon(
                   onPressed: _isLoading ? null : _signInWithGoogle,
                   icon: const Icon(Icons.g_mobiledata),
-                  label: const Text('Continuar con Google'),
+                  label: Text(_tr.continueGoogle),
                 ),
               ),
               const SizedBox(height: 12),
@@ -138,7 +141,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                 child: OutlinedButton.icon(
                   onPressed: _isLoading ? null : _signInWithApple,
                   icon: const Icon(Icons.apple),
-                  label: const Text('Continuar con Apple'),
+                  label: Text(_tr.continueApple),
                 ),
               ),
               const SizedBox(height: 24),
@@ -146,17 +149,15 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
               Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  const Text('¿No tienes cuenta?'),
+                  Text(_tr.noAccount),
                   TextButton(
                     onPressed:
                         _isLoading ? null : () => context.go('/register'),
-                    child: const Text('Crear cuenta'),
+                    child: Text(_tr.createAccount),
                   ),
                 ],
               ),
             ],
-          ),
-        ),
           ),
         ),
       ),
@@ -208,7 +209,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     } on FirebaseAuthException catch (e) {
       _showMessage(_mapAuthError(e.code));
     } on Exception catch (e) {
-      _showMessage('Error al iniciar sesión: $e');
+      _showMessage(_tr.signInError('$e'));
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
@@ -217,16 +218,16 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   Future<void> _forgotPassword() async {
     final email = _emailController.text.trim();
     if (email.isEmpty) {
-      _showMessage('Ingresa tu correo para recuperar la contraseña');
+      _showMessage(_tr.enterEmailForReset);
       return;
     }
     try {
       await ref.read(authControllerProvider).sendPasswordResetEmail(email);
-      _showMessage('Te enviamos un correo para restablecer tu contraseña');
+      _showMessage(_tr.resetEmailSent);
     } on FirebaseAuthException catch (e) {
       _showMessage(_mapAuthError(e.code));
     } on Exception catch (e) {
-      _showMessage('Error: $e');
+      _showMessage(_tr.genericError('$e'));
     }
   }
 
@@ -241,7 +242,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       _showMessage(_mapGoogleAuthError(e.code));
       _showErrorDialog('Google', e.code);
     } on Exception catch (e) {
-      _showMessage('Error con Google: $e');
+      _showMessage(_tr.googleError('$e'));
       _showErrorDialog('Google', e.toString());
     } finally {
       if (mounted) setState(() => _isLoading = false);
@@ -253,7 +254,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     try {
       await ref.read(authControllerProvider).signInWithApple();
     } on Exception catch (e) {
-      _showMessage('Error con Apple: $e');
+      _showMessage(_tr.appleError('$e'));
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
@@ -268,17 +269,17 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
 
   String? _validateEmail(String? value) {
     final text = value?.trim() ?? '';
-    if (text.isEmpty) return 'Ingresa tu correo';
+    if (text.isEmpty) return _tr.enterYourEmail;
     final isValid =
         RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$').hasMatch(text);
-    if (!isValid) return 'Correo inválido';
+    if (!isValid) return _tr.invalidEmail;
     return null;
   }
 
   String? _validatePassword(String? value) {
     final text = value ?? '';
-    if (text.isEmpty) return 'Ingresa tu contraseña';
-    if (text.length < 6) return 'Mínimo 6 caracteres';
+    if (text.isEmpty) return _tr.enterYourPassword;
+    if (text.length < 6) return _tr.min6Chars;
     return null;
   }
 
@@ -292,7 +293,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: const Text('Entendido'),
+            child: Text(_tr.understood),
           ),
         ],
       ),
@@ -302,40 +303,40 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   String _mapAuthError(String code) {
     switch (code) {
       case 'invalid-email':
-        return 'El correo no es válido';
+        return _tr.emailNotValid;
       case 'user-disabled':
-        return 'Esta cuenta está deshabilitada';
+        return _tr.accountDisabled;
       case 'user-not-found':
-        return 'No existe una cuenta con ese correo';
+        return _tr.noAccountWithEmail;
       case 'wrong-password':
-        return 'Contraseña incorrecta';
+        return _tr.wrongPassword;
       case 'too-many-requests':
-        return 'Demasiados intentos, intenta más tarde';
+        return _tr.tooManyRequests;
       case 'network-request-failed':
-        return 'Error de red, revisa tu conexión';
+        return _tr.networkError;
       default:
-        return 'Error al iniciar sesión: $code';
+        return _tr.signInErrorCode(code);
     }
   }
 
   String _mapGoogleAuthError(String code) {
     switch (code) {
       case 'sign_in_failed':
-        return 'Error al iniciar con Google. Revisa Servicios de Google Play y vuelve a intentar';
+        return _tr.googlePlayError;
       case 'network_error':
-        return 'Error de red, revisa tu conexión';
+        return _tr.networkError;
       case 'popup_closed_by_user':
       case 'sign_in_canceled':
       case 'sign_in_cancelled':
-        return 'Inicio de sesión cancelado';
+        return _tr.signInCanceled;
       case 'account_exists_with_different_credential':
-        return 'El correo ya está registrado con otro método';
+        return _tr.emailDifferentProvider;
       case 'user-disabled':
-        return 'Esta cuenta está deshabilitada';
+        return _tr.accountDisabled;
       case 'user-not-found':
-        return 'No existe una cuenta con ese correo';
+        return _tr.noAccountWithEmail;
       default:
-        return 'Error con Google: $code';
+        return _tr.googleError(code);
     }
   }
 }

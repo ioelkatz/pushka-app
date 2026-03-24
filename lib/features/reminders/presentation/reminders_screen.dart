@@ -1,5 +1,6 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import '../../../app/theme/app_tokens.dart';
+import '../../../core/l10n/s.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../analytics/analytics_service.dart';
@@ -17,10 +18,9 @@ class RemindersScreen extends ConsumerStatefulWidget {
 }
 
 class _RemindersScreenState extends ConsumerState<RemindersScreen> {
-
   @override
   Widget build(BuildContext context) {
-
+    final tr = S.of(context);
     return Column(
       children: [
         Expanded(
@@ -37,10 +37,10 @@ class _RemindersScreenState extends ConsumerState<RemindersScreen> {
                             color: Colors.grey.shade400,
                           ),
                           const SizedBox(height: 10),
-                          const Text(
-                            'No hay recordatorios',
+                          Text(
+                            tr.noReminders,
                             textAlign: TextAlign.center,
-                            style: TextStyle(
+                            style: const TextStyle(
                               fontSize: 16,
                               fontWeight: FontWeight.w600,
                               color: AppTokens.textPrimary,
@@ -48,7 +48,7 @@ class _RemindersScreenState extends ConsumerState<RemindersScreen> {
                           ),
                           const SizedBox(height: 4),
                           Text(
-                            'Toca el botón para agregar uno',
+                            tr.tapToAddReminder,
                             textAlign: TextAlign.center,
                             style: TextStyle(
                               fontSize: 14,
@@ -61,84 +61,69 @@ class _RemindersScreenState extends ConsumerState<RemindersScreen> {
                   }
 
                   return ListView.separated(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 18, vertical: 12),
                     itemCount: reminders.length,
-                    separatorBuilder: (context, index) => Divider(
+                    separatorBuilder: (_, __) => Divider(
                       height: 1,
                       thickness: 1,
                       color: Colors.grey.shade200,
                     ),
                     itemBuilder: (context, index) {
                       final reminder = reminders[index];
-                      return _buildReminderItem(
-                        reminder: reminder,
-                        onToggle: (value) => _toggleReminder(reminder, value),
-                        onEdit: () => _showEditReminderDialog(reminder),
-                        onDelete: () => _deleteReminder(reminder),
-                        activeColor: AppTokens.skyBlue,
+                      return Dismissible(
+                        key: ValueKey(reminder.id),
+                        direction: DismissDirection.endToStart,
+                        background: Container(
+                          alignment: Alignment.centerRight,
+                          padding: const EdgeInsets.only(right: 20),
+                          color: Colors.red.shade50,
+                          child: Icon(Icons.delete_outline,
+                              color: Colors.red.shade400),
+                        ),
+                        confirmDismiss: (_) => _confirmDelete(reminder),
+                        onDismissed: (_) => _deleteReminder(reminder),
+                        child: _buildReminderItem(
+                          reminder: reminder,
+                          onToggle: (v) => _toggleReminder(reminder, v),
+                          onEdit: () => _showEditReminderDialog(reminder),
+                        ),
                       );
                     },
                   );
                 },
-                loading: () => const Center(
-                  child: CircularProgressIndicator(),
-                ),
-                error: (_, _) => const Center(
-                  child: Text('Error cargando recordatorios'),
-                ),
+                loading: () =>
+                    const Center(child: CircularProgressIndicator()),
+                error: (_, __) =>
+                    Center(child: Text(tr.errorLoadingReminders)),
               ),
         ),
-        // Botón agregar recordatorio
-        Container(
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withValues(alpha: 0.05),
-                blurRadius: 10,
-                offset: const Offset(0, -2),
-              ),
-            ],
-          ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
           child: SafeArea(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                SizedBox(
-                  width: double.infinity,
-                  child: ElevatedButton(
-                    onPressed: () => _showAddReminderDialog(),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: AppTokens.primaryBlue,
-                      foregroundColor: Colors.white,
-                      elevation: 0,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                    ),
-                    child: const Text(
-                      '+ Agregar recordatorio',
-                      style: TextStyle(
-                        fontSize: 15,
-                        fontWeight: FontWeight.w700,
-                        letterSpacing: 0.2,
-                      ),
-                    ),
+            child: SizedBox(
+              width: double.infinity,
+              height: AppTokens.buttonHeight,
+              child: OutlinedButton(
+                onPressed: _showAddReminderDialog,
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: AppTokens.primaryBlue,
+                  side: const BorderSide(
+                      color: AppTokens.primaryBlue, width: 1.5),
+                  shape: RoundedRectangleBorder(
+                    borderRadius:
+                        BorderRadius.circular(AppTokens.radiusMd),
                   ),
                 ),
-                const SizedBox(height: 10),
-                SizedBox(
-                  width: double.infinity,
-                  child: OutlinedButton(
-                    onPressed: () async {
-                      await NotificationService.instance.showTestNotification();
-                    },
-                    child: const Text('Probar notificación'),
+                child: Text(
+                  tr.addReminder,
+                  style: const TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 0.8,
                   ),
                 ),
-              ],
+              ),
             ),
           ),
         ),
@@ -150,8 +135,6 @@ class _RemindersScreenState extends ConsumerState<RemindersScreen> {
     required Reminder reminder,
     required ValueChanged<bool> onToggle,
     required VoidCallback onEdit,
-    required VoidCallback onDelete,
-    required Color activeColor,
   }) {
     final subtitle = reminder.subtitle;
     final subtitle2 = reminder.subtitleSecondary;
@@ -161,7 +144,6 @@ class _RemindersScreenState extends ConsumerState<RemindersScreen> {
       child: Padding(
         padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 4),
         child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Expanded(
               child: Column(
@@ -178,7 +160,7 @@ class _RemindersScreenState extends ConsumerState<RemindersScreen> {
                   const SizedBox(height: 4),
                   Text(
                     subtitle,
-                    style: TextStyle(
+                    style: const TextStyle(
                       fontSize: 14,
                       fontWeight: FontWeight.w400,
                       color: AppTokens.mutedText,
@@ -188,7 +170,7 @@ class _RemindersScreenState extends ConsumerState<RemindersScreen> {
                     const SizedBox(height: 2),
                     Text(
                       subtitle2,
-                      style: TextStyle(
+                      style: const TextStyle(
                         fontSize: 14,
                         fontWeight: FontWeight.w400,
                         color: AppTokens.mutedText,
@@ -198,23 +180,15 @@ class _RemindersScreenState extends ConsumerState<RemindersScreen> {
                 ],
               ),
             ),
-            const SizedBox(width: 16),
-            Column(
-              children: [
-                Switch(
-                  value: reminder.isEnabled,
-                  onChanged: onToggle,
-                  activeThumbColor: activeColor,
-                  activeTrackColor: activeColor.withValues(alpha: 0.45),
-                  inactiveThumbColor: Colors.white,
-                  inactiveTrackColor: Colors.grey.shade300,
-                ),
-                const SizedBox(height: 8),
-                IconButton(
-                  icon: const Icon(Icons.delete_outline, color: Colors.grey),
-                  onPressed: onDelete,
-                ),
-              ],
+            const SizedBox(width: 12),
+            Switch(
+              value: reminder.isEnabled,
+              onChanged: onToggle,
+              activeColor: AppTokens.primaryBlue,
+              activeTrackColor:
+                  AppTokens.primaryBlue.withValues(alpha: 0.35),
+              inactiveThumbColor: Colors.white,
+              inactiveTrackColor: Colors.grey.shade300,
             ),
           ],
         ),
@@ -222,46 +196,65 @@ class _RemindersScreenState extends ConsumerState<RemindersScreen> {
     );
   }
 
-  Future<void> _showAddReminderDialog() async {
-    final result = await showModalBottomSheet<ReminderDraft>(
+  Future<bool?> _confirmDelete(Reminder reminder) {
+    final tr = S.of(context);
+    return showDialog<bool>(
       context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (context) => const _ReminderDialog(),
+      builder: (ctx) => AlertDialog(
+        title: Text(tr.deleteReminderTitle),
+        content: Text(tr.deleteReminderConfirm(reminder.title)),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: Text(tr.cancel),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: Text(tr.delete, style: const TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _showAddReminderDialog() async {
+    final result = await Navigator.of(context, rootNavigator: true)
+        .push<ReminderDraft>(
+      MaterialPageRoute(builder: (_) => const _ReminderFormPage()),
     );
 
     if (result != null) {
       await _saveReminder(result);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Recordatorio agregado')),
+          SnackBar(content: Text(S.of(context).reminderAdded)),
         );
       }
     }
   }
 
   Future<void> _showEditReminderDialog(Reminder reminder) async {
-    final result = await showModalBottomSheet<ReminderDraft>(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (context) => _ReminderDialog(reminder: reminder),
+    final result = await Navigator.of(context, rootNavigator: true)
+        .push<ReminderDraft>(
+      MaterialPageRoute(
+          builder: (_) => _ReminderFormPage(reminder: reminder)),
     );
 
     if (result != null) {
       await _saveReminder(result, existingId: reminder.id);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Recordatorio actualizado')),
+          SnackBar(content: Text(S.of(context).reminderUpdated)),
         );
       }
     }
   }
 
-  Future<void> _saveReminder(ReminderDraft draft, {String? existingId}) async {
+  Future<void> _saveReminder(ReminderDraft draft,
+      {String? existingId}) async {
     final user = ref.read(currentUserProvider);
     if (user == null) {
-      _showMessage('Inicia sesión para guardar recordatorios');
+      _showMessage(S.of(context).signInToSaveReminders);
       return;
     }
     final repo = ref.read(reminderRepositoryProvider);
@@ -287,17 +280,18 @@ class _RemindersScreenState extends ConsumerState<RemindersScreen> {
         );
         await AnalyticsService.instance.logReminderCreated();
       } catch (_) {
-        _showMessage('No se pudo guardar el recordatorio');
+        _showMessage(S.of(context).couldNotSaveReminder);
       }
     } else {
       try {
-        await repo.updateReminder(user.uid, reminder.copyWith(id: existingId));
+        await repo.updateReminder(
+            user.uid, reminder.copyWith(id: existingId));
         await NotificationService.instance.scheduleReminder(
           reminder.copyWith(id: existingId),
         );
         await AnalyticsService.instance.logReminderUpdated();
       } catch (_) {
-        _showMessage('No se pudo actualizar el recordatorio');
+        _showMessage(S.of(context).couldNotUpdateReminder);
       }
     }
   }
@@ -305,7 +299,7 @@ class _RemindersScreenState extends ConsumerState<RemindersScreen> {
   Future<void> _toggleReminder(Reminder reminder, bool value) async {
     final user = ref.read(currentUserProvider);
     if (user == null) {
-      _showMessage('Inicia sesión para modificar recordatorios');
+      _showMessage(S.of(context).signInToModify);
       return;
     }
     final repo = ref.read(reminderRepositoryProvider);
@@ -314,14 +308,14 @@ class _RemindersScreenState extends ConsumerState<RemindersScreen> {
       await repo.updateReminder(user.uid, updated);
       await NotificationService.instance.scheduleReminder(updated);
     } catch (_) {
-      _showMessage('No se pudo actualizar el recordatorio');
+      _showMessage(S.of(context).couldNotUpdateReminder);
     }
   }
 
   Future<void> _deleteReminder(Reminder reminder) async {
     final user = ref.read(currentUserProvider);
     if (user == null) {
-      _showMessage('Inicia sesión para eliminar recordatorios');
+      _showMessage(S.of(context).signInToDelete);
       return;
     }
     final repo = ref.read(reminderRepositoryProvider);
@@ -330,7 +324,7 @@ class _RemindersScreenState extends ConsumerState<RemindersScreen> {
       await NotificationService.instance.cancelReminder(reminder);
       await AnalyticsService.instance.logReminderDeleted();
     } catch (_) {
-      _showMessage('No se pudo eliminar el recordatorio');
+      _showMessage(S.of(context).couldNotDelete);
     }
   }
 
@@ -342,22 +336,41 @@ class _RemindersScreenState extends ConsumerState<RemindersScreen> {
   }
 }
 
-class _ReminderDialog extends StatefulWidget {
-  final Reminder? reminder;
+// ---------------------------------------------------------------------------
+// Repeat option enum
+// ---------------------------------------------------------------------------
 
-  const _ReminderDialog({this.reminder});
+enum _RepeatOption {
+  daily,
+  weekdays,
+  fridayHoliday,
+  chooseDate,
+  custom;
 
-  @override
-  State<_ReminderDialog> createState() => _ReminderDialogState();
 }
 
-class _ReminderDialogState extends State<_ReminderDialog> {
+// ---------------------------------------------------------------------------
+// Full-screen reminder form page
+// ---------------------------------------------------------------------------
+
+class _ReminderFormPage extends StatefulWidget {
+  final Reminder? reminder;
+  const _ReminderFormPage({this.reminder});
+
+  @override
+  State<_ReminderFormPage> createState() => _ReminderFormPageState();
+}
+
+class _ReminderFormPageState extends State<_ReminderFormPage> {
   final _formKey = GlobalKey<FormState>();
   late final TextEditingController _titleController;
   late TimeOfDay _selectedTime;
+  late _RepeatOption _repeatOption;
   late final Set<int> _selectedDays;
   late bool _isHoliday;
   int? _minutesBefore;
+  DateTime? _selectedDate;
+
   late bool _hasSecondTime;
   TimeOfDay? _secondTime;
   late final Set<int> _secondDays;
@@ -366,27 +379,28 @@ class _ReminderDialogState extends State<_ReminderDialog> {
   @override
   void initState() {
     super.initState();
-    if (widget.reminder != null) {
-      // Modo edición - precargar valores
-      final reminder = widget.reminder!;
-      _titleController = TextEditingController(text: reminder.title);
-      _selectedTime = reminder.time;
-      _selectedDays = reminder.days.toSet();
-      _isHoliday = reminder.isHoliday;
-      _minutesBefore = reminder.minutesBefore;
-      _hasSecondTime = reminder.secondTime != null;
-      _secondTime = reminder.secondTime;
-      _secondDays = reminder.secondDays.toSet();
-      _secondIsHoliday = reminder.secondIsHoliday;
+    final r = widget.reminder;
+    if (r != null) {
+      _titleController = TextEditingController(text: r.title);
+      _selectedTime = r.time;
+      _selectedDays = r.days.toSet();
+      _isHoliday = r.isHoliday;
+      _minutesBefore = r.minutesBefore;
+      _hasSecondTime = r.secondTime != null;
+      _secondTime = r.secondTime;
+      _secondDays = r.secondDays.toSet();
+      _secondIsHoliday = r.secondIsHoliday;
+      _repeatOption = _inferRepeatOption(r.days, r.isHoliday);
     } else {
-      // Modo creación - valores por defecto
       _titleController = TextEditingController();
       _selectedTime = const TimeOfDay(hour: 12, minute: 0);
-      _selectedDays = {};
+      _selectedDays = {1, 2, 3, 4, 5, 6, 7};
       _isHoliday = false;
+      _minutesBefore = null;
       _hasSecondTime = false;
       _secondDays = {};
       _secondIsHoliday = false;
+      _repeatOption = _RepeatOption.daily;
     }
   }
 
@@ -396,348 +410,508 @@ class _ReminderDialogState extends State<_ReminderDialog> {
     super.dispose();
   }
 
+  static _RepeatOption _inferRepeatOption(List<int> days, bool isHoliday) {
+    final s = days.toSet();
+    if (s.length == 7 && s.containsAll([1, 2, 3, 4, 5, 6, 7])) {
+      return _RepeatOption.daily;
+    }
+    if (s.length == 5 && s.containsAll([1, 2, 3, 4, 5]) && !isHoliday) {
+      return _RepeatOption.weekdays;
+    }
+    if (s.length == 1 && s.contains(5) && isHoliday) {
+      return _RepeatOption.fridayHoliday;
+    }
+    return _RepeatOption.custom;
+  }
+
+  void _applyRepeatOption(_RepeatOption option) {
+    setState(() {
+      _repeatOption = option;
+      switch (option) {
+        case _RepeatOption.daily:
+          _selectedDays
+            ..clear()
+            ..addAll([1, 2, 3, 4, 5, 6, 7]);
+          _isHoliday = false;
+          _selectedDate = null;
+        case _RepeatOption.weekdays:
+          _selectedDays
+            ..clear()
+            ..addAll([1, 2, 3, 4, 5]);
+          _isHoliday = false;
+          _selectedDate = null;
+        case _RepeatOption.fridayHoliday:
+          _selectedDays
+            ..clear()
+            ..add(5);
+          _isHoliday = true;
+          _selectedDate = null;
+        case _RepeatOption.chooseDate:
+          _selectedDays.clear();
+          _isHoliday = false;
+          _selectedDate ??= DateTime.now();
+        case _RepeatOption.custom:
+          _selectedDate = null;
+      }
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
-    final bottomInset = MediaQuery.of(context).viewInsets.bottom;
-    return Padding(
-      padding: EdgeInsets.only(bottom: bottomInset),
-      child: Container(
-        constraints: BoxConstraints(maxHeight: MediaQuery.of(context).size.height * 0.88),
-        decoration: const BoxDecoration(color: Colors.white, borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+    final tr = S.of(context);
+    final isEditing = widget.reminder != null;
+
+    return Scaffold(
+      backgroundColor: Colors.white,
+      appBar: AppBar(
+        backgroundColor: Colors.white,
+        elevation: 0,
+        scrolledUnderElevation: 0,
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back, color: AppTokens.textPrimary),
+          onPressed: () => Navigator.pop(context),
+        ),
+        title: Text(
+          isEditing ? tr.editReminder : tr.newReminder,
+          style: const TextStyle(
+            color: AppTokens.textPrimary,
+            fontSize: 18,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+        centerTitle: false,
+      ),
+      body: Form(
+        key: _formKey,
         child: Column(
-          mainAxisSize: MainAxisSize.min,
           children: [
-            // Handle + Header
-            Container(
-              padding: const EdgeInsets.fromLTRB(20, 8, 8, 14),
-              decoration: BoxDecoration(
-                color: AppTokens.primaryBlue,
-                borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
-              ),
-              child: Column(children: [
-                Center(child: Container(width: 36, height: 4, margin: const EdgeInsets.only(bottom: 12), decoration: BoxDecoration(color: Colors.white.withValues(alpha: 0.4), borderRadius: BorderRadius.circular(2)))),
-                Row(children: [
-                  Expanded(child: Text(
-                    widget.reminder != null ? 'Editar Recordatorio' : 'Nuevo Recordatorio',
-                    style: const TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.w700),
-                  )),
-                  IconButton(icon: const Icon(Icons.close, color: Colors.white), onPressed: () => Navigator.pop(context)),
-                ]),
-              ]),
-            ),
-            Flexible(
+            Expanded(
               child: SingleChildScrollView(
-                padding: const EdgeInsets.fromLTRB(20, 18, 20, 14),
+                padding: const EdgeInsets.fromLTRB(20, 8, 20, 20),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text('Título', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: AppTokens.textPrimary)),
+                    _sectionLabel(tr.labelSection),
                     const SizedBox(height: 8),
-                    Form(
-                      key: _formKey,
-                      child: TextFormField(
-                        controller: _titleController,
-                        textInputAction: TextInputAction.next,
-                        validator: _validateTitle,
-                        decoration: InputDecoration(
-                          hintText: 'Ej: Antes del Encendido de Velas',
-                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                          focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: AppTokens.primaryBlue, width: 1.6)),
-                        ),
-                      ),
+                    TextFormField(
+                      controller: _titleController,
+                      textInputAction: TextInputAction.done,
+                      validator: (v) => _validateTitle(context, v),
+                      decoration:
+                          _inputDecoration(tr.reminderTitleHint),
                     ),
                     const SizedBox(height: 20),
-
-                    // Hora
-                    const Text(
-                      'Hora',
-                      style: TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w600,
-                        color: AppTokens.textPrimary,
-                      ),
-                    ),
+                    _sectionLabel(tr.timeSection),
                     const SizedBox(height: 8),
-                    InkWell(
-                      onTap: () async {
-                        final time = await showTimePicker(
-                          context: context,
-                          initialTime: _selectedTime,
-                        );
-                        if (time != null) {
-                          setState(() => _selectedTime = time);
-                        }
-                      },
-                      child: Container(
-                        padding: const EdgeInsets.all(16),
-                        decoration: BoxDecoration(
-                          border: Border.all(color: Colors.grey.shade300),
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: Row(
-                          children: [
-                            const Icon(Icons.access_time),
-                            const SizedBox(width: 12),
-                            Text(
-                              _formatTimeOfDay(context, _selectedTime),
-                              style: const TextStyle(fontSize: 16),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
+                    _buildTimePicker(),
                     const SizedBox(height: 20),
-
-                    // Días de la semana
-                    const Text(
-                      'Días de la Semana',
-                      style: TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w600,
-                        color: AppTokens.textPrimary,
-                      ),
-                    ),
+                    _sectionLabel(tr.repeatSection),
                     const SizedBox(height: 8),
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
-                      children: [
-                        _buildDayChip('L', DateTime.monday),
-                        _buildDayChip('M', DateTime.tuesday),
-                        _buildDayChip('X', DateTime.wednesday),
-                        _buildDayChip('J', DateTime.thursday),
-                        _buildDayChip('V', DateTime.friday),
-                        _buildDayChip('S', DateTime.saturday),
-                        _buildDayChip('D', DateTime.sunday),
-                      ],
-                    ),
-                    const SizedBox(height: 14),
-
-                    // Festivos
-                    CheckboxListTile(
-                      title: const Text('Incluir Festivos'),
-                      value: _isHoliday,
-                      onChanged: (value) => setState(() => _isHoliday = value ?? false),
-                      contentPadding: EdgeInsets.zero,
-                    ),
-                    const SizedBox(height: 8),
-
-                    // Minutos antes (opcional)
-                    CheckboxListTile(
-                      title: const Text('Minutos antes (opcional)'),
-                      value: _minutesBefore != null,
-                      onChanged: (value) {
-                        setState(() {
-                          _minutesBefore = value == true ? 15 : null;
-                        });
-                      },
-                      contentPadding: EdgeInsets.zero,
-                    ),
-                    if (_minutesBefore != null) ...[
+                    _buildRepeatDropdown(),
+                    if (_repeatOption == _RepeatOption.chooseDate) ...[
+                      const SizedBox(height: 20),
+                      _sectionLabel(tr.dateSection),
                       const SizedBox(height: 8),
-                      Slider(
-                        value: _minutesBefore!.toDouble(),
-                        min: 5,
-                        max: 60,
-                        divisions: 11,
-                        label: '$_minutesBefore minutos antes',
-                        onChanged: (value) {
-                          setState(() => _minutesBefore = value.toInt());
-                        },
-                      ),
+                      _buildDatePicker(),
                     ],
-                    const SizedBox(height: 14),
-
-                    // Segunda hora opcional
-                    CheckboxListTile(
-                      title: const Text('Agregar segunda hora'),
-                      value: _hasSecondTime,
-                      onChanged: (value) {
-                        setState(() {
-                          _hasSecondTime = value ?? false;
-                          if (_hasSecondTime && _secondTime == null) {
-                            _secondTime = const TimeOfDay(hour: 13, minute: 0);
-                          }
-                        });
-                      },
-                      contentPadding: EdgeInsets.zero,
-                    ),
-                    if (_hasSecondTime) ...[
-                      const SizedBox(height: 14),
-                      const Text(
-                        'Segunda Hora',
-                        style: TextStyle(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w600,
-                          color: AppTokens.textPrimary,
-                        ),
-                      ),
+                    if (_repeatOption == _RepeatOption.custom) ...[
+                      const SizedBox(height: 20),
+                      _sectionLabel(tr.daysSection),
                       const SizedBox(height: 8),
-                      InkWell(
-                        onTap: () async {
-                          final time = await showTimePicker(
-                            context: context,
-                            initialTime: _secondTime ?? const TimeOfDay(hour: 13, minute: 0),
-                          );
-                          if (time != null) {
-                            setState(() => _secondTime = time);
-                          }
-                        },
-                        child: Container(
-                          padding: const EdgeInsets.all(16),
-                          decoration: BoxDecoration(
-                            border: Border.all(color: Colors.grey.shade300),
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: Row(
-                            children: [
-                              const Icon(Icons.access_time),
-                              const SizedBox(width: 12),
-                              Text(
-                                _secondTime != null
-                                    ? _formatTimeOfDay(context, _secondTime!)
-                                    : 'Seleccionar hora',
-                                style: const TextStyle(fontSize: 16),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 14),
-                      const Text(
-                        'Días para Segunda Hora',
-                        style: TextStyle(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w600,
-                          color: AppTokens.textPrimary,
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      Wrap(
-                        spacing: 8,
-                        runSpacing: 8,
-                        children: [
-                          _buildSecondDayChip('L', DateTime.monday),
-                          _buildSecondDayChip('M', DateTime.tuesday),
-                          _buildSecondDayChip('X', DateTime.wednesday),
-                          _buildSecondDayChip('J', DateTime.thursday),
-                          _buildSecondDayChip('V', DateTime.friday),
-                          _buildSecondDayChip('S', DateTime.saturday),
-                          _buildSecondDayChip('D', DateTime.sunday),
-                        ],
-                      ),
-                      const SizedBox(height: 8),
-                      CheckboxListTile(
-                        title: const Text('Incluir Festivos (segunda hora)'),
-                        value: _secondIsHoliday,
-                        onChanged: (value) => setState(() => _secondIsHoliday = value ?? false),
-                        contentPadding: EdgeInsets.zero,
-                      ),
+                      _buildDayChips(),
+                      const SizedBox(height: 12),
+                      _buildHolidayToggle(),
                     ],
                   ],
                 ),
               ),
             ),
-            SafeArea(top: false, child: Padding(
-              padding: const EdgeInsets.fromLTRB(20, 12, 20, 16),
-              child: Column(mainAxisSize: MainAxisSize.min, children: [
-                SizedBox(width: double.infinity, height: 48, child: ElevatedButton(
-                  style: ElevatedButton.styleFrom(backgroundColor: AppTokens.primaryBlue, foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
-                  onPressed: _validateAndSave,
-                  child: const Text('Guardar', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
-                )),
-                const SizedBox(height: 8),
-                SizedBox(width: double.infinity, height: 44, child: TextButton(
-                  onPressed: () => Navigator.pop(context),
-                  child: Text('Cancelar', style: TextStyle(color: Colors.grey.shade600, fontWeight: FontWeight.w500)),
-                )),
-              ]),
-            )),
+            _buildBottomButtons(),
           ],
         ),
       ),
     );
   }
 
-  Widget _buildDayChip(String label, int day) {
-    final isSelected = _selectedDays.contains(day);
-    return FilterChip(
-      label: Text(label),
-      selected: isSelected,
-      onSelected: (selected) {
-        setState(() {
-          if (selected) {
-            _selectedDays.add(day);
-          } else {
-            _selectedDays.remove(day);
-          }
-        });
+  Widget _sectionLabel(String text) {
+    return Text(
+      text,
+      style: const TextStyle(
+        fontSize: 11,
+        fontWeight: FontWeight.w600,
+        color: AppTokens.mutedText,
+        letterSpacing: 1.2,
+      ),
+    );
+  }
+
+  InputDecoration _inputDecoration(String hint) {
+    return InputDecoration(
+      hintText: hint,
+      hintStyle: TextStyle(color: Colors.grey.shade400, fontSize: 15),
+      contentPadding:
+          const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+      border: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(AppTokens.radiusMd),
+        borderSide: BorderSide(color: Colors.grey.shade300),
+      ),
+      enabledBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(AppTokens.radiusMd),
+        borderSide: BorderSide(color: Colors.grey.shade300),
+      ),
+      focusedBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(AppTokens.radiusMd),
+        borderSide:
+            const BorderSide(color: AppTokens.primaryBlue, width: 1.6),
+      ),
+      errorBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(AppTokens.radiusMd),
+        borderSide: const BorderSide(color: Colors.red),
+      ),
+      focusedErrorBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(AppTokens.radiusMd),
+        borderSide: const BorderSide(color: Colors.red, width: 1.6),
+      ),
+    );
+  }
+
+  Widget _buildTimePicker() {
+    return InkWell(
+      borderRadius: BorderRadius.circular(AppTokens.radiusMd),
+      onTap: _pickTime,
+      child: Container(
+        padding:
+            const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+        decoration: BoxDecoration(
+          border: Border.all(color: Colors.grey.shade300),
+          borderRadius: BorderRadius.circular(AppTokens.radiusMd),
+        ),
+        child: Row(
+          children: [
+            Expanded(
+              child: Text(
+                _formatTime(_selectedTime),
+                style: const TextStyle(
+                    fontSize: 15, color: AppTokens.textPrimary),
+              ),
+            ),
+            Icon(Icons.arrow_drop_down, color: Colors.grey.shade600),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildRepeatDropdown() {
+    final tr = S.of(context);
+    return DropdownButtonFormField<_RepeatOption>(
+      value: _repeatOption,
+      decoration: InputDecoration(
+        contentPadding:
+            const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(AppTokens.radiusMd),
+          borderSide: BorderSide(color: Colors.grey.shade300),
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(AppTokens.radiusMd),
+          borderSide: BorderSide(color: Colors.grey.shade300),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(AppTokens.radiusMd),
+          borderSide: const BorderSide(
+              color: AppTokens.primaryBlue, width: 1.6),
+        ),
+      ),
+      icon: Icon(Icons.arrow_drop_down, color: Colors.grey.shade600),
+      dropdownColor: Colors.white,
+      items: _RepeatOption.values.map((o) {
+        final label = switch (o) {
+          _RepeatOption.daily => tr.repeatDaily,
+          _RepeatOption.weekdays => tr.repeatWeekdays,
+          _RepeatOption.fridayHoliday => tr.repeatFridayHoliday,
+          _RepeatOption.chooseDate => tr.repeatChooseDate,
+          _RepeatOption.custom => tr.repeatCustom,
+        };
+        return DropdownMenuItem(value: o, child: Text(label));
+      }).toList(),
+      onChanged: (v) {
+        if (v != null) _applyRepeatOption(v);
       },
     );
   }
 
-  Widget _buildSecondDayChip(String label, int day) {
-    final isSelected = _secondDays.contains(day);
-    return FilterChip(
-      label: Text(label),
-      selected: isSelected,
-      onSelected: (selected) {
-        setState(() {
-          if (selected) {
-            _secondDays.add(day);
-          } else {
-            _secondDays.remove(day);
-          }
-        });
-      },
+  Widget _buildDatePicker() {
+    final dateText = _selectedDate != null
+        ? '${_selectedDate!.day.toString().padLeft(2, '0')}/'
+            '${_selectedDate!.month.toString().padLeft(2, '0')}/'
+            '${_selectedDate!.year}'
+        : S.of(context).selectDate;
+
+    return InkWell(
+      borderRadius: BorderRadius.circular(AppTokens.radiusMd),
+      onTap: _pickDate,
+      child: Container(
+        padding:
+            const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+        decoration: BoxDecoration(
+          border: Border.all(color: Colors.grey.shade300),
+          borderRadius: BorderRadius.circular(AppTokens.radiusMd),
+        ),
+        child: Row(
+          children: [
+            Icon(Icons.calendar_today_outlined,
+                size: 20, color: Colors.grey.shade600),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                dateText,
+                style: const TextStyle(
+                    fontSize: 15, color: AppTokens.textPrimary),
+              ),
+            ),
+            Icon(Icons.arrow_drop_down, color: Colors.grey.shade600),
+          ],
+        ),
+      ),
     );
   }
 
-  String _formatTimeOfDay(BuildContext context, TimeOfDay time) {
-    final localizations = MaterialLocalizations.of(context);
-    return localizations.formatTimeOfDay(time, alwaysUse24HourFormat: false);
+  Widget _buildDayChips() {
+    final tr = S.of(context);
+    final labels = [tr.dayL, tr.dayM, tr.dayX, tr.dayJ, tr.dayV, tr.dayS, tr.dayD];
+    const dayValues = [
+      DateTime.monday,
+      DateTime.tuesday,
+      DateTime.wednesday,
+      DateTime.thursday,
+      DateTime.friday,
+      DateTime.saturday,
+      DateTime.sunday,
+    ];
+
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: List.generate(7, (i) {
+        final day = dayValues[i];
+        final selected = _selectedDays.contains(day);
+        return GestureDetector(
+          onTap: () {
+            setState(() {
+              if (selected) {
+                _selectedDays.remove(day);
+              } else {
+                _selectedDays.add(day);
+              }
+            });
+          },
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 180),
+            width: 42,
+            height: 42,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: selected ? AppTokens.primaryBlue : Colors.white,
+              border: Border.all(
+                color: selected
+                    ? AppTokens.primaryBlue
+                    : Colors.grey.shade300,
+              ),
+              borderRadius: BorderRadius.circular(AppTokens.radiusSm),
+            ),
+            child: Text(
+              labels[i],
+              style: TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+                color: selected ? Colors.white : AppTokens.mutedText,
+              ),
+            ),
+          ),
+        );
+      }),
+    );
+  }
+
+  Widget _buildHolidayToggle() {
+    return GestureDetector(
+      onTap: () => setState(() => _isHoliday = !_isHoliday),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 24,
+            height: 24,
+            child: Checkbox(
+              value: _isHoliday,
+              activeColor: AppTokens.primaryBlue,
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(4)),
+              onChanged: (v) =>
+                  setState(() => _isHoliday = v ?? false),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Text(
+            S.of(context).includeHolidays,
+            style: const TextStyle(fontSize: 15, color: AppTokens.textPrimary),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildBottomButtons() {
+    final tr = S.of(context);
+    return SafeArea(
+      top: false,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(20, 12, 20, 16),
+        child: Row(
+          children: [
+            Expanded(
+              child: SizedBox(
+                height: AppTokens.buttonHeight,
+                child: OutlinedButton(
+                  onPressed: () => Navigator.pop(context),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: AppTokens.mutedText,
+                    side: BorderSide(color: Colors.grey.shade300),
+                    shape: RoundedRectangleBorder(
+                      borderRadius:
+                          BorderRadius.circular(AppTokens.radiusMd),
+                    ),
+                  ),
+                  child: Text(
+                    tr.cancelBtn,
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: 0.5,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: SizedBox(
+                height: AppTokens.buttonHeight,
+                child: OutlinedButton(
+                  onPressed: _validateAndSave,
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: AppTokens.primaryBlue,
+                    side: const BorderSide(
+                        color: AppTokens.primaryBlue, width: 1.5),
+                    shape: RoundedRectangleBorder(
+                      borderRadius:
+                          BorderRadius.circular(AppTokens.radiusMd),
+                    ),
+                  ),
+                  child: Text(
+                    tr.saveBtn,
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: 0.5,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _pickTime() async {
+    final time = await showTimePicker(
+      context: context,
+      initialTime: _selectedTime,
+    );
+    if (time != null) setState(() => _selectedTime = time);
+  }
+
+  Future<void> _pickDate() async {
+    final now = DateTime.now();
+    final date = await showDatePicker(
+      context: context,
+      initialDate: _selectedDate ?? now,
+      firstDate: now,
+      lastDate: now.add(const Duration(days: 365)),
+    );
+    if (date != null) setState(() => _selectedDate = date);
+  }
+
+  String _formatTime(TimeOfDay time) {
+    final hour = time.hourOfPeriod == 0 ? 12 : time.hourOfPeriod;
+    final minute = time.minute.toString().padLeft(2, '0');
+    final period = time.period == DayPeriod.am ? 'AM' : 'PM';
+    return '$hour:$minute $period';
   }
 
   void _validateAndSave() {
-    final form = _formKey.currentState;
-    if (form == null || !form.validate()) return;
+    if (!_formKey.currentState!.validate()) return;
 
-    if (_selectedDays.isEmpty && !_isHoliday) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Selecciona al menos un día o festivos')),
-      );
-      return;
+    List<int> days;
+    bool isHoliday = _isHoliday;
+
+    switch (_repeatOption) {
+      case _RepeatOption.daily:
+        days = [1, 2, 3, 4, 5, 6, 7];
+        isHoliday = false;
+      case _RepeatOption.weekdays:
+        days = [1, 2, 3, 4, 5];
+        isHoliday = false;
+      case _RepeatOption.fridayHoliday:
+        days = [5];
+        isHoliday = true;
+      case _RepeatOption.chooseDate:
+        if (_selectedDate == null) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(S.of(context).selectDateRequired)),
+          );
+          return;
+        }
+        days = [_selectedDate!.weekday];
+        isHoliday = false;
+      case _RepeatOption.custom:
+        days = _selectedDays.toList()..sort();
+        if (days.isEmpty && !isHoliday) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+                content: Text(S.of(context).selectDayOrHoliday)),
+          );
+          return;
+        }
     }
 
-    if (_hasSecondTime && (_secondDays.isEmpty && !_secondIsHoliday)) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Selecciona días para la segunda hora')),
-      );
-      return;
-    }
-
-    final reminder = ReminderDraft(
-      title: _titleController.text.trim(),
-      time: _selectedTime,
-      days: _selectedDays.toList(),
-      isHoliday: _isHoliday,
-      minutesBefore: _minutesBefore,
-      isEnabled: widget.reminder?.isEnabled ?? true,
-      secondTime: _hasSecondTime ? _secondTime : null,
-      secondDays: _hasSecondTime ? _secondDays.toList() : <int>[],
-      secondIsHoliday: _hasSecondTime ? _secondIsHoliday : false,
+    Navigator.pop(
+      context,
+      ReminderDraft(
+        title: _titleController.text.trim(),
+        time: _selectedTime,
+        days: days,
+        isHoliday: isHoliday,
+        minutesBefore: _minutesBefore,
+        isEnabled: widget.reminder?.isEnabled ?? true,
+        secondTime: _hasSecondTime ? _secondTime : null,
+        secondDays: _hasSecondTime ? _secondDays.toList() : <int>[],
+        secondIsHoliday: _hasSecondTime ? _secondIsHoliday : false,
+      ),
     );
-
-    Navigator.pop(context, reminder);
   }
 
-  String? _validateTitle(String? value) {
+  String? _validateTitle(BuildContext context, String? value) {
     final text = value?.trim() ?? '';
-    if (text.isEmpty) return 'Ingresa un título';
-    if (text.length < 3) return 'Título muy corto';
+    if (text.isEmpty) return S.of(context).enterTitle;
+    if (text.length < 3) return S.of(context).titleTooShort;
     return null;
   }
 }
+
+// ---------------------------------------------------------------------------
+// Draft model (unchanged)
+// ---------------------------------------------------------------------------
 
 class ReminderDraft {
   const ReminderDraft({

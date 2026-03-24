@@ -1,12 +1,11 @@
-﻿import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 
 import '../../users/presentation/user_profile_provider.dart';
 import '../data/wallet_service.dart';
-import '../../../app/theme/app_tokens.dart';
-import '../../../core/keyboard_safe_sheet.dart';
+import '../../../core/l10n/s.dart';
 
 class WalletSendRequestScreen extends ConsumerStatefulWidget {
   const WalletSendRequestScreen({super.key});
@@ -49,17 +48,17 @@ class _WalletSendRequestScreenState
     messenger.clearSnackBars();
     messenger.showSnackBar(
       SnackBar(
-        content: const Text(
-          'Selecciona un contacto para enviar o solicitar dinero.',
+        content: Text(
+          S.of(context).selectContactBanner,
           textAlign: TextAlign.center,
-          style: TextStyle(
+          style: const TextStyle(
             fontSize: 16,
             fontWeight: FontWeight.w500,
             height: 1.3,
           ),
         ),
         behavior: SnackBarBehavior.floating,
-        backgroundColor: AppTokens.mutedText,
+        backgroundColor: const Color(0xFF777777),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
         margin: const EdgeInsets.fromLTRB(36, 0, 36, 94),
         duration: const Duration(seconds: 2),
@@ -70,7 +69,7 @@ class _WalletSendRequestScreenState
   Future<void> _addContact(String walletId) async {
     final normalized = _normalizeWalletId(walletId);
     if (normalized.isEmpty) {
-      _showInfo('Ingresa un ID de billetera válido');
+      _showInfo(S.of(context).invalidWalletId);
       return;
     }
     if (_saving) return;
@@ -78,7 +77,7 @@ class _WalletSendRequestScreenState
     setState(() => _saving = true);
     try {
       await WalletService.instance.addContact(normalized);
-      _showInfo('Contacto agregado');
+      _showInfo(S.of(context).contactAdded);
     } catch (e) {
       final msg = e.toString().replaceFirst('Exception: ', '');
       _showInfo(msg);
@@ -100,63 +99,78 @@ class _WalletSendRequestScreenState
     String manualValue = '';
     String? error;
 
-    final manualWalletId = await showKeyboardSafeSheet<String>(
+    final manualWalletId = await showModalBottomSheet<String>(
       context: context,
-      contentPadding: const EdgeInsets.fromLTRB(20, 8, 20, 16),
-      builder: (ctx, setSheetState) => Column(
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (ctx, setSheetState) {
+            return Padding(
+              padding: EdgeInsets.only(bottom: MediaQuery.of(ctx).viewInsets.bottom),
+              child: Container(
+                decoration: const BoxDecoration(color: Colors.white, borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+                child: SafeArea(top: false, child: SingleChildScrollView(
+                  padding: const EdgeInsets.fromLTRB(20, 8, 20, 16),
+                  child: Column(
                     mainAxisSize: MainAxisSize.min,
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
                       Center(child: Container(width: 36, height: 4, margin: const EdgeInsets.only(bottom: 14), decoration: BoxDecoration(color: Colors.grey.shade300, borderRadius: BorderRadius.circular(2)))),
-                      const Text('Verificación', textAlign: TextAlign.center, style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
+                      Text(S.of(ctx).verification, textAlign: TextAlign.center, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
                       const SizedBox(height: 14),
-                      const Text(
-                        'Para enviar o solicitar tzedaká, primero verifica el contacto:\n'
-                        '• Escanea su ID de billetera (arriba a la derecha en esta pantalla), o\n'
-                        '• Escribe el código de 6 dígitos que te comparta.',
-                        style: TextStyle(fontSize: 14, height: 1.45, color: AppTokens.mutedText),
+                      Text(
+                        S.of(ctx).verificationBody,
+                        style: const TextStyle(fontSize: 14, height: 1.45, color: Color(0xFF5A5A5A)),
                       ),
                       const SizedBox(height: 18),
                       SizedBox(height: 52, child: ElevatedButton(
-                        style: ElevatedButton.styleFrom(backgroundColor: AppTokens.primaryBlue, foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
+                        style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFE05A4F), foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
                         onPressed: () => Navigator.of(ctx).pop(''),
-                        child: const Text('Escanear ID de billetera', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+                        child: Text(S.of(ctx).scanWalletId, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
                       )),
                       const SizedBox(height: 10),
-                      const Text('o', textAlign: TextAlign.center, style: TextStyle(fontSize: 16, color: AppTokens.mutedText)),
+                      Text(S.of(ctx).or_, textAlign: TextAlign.center, style: const TextStyle(fontSize: 16, color: Color(0xFF5A5A5A))),
                       const SizedBox(height: 6),
                       if (!showManualEntry)
                         SizedBox(height: 52, child: OutlinedButton(
-                          style: OutlinedButton.styleFrom(foregroundColor: AppTokens.primaryBlue, side: const BorderSide(color: AppTokens.primaryBlue, width: 2), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
+                          style: OutlinedButton.styleFrom(foregroundColor: const Color(0xFFE05A4F), side: const BorderSide(color: Color(0xFFE05A4F), width: 2), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
                           onPressed: () { setSheetState(() { showManualEntry = true; error = null; }); },
-                          child: const Text('Ingresar ID de billetera', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+                          child: Text(S.of(ctx).enterWalletId, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
                         )),
                       if (showManualEntry) ...[
                         TextField(
-                            textCapitalization: TextCapitalization.characters,
+                          autofocus: true,
+                          textCapitalization: TextCapitalization.characters,
                           textInputAction: TextInputAction.done,
                           onChanged: (value) { manualValue = value; if (error != null) setSheetState(() => error = null); },
                           onSubmitted: (value) {
                             final normalized = _normalizeWalletId(value);
-                            if (normalized.isEmpty) { setSheetState(() => error = 'Ingresa un ID válido'); return; }
+                            if (normalized.isEmpty) { setSheetState(() => error = S.of(ctx).enterValidId); return; }
                             Navigator.of(ctx).pop(value);
                           },
                           decoration: InputDecoration(
-                            hintText: 'Escribe ID de billetera', errorText: error,
+                            hintText: S.of(ctx).writeWalletId, errorText: error,
                             contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
                             border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                            focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: AppTokens.primaryBlue, width: 1.6)),
+                            focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: Color(0xFFE05A4F), width: 1.6)),
                           ),
                         ),
                       ],
                     ],
                   ),
+                )),
+              ),
+            );
+          },
+        );
+      },
     );
 
     if (manualWalletId == null) return;
     final normalizedManual = _normalizeWalletId(manualWalletId.isEmpty ? manualValue : manualWalletId);
     if (manualWalletId.isNotEmpty && normalizedManual.isEmpty) {
-      _showInfo('Ingresa un ID de billetera válido');
+      _showInfo(S.of(context).invalidWalletId);
       return;
     }
     if (manualWalletId.isEmpty) {
@@ -166,105 +180,11 @@ class _WalletSendRequestScreenState
     await _addContact(normalizedManual);
   }
 
-
-  Future<double?> _showAmountDialog(String actionLabel) async {
-    final controller = TextEditingController();
-    String? error;
-    return showKeyboardSafeSheet<double>(
-      context: context,
-      builder: (ctx, setDialogState) => Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-                      Center(child: Container(width: 36, height: 4, margin: const EdgeInsets.only(bottom: 12), decoration: BoxDecoration(color: Colors.grey.shade300, borderRadius: BorderRadius.circular(2)))),
-                      Text(actionLabel, textAlign: TextAlign.center, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
-                      const SizedBox(height: 6),
-                      Text(
-                        'Contacto: $_selectedContactWalletId',
-                        textAlign: TextAlign.center,
-                        style: TextStyle(fontSize: 13, color: Colors.grey.shade600),
-                      ),
-                      const SizedBox(height: 18),
-                      TextField(
-                        controller: controller,
-                        keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                        textInputAction: TextInputAction.done,
-                        onSubmitted: (_) {
-                          final value = double.tryParse(controller.text.trim().replaceAll(',', '.'));
-                          if (value != null && value > 0) Navigator.pop(ctx, value);
-                        },
-                        decoration: InputDecoration(
-                          hintText: 'Ej: 50', prefixText: '\$ ', errorText: error,
-                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                          focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: AppTokens.primaryBlue, width: 1.6)),
-                        ),
-                        onChanged: (_) { if (error != null) setDialogState(() => error = null); },
-                      ),
-                      const SizedBox(height: 16),
-                      SizedBox(width: double.infinity, height: 48, child: ElevatedButton(
-                        style: ElevatedButton.styleFrom(backgroundColor: AppTokens.primaryBlue, foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
-                        onPressed: () {
-                          final value = double.tryParse(controller.text.trim().replaceAll(',', '.'));
-                          if (value == null || value <= 0) { setDialogState(() => error = 'Ingresa un monto v\u00e1lido'); return; }
-                          Navigator.pop(ctx, value);
-                        },
-                        child: Text(actionLabel, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
-                      )),
-                      SizedBox(width: double.infinity, height: 44, child: TextButton(
-                        onPressed: () => Navigator.pop(ctx),
-                        child: Text('Cancelar', style: TextStyle(color: Colors.grey.shade600, fontWeight: FontWeight.w500)),
-                      )),
-                    ]),
-    );
-  }
-
-  Future<void> _executeSend() async {
-    if (_selectedContactWalletId == null) {
-      _showSelectContactBanner();
-      return;
-    }
-    final amount = await _showAmountDialog('Enviar');
-    if (!mounted || amount == null) return;
-
-    setState(() => _saving = true);
-    try {
-      await WalletService.instance.transfer(
-        targetWalletId: _selectedContactWalletId!,
-        amount: amount,
-      );
-      if (!mounted) return;
-      _showInfo('Enviado \$${amount.toStringAsFixed(2)} a $_selectedContactWalletId');
-    } catch (e) {
-      if (!mounted) return;
-      _showInfo(e.toString().replaceFirst('Exception: ', ''));
-    } finally {
-      if (mounted) setState(() => _saving = false);
-    }
-  }
-
-  Future<void> _executeRequest() async {
-    if (_selectedContactWalletId == null) {
-      _showSelectContactBanner();
-      return;
-    }
-    final amount = await _showAmountDialog('Solicitar');
-    if (!mounted || amount == null) return;
-
-    setState(() => _saving = true);
-    try {
-      await WalletService.instance.requestTransfer(
-        fromWalletId: _selectedContactWalletId!,
-        amount: amount,
-      );
-      if (!mounted) return;
-      _showInfo('Solicitud de \$${amount.toStringAsFixed(2)} enviada');
-    } catch (e) {
-      if (!mounted) return;
-      _showInfo(e.toString().replaceFirst('Exception: ', ''));
-    } finally {
-      if (mounted) setState(() => _saving = false);
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
+    final tr = S.of(context);
+    const red = Color(0xFFE84324);
+    const navy = Color(0xFF1F233A);
     final uid = ref.watch(currentUserProvider)?.uid;
 
     return Column(
@@ -279,7 +199,7 @@ class _WalletSendRequestScreenState
                   width: double.infinity,
                   child: ElevatedButton(
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: AppTokens.primaryBlue,
+                      backgroundColor: red,
                       foregroundColor: Colors.white,
                       minimumSize: const Size(0, 42),
                       shape: RoundedRectangleBorder(
@@ -287,9 +207,9 @@ class _WalletSendRequestScreenState
                       ),
                     ),
                     onPressed: _saving ? null : _showVerificationDialog,
-                    child: const Text(
-                      '+ AGREGAR NUEVO CONTACTO',
-                      style: TextStyle(
+                    child: Text(
+                      tr.addNewContact,
+                      style: const TextStyle(
                         fontSize: 14,
                         fontWeight: FontWeight.w700,
                         letterSpacing: 0.2,
@@ -298,42 +218,42 @@ class _WalletSendRequestScreenState
                   ),
                 ),
                 const SizedBox(height: 18),
-                const Text(
-                  'TUS CONTACTOS',
-                  style: TextStyle(
+                Text(
+                  tr.yourContacts,
+                  style: const TextStyle(
                     fontSize: 18,
                     fontWeight: FontWeight.w500,
                     letterSpacing: 0.6,
-                    color: AppTokens.textPrimary,
+                    color: Color(0xFF2D2D2D),
                   ),
                 ),
                 const SizedBox(height: 12),
                 Expanded(
                   child: uid == null
-                      ? const Center(
+                      ? Center(
                           child: Text(
-                            'Inicia sesión para ver tus contactos',
-                            style: TextStyle(fontSize: 16),
+                            tr.signInForContacts,
+                            style: const TextStyle(fontSize: 16),
                           ),
                         )
                       : StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
                           stream: _contactsStream(uid),
                           builder: (context, snapshot) {
                             if (snapshot.hasError) {
-                              return const Center(child: Text('Error cargando contactos'));
+                              return Center(child: Text(tr.errorLoadingContacts));
                             }
                             if (!snapshot.hasData) {
                               return const Center(child: CircularProgressIndicator());
                             }
                             final docs = snapshot.data!.docs;
                             if (docs.isEmpty) {
-                              return const Center(
+                              return Center(
                                 child: Text(
-                                  'Sin contactos',
-                                  style: TextStyle(
+                                  tr.noContacts,
+                                  style: const TextStyle(
                                     fontSize: 20,
                                     fontWeight: FontWeight.w400,
-                                    color: AppTokens.textPrimary,
+                                    color: Color(0xFF2D2D2D),
                                   ),
                                 ),
                               );
@@ -347,7 +267,7 @@ class _WalletSendRequestScreenState
                                 final name =
                                     (data['displayName'] as String?)?.trim().isNotEmpty == true
                                         ? data['displayName'] as String
-                                        : 'Contacto';
+                                        : tr.defaultContact;
                                 final walletId = (data['walletId'] as String?) ?? docs[index].id;
                                 final isSelected = _selectedContactWalletId == walletId;
                                 return Material(
@@ -363,10 +283,10 @@ class _WalletSendRequestScreenState
                                         vertical: 12,
                                       ),
                                       decoration: BoxDecoration(
-                                        color: AppTokens.cardSilver,
+                                        color: const Color(0xFFF4F4F4),
                                         borderRadius: BorderRadius.circular(14),
                                         border: isSelected
-                                            ? Border.all(color: AppTokens.primaryBlue, width: 1.8)
+                                            ? Border.all(color: red, width: 1.8)
                                             : null,
                                       ),
                                       child: Row(
@@ -375,12 +295,12 @@ class _WalletSendRequestScreenState
                                             width: 36,
                                             height: 36,
                                             decoration: BoxDecoration(
-                                              color: AppTokens.primaryBlue.withValues(alpha: 0.14),
+                                              color: red.withValues(alpha: 0.14),
                                               borderRadius: BorderRadius.circular(10),
                                             ),
                                             child: const Icon(
                                               Icons.person_outline_rounded,
-                                              color: AppTokens.primaryBlue,
+                                              color: red,
                                             ),
                                           ),
                                           const SizedBox(width: 10),
@@ -397,10 +317,10 @@ class _WalletSendRequestScreenState
                                                 ),
                                                 const SizedBox(height: 2),
                                                 Text(
-                                                  'ID: $walletId',
+                                                  tr.idPrefix(walletId),
                                                   style: TextStyle(
                                                     fontSize: 13,
-                                                    color: AppTokens.mutedText,
+                                                    color: Colors.black.withValues(alpha: 0.55),
                                                   ),
                                                 ),
                                               ],
@@ -429,7 +349,7 @@ class _WalletSendRequestScreenState
                 Expanded(
                   child: ElevatedButton(
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: AppTokens.primaryBlue,
+                      backgroundColor: red,
                       foregroundColor: Colors.white,
                       minimumSize: const Size(0, 52),
                       shape: RoundedRectangleBorder(
@@ -437,13 +357,15 @@ class _WalletSendRequestScreenState
                       ),
                       elevation: _sendSelected ? 0 : 1.5,
                     ),
-                    onPressed: _saving ? null : () {
+                    onPressed: () {
                       setState(() => _sendSelected = true);
-                      _executeSend();
+                      if (_selectedContactWalletId == null) {
+                        _showSelectContactBanner();
+                      }
                     },
-                    child: const Text(
-                      'ENVIAR',
-                      style: TextStyle(
+                    child: Text(
+                      tr.send,
+                      style: const TextStyle(
                         fontSize: 15,
                         fontWeight: FontWeight.w800,
                         letterSpacing: 0.2,
@@ -455,7 +377,7 @@ class _WalletSendRequestScreenState
                 Expanded(
                   child: ElevatedButton(
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: AppTokens.textPrimary,
+                      backgroundColor: navy,
                       foregroundColor: Colors.white,
                       minimumSize: const Size(0, 52),
                       shape: RoundedRectangleBorder(
@@ -463,13 +385,15 @@ class _WalletSendRequestScreenState
                       ),
                       elevation: _sendSelected ? 1.5 : 0,
                     ),
-                    onPressed: _saving ? null : () {
+                    onPressed: () {
                       setState(() => _sendSelected = false);
-                      _executeRequest();
+                      if (_selectedContactWalletId == null) {
+                        _showSelectContactBanner();
+                      }
                     },
-                    child: const Text(
-                      'SOLICITAR',
-                      style: TextStyle(
+                    child: Text(
+                      tr.request,
+                      style: const TextStyle(
                         fontSize: 15,
                         fontWeight: FontWeight.w800,
                         letterSpacing: 0.2,
@@ -507,7 +431,7 @@ class _WalletScannerScreenState extends State<_WalletScannerScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Escanear código QR'),
+        title: Text(S.of(context).scanQrCode),
       ),
       body: Stack(
         children: [
@@ -542,7 +466,7 @@ class _WalletScannerScreenState extends State<_WalletScannerScreen> {
               child: Container(
                 width: 260,
                 height: 2,
-                color: AppTokens.primaryBlue,
+                color: const Color(0xFFE84324),
               ),
             ),
           ),

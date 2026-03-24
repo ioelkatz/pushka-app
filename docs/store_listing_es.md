@@ -1,4 +1,4 @@
-Store Listing – Pushka (ES)
+﻿Store Listing – Pushka (ES)
 
 NOMBRE DE LA APP
 Pushka
@@ -25,3 +25,4 @@ Sitio web: [SITIO WEB]
 
 POLÍTICA DE PRIVACIDAD
 [URL DE POLÍTICA DE PRIVACIDAD]
+

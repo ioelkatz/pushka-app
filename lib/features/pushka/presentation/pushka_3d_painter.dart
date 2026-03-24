@@ -38,31 +38,15 @@ class Pushka3DPainter extends CustomPainter {
   }
 
   void _drawGlow(Canvas canvas, double cx, double cy, double cylW, double cylH) {
-    final glowRadius = cylW * 1.2;
-    final glowPaint = Paint()
-      ..shader = RadialGradient(
-        center: Alignment.center,
-        radius: 1.0,
-        colors: [
-          const Color(0xFF60A5FA).withValues(alpha: 0.12),
-          const Color(0xFF38BDF8).withValues(alpha: 0.06),
-          Colors.transparent,
-        ],
-        stops: const [0.0, 0.5, 1.0],
-      ).createShader(
-        Rect.fromCenter(
-          center: Offset(cx, cy),
-          width: glowRadius * 2,
-          height: cylH * 1.3,
-        ),
-      );
+    final paint = Paint()
+      ..color = const Color(0xFF60A5FA).withValues(alpha: 0.07);
     canvas.drawOval(
       Rect.fromCenter(
         center: Offset(cx, cy),
-        width: glowRadius * 2,
-        height: cylH * 1.3,
+        width: cylW * 2.0,
+        height: cylH * 1.1,
       ),
-      glowPaint,
+      paint,
     );
   }
 
@@ -163,14 +147,12 @@ class Pushka3DPainter extends CustomPainter {
       ..shader = LinearGradient(
         begin: Alignment.centerLeft,
         end: Alignment.centerRight,
-        stops: const [0.0, 0.08, 0.25, 0.5, 0.8, 1.0],
+        stops: const [0.0, 0.15, 0.85, 1.0],
         colors: [
-          Colors.white.withValues(alpha: 0.0),
-          Colors.white.withValues(alpha: 0.12),
-          Colors.white.withValues(alpha: 0.04),
+          Colors.white.withValues(alpha: 0.10),
           Colors.transparent,
-          Colors.black.withValues(alpha: 0.02),
-          Colors.black.withValues(alpha: 0.05),
+          Colors.transparent,
+          Colors.black.withValues(alpha: 0.04),
         ],
       ).createShader(Rect.fromLTRB(l, top, r, bot));
 
@@ -317,4 +299,5 @@ class Pushka3DPainter extends CustomPainter {
   bool shouldRepaint(covariant Pushka3DPainter oldDelegate) {
     return oldDelegate.fillFraction != fillFraction;
   }
+
 }

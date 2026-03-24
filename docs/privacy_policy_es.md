@@ -1,6 +1,6 @@
-Política de Privacidad – Pushka
+﻿Política de Privacidad – Pushka
 
-Última actualización: [FECHA]
+Última actualización: 26 de enero de 2026
 
 Esta Política de Privacidad describe cómo Pushka (“la App”) recopila, usa y comparte información cuando utilizas la aplicación.
 
@@ -30,19 +30,21 @@ No vendemos tu información personal. Compartimos datos solo cuando:
 
 5. Retención y eliminación
 Conservamos los datos mientras la cuenta esté activa. Puedes solicitar eliminación escribiendo a:
-[EMAIL DE CONTACTO]
+support@pushkaapp.com
 
 6. Seguridad
 Aplicamos medidas de seguridad razonables para proteger tu información. Sin embargo, ningún sistema es 100% seguro.
 
 7. Derechos del usuario
 Puedes solicitar acceso, corrección o eliminación de tus datos escribiendo a:
-[EMAIL DE CONTACTO]
+support@pushkaapp.com
 
 8. Cambios en esta política
 Podemos actualizar esta política ocasionalmente. Publicaremos la nueva versión en la App o en un sitio web.
 
 Contacto
-[NOMBRE DE LA ORGANIZACIÓN]
-[EMAIL DE CONTACTO]
-[SITIO WEB]
+Colel Jabad
+support@pushkaapp.com
+https://www.pushkaapp.com
+
+

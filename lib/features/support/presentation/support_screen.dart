@@ -1,13 +1,17 @@
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
-import '../../../app/theme/app_tokens.dart';
+
+import '../../../core/l10n/s.dart';
 
 class SupportScreen extends StatelessWidget {
   const SupportScreen({super.key});
 
   @override
   Widget build(BuildContext context) {
+    final tr = S.of(context);
+    const red = Color(0xFFE05A4F);
     const green = Color(0xFF25D366);
+    const blue = Color(0xFF2F60C5);
 
     return SingleChildScrollView(
       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
@@ -36,22 +40,22 @@ class SupportScreen extends StatelessWidget {
                   ),
                   const SizedBox(height: 4),
                   // Colel Jabad
-                  const Text(
-                    'Colel Jabad',
-                    style: TextStyle(
+                  Text(
+                    tr.colelJabad,
+                    style: const TextStyle(
                       fontSize: 30,
                       fontWeight: FontWeight.w700,
-                      color: AppTokens.textPrimary,
+                      color: Colors.black87,
                       letterSpacing: 0.5,
                     ),
                   ),
                   const SizedBox(height: 4),
                   // Tagline
                   Text(
-                    'Cuidando a los necesitados de Israel desde 1788',
+                    tr.tagline1788,
                     style: TextStyle(
                       fontSize: 14,
-                      color: AppTokens.mutedText,
+                      color: Colors.grey.shade600,
                       fontWeight: FontWeight.w400,
                     ),
                   ),
@@ -86,13 +90,13 @@ class SupportScreen extends StatelessWidget {
           const SizedBox(height: 32),
 
           // App Version
-          const Text(
-            'VERSIÓN DE LA APP',
-            style: TextStyle(
+          Text(
+            tr.appVersionSection,
+            style: const TextStyle(
               fontSize: 11,
               fontWeight: FontWeight.w600,
               letterSpacing: 1.2,
-              color: AppTokens.textPrimary,
+              color: Colors.black87,
             ),
           ),
           const SizedBox(height: 8),
@@ -101,20 +105,20 @@ class SupportScreen extends StatelessWidget {
             style: TextStyle(
               fontSize: 18,
               fontWeight: FontWeight.w600,
-              color: AppTokens.textPrimary,
+              color: Colors.black87,
             ),
           ),
 
           const SizedBox(height: 28),
 
           // Support Section
-          const Text(
-            'SOPORTE',
-            style: TextStyle(
+          Text(
+            tr.supportSection,
+            style: const TextStyle(
               fontSize: 11,
               fontWeight: FontWeight.w600,
               letterSpacing: 1.2,
-              color: AppTokens.textPrimary,
+              color: Colors.black87,
             ),
           ),
           const SizedBox(height: 16),
@@ -126,7 +130,7 @@ class SupportScreen extends StatelessWidget {
               'app@colelchabad.org',
               style: const TextStyle(
                 fontSize: 16,
-                color: AppTokens.primaryBlue,
+                color: red,
                 decoration: TextDecoration.underline,
               ),
             ),
@@ -143,7 +147,7 @@ class SupportScreen extends StatelessWidget {
                   '+1 (718) 774-5446',
                   style: const TextStyle(
                     fontSize: 16,
-                    color: AppTokens.primaryBlue,
+                    color: red,
                     decoration: TextDecoration.underline,
                   ),
                 ),
@@ -175,12 +179,12 @@ class SupportScreen extends StatelessWidget {
           // Learn More Link
           InkWell(
             onTap: () => _launchLearnMore(),
-            child: const Text(
-              'Aprende más sobre Colel Jabad y la Pushka de Colel Jabad.',
+            child: Text(
+              tr.learnMoreColel,
               textAlign: TextAlign.center,
-              style: TextStyle(
+              style: const TextStyle(
                 fontSize: 14,
-                color: AppTokens.primaryBlue,
+                color: blue,
                 decoration: TextDecoration.underline,
               ),
             ),
@@ -189,13 +193,13 @@ class SupportScreen extends StatelessWidget {
           const SizedBox(height: 32),
 
           // Developer Section
-          const Text(
-            'DESARROLLADO POR',
-            style: TextStyle(
+          Text(
+            tr.developedBy,
+            style: const TextStyle(
               fontSize: 11,
               fontWeight: FontWeight.w600,
               letterSpacing: 1.2,
-              color: AppTokens.textPrimary,
+              color: Colors.black87,
             ),
           ),
           const SizedBox(height: 16),
@@ -209,7 +213,7 @@ class SupportScreen extends StatelessWidget {
                 width: 32,
                 height: 32,
                 decoration: BoxDecoration(
-                  color: AppTokens.primaryBlue,
+                  color: const Color(0xFF6B46C1), // Púrpura
                   borderRadius: BorderRadius.circular(6),
                 ),
                 child: const Center(
@@ -229,7 +233,7 @@ class SupportScreen extends StatelessWidget {
                 style: TextStyle(
                   fontSize: 18,
                   fontWeight: FontWeight.w600,
-                  color: AppTokens.textPrimary,
+                  color: Colors.black87,
                 ),
               ),
             ],
@@ -248,7 +252,7 @@ class SupportScreen extends StatelessWidget {
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: AppTokens.border, width: 1),
+        border: Border.all(color: Colors.grey.shade300, width: 1),
       ),
       child: Stack(
         children: [
@@ -260,12 +264,12 @@ class SupportScreen extends StatelessWidget {
             child: Container(
               height: 60,
               decoration: BoxDecoration(
-                color: AppTokens.cardSilver,
+                color: const Color(0xFFF5F5F5),
                 borderRadius: const BorderRadius.only(
                   bottomLeft: Radius.circular(8),
                   bottomRight: Radius.circular(8),
                 ),
-                border: Border.all(color: AppTokens.border, width: 1.5),
+                border: Border.all(color: Colors.grey.shade300, width: 1.5),
               ),
               child: Stack(
                 children: [
@@ -277,7 +281,7 @@ class SupportScreen extends StatelessWidget {
                     child: Container(
                       height: 3,
                       decoration: BoxDecoration(
-                        color: AppTokens.mutedText,
+                        color: Colors.grey.shade500,
                         borderRadius: BorderRadius.circular(2),
                       ),
                     ),
@@ -287,10 +291,10 @@ class SupportScreen extends StatelessWidget {
                     child: Column(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        _buildColoredLetter('צ', AppTokens.primaryBlue),
+                        _buildColoredLetter('צ', Colors.blue),
                         _buildColoredLetter('ד', Colors.yellow.shade700),
-                        _buildColoredLetter('ק', AppTokens.skyBlue),
-                        _buildColoredLetter('ה', AppTokens.destructive),
+                        _buildColoredLetter('ק', Colors.orange),
+                        _buildColoredLetter('ה', Colors.red),
                       ],
                     ),
                   ),
@@ -306,7 +310,7 @@ class SupportScreen extends StatelessWidget {
             child: Container(
               height: 12,
               decoration: BoxDecoration(
-                color: AppTokens.mutedText,
+                color: Colors.grey.shade400,
                 borderRadius: const BorderRadius.only(
                   topLeft: Radius.circular(4),
                   topRight: Radius.circular(4),

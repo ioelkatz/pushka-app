@@ -1,9 +1,8 @@
-﻿import 'package:firebase_auth/firebase_auth.dart';
-import 'package:flutter/foundation.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
-import '../../../app/theme/app_tokens.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/l10n/s.dart';
 import '../providers/auth_controller.dart';
 
 class RegisterScreen extends ConsumerStatefulWidget {
@@ -20,6 +19,13 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
   final _passwordController = TextEditingController();
   bool _isLoading = false;
   bool _obscurePassword = true;
+  late S _tr;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _tr = S.of(context);
+  }
 
   @override
   void dispose() {
@@ -32,24 +38,21 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Crear cuenta')),
+      appBar: AppBar(title: Text(_tr.createAccountTitle)),
       body: SafeArea(
-        child: Center(
-          child: ConstrainedBox(
-            constraints: BoxConstraints(maxWidth: kIsWeb ? 480 : double.infinity),
-            child: SingleChildScrollView(
+        child: SingleChildScrollView(
           padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text(
-                'Crea tu cuenta',
-                style: TextStyle(fontSize: 24, fontWeight: FontWeight.w700),
+              Text(
+                _tr.createYourAccount,
+                style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w700),
               ),
               const SizedBox(height: 8),
-              const Text(
-                'Completa tus datos para comenzar',
-                style: TextStyle(fontSize: 16, color: AppTokens.mutedText),
+              Text(
+                _tr.completeData,
+                style: const TextStyle(fontSize: 16, color: Colors.black54),
               ),
               const SizedBox(height: 24),
 
@@ -59,14 +62,14 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
                   children: [
                     _buildTextField(
                       controller: _nameController,
-                      label: 'Nombre completo',
+                      label: _tr.fullName,
                       textInputAction: TextInputAction.next,
                       validator: _validateName,
                     ),
                     const SizedBox(height: 16),
                     _buildTextField(
                       controller: _emailController,
-                      label: 'Correo electrónico',
+                      label: _tr.emailField,
                       keyboardType: TextInputType.emailAddress,
                       textInputAction: TextInputAction.next,
                       validator: _validateEmail,
@@ -74,7 +77,7 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
                     const SizedBox(height: 16),
                     _buildTextField(
                       controller: _passwordController,
-                      label: 'Contraseña',
+                      label: _tr.passwordField,
                       obscureText: _obscurePassword,
                       textInputAction: TextInputAction.done,
                       validator: _validatePassword,
@@ -105,12 +108,10 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
                           height: 20,
                           child: CircularProgressIndicator(strokeWidth: 2),
                         )
-                      : const Text('Crear cuenta'),
+                      : Text(_tr.createAccount),
                 ),
               ),
             ],
-          ),
-        ),
           ),
         ),
       ),
@@ -165,7 +166,7 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
     } on FirebaseAuthException catch (e) {
       _showMessage(_mapAuthError(e.code));
     } on Exception catch (e) {
-      _showMessage('Error al crear cuenta: $e');
+      _showMessage(_tr.createAccountError('$e'));
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
@@ -180,41 +181,41 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
 
   String? _validateName(String? value) {
     final text = value?.trim() ?? '';
-    if (text.isEmpty) return 'Ingresa tu nombre';
-    if (text.length < 2) return 'Nombre demasiado corto';
+    if (text.isEmpty) return _tr.enterYourName;
+    if (text.length < 2) return _tr.nameTooShort;
     return null;
   }
 
   String? _validateEmail(String? value) {
     final text = value?.trim() ?? '';
-    if (text.isEmpty) return 'Ingresa tu correo';
+    if (text.isEmpty) return _tr.enterYourEmail;
     final isValid =
         RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$').hasMatch(text);
-    if (!isValid) return 'Correo inválido';
+    if (!isValid) return _tr.invalidEmail;
     return null;
   }
 
   String? _validatePassword(String? value) {
     final text = value ?? '';
-    if (text.isEmpty) return 'Ingresa tu contraseña';
-    if (text.length < 6) return 'Mínimo 6 caracteres';
+    if (text.isEmpty) return _tr.enterYourPassword;
+    if (text.length < 6) return _tr.min6Chars;
     return null;
   }
 
   String _mapAuthError(String code) {
     switch (code) {
       case 'invalid-email':
-        return 'El correo no es válido';
+        return _tr.emailNotValid;
       case 'email-already-in-use':
-        return 'Ese correo ya está registrado';
+        return _tr.emailInUse;
       case 'weak-password':
-        return 'La contraseña es muy débil';
+        return _tr.weakPassword;
       case 'operation-not-allowed':
-        return 'Este método de registro no está habilitado';
+        return _tr.registrationNotAllowed;
       case 'network-request-failed':
-        return 'Error de red, revisa tu conexión';
+        return _tr.networkError;
       default:
-        return 'Error al crear cuenta: $code';
+        return _tr.createAccountErrorCode(code);
     }
   }
 }

@@ -1,5 +1,4 @@
-import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
+﻿import 'package:flutter/material.dart';
 
 import 'app_tokens.dart';
 
@@ -7,7 +6,7 @@ class AppTheme {
   const AppTheme._();
 
   static ThemeData light() {
-    final textTheme = GoogleFonts.interTextTheme();
+    const textTheme = TextTheme();
 
     final base = ThemeData(
       useMaterial3: true,

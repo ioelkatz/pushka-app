@@ -1,4 +1,4 @@
-import 'package:cloud_firestore/cloud_firestore.dart' as firestore;
+﻿import 'package:cloud_firestore/cloud_firestore.dart' as firestore;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../domain/transaction.dart';
@@ -28,15 +28,21 @@ class TransactionRepository {
     String? description,
     PaymentMethod paymentMethod = PaymentMethod.card,
     PaymentStatus status = PaymentStatus.completed,
+    String? docId,
   }) async {
-    await _collection(uid).add({
+    final data = {
       'type': type.name,
       'amount': amount,
       'description': description ?? '',
       'paymentMethod': paymentMethod.name,
       'status': status.name,
       'createdAt': firestore.Timestamp.now(),
-    });
+    };
+    if (docId != null) {
+      await _collection(uid).doc(docId).set(data);
+    } else {
+      await _collection(uid).add(data);
+    }
   }
 
   Transaction _fromDoc(

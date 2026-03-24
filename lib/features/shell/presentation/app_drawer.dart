@@ -2,8 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../../core/l10n/s.dart';
 import '../../users/presentation/user_profile_provider.dart';
-import '../../../app/theme/app_tokens.dart';
 
 enum DrawerItem { pushka, wallet, reminders, history, settings, prayers, support, about }
 
@@ -14,6 +14,8 @@ class AppDrawer extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final tr = S.of(context);
+    const blue = Color(0xFF2F60C5);
     final user = ref.watch(currentUserProvider);
     final profile = ref.watch(userProfileProvider).valueOrNull;
     final displayName =
@@ -21,7 +23,7 @@ class AppDrawer extends ConsumerWidget {
             ? (profile?['displayName'] as String)
             : (user?.displayName?.trim().isNotEmpty == true
                 ? user!.displayName!
-                : 'Usuario');
+                : tr.defaultUser);
     
     return Drawer(
       child: Column(
@@ -29,13 +31,15 @@ class AppDrawer extends ConsumerWidget {
           // Header azul
           Container(
             height: 120,
-            decoration: const BoxDecoration(color: AppTokens.primaryBlue),
+            decoration: const BoxDecoration(color: blue),
             child: Padding(
               padding: const EdgeInsets.fromLTRB(20, 50, 20, 20),
               child: Align(
                 alignment: Alignment.centerLeft,
                 child: Text(
-                  'HOLA ${displayName.toUpperCase()}',
+                  tr.hello(displayName.toUpperCase()),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
                     color: Colors.white,
                     fontSize: 24,
@@ -52,14 +56,14 @@ class AppDrawer extends ConsumerWidget {
             child: ListView(
               padding: const EdgeInsets.symmetric(vertical: 8),
               children: [
-                _item(context, DrawerItem.pushka, 'Mi Pushka', '/', Icons.home),
-                _item(context, DrawerItem.wallet, 'Billetera', '/wallet', Icons.account_balance_wallet),
-                _item(context, DrawerItem.reminders, 'Recordatorios', '/reminders', Icons.notifications),
-                _item(context, DrawerItem.history, 'Historial', '/history', Icons.history),
-                _item(context, DrawerItem.settings, 'Configuración', '/settings', Icons.settings),
-                _item(context, DrawerItem.prayers, 'Segulot y Rezos', '/prayers', Icons.menu_book),
-                _item(context, DrawerItem.support, 'Soporte', '/support', Icons.support_agent),
-                _item(context, DrawerItem.about, 'Acerca de', '/about', Icons.info),
+                _item(context, DrawerItem.pushka, tr.myPushka, '/', Icons.home, blue),
+                _item(context, DrawerItem.wallet, tr.wallet, '/wallet', Icons.account_balance_wallet, blue),
+                _item(context, DrawerItem.reminders, tr.reminders, '/reminders', Icons.notifications, blue),
+                _item(context, DrawerItem.history, tr.history, '/history', Icons.history, blue),
+                _item(context, DrawerItem.settings, tr.settings, '/settings', Icons.settings, blue),
+                _item(context, DrawerItem.prayers, tr.prayersAndSegulot, '/prayers', Icons.menu_book, blue),
+                _item(context, DrawerItem.support, tr.support, '/support', Icons.support_agent, blue),
+                _item(context, DrawerItem.about, tr.about, '/about', Icons.info, blue),
               ],
             ),
           ),
@@ -68,42 +72,42 @@ class AppDrawer extends ConsumerWidget {
           Container(
             padding: const EdgeInsets.all(20),
             decoration: BoxDecoration(
-              border: Border(top: BorderSide(color: AppTokens.border)),
+              border: Border(top: BorderSide(color: Colors.grey.shade200)),
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'Versión 3.2.0',
+                  tr.version('3.2.0'),
                   style: TextStyle(
                     fontSize: 12,
-                    color: AppTokens.mutedText,
+                    color: Colors.grey.shade600,
                     fontWeight: FontWeight.w400,
                   ),
                 ),
                 const SizedBox(height: 8),
                 Text(
-                  'Patrocinado por',
+                  tr.sponsoredBy,
                   style: TextStyle(
                     fontSize: 12,
-                    color: AppTokens.mutedText,
+                    color: Colors.grey.shade600,
                     fontWeight: FontWeight.w400,
                   ),
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  'Rabino Dovid (Roberto)',
+                  tr.sponsorLine1,
                   style: TextStyle(
                     fontSize: 12,
-                    color: AppTokens.mutedText,
+                    color: Colors.grey.shade700,
                     fontWeight: FontWeight.w500,
                   ),
                 ),
                 Text(
-                  'y Margie Szerer',
+                  tr.sponsorLine2,
                   style: TextStyle(
                     fontSize: 12,
-                    color: AppTokens.mutedText,
+                    color: Colors.grey.shade700,
                     fontWeight: FontWeight.w500,
                   ),
                 ),
@@ -121,25 +125,26 @@ class AppDrawer extends ConsumerWidget {
     String title,
     String route,
     IconData icon,
+    Color blue,
   ) {
     final selected = item == current;
 
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
       decoration: BoxDecoration(
-        color: selected ? AppTokens.primaryBlue : Colors.transparent,
+        color: selected ? blue : Colors.transparent,
         borderRadius: BorderRadius.circular(8),
       ),
       child: ListTile(
         leading: Icon(
           icon,
-          color: selected ? Colors.white : AppTokens.mutedText,
+          color: selected ? Colors.white : Colors.grey.shade700,
           size: 24,
         ),
         title: Text(
           title,
           style: TextStyle(
-            color: selected ? Colors.white : AppTokens.textPrimary,
+            color: selected ? Colors.white : Colors.black87,
             fontSize: 16,
             fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
           ),
