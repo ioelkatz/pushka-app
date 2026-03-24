@@ -31,7 +31,7 @@ class StripeService {
 
     final clientSecret = result.data['clientSecret'] as String?;
     if (clientSecret == null || clientSecret.isEmpty) {
-      throw Exception('No se pudo iniciar el pago');
+      throw Exception('Could not initiate payment');
     }
 
     debugPrint('[StripeService] PaymentIntent created, initializing sheet...');
@@ -53,7 +53,7 @@ class StripeService {
     const separator = '_secret_';
     final index = clientSecret.indexOf(separator);
     if (index <= 0) {
-      throw Exception('No se pudo identificar el pago');
+      throw Exception('Could not identify payment');
     }
     return clientSecret.substring(0, index);
   }

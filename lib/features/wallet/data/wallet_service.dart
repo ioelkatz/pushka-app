@@ -1,4 +1,4 @@
-﻿import 'package:cloud_functions/cloud_functions.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 
 class WalletService {
   WalletService._();
@@ -12,7 +12,7 @@ class WalletService {
     try {
       await callable.call({'paymentIntentId': paymentIntentId});
     } on FirebaseFunctionsException catch (error) {
-      final message = error.message ?? 'No se pudo confirmar la recarga.';
+      final message = error.message ?? 'Could not confirm the top-up.';
       throw Exception(message);
     }
   }
@@ -28,7 +28,7 @@ class WalletService {
         'amount': amount,
       });
     } on FirebaseFunctionsException catch (error) {
-      final message = error.message ?? 'No se pudo completar la transferencia.';
+      final message = error.message ?? 'Could not complete the transfer.';
       throw Exception(message);
     }
   }
@@ -44,7 +44,7 @@ class WalletService {
         'amount': amount,
       });
     } on FirebaseFunctionsException catch (error) {
-      final message = error.message ?? 'No se pudo enviar la solicitud.';
+      final message = error.message ?? 'Could not send the request.';
       throw Exception(message);
     }
   }
@@ -54,7 +54,7 @@ class WalletService {
     try {
       await callable.call({'walletId': walletId});
     } on FirebaseFunctionsException catch (error) {
-      final message = error.message ?? 'No se pudo agregar el contacto.';
+      final message = error.message ?? 'Could not add the contact.';
       throw Exception(message);
     }
   }

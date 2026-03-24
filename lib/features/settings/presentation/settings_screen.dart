@@ -13,6 +13,7 @@ import '../../wallet/data/wallet_service.dart';
 import '../../../core/format_utils.dart';
 import '../../../core/l10n/locale_provider.dart';
 import 'auto_empty_screen.dart';
+import '../../../core/l10n/s.dart';
 
 class SettingsScreen extends ConsumerStatefulWidget {
   const SettingsScreen({super.key});
@@ -66,7 +67,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     if (walletId.isEmpty) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Ingresa un ID de Pushka válido')),
+        SnackBar(content: Text(S.of(context).invalidPushkaId)),
       );
       return;
     }
@@ -74,7 +75,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       await WalletService.instance.addContact(walletId);
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Pushka agregada')),
+        SnackBar(content: Text(S.of(context).pushkaAdded)),
       );
     } catch (e) {
       if (!mounted) return;
@@ -116,19 +117,19 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
                       Center(child: Container(width: 36, height: 4, margin: const EdgeInsets.only(bottom: 14), decoration: BoxDecoration(color: Colors.grey.shade300, borderRadius: BorderRadius.circular(2)))),
-                      const Text('Agregar nueva Pushka', textAlign: TextAlign.center, style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
+                      Text(S.of(context).addNewPushka, textAlign: TextAlign.center, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
                       const SizedBox(height: 18),
                       SizedBox(height: 52, child: ElevatedButton(
                         style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFE05A4F), foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
                         onPressed: () => Navigator.of(ctx).pop(''),
-                        child: const Text('Escanear código QR', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+                        child: Text(S.of(context).scanQrCode, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
                       )),
                       const SizedBox(height: 12),
                       if (!showManualEntry)
                         SizedBox(height: 52, child: OutlinedButton(
                           style: OutlinedButton.styleFrom(foregroundColor: const Color(0xFFE05A4F), side: const BorderSide(color: Color(0xFFE05A4F), width: 2), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
                           onPressed: () { setSheetState(() { showManualEntry = true; error = null; }); },
-                          child: const Text('Ingresar ID Pushka', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+                          child: Text(S.of(context).enterPushkaId, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
                         )),
                       if (showManualEntry) ...[
                         TextField(
@@ -136,11 +137,11 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                           textInputAction: TextInputAction.done,
                           onChanged: (value) { manualValue = value; if (error != null) setSheetState(() => error = null); },
                           onSubmitted: (value) {
-                            if (_normalizeWalletId(value).isEmpty) { setSheetState(() => error = 'Ingresa un ID válido'); return; }
+                            if (_normalizeWalletId(value).isEmpty) { setSheetState(() => error = S.of(context).enterValidId); return; }
                             Navigator.of(ctx).pop(value);
                           },
                           decoration: InputDecoration(
-                            hintText: 'Ingresa ID Pushka', errorText: error,
+                            hintText: S.of(context).pushkaIdHint, errorText: error,
                             contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
                             border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
                             focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: Color(0xFFE05A4F), width: 1.6)),
@@ -167,6 +168,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final tr = S.of(context);
     const orange = Color(0xFFFF9500);
     const red = Color(0xFFE05A4F);
     const blue = Color(0xFF2F60C5);
@@ -231,7 +233,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     final userName = getProfileString('displayName') ??
         (user?.displayName?.trim().isNotEmpty == true
             ? user!.displayName!
-            : 'Usuario');
+            : tr.defaultUser);
     final userEmail = user?.email ?? 'sin-correo';
     final billingEmail = getProfileString('billingEmail') ?? '-';
     final phoneNumber = getProfileString('phoneNumber') ?? '-';
@@ -243,11 +245,11 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           // GENERAL Section
-          _buildSectionTitle('GENERAL'),
+          _buildSectionTitle(tr.general),
           const SizedBox(height: 12),
 
           // PUSHKA GOAL
-          _buildLabel('META DE PUSHKA'),
+          _buildLabel(tr.pushkaGoalSetting),
           const SizedBox(height: 6),
           _buildInputField(
             value: formatMoney(pushkaGoal),
@@ -257,7 +259,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           const SizedBox(height: 18),
 
           // PRESET AMOUNTS
-          _buildLabel('MONTO PREESTABLECIDO'),
+          _buildLabel(tr.presetAmount),
           const SizedBox(height: 6),
           Row(
             children: [
@@ -289,10 +291,10 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           const SizedBox(height: 18),
 
           // EMPTY PUSHKA
-          _buildLabel('VACIAR PUSHKA'),
+          _buildLabel(tr.emptyPushkaSetting),
           const SizedBox(height: 6),
           _buildActionButton(
-            'Vaciar Manualmente',
+            tr.manualEmpty,
             onTap: () {
               Navigator.of(context, rootNavigator: true).push(
                 MaterialPageRoute(builder: (_) => const AutoEmptyScreen()),
@@ -302,7 +304,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           const SizedBox(height: 18),
 
           // CURRENCY
-          _buildLabel('MONEDA'),
+          _buildLabel(tr.currency),
           const SizedBox(height: 6),
           _buildCurrencySelector(
             country: selectedCountry,
@@ -312,14 +314,14 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           const SizedBox(height: 18),
 
           // LANGUAGE
-          _buildLabel('IDIOMA'),
+          _buildLabel(tr.language),
           const SizedBox(height: 6),
           _buildLanguageSelector(),
           const SizedBox(height: 32),
 
           // SOUND
           _buildToggleRow(
-            'SONIDO',
+            tr.sound,
             soundEnabled,
             orange,
             onChanged: (value) {
@@ -331,7 +333,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
           // COIN JINGLE
           _buildToggleRow(
-            'SONIDO DE MONEDA',
+            tr.coinJingle,
             coinJingleEnabled,
             orange,
             onChanged: (value) {
@@ -343,7 +345,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
           // VIBRATION
           _buildToggleRow(
-            'VIBRACIÓN',
+            tr.vibration,
             vibrationEnabled,
             orange,
             onChanged: (value) {
@@ -355,7 +357,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
           // PARTIAL PAYMENTS
           _buildToggleRow(
-            'PAGOS PARCIALES',
+            tr.partialPayments,
             partialPaymentsEnabled,
             orange,
             onChanged: (value) {
@@ -367,8 +369,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
           // ADDITIONAL PAYMENT OPTIONS
           _buildToggleRowWithSubtitle(
-            'OPCIONES DE PAGO ADICIONALES',
-            'Incluyendo cheque, transferencia, DAF',
+            tr.additionalPaymentOptions,
+            tr.additionalPaymentOptionsSub,
             additionalPaymentOptionsEnabled,
             orange,
             labelFontSize: 14,
@@ -380,7 +382,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           const SizedBox(height: 18),
 
           _buildToggleRow(
-            'AUTENTICACIÓN BIOMÉTRICA',
+            tr.biometricAuth,
             biometricAuthenticationEnabled,
             orange,
             onChanged: (value) async {
@@ -392,7 +394,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               _updateSettings(user, biometricAuthenticationEnabled: value);
               if (value && mounted) {
                 ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Autenticación biométrica activada')),
+                  SnackBar(content: Text(tr.biometricActivated)),
                 );
               }
             },
@@ -407,11 +409,11 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   if (biometrics.isEmpty) return const SizedBox.shrink();
                   return Wrap(spacing: 8, runSpacing: 6, children: [
                     if (biometrics.contains(BiometricType.fingerprint))
-                      _biometricChip(Icons.fingerprint, 'Huella digital'),
+                      _biometricChip(Icons.fingerprint, tr.fingerprint),
                     if (biometrics.contains(BiometricType.face))
-                      _biometricChip(Icons.face, 'Reconocimiento facial'),
+                      _biometricChip(Icons.face, tr.faceRecognition),
                     if (biometrics.contains(BiometricType.strong) || biometrics.contains(BiometricType.weak))
-                      _biometricChip(Icons.lock_outline, 'PIN / Patrón'),
+                      _biometricChip(Icons.lock_outline, tr.pinPattern),
                   ]);
                 },
               ),
@@ -428,8 +430,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              const Text(
-                'MI PUSHKA',
+              Text(
+                tr.myPushkaSection,
                 style: TextStyle(
                   fontSize: 40 / 2,
                   fontWeight: FontWeight.w700,
@@ -449,8 +451,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     borderRadius: BorderRadius.circular(999),
                   ),
                 ),
-                child: const Text(
-                  '+ Agregar Pushka',
+                child: Text(
+                  tr.addPushkaBtn,
                   style: TextStyle(
                     fontWeight: FontWeight.w700,
                     fontSize: 16,
@@ -462,21 +464,21 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           ),
           const SizedBox(height: 16),
           if (user == null)
-            const Text('Inicia sesión para ver tus Pushkas')
+            Text(tr.signInToSeePushkas)
           else
             StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
               stream: _pushkasStream(user.uid),
               builder: (context, snapshot) {
                 if (snapshot.hasError) {
-                  return const Text('No se pudieron cargar las Pushkas');
+                  return Text(tr.errorLoadingPushkas);
                 }
                 if (!snapshot.hasData) {
                   return const Center(child: CircularProgressIndicator());
                 }
                 final docs = snapshot.data!.docs;
                 if (docs.isEmpty) {
-                  return _buildPushkaItem(const {
-                    'name': 'Colel Jabad Pushka',
+                  return _buildPushkaItem({
+                    'name': tr.defaultPushkaName,
                     'id': 'colel-chabad-pushka',
                   });
                 }
@@ -502,48 +504,48 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           const SizedBox(height: 22),
 
           // PROFILE Section
-          _buildSectionTitle('PERFIL'),
+          _buildSectionTitle(tr.profileSection),
           const SizedBox(height: 12),
-          _buildProfileField('NOMBRE', userName),
+          _buildProfileField(tr.nameLabel, userName),
           const SizedBox(height: 16),
-          _buildProfileField('CORREO ELECTRÓNICO', userEmail),
+          _buildProfileField(tr.emailLabel, userEmail),
           const SizedBox(height: 16),
           _buildEditableField(
-            'CORREO DE FACTURACIÓN',
+            tr.billingEmail,
             billingEmail,
             onEdit: () => _showEditDialog(
-              'Correo de facturación',
+              tr.billingEmail,
               billingEmail == '-' ? '' : billingEmail,
               (value) => _updateProfileField(
                 user,
                 billingEmail: value,
-              ),
+              ), fieldKey: 'billingEmail',
             ),
           ),
           const SizedBox(height: 16),
           _buildEditableField(
-            'NÚMERO DE TELÉFONO',
+            tr.phoneLabel,
             phoneNumber,
             onEdit: () => _showEditDialog(
-              'Número de teléfono',
+              tr.phoneLabel,
               phoneNumber == '-' ? '' : phoneNumber,
               (value) => _updateProfileField(
                 user,
                 phoneNumber: value,
-              ),
+              ), fieldKey: 'phone',
             ),
           ),
           const SizedBox(height: 16),
           _buildEditableField(
-            'DIRECCIÓN POSTAL',
+            tr.mailingAddress,
             mailingAddress,
             onEdit: () => _showEditDialog(
-              'Dirección postal',
+              tr.mailingAddress,
               mailingAddress == '-' ? '' : mailingAddress,
               (value) => _updateProfileField(
                 user,
                 mailingAddress: value,
-              ),
+              ), fieldKey: 'mailingAddress',
             ),
           ),
           const SizedBox(height: 16),
@@ -555,7 +557,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           const SizedBox(height: 22),
 
           // MANAGE ACCOUNT Section
-          _buildSectionTitle('ADMINISTRAR CUENTA'),
+          _buildSectionTitle(tr.manageAccount),
           const SizedBox(height: 12),
           InkWell(
             onTap: () => _showDeleteAccountDialog(),
@@ -564,7 +566,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 Icon(Icons.delete_outline, color: const Color(0xFF8B1A1A), size: 20),
                 const SizedBox(width: 8),
                 Text(
-                  '¿Eliminar cuenta?',
+                  tr.deleteAccountQuestion,
                   style: const TextStyle(
                     fontSize: 16,
                     color: Color(0xFF8B1A1A),
@@ -588,8 +590,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   borderRadius: BorderRadius.circular(8),
                 ),
               ),
-              child: const Text(
-                'Cerrar sesión',
+              child: Text(
+                tr.logout,
                 style: TextStyle(
                   color: red,
                   fontWeight: FontWeight.w700,
@@ -711,8 +713,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   color: blue,
                   borderRadius: BorderRadius.circular(8),
                 ),
-                child: const Text(
-                  'Principal',
+                child: Text(
+                  S.of(context).principalBadge,
                   style: TextStyle(
                     color: Colors.white,
                     fontSize: 11,
@@ -802,10 +804,11 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
   Widget _buildLanguageSelector() {
     final currentLocale = ref.watch(localeProvider);
-    const languages = [
-      {'label': 'Español', 'code': 'es'},
-      {'label': 'English', 'code': 'en'},
-      {'label': 'Français', 'code': 'fr'},
+    final tr = S.of(context);
+    final languages = [
+      {'label': tr.langSpanish, 'code': 'es'},
+      {'label': tr.langEnglish, 'code': 'en'},
+      {'label': tr.langFrench, 'code': 'fr'},
     ];
 
     return Container(
@@ -1044,7 +1047,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       if (!canAuth) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Tu dispositivo no soporta autenticación biométrica')),
+            SnackBar(content: Text(S.of(context).noBiometric)),
           );
         }
         return false;
@@ -1054,16 +1057,16 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       if (biometrics.isEmpty) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text(
-              'Configura un PIN, huella digital o reconocimiento facial en los ajustes de tu dispositivo primero',
-            ), duration: Duration(seconds: 4)),
+            SnackBar(content: Text(
+              S.of(context).configureDeviceSecurity,
+            ), duration: const Duration(seconds: 4)),
           );
         }
         return false;
       }
 
       return await auth.authenticate(
-        localizedReason: 'Confirma tu identidad para activar la autenticación biométrica',
+        localizedReason: S.of(context).biometricReasonEnable,
         biometricOnly: false,
       );
     } catch (e) {
@@ -1071,15 +1074,15 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       if (msg.contains('NoCredentialSet') || msg.contains('notEnrolled') || msg.contains('notAvailable')) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text(
-              'Configura un PIN, huella digital o reconocimiento facial en los ajustes de tu dispositivo primero',
-            ), duration: Duration(seconds: 4)),
+            SnackBar(content: Text(
+              S.of(context).configureDeviceSecurity,
+            ), duration: const Duration(seconds: 4)),
           );
         }
       } else {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('No se pudo completar la autenticación')),
+            SnackBar(content: Text(S.of(context).authCouldNotComplete)),
           );
         }
       }
@@ -1102,8 +1105,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     );
   }
 
-  Future<void> _showEditDialog(String title, String currentValue, Function(String) onSave) async {
-    final isPhone = title.toLowerCase().contains('tel');
+  Future<void> _showEditDialog(String title, String currentValue, Function(String) onSave, {String fieldKey = ''}) async {
+    final isPhone = fieldKey == 'phone';
 
     final result = await showDialog<String>(
       context: context,
@@ -1136,7 +1139,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   OutlinedButton(
                     onPressed: () {
                       showCountryPicker(context: ctx, showPhoneCode: true,
-                        countryListTheme: CountryListThemeData(inputDecoration: const InputDecoration(labelText: 'Buscar pa\u00eds', hintText: 'Nombre o c\u00f3digo', prefixIcon: Icon(Icons.search))),
+                        countryListTheme: CountryListThemeData(inputDecoration: InputDecoration(labelText: S.of(context).searchCountry, hintText: S.of(context).nameOrCode, prefixIcon: const Icon(Icons.search))),
                         onSelect: (Country country) { setDialogState(() { phonePrefix = '+${country.phoneCode}'; phoneFlag = country.flagEmoji; }); },
                       );
                     },
@@ -1147,7 +1150,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     controller: controller,
                     autofocus: true,
                     keyboardType: TextInputType.phone,
-                    decoration: InputDecoration(hintText: 'N\u00famero de tel\u00e9fono', errorText: errorText,
+                    decoration: InputDecoration(hintText: S.of(context).phoneHint, errorText: errorText,
                       border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
                       focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: Color(0xFFE05A4F), width: 1.6)),
                     ),
@@ -1158,8 +1161,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 TextField(
                   controller: controller,
                   autofocus: true,
-                  keyboardType: _keyboardTypeForTitle(title),
-                  decoration: InputDecoration(hintText: 'Ingresa ${title.toLowerCase()}', errorText: errorText,
+                  keyboardType: _keyboardTypeForKey(fieldKey),
+                  decoration: InputDecoration(hintText: S.of(context).enterField(title.toLowerCase()), errorText: errorText,
                     border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
                     focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: Color(0xFFE05A4F), width: 1.6)),
                   ),
@@ -1172,15 +1175,15 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFE05A4F), foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
                 onPressed: () {
                   final value = isPhone ? '$phonePrefix ${controller.text.trim()}'.trim() : controller.text.trim();
-                  final validationError = _validateByTitle(title, value);
+                  final validationError = _validateByKey(fieldKey, value);
                   if (validationError != null) { setDialogState(() => errorText = validationError); return; }
                   Navigator.pop(ctx, value);
                 },
-                child: const Text('Guardar', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+                child: Text(S.of(context).save, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
               )),
               SizedBox(width: double.infinity, height: 44, child: TextButton(
                 onPressed: () => Navigator.pop(ctx),
-                child: Text('Cancelar', style: TextStyle(color: Colors.grey.shade600, fontWeight: FontWeight.w500)),
+                child: Text(S.of(context).cancel, style: TextStyle(color: Colors.grey.shade600, fontWeight: FontWeight.w500)),
               )),
             ],
           ),
@@ -1247,14 +1250,14 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     final result = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Eliminar Cuenta'),
-        content: const Text(
-          '¿Está seguro de que desea eliminar su cuenta? Esta acción no se puede deshacer.',
+        title: Text(S.of(context).deleteAccountTitle),
+        content: Text(
+          S.of(context).deleteAccountBody,
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancelar'),
+            child: Text(S.of(context).cancel),
           ),
           ElevatedButton(
             onPressed: () => Navigator.pop(context, true),
@@ -1262,7 +1265,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               backgroundColor: Colors.red,
               foregroundColor: Colors.white,
             ),
-            child: const Text('Eliminar'),
+            child: Text(S.of(context).delete),
           ),
         ],
       ),
@@ -1270,7 +1273,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
     if (result == true && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Cuenta eliminada')),
+        SnackBar(content: Text(S.of(context).accountDeleted)),
       );
     }
   }
@@ -1279,16 +1282,16 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     final result = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Cerrar Sesión'),
-        content: const Text('¿Está seguro de que desea cerrar sesión?'),
+        title: Text(S.of(context).logoutTitle),
+        content: Text(S.of(context).logoutConfirm),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancelar'),
+            child: Text(S.of(context).cancel),
           ),
           ElevatedButton(
             onPressed: () => Navigator.pop(context, true),
-            child: const Text('Cerrar Sesión'),
+            child: Text(S.of(context).logoutTitle),
           ),
         ],
       ),
@@ -1298,7 +1301,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       await ref.read(authControllerProvider).signOut();
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Sesión cerrada')),
+        SnackBar(content: Text(S.of(context).sessionClosed)),
       );
     }
   }
@@ -1319,7 +1322,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             contentPadding: const EdgeInsets.fromLTRB(20, 22, 20, 0),
             actionsPadding: const EdgeInsets.fromLTRB(20, 0, 20, 18),
             content: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
-              const Text('Meta de Pushka', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
+              Text(S.of(context).pushkaGoalDialog, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
               const SizedBox(height: 14),
               TextField(
                 controller: controller,
@@ -1331,7 +1334,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   if (value != null && value > 0) Navigator.pop(ctx, value);
                 },
                 decoration: InputDecoration(
-                  labelText: 'Monto', prefixText: '\$ ', hintText: 'Ej: 3600.00', errorText: errorText,
+                  labelText: S.of(context).amount, prefixText: '\$ ', hintText: S.of(context).exampleGoalHint, errorText: errorText,
                   border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
                   focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: Color(0xFFE05A4F), width: 1.6)),
                 ),
@@ -1343,14 +1346,14 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFE05A4F), foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
                 onPressed: () {
                   final value = double.tryParse(controller.text.trim().replaceAll(',', '.'));
-                  if (value == null || value <= 0) { setDialogState(() => errorText = 'Ingresa un monto v\u00e1lido'); return; }
+                  if (value == null || value <= 0) { setDialogState(() => errorText = S.of(context).enterValidAmount); return; }
                   Navigator.pop(ctx, value);
                 },
-                child: const Text('Guardar', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+                child: Text(S.of(context).save, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
               )),
               SizedBox(width: double.infinity, height: 44, child: TextButton(
                 onPressed: () => Navigator.pop(ctx),
-                child: Text('Cancelar', style: TextStyle(color: Colors.grey.shade600, fontWeight: FontWeight.w500)),
+                child: Text(S.of(context).cancel, style: TextStyle(color: Colors.grey.shade600, fontWeight: FontWeight.w500)),
               )),
             ],
           ),
@@ -1386,13 +1389,13 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 child: const Icon(Icons.savings_outlined, color: Color(0xFFFF9500), size: 30),
               ),
               const SizedBox(height: 16),
-              const Text(
-                'Vacía tu Pushka primero',
-                style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
+              Text(
+                S.of(context).emptyPushkaFirst,
+                style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
               ),
               const SizedBox(height: 10),
               Text(
-                'Para cambiar de moneda, primero debes vaciar o donar el saldo actual de tu Pushka.',
+                S.of(context).currencyChangeBody,
                 textAlign: TextAlign.center,
                 style: TextStyle(fontSize: 14, color: Colors.grey.shade700, height: 1.4),
               ),
@@ -1407,7 +1410,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     elevation: 0,
                   ),
                   onPressed: () => Navigator.pop(ctx),
-                  child: const Text('Entendido', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
+                  child: Text(S.of(context).understood, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
                 ),
               ),
             ]),
@@ -1433,7 +1436,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     final result = await showDialog<Map<String, String>>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Seleccionar Moneda'),
+        title: Text(S.of(context).selectCurrency),
         content: ConstrainedBox(
           constraints: BoxConstraints(
             maxHeight: MediaQuery.of(context).size.height * 0.55,
@@ -1504,27 +1507,23 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     }
   }
 
-    TextInputType _keyboardTypeForTitle(String title) {
-    switch (title.toLowerCase()) {
-      case 'correo de facturación':
-        return TextInputType.emailAddress;
-      case 'número de teléfono':
-        return TextInputType.phone;
-      default:
-        return TextInputType.text;
+  TextInputType _keyboardTypeForKey(String key) {
+    switch (key) {
+      case 'billingEmail': return TextInputType.emailAddress;
+      case 'phone': return TextInputType.phone;
+      default: return TextInputType.text;
     }
   }
 
-  String? _validateByTitle(String title, String value) {
-    if (value.isEmpty) return 'Campo requerido';
-    switch (title.toLowerCase()) {
-      case 'correo de facturación':
-        final isValid =
-            RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$').hasMatch(value);
-        return isValid ? null : 'Correo inválido';
-      case 'número de teléfono':
+  String? _validateByKey(String key, String value) {
+    if (value.isEmpty) return S.of(context).fieldRequired;
+    switch (key) {
+      case 'billingEmail':
+        final isValid = RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$').hasMatch(value);
+        return isValid ? null : S.of(context).invalidEmail;
+      case 'phone':
         final isValid = RegExp(r'^[0-9+\-\s]{7,}$').hasMatch(value);
-        return isValid ? null : 'Número inválido';
+        return isValid ? null : S.of(context).invalidPhone;
       default:
         return null;
     }
@@ -1552,7 +1551,7 @@ class _SettingsQrScannerScreenState extends State<_SettingsQrScannerScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Escanear código QR'),
+        title: Text(S.of(context).scanQrCode),
       ),
       body: Stack(
         children: [
