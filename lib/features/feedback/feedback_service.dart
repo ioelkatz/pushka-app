@@ -22,8 +22,7 @@ class FeedbackService {
       await _coinPlayer.setVolume(0.7);
       await _successPlayer.setVolume(0.6);
       _initialized = true;
-    } catch (e) {
-      debugPrint('FeedbackService init error: $e');
+    } catch (_) {
     }
   }
 
@@ -40,28 +39,36 @@ class FeedbackService {
   Future<void> playCoinDrop() async {
     if (!coinJingleEnabled || kIsWeb) return;
     if (vibrationEnabled) {
+      // Double-tap pattern: coin bounce feel
       HapticFeedback.lightImpact();
+      Future.delayed(const Duration(milliseconds: 80), HapticFeedback.lightImpact);
     }
     if (!soundEnabled) return;
     try {
       await _coinPlayer.stop();
       await _coinPlayer.play(AssetSource('sounds/coin.wav'));
-    } catch (e) {
-      debugPrint('Coin sound error: $e');
-    }
+    } catch (_) {}
   }
 
   Future<void> playSuccess() async {
     if (!soundEnabled || kIsWeb) return;
     if (vibrationEnabled) {
+      // Triple rising pattern: triumphant goal-reached feel
       HapticFeedback.mediumImpact();
+      Future.delayed(const Duration(milliseconds: 100), HapticFeedback.mediumImpact);
+      Future.delayed(const Duration(milliseconds: 200), HapticFeedback.heavyImpact);
     }
     try {
       await _successPlayer.stop();
       await _successPlayer.play(AssetSource('sounds/success.wav'));
-    } catch (e) {
-      debugPrint('Success sound error: $e');
-    }
+    } catch (_) {}
+  }
+
+  /// Heavy thud + light echo — used when pushka is emptied.
+  Future<void> vibratePushkaEmpty() async {
+    if (!vibrationEnabled || kIsWeb) return;
+    HapticFeedback.heavyImpact();
+    Future.delayed(const Duration(milliseconds: 120), HapticFeedback.lightImpact);
   }
 
   Future<void> vibrate() async {

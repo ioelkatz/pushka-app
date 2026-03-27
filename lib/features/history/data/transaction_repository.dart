@@ -29,6 +29,7 @@ class TransactionRepository {
     PaymentMethod paymentMethod = PaymentMethod.card,
     PaymentStatus status = PaymentStatus.completed,
     String? docId,
+    String currencyCode = 'USD',
   }) async {
     final data = {
       'type': type.name,
@@ -36,6 +37,7 @@ class TransactionRepository {
       'description': description ?? '',
       'paymentMethod': paymentMethod.name,
       'status': status.name,
+      'currencyCode': currencyCode.toUpperCase(),
       'createdAt': firestore.Timestamp.now(),
     };
     if (docId != null) {
@@ -81,6 +83,7 @@ class TransactionRepository {
           : data['description'] as String?,
       paymentMethod: method,
       status: paymentStatus,
+      currencyCode: (data['currencyCode'] as String?) ?? 'USD',
     );
   }
 }

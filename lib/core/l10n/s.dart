@@ -173,6 +173,7 @@ class S {
   String get settingsApplied => _t('Configuración aplicada', 'Settings applied', 'Paramètres appliqués');
   String get customGoal => _t('Meta personalizada', 'Custom goal', 'Objectif personnalisé');
   String get customGoalHint => _t('Ej: 4500', 'E.g.: 4500', 'Ex : 4500');
+  String get offlineMessage => _t('Sin conexión a internet', 'No internet connection', 'Pas de connexion internet');
   String get offlineSaved => _t(
     'Sin conexión estable. Guardamos localmente y se sincronizará al reconectar.',
     'No stable connection. Saved locally, will sync on reconnect.',
@@ -258,6 +259,12 @@ class S {
     'Mettez des fonds de côté maintenant pour vider votre Pushka plus tard',
   );
   String get learnMore => _t('Aprender más', 'Learn more', 'En savoir plus');
+  String get walletInfoTitle => _t('¿Cómo funciona la billetera?', 'How does the wallet work?', 'Comment fonctionne le portefeuille ?');
+  String get walletInfoBody => _t(
+    'La billetera Pushka te permite:\n\n• Cargar fondos con tarjeta de crédito.\n• Vaciar tu Pushka física instantáneamente.\n• Enviar o solicitar donaciones a familiares y amigos.\n• Programar recargas automáticas.',
+    'The Pushka wallet allows you to:\n\n• Load funds securely with a credit card.\n• Empty your physical Pushka instantly.\n• Send or request donations to family and friends.\n• Schedule automatic top-ups.',
+    'Le portefeuille Pushka vous permet de :\n\n• Charger des fonds par carte de crédit.\n• Vider votre Pushka physique instantanément.\n• Envoyer ou recevoir des dons.\n• Programmer des recharges automatiques.',
+  );
   String get yourWalletId => _t('Tu ID de billetera', 'Your wallet ID', 'Votre ID de portefeuille');
   String get balanceLabel => _t('SALDO', 'BALANCE', 'SOLDE');
   String get addFundsBtn => _t('+ Agregar fondos', '+ Add funds', '+ Ajouter des fonds');
@@ -410,6 +417,16 @@ class S {
   String get dateSection => _t('FECHA', 'DATE', 'DATE');
   String get daysSection => _t('DÍAS', 'DAYS', 'JOURS');
   String get includeHolidays => _t('Incluir festivos', 'Include holidays', 'Inclure les jours fériés');
+  String get secondTimeSection => _t('SEGUNDO HORARIO', 'SECOND TIME', 'DEUXIÈME HEURE');
+  String get addSecondTime => _t('Agregar segundo horario', 'Add second time', 'Ajouter une deuxième heure');
+  String get secondTimeLabel => _t('Segunda hora', 'Second time', 'Deuxième heure');
+  String get advanceNoticeSection => _t('AVISO PREVIO', 'ADVANCE NOTICE', 'PRÉAVIS');
+  String get atExactTime => _t('A la hora exacta', 'At exact time', 'À l\'heure exacte');
+  String get minutesBefore30 => _t('30 minutos antes', '30 minutes before', '30 minutes avant');
+  String get minutesBefore60 => _t('1 hora antes', '1 hour before', '1 heure avant');
+  String get minutesBefore90 => _t('1h 30min antes', '1.5 hours before', '1h 30min avant');
+  String get minutesBefore120 => _t('2 horas antes', '2 hours before', '2 heures avant');
+  String get presetsFromMain => _t('Editables con ⚙ en la pantalla principal', 'Editable with ⚙ on main screen', 'Modifiable avec ⚙ sur l\'écran principal');
   String get cancelBtn => _t('CANCELAR', 'CANCEL', 'ANNULER');
   String get saveBtn => _t('GUARDAR', 'SAVE', 'ENREGISTRER');
   String get selectDate => _t('Seleccionar fecha', 'Select date', 'Sélectionner une date');
@@ -434,8 +451,14 @@ class S {
   String get filterPushkaEmpty => _t('Pushka Vacía', 'Pushka Empty', 'Pushka vidée');
   String get filterWalletFill => _t('Billetera Rellena', 'Wallet Fill', 'Portefeuille rechargé');
   String get noTransactions => _t('No hay transacciones', 'No transactions', 'Aucune transaction');
+  String get noTransactionsSubtitle => _t('Tus donaciones aparecerán aquí', 'Your donations will appear here', 'Vos dons apparaîtront ici');
+  String get noContactsSubtitle => _t('Agregá tu primer contacto con el botón +', 'Add your first contact with the + button', 'Ajoutez votre premier contact avec le bouton +');
   String get errorLoadingHistory => _t("Error cargando historial", "Error loading history", "Erreur de chargement de l'historique");
   String get pending => _t('Pendiente', 'Pending', 'En attente');
+  String get historyDate => _t('Fecha', 'Date', 'Date');
+  String get historyDescription => _t('Descripción', 'Description', 'Description');
+  String get historyMethod => _t('Método', 'Method', 'Méthode');
+  String get historyStatus => _t('Estado', 'Status', 'Statut');
 
   // ---------------------------------------------------------------------------
   // TRANSACTION DOMAIN
@@ -448,6 +471,7 @@ class S {
   String get methodCheck => _t('Cheque', 'Check', 'Chèque');
   String get methodTransfer => _t('Transferencia', 'Transfer', 'Virement');
   String get methodDaf => _t('DAF', 'DAF', 'DAF');
+  String get methodAuto => _t('Automático', 'Automatic', 'Automatique');
   String get statusCompleted => _t('Completado', 'Completed', 'Terminé');
   String get statusPending => _t('Pendiente', 'Pending', 'En attente');
   String get statusConfirmed => _t('Confirmado', 'Confirmed', 'Confirmé');
@@ -634,6 +658,7 @@ class S {
   String get dayFriFull => _t('Viernes', 'Friday', 'Vendredi');
   String get daySatFull => _t('Sábado', 'Saturday', 'Samedi');
   String get daySunFull => _t('Domingo', 'Sunday', 'Dimanche');
+  String get monthJan => _t('Ene', 'Jan', 'Jan');
   String get monthFeb => _t('Feb', 'Feb', 'Fév');
   String get monthMar => _t('Mar', 'Mar', 'Mar');
   String get monthApr => _t('Abr', 'Apr', 'Avr');
@@ -727,26 +752,125 @@ class S {
   // ---------------------------------------------------------------------------
 
   String checkInstructions(String amount) => _t(
-    'Envía un cheque por el monto de $amount a:\n\nNombre: [Nombre de la Organización]\nDirección: [Dirección postal]\nCiudad, Estado, ZIP: [Ciudad, ST 00000]\n\nReferencia: Incluye tu email o ID de usuario en el memo del cheque.\n\nUna vez recibido y procesado, la donación se marcará como confirmada en tu historial.',
-    'Send a check for $amount to:\n\nName: [Organization Name]\nAddress: [Mailing Address]\nCity, State, ZIP: [City, ST 00000]\n\nReference: Include your email or user ID in the check memo.\n\nOnce received and processed, the donation will be marked as confirmed in your history.',
-    'Envoyez un chèque de $amount à :\n\nNom : [Nom de l\'Organisation]\nAdresse : [Adresse postale]\nVille, État, Code postal : [Ville, XX 00000]\n\nRéférence : Incluez votre e-mail ou ID utilisateur dans le mémo du chèque.\n\nUne fois reçu et traité, le don sera marqué comme confirmé dans votre historique.',
+    'Envía un cheque por el monto de $amount a:\n\nNombre: Colel Chabad Relief Fund\nDirección: 1408 President Street\nCiudad, Estado, ZIP: Brooklyn, NY 11213\n\nReferencia: Incluye tu email o ID de usuario en el memo del cheque.\n\nUna vez recibido y procesado, la donación se marcará como confirmada en tu historial.',
+    'Send a check for $amount to:\n\nName: Colel Chabad Relief Fund\nAddress: 1408 President Street\nCity, State, ZIP: Brooklyn, NY 11213\n\nReference: Include your email or user ID in the check memo.\n\nOnce received and processed, the donation will be marked as confirmed in your history.',
+    'Envoyez un chèque de $amount à :\n\nNom : Colel Chabad Relief Fund\nAdresse : 1408 President Street\nVille, État, Code postal : Brooklyn, NY 11213\n\nRéférence : Incluez votre e-mail ou ID utilisateur dans le mémo du chèque.\n\nUne fois reçu et traité, le don sera marqué comme confirmé dans votre historique.',
   );
 
   String transferInstructions(String amount) => _t(
-    'Transfiere $amount a la siguiente cuenta:\n\nBanco: [Nombre del Banco]\nNúmero de cuenta: [XXXX-XXXX-XXXX]\nRouting / ABA: [XXXXXXXXX]\nBeneficiario: [Nombre de la Organización]\n\nReferencia: Usa tu email como referencia de la transferencia.\n\nEl pago se confirmará automáticamente en 2-3 días hábiles.',
-    'Transfer $amount to the following account:\n\nBank: [Bank Name]\nAccount number: [XXXX-XXXX-XXXX]\nRouting / ABA: [XXXXXXXXX]\nBeneficiary: [Organization Name]\n\nReference: Use your email as transfer reference.\n\nPayment will be confirmed automatically in 2-3 business days.',
-    'Transférez $amount vers le compte suivant :\n\nBanque : [Nom de la Banque]\nNuméro de compte : [XXXX-XXXX-XXXX]\nRouting / ABA : [XXXXXXXXX]\nBénéficiaire : [Nom de l\'Organisation]\n\nRéférence : Utilisez votre e-mail comme référence de virement.\n\nLe paiement sera confirmé automatiquement sous 2 à 3 jours ouvrables.',
+    'Transfiere $amount a la siguiente cuenta:\n\nBeneficiario: Colel Chabad Relief Fund\nBanco: JPMorgan Chase Bank\nNúmero de cuenta: [COMPLETAR]\nRouting / ABA: [COMPLETAR]\n\nReferencia: Usa tu email como referencia de la transferencia.\n\nEl pago se confirmará en 2-3 días hábiles. Para obtener los datos bancarios completos, contacta a app@colelchabad.org.',
+    'Transfer $amount to the following account:\n\nBeneficiary: Colel Chabad Relief Fund\nBank: JPMorgan Chase Bank\nAccount number: [FILL IN]\nRouting / ABA: [FILL IN]\n\nReference: Use your email as transfer reference.\n\nPayment will be confirmed in 2-3 business days. For complete banking details, contact app@colelchabad.org.',
+    'Transférez $amount vers le compte suivant :\n\nBénéficiaire : Colel Chabad Relief Fund\nBanque : JPMorgan Chase Bank\nNuméro de compte : [À COMPLÉTER]\nRouting / ABA : [À COMPLÉTER]\n\nRéférence : Utilisez votre e-mail comme référence de virement.\n\nLe paiement sera confirmé sous 2 à 3 jours ouvrables. Pour les coordonnées bancaires complètes, contactez app@colelchabad.org.',
   );
 
   String dafInstructions(String amount) => _t(
-    'Realiza una donación de $amount desde tu DAF a:\n\nOrganización: [Nombre Legal de la Organización]\nEIN: [XX-XXXXXXX]\nDirección: [Dirección de la Organización]\n\nIndica tu email en el campo de notas del grant.\n\nProveedores comunes: Fidelity Charitable, Schwab Charitable, DAF Direct.\n\nUna vez procesado el grant, la donación se confirmará en tu historial.',
-    'Make a donation of $amount from your DAF to:\n\nOrganization: [Legal Organization Name]\nEIN: [XX-XXXXXXX]\nAddress: [Organization Address]\n\nInclude your email in the grant notes field.\n\nCommon providers: Fidelity Charitable, Schwab Charitable, DAF Direct.\n\nOnce the grant is processed, the donation will be confirmed in your history.',
-    'Faites un don de $amount depuis votre DAF à :\n\nOrganisation : [Nom Légal de l\'Organisation]\nEIN : [XX-XXXXXXX]\nAdresse : [Adresse de l\'Organisation]\n\nIndiquez votre e-mail dans le champ notes de la subvention.\n\nFournisseurs courants : Fidelity Charitable, Schwab Charitable, DAF Direct.\n\nUne fois la subvention traitée, le don sera confirmé dans votre historique.',
+    'Realiza una donación de $amount desde tu DAF a:\n\nOrganización: Colel Chabad Relief Fund, Inc.\nEIN: 13-1628155\nDirección: 1408 President Street, Brooklyn, NY 11213\n\nIndica tu email en el campo de notas del grant.\n\nProveedores comunes: Fidelity Charitable, Schwab Charitable, DAF Direct.\n\nUna vez procesado el grant, la donación se confirmará en tu historial.',
+    'Make a donation of $amount from your DAF to:\n\nOrganization: Colel Chabad Relief Fund, Inc.\nEIN: 13-1628155\nAddress: 1408 President Street, Brooklyn, NY 11213\n\nInclude your email in the grant notes field.\n\nCommon providers: Fidelity Charitable, Schwab Charitable, DAF Direct.\n\nOnce the grant is processed, the donation will be confirmed in your history.',
+    'Faites un don de $amount depuis votre DAF à :\n\nOrganisation : Colel Chabad Relief Fund, Inc.\nEIN : 13-1628155\nAdresse : 1408 President Street, Brooklyn, NY 11213\n\nIndiquez votre e-mail dans le champ notes de la subvention.\n\nFournisseurs courants : Fidelity Charitable, Schwab Charitable, DAF Direct.\n\nUne fois la subvention traitée, le don sera confirmé dans votre historique.',
   );
 
   String get checkTitle => _t('Pago con Cheque', 'Check Payment', 'Paiement par chèque');
   String get transferTitle => _t('Transferencia Bancaria', 'Bank Transfer', 'Virement bancaire');
   String get dafTitle => _t('Donor Advised Fund (DAF)', 'Donor Advised Fund (DAF)', 'Donor Advised Fund (DAF)');
+
+  // ---------------------------------------------------------------------------
+  // NAVIGATION TITLES
+  // ---------------------------------------------------------------------------
+
+  String get navPushka => _t('Mi Pushka', 'My Pushka', 'Ma Pushka');
+  String get navWallet => _t('Billetera', 'Wallet', 'Portefeuille');
+  String get navSendRequest => _t('Enviar/Solicitar', 'Send/Request', 'Envoyer/Demander');
+  String get navAutoRefill => _t('RECARGA AUTOMÁTICA', 'AUTO REFILL', 'RECHARGE AUTOMATIQUE');
+  String get navReminders => _t('Recordatorios', 'Reminders', 'Rappels');
+  String get navHistory => _t('Historial', 'History', 'Historique');
+  String get navSettings => _t('Configuración', 'Settings', 'Paramètres');
+  String get navPrayers => _t('Segulot y Rezos', 'Prayers & Blessings', 'Prières et Bénédictions');
+  String get navSupport => _t('Soporte', 'Support', 'Assistance');
+
+  // ---------------------------------------------------------------------------
+  // QR WALLET DIALOG
+  // ---------------------------------------------------------------------------
+
+  String get showMyQr => _t('Mostrar mi QR', 'Show my QR', 'Afficher mon QR');
+  String get signInToSeeQr => _t('Inicia sesión para ver tu código QR', 'Sign in to see your QR code', 'Connectez-vous pour voir votre code QR');
+  String get closeTooltip => _t('Cerrar', 'Close', 'Fermer');
+  String get yourWalletDialog => _t('Tu billetera', 'Your wallet', 'Votre portefeuille');
+  String get yourSixDigitCode => _t('Tu código de 6 dígitos', 'Your 6-digit code', 'Votre code à 6 chiffres');
+  String get walletCodeCopied => _t('Código copiado y listo para compartir', 'Code copied and ready to share', 'Code copié et prêt à partager');
+  String get walletShareSubject => _t('Mi código de billetera Pushka', 'My Pushka wallet code', 'Mon code portefeuille Pushka');
+  String walletShareMessage(String id) => _t(
+    'Mi código de billetera Pushka es: $id\nEscanealo o ingrésalo manualmente para enviar o solicitar tzedaká.\nDescargar app: https://pushkapp.cc/share',
+    'My Pushka wallet code is: $id\nScan it or enter it manually to send or request tzedakah.\nDownload app: https://pushkapp.cc/share',
+    'Mon code portefeuille Pushka est : $id\nScannez-le ou entrez-le manuellement pour envoyer ou demander de la tsédaka.\nTélécharger l\'app : https://pushkapp.cc/share',
+  );
+  // ---------------------------------------------------------------------------
+  // PAYMENT CONFIRMATION
+  // ---------------------------------------------------------------------------
+
+  String get confirmPaymentTitle => _t('Confirmar donación', 'Confirm donation', 'Confirmer le don');
+  String confirmPaymentBody(String amount) => _t(
+    'Estás a punto de donar $amount. ¿Confirmas esta tzedaká?',
+    'You are about to donate $amount. Do you confirm this tzedakah?',
+    'Vous êtes sur le point de donner $amount. Confirmez-vous cette tsédaka ?',
+  );
+  String get confirmDonate => _t('Sí, donar', 'Yes, donate', 'Oui, donner');
+
+  // ---------------------------------------------------------------------------
+  // ONBOARDING
+  // ---------------------------------------------------------------------------
+
+  String get onboardingSkip => _t('Omitir', 'Skip', 'Ignorer');
+  String get onboardingNext => _t('Siguiente', 'Next', 'Suivant');
+  String get onboardingDone => _t('¡Comenzar!', 'Get started!', 'Commencer !');
+  String get onboarding1Title => _t('Bienvenido a Pushka', 'Welcome to Pushka', 'Bienvenue sur Pushka');
+  String get onboarding1Body => _t(
+    'La app oficial de Colel Jabad para tu Tzedaká digital. Acumula donaciones como en una pushka real, y vacíala cuando estés listo.',
+    'The official Colel Chabad app for your digital Tzedakah. Accumulate donations like a real pushka, and empty it when you\'re ready.',
+    "L'application officielle de Colel 'Habad pour votre Tsédaka numérique. Accumulez des dons comme dans une vraie pushka, et videz-la quand vous êtes prêt.",
+  );
+  String get onboarding2Title => _t('Acumula Tzedaká', 'Accumulate Tzedakah', 'Accumulez de la Tsédaka');
+  String get onboarding2Body => _t(
+    'Toca los montos predefinidos para ir sumando. Establece una meta y cuando la alcances, ¡celebra tu mitzvá!',
+    'Tap the preset amounts to keep adding. Set a goal and when you reach it, celebrate your mitzvah!',
+    'Appuyez sur les montants prédéfinis pour continuer à accumuler. Fixez-vous un objectif et quand vous l\'atteignez, célébrez votre mitsva !',
+  );
+  String get onboarding3Title => _t('Tu Billetera', 'Your Wallet', 'Votre Portefeuille');
+  String get onboarding3Body => _t(
+    'Agrega fondos a tu billetera y envíalos a tus contactos. Comparte tu código QR para recibir tzedaká de otros.',
+    'Add funds to your wallet and send them to your contacts. Share your QR code to receive tzedakah from others.',
+    'Ajoutez des fonds à votre portefeuille et envoyez-les à vos contacts. Partagez votre code QR pour recevoir de la tsédaka des autres.',
+  );
+  String get onboarding4Title => _t('Recordatorios', 'Reminders', 'Rappels');
+  String get onboarding4Body => _t(
+    'Configura recordatorios diarios, semanales o para festividades judías. Nunca olvides tu mitzvá de Tzedaká.',
+    'Set up daily, weekly, or Jewish holiday reminders. Never forget your Tzedakah mitzvah.',
+    'Configurez des rappels quotidiens, hebdomadaires ou pour les fêtes juives. N\'oubliez jamais votre mitsva de Tsédaka.',
+  );
+
+  // ---------------------------------------------------------------------------
+  // HISTORY CHART
+  // ---------------------------------------------------------------------------
+
+  String get chartTitle => _t('DONACIONES POR MES', 'MONTHLY DONATIONS', 'DONS MENSUELS');
+  String get chartShowGraph => _t('Ver gráfico', 'Show chart', 'Afficher le graphique');
+  String get chartHideGraph => _t('Ocultar gráfico', 'Hide chart', 'Masquer le graphique');
+  String get chartNoData => _t('Sin datos aún', 'No data yet', 'Pas encore de données');
+
+  // ---------------------------------------------------------------------------
+  // PROFILE
+  // ---------------------------------------------------------------------------
+
+  String get editProfileTitle => _t('Editar perfil', 'Edit profile', 'Modifier le profil');
+  String get displayNameLabel => _t('Nombre', 'Name', 'Nom');
+  String get displayNameHint => _t('Tu nombre completo', 'Your full name', 'Votre nom complet');
+  String get profileUpdated => _t('Perfil actualizado', 'Profile updated', 'Profil mis à jour');
+  String get editNameTooltip => _t('Editar nombre', 'Edit name', 'Modifier le nom');
+
+  String get appShareText => _t(
+    'He estado usando esta increíble app Pushka de Tzedaká. ¡Funciona igual que una pushka real! Con solo un toque puedes "poner una moneda" y cuando estés listo, "vaciarla" para hacer una donación.\n\nToda la Tzedaká va directamente a Colel Chabad, que hace una labor increíble ayudando a los pobres en Israel.\n\nMírala aquí: https://pushkapp.cc/share',
+    'I\'ve been using this amazing Tzedakah Pushka app. It works just like a real pushka! With one tap you can "drop a coin" and when ready, "empty it" to make a donation.\n\nAll Tzedakah goes directly to Colel Chabad, doing incredible work helping the poor in Israel.\n\nCheck it out: https://pushkapp.cc/share',
+    'J\'utilise cette incroyable app Pushka de Tsédaka. Elle fonctionne comme une vraie pushka ! D\'un simple clic, vous pouvez "mettre une pièce" et quand vous êtes prêt, "la vider" pour faire un don.\n\nToute la Tsédaka va directement à Colel \'Habad, qui fait un travail incroyable pour aider les pauvres en Israël.\n\nDécouvrez-la ici : https://pushkapp.cc/share',
+  );
 }
 
 // -----------------------------------------------------------------------------

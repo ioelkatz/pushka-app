@@ -163,8 +163,8 @@ void main() {
   });
 
   group('PaymentMethod enum', () {
-    test('has exactly 4 values', () {
-      expect(PaymentMethod.values.length, 4);
+    test('has exactly 5 values', () {
+      expect(PaymentMethod.values.length, 5);
     });
 
     test('name serialization round-trips', () {

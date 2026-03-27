@@ -44,7 +44,7 @@ void main() {
         await tester.pumpAndSettle();
 
         final textFields = find.byType(TextField);
-        if (textFields.evaluate().length >= 1) {
+        if (textFields.evaluate().isNotEmpty) {
           await tester.enterText(textFields.first, '100');
           await tester.pumpAndSettle();
         }

@@ -59,8 +59,16 @@ dependencies:
   local_auth: ^3.0.1
   intl: 0.20.2
   audioplayers: ^6.6.0
-
-
+  shimmer: ^3.0.0
+  confetti: ^0.8.0
+  connectivity_plus: ^6.1.1
+  lottie: ^3.1.0
+  fl_chart: ^0.69.0
+  smooth_page_indicator: ^1.2.0
+  flutter_haptic_feedback: ^1.0.0
+  google_fonts: ^6.2.1
+  hive_flutter: ^1.1.0
+  flutter_windowmanager: ^0.2.0
 
 
 dev_dependencies:
@@ -68,7 +76,9 @@ dev_dependencies:
     sdk: flutter
   integration_test:
     sdk: flutter
-  mockito: ^5.4.4
+  mocktail: ^1.0.4
+  fake_cloud_firestore: ^3.1.0
+  firebase_auth_mocks: ^0.14.0
   build_runner: ^2.4.13
   flutter_lints: ^6.0.0
   flutter_launcher_icons: ^0.14.4
@@ -84,6 +94,7 @@ flutter:
   assets:
     - assets/sounds/
     - assets/images/
+    - assets/animations/
 
 
   # To add assets to your application, add an assets section, like this:

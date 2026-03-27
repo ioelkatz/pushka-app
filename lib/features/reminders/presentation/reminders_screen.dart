@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../app/theme/app_tokens.dart';
 import '../../../core/l10n/s.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../../core/widgets/shimmer_list.dart';
+import '../../../core/widgets/empty_state.dart';
 
 import '../../analytics/analytics_service.dart';
 import '../../notifications/notification_service.dart';
@@ -27,36 +29,11 @@ class _RemindersScreenState extends ConsumerState<RemindersScreen> {
           child: ref.watch(userRemindersProvider).when(
                 data: (reminders) {
                   if (reminders.isEmpty) {
-                    return Center(
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(
-                            Icons.notifications_none_rounded,
-                            size: 54,
-                            color: Colors.grey.shade400,
-                          ),
-                          const SizedBox(height: 10),
-                          Text(
-                            tr.noReminders,
-                            textAlign: TextAlign.center,
-                            style: const TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.w600,
-                              color: AppTokens.textPrimary,
-                            ),
-                          ),
-                          const SizedBox(height: 4),
-                          Text(
-                            tr.tapToAddReminder,
-                            textAlign: TextAlign.center,
-                            style: TextStyle(
-                              fontSize: 14,
-                              color: Colors.grey.shade600,
-                            ),
-                          ),
-                        ],
-                      ),
+                    return EmptyState(
+                      icon: Icons.notifications_none_rounded,
+                      iconColor: const Color(0xFFD97706),
+                      title: tr.noReminders,
+                      subtitle: tr.tapToAddReminder,
                     );
                   }
 
@@ -64,7 +41,7 @@ class _RemindersScreenState extends ConsumerState<RemindersScreen> {
                     padding: const EdgeInsets.symmetric(
                         horizontal: 18, vertical: 12),
                     itemCount: reminders.length,
-                    separatorBuilder: (_, __) => Divider(
+                    separatorBuilder: (context, i) => Divider(
                       height: 1,
                       thickness: 1,
                       color: Colors.grey.shade200,
@@ -92,9 +69,8 @@ class _RemindersScreenState extends ConsumerState<RemindersScreen> {
                     },
                   );
                 },
-                loading: () =>
-                    const Center(child: CircularProgressIndicator()),
-                error: (_, __) =>
+                loading: () => const ShimmerList(count: 5, itemHeight: 80),
+                error: (error, stack) =>
                     Center(child: Text(tr.errorLoadingReminders)),
               ),
         ),
@@ -136,8 +112,9 @@ class _RemindersScreenState extends ConsumerState<RemindersScreen> {
     required ValueChanged<bool> onToggle,
     required VoidCallback onEdit,
   }) {
-    final subtitle = reminder.subtitle;
-    final subtitle2 = reminder.subtitleSecondary;
+    final tr = S.of(context);
+    final subtitle = reminder.subtitleFor(tr);
+    final subtitle2 = reminder.subtitleSecondaryFor(tr);
 
     return InkWell(
       onTap: onEdit,
@@ -184,7 +161,7 @@ class _RemindersScreenState extends ConsumerState<RemindersScreen> {
             Switch(
               value: reminder.isEnabled,
               onChanged: onToggle,
-              activeColor: AppTokens.primaryBlue,
+              activeThumbColor: AppTokens.primaryBlue,
               activeTrackColor:
                   AppTokens.primaryBlue.withValues(alpha: 0.35),
               inactiveThumbColor: Colors.white,
@@ -252,9 +229,10 @@ class _RemindersScreenState extends ConsumerState<RemindersScreen> {
 
   Future<void> _saveReminder(ReminderDraft draft,
       {String? existingId}) async {
+    final tr = S.of(context);
     final user = ref.read(currentUserProvider);
     if (user == null) {
-      _showMessage(S.of(context).signInToSaveReminders);
+      _showMessage(tr.signInToSaveReminders);
       return;
     }
     final repo = ref.read(reminderRepositoryProvider);
@@ -280,7 +258,7 @@ class _RemindersScreenState extends ConsumerState<RemindersScreen> {
         );
         await AnalyticsService.instance.logReminderCreated();
       } catch (_) {
-        _showMessage(S.of(context).couldNotSaveReminder);
+        _showMessage(tr.couldNotSaveReminder);
       }
     } else {
       try {
@@ -291,15 +269,16 @@ class _RemindersScreenState extends ConsumerState<RemindersScreen> {
         );
         await AnalyticsService.instance.logReminderUpdated();
       } catch (_) {
-        _showMessage(S.of(context).couldNotUpdateReminder);
+        _showMessage(tr.couldNotUpdateReminder);
       }
     }
   }
 
   Future<void> _toggleReminder(Reminder reminder, bool value) async {
+    final tr = S.of(context);
     final user = ref.read(currentUserProvider);
     if (user == null) {
-      _showMessage(S.of(context).signInToModify);
+      _showMessage(tr.signInToModify);
       return;
     }
     final repo = ref.read(reminderRepositoryProvider);
@@ -308,14 +287,15 @@ class _RemindersScreenState extends ConsumerState<RemindersScreen> {
       await repo.updateReminder(user.uid, updated);
       await NotificationService.instance.scheduleReminder(updated);
     } catch (_) {
-      _showMessage(S.of(context).couldNotUpdateReminder);
+      _showMessage(tr.couldNotUpdateReminder);
     }
   }
 
   Future<void> _deleteReminder(Reminder reminder) async {
+    final tr = S.of(context);
     final user = ref.read(currentUserProvider);
     if (user == null) {
-      _showMessage(S.of(context).signInToDelete);
+      _showMessage(tr.signInToDelete);
       return;
     }
     final repo = ref.read(reminderRepositoryProvider);
@@ -324,7 +304,7 @@ class _RemindersScreenState extends ConsumerState<RemindersScreen> {
       await NotificationService.instance.cancelReminder(reminder);
       await AnalyticsService.instance.logReminderDeleted();
     } catch (_) {
-      _showMessage(S.of(context).couldNotDelete);
+      _showMessage(tr.couldNotDelete);
     }
   }
 
@@ -522,6 +502,26 @@ class _ReminderFormPageState extends State<_ReminderFormPage> {
                       const SizedBox(height: 12),
                       _buildHolidayToggle(),
                     ],
+                    const SizedBox(height: 24),
+                    Divider(height: 1, color: Colors.grey.shade200),
+                    const SizedBox(height: 20),
+                    _sectionLabel(tr.secondTimeSection),
+                    const SizedBox(height: 8),
+                    _buildSecondTimeToggle(),
+                    if (_hasSecondTime) ...[
+                      const SizedBox(height: 16),
+                      _sectionLabel(tr.secondTimeLabel),
+                      const SizedBox(height: 8),
+                      _buildSecondTimePicker(),
+                    ],
+                    if (_isHoliday || _repeatOption == _RepeatOption.fridayHoliday) ...[
+                      const SizedBox(height: 24),
+                      Divider(height: 1, color: Colors.grey.shade200),
+                      const SizedBox(height: 20),
+                      _sectionLabel(tr.advanceNoticeSection),
+                      const SizedBox(height: 8),
+                      _buildMinutesBeforeDropdown(),
+                    ],
                   ],
                 ),
               ),
@@ -602,10 +602,48 @@ class _ReminderFormPageState extends State<_ReminderFormPage> {
     );
   }
 
+  Widget _buildMinutesBeforeDropdown() {
+    final tr = S.of(context);
+    final options = <int?, String>{
+      null: tr.atExactTime,
+      30: tr.minutesBefore30,
+      60: tr.minutesBefore60,
+      90: tr.minutesBefore90,
+      120: tr.minutesBefore120,
+    };
+    return DropdownButtonFormField<int?>(
+      initialValue: _minutesBefore,
+      decoration: InputDecoration(
+        contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(AppTokens.radiusMd),
+          borderSide: BorderSide(color: Colors.grey.shade300),
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(AppTokens.radiusMd),
+          borderSide: BorderSide(color: Colors.grey.shade300),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(AppTokens.radiusMd),
+          borderSide: const BorderSide(color: AppTokens.primaryBlue, width: 1.6),
+        ),
+      ),
+      icon: Icon(Icons.arrow_drop_down, color: Colors.grey.shade600),
+      dropdownColor: Colors.white,
+      items: options.entries.map((e) {
+        return DropdownMenuItem<int?>(
+          value: e.key,
+          child: Text(e.value),
+        );
+      }).toList(),
+      onChanged: (v) => setState(() => _minutesBefore = v),
+    );
+  }
+
   Widget _buildRepeatDropdown() {
     final tr = S.of(context);
     return DropdownButtonFormField<_RepeatOption>(
-      value: _repeatOption,
+      initialValue: _repeatOption,
       decoration: InputDecoration(
         contentPadding:
             const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
@@ -899,6 +937,91 @@ class _ReminderFormPageState extends State<_ReminderFormPage> {
         secondIsHoliday: _hasSecondTime ? _secondIsHoliday : false,
       ),
     );
+  }
+
+  Widget _buildSecondTimeToggle() {
+    final tr = S.of(context);
+    return GestureDetector(
+      onTap: () {
+        setState(() {
+          _hasSecondTime = !_hasSecondTime;
+          if (_hasSecondTime) {
+            _secondTime ??= const TimeOfDay(hour: 18, minute: 0);
+            if (_secondDays.isEmpty) _secondDays.addAll(_selectedDays);
+            _secondIsHoliday = _isHoliday;
+          }
+        });
+      },
+      child: Row(
+        children: [
+          SizedBox(
+            width: 24,
+            height: 24,
+            child: Checkbox(
+              value: _hasSecondTime,
+              activeColor: AppTokens.primaryBlue,
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(4)),
+              onChanged: (v) {
+                setState(() {
+                  _hasSecondTime = v ?? false;
+                  if (_hasSecondTime) {
+                    _secondTime ??= const TimeOfDay(hour: 18, minute: 0);
+                    if (_secondDays.isEmpty) _secondDays.addAll(_selectedDays);
+                    _secondIsHoliday = _isHoliday;
+                  }
+                });
+              },
+            ),
+          ),
+          const SizedBox(width: 10),
+          Text(
+            tr.addSecondTime,
+            style: const TextStyle(fontSize: 15, color: AppTokens.textPrimary),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSecondTimePicker() {
+    return InkWell(
+      borderRadius: BorderRadius.circular(AppTokens.radiusMd),
+      onTap: _pickSecondTime,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+        decoration: BoxDecoration(
+          border: Border.all(color: Colors.grey.shade300),
+          borderRadius: BorderRadius.circular(AppTokens.radiusMd),
+        ),
+        child: Row(
+          children: [
+            Expanded(
+              child: Text(
+                _formatTime(_secondTime ?? const TimeOfDay(hour: 18, minute: 0)),
+                style: const TextStyle(
+                    fontSize: 15, color: AppTokens.textPrimary),
+              ),
+            ),
+            Icon(Icons.arrow_drop_down, color: Colors.grey.shade600),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _pickSecondTime() async {
+    final time = await showTimePicker(
+      context: context,
+      initialTime: _secondTime ?? const TimeOfDay(hour: 18, minute: 0),
+    );
+    if (time != null) {
+      setState(() {
+        _secondTime = time;
+        _secondDays = Set.from(_selectedDays);
+        _secondIsHoliday = _isHoliday;
+      });
+    }
   }
 
   String? _validateTitle(BuildContext context, String? value) {

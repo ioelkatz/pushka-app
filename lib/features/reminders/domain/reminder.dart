@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../../../core/l10n/s.dart';
+
 class Reminder {
   const Reminder({
     required this.id,
@@ -89,60 +91,98 @@ class Reminder {
     );
   }
 
-  String get subtitle {
+  /// Spanish-only subtitle used for push notification bodies.
+  String get subtitle => _subtitleEs();
+  String? get subtitleSecondary => _subtitleSecondaryEs();
+
+  String _subtitleEs() {
     final timeStr = _formatTime(time);
-    final dayNames = _getDayNames(days);
+    final dayNames = _getDayNamesEs(days);
+    var result = '';
+    if (dayNames.isNotEmpty) {
+      result = '$dayNames - $timeStr';
+    } else if (isHoliday) {
+      result = 'Viernes y festivos - $timeStr';
+    }
+    if (minutesBefore != null) result += ' - $minutesBefore min antes';
+    return result;
+  }
+
+  String? _subtitleSecondaryEs() {
+    if (secondTime == null) return null;
+    final timeStr = _formatTime(secondTime!);
+    final dayNames = _getDayNamesEs(secondDays);
+    if (dayNames.isNotEmpty) return '$dayNames - $timeStr';
+    if (secondIsHoliday) return 'Viernes y festivos - $timeStr';
+    return null;
+  }
+
+  String _getDayNamesEs(List<int> dayNumbers) {
+    if (dayNumbers.length == 7) return 'Todos los días';
+    if (dayNumbers.length == 5 &&
+        dayNumbers.every((d) => d >= DateTime.monday && d <= DateTime.friday)) {
+      return 'Días de Semana';
+    }
+    const names = ['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom'];
+    return dayNumbers.map((d) => names[d - 1]).join(', ');
+  }
+
+  String subtitleFor(S tr) {
+    final timeStr = _formatTime(time);
+    final dayNames = _getDayNames(days, tr);
 
     var result = '';
     if (dayNames.isNotEmpty) {
       result = '$dayNames - $timeStr';
     } else if (isHoliday) {
-      result = 'Festivos - $timeStr';
+      result = '${tr.repeatFridayHoliday} - $timeStr';
     }
 
     if (minutesBefore != null) {
-      result += ' - $minutesBefore min antes';
+      result += ' - ${tr.minBefore(minutesBefore.toString())}';
     }
 
     return result;
   }
 
-  String? get subtitleSecondary {
+  String? subtitleSecondaryFor(S tr) {
     if (secondTime == null) return null;
     final timeStr = _formatTime(secondTime!);
-    final dayNames = _getDayNames(secondDays);
+    final dayNames = _getDayNames(secondDays, tr);
     if (dayNames.isNotEmpty) {
       return '$dayNames - $timeStr';
     }
     if (secondIsHoliday) {
-      return 'Festivos - $timeStr';
+      return '${tr.repeatFridayHoliday} - $timeStr';
     }
     return null;
   }
 
-  String _formatTime(TimeOfDay time) {
-    final hour = time.hourOfPeriod == 0 ? 12 : time.hourOfPeriod;
-    final minute = time.minute.toString().padLeft(2, '0');
-    final period = time.period == DayPeriod.am ? 'AM' : 'PM';
+  String _formatTime(TimeOfDay t) {
+    final hour = t.hourOfPeriod == 0 ? 12 : t.hourOfPeriod;
+    final minute = t.minute.toString().padLeft(2, '0');
+    final period = t.period == DayPeriod.am ? 'AM' : 'PM';
     return '$hour:$minute $period';
   }
 
-  String _getDayNames(List<int> dayNumbers) {
-    const dayNames = ['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom'];
-
+  String _getDayNames(List<int> dayNumbers, S tr) {
     if (dayNumbers.length == 5 &&
         dayNumbers.contains(DateTime.monday) &&
         dayNumbers.contains(DateTime.tuesday) &&
         dayNumbers.contains(DateTime.wednesday) &&
         dayNumbers.contains(DateTime.thursday) &&
         dayNumbers.contains(DateTime.friday)) {
-      return 'Días de Semana';
+      return tr.weekdaysLabel;
     }
 
     if (dayNumbers.length == 7) {
-      return 'Todos los días';
+      return tr.everyDay;
     }
 
-    return dayNumbers.map((d) => dayNames[d - 1]).join(', ');
+    final names = [
+      tr.dayMonShort, tr.dayTueShort, tr.dayWedShort, tr.dayThuShort,
+      tr.dayFriShort, tr.daySatShort, tr.daySunShort,
+    ];
+    return dayNumbers.map((d) => names[d - 1]).join(', ');
   }
 }

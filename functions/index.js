@@ -12,6 +12,39 @@ admin.initializeApp();
 const db = admin.firestore();
 const messaging = admin.messaging();
 
+// ---------------------------------------------------------------------------
+// Rate limiting — Firestore-backed sliding window counter
+// ---------------------------------------------------------------------------
+/**
+ * Checks whether uid has exceeded maxCalls within windowSeconds.
+ * Throws HttpsError("resource-exhausted") if the limit is exceeded.
+ * Uses a single Firestore document per uid+action with atomic increment.
+ */
+async function enforceRateLimit(uid, action, maxCalls, windowSeconds) {
+  const now = Date.now();
+  const windowStart = now - windowSeconds * 1000;
+  const ref = db.collection("_rateLimits").doc(`${uid}_${action}`);
+
+  await db.runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    const data = snap.exists ? snap.data() : { calls: [], updatedAt: now };
+
+    // Keep only calls within the current window
+    const recentCalls = (data.calls || []).filter((ts) => ts > windowStart);
+
+    if (recentCalls.length >= maxCalls) {
+      const retryAfter = Math.ceil((recentCalls[0] + windowSeconds * 1000 - now) / 1000);
+      throw new HttpsError(
+        "resource-exhausted",
+        `Demasiadas solicitudes. Intenta de nuevo en ${retryAfter} segundos.`
+      );
+    }
+
+    recentCalls.push(now);
+    tx.set(ref, { calls: recentCalls, updatedAt: now }, { merge: true });
+  });
+}
+
 function minAmountForCurrency(currency) {
   const code = String(currency || "usd").toLowerCase();
   const minimums = {
@@ -73,6 +106,15 @@ function computeNextWalletTopUpDate({
   if (offset === 0 && run <= now) offset = 7;
   run.setUTCDate(run.getUTCDate() + offset);
   return run;
+}
+
+async function getUserLanguage(uid) {
+  try {
+    const snap = await db.collection("users").doc(uid).get();
+    const lang = snap.data()?.language;
+    if (lang === "en" || lang === "fr") return lang;
+  } catch (_) { /* default */ }
+  return "es";
 }
 
 async function getUserTokens(uid) {
@@ -260,6 +302,8 @@ exports.createPaymentIntent = onCall(
   if (!request.auth?.uid) {
     throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
   }
+  // 10 payment attempts per 10 minutes per user
+  await enforceRateLimit(request.auth.uid, "createPaymentIntent", 10, 600);
   if (!stripeSecret.value()) {
     throw new HttpsError("failed-precondition", "Stripe no configurado.");
   }
@@ -496,23 +540,55 @@ exports.onTransactionCreated = onDocumentCreated(
 
     const type = data.type || "tzedaka";
     const amount = data.amount ?? 0;
-    const title = "Pushka";
 
-    let body = "Nueva transacción registrada";
-    if (type === "tzedaka") {
-      body = `¡Gracias por tu donación! \$${amount}`;
-    } else if (type === "pushkaEmpty") {
-      body = "Tu Pushka fue vaciada";
-    } else if (type === "walletFill") {
-      body = `Billetera rellenada con \$${amount}`;
-    }
+    // Scheduled jobs (auto-empty, auto-topup) send their own notification
+    if (data.skipNotification === true) return;
+
+    // Detect user language from profile
+    let lang = "es";
+    try {
+      const userSnap = await admin.firestore().collection("users").doc(uid).get();
+      const userLang = userSnap.data()?.language;
+      if (userLang === "en" || userLang === "fr") lang = userLang;
+    } catch (_) { /* default to Spanish */ }
+
+    const fmt = (n) => `$${Number(n).toFixed(2)}`;
+    const abs = Math.abs(Number(amount));
+
+    const messages = {
+      es: {
+        tzedaka:       `¡Gracias por tu donación! ${fmt(amount)}`,
+        pushkaEmpty:   `Tu Pushka fue vaciada. Donación: ${fmt(amount)}`,
+        walletFillPos: `Billetera recargada con ${fmt(amount)}`,
+        walletFillNeg: `Transferencia enviada: ${fmt(abs)}`,
+        default:       "Nueva transacción registrada",
+      },
+      en: {
+        tzedaka:       `Thank you for your donation! ${fmt(amount)}`,
+        pushkaEmpty:   `Your Pushka was emptied. Donation: ${fmt(amount)}`,
+        walletFillPos: `Wallet topped up with ${fmt(amount)}`,
+        walletFillNeg: `Transfer sent: ${fmt(abs)}`,
+        default:       "New transaction recorded",
+      },
+      fr: {
+        tzedaka:       `Merci pour votre don ! ${fmt(amount)}`,
+        pushkaEmpty:   `Votre Pushka a été vidée. Don : ${fmt(amount)}`,
+        walletFillPos: `Portefeuille rechargé de ${fmt(amount)}`,
+        walletFillNeg: `Transfert envoyé : ${fmt(abs)}`,
+        default:       "Nouvelle transaction enregistrée",
+      },
+    };
+
+    const m = messages[lang];
+    let body = m.default;
+    if (type === "tzedaka") body = m.tzedaka;
+    else if (type === "pushkaEmpty") body = m.pushkaEmpty;
+    else if (type === "walletFill" && amount >= 0) body = m.walletFillPos;
+    else if (type === "walletFill" && amount < 0) body = m.walletFillNeg;
 
     await sendToUser(uid, {
-      notification: { title, body },
-      data: {
-        type,
-        amount: String(amount),
-      },
+      notification: { title: "Pushka", body },
+      data: { type, amount: String(amount) },
     });
   },
 );
@@ -604,6 +680,8 @@ exports.walletTransfer = onCall(
     if (!request.auth?.uid) {
       throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
     }
+    // 20 transfers per hour per user
+    await enforceRateLimit(request.auth.uid, "walletTransfer", 20, 3600);
 
     const senderUid = request.auth.uid;
     const targetWalletId = String(request.data?.targetWalletId || "").trim();
@@ -690,6 +768,78 @@ exports.walletTransfer = onCall(
     });
 
     return { success: true, walletBalance: senderBalanceAfter };
+  },
+);
+
+exports.walletRequestTransfer = onCall(
+  { enforceAppCheck: true },
+  async (request) => {
+    if (!request.auth?.uid) {
+      throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
+    }
+    // 30 requests per hour per user
+    await enforceRateLimit(request.auth.uid, "walletRequestTransfer", 30, 3600);
+
+    const requesterUid = request.auth.uid;
+    const fromWalletId = String(request.data?.fromWalletId || "").trim();
+    const amount = Number(request.data?.amount || 0);
+
+    if (!fromWalletId) {
+      throw new HttpsError("invalid-argument", "ID de billetera inválido.");
+    }
+    if (!Number.isFinite(amount) || amount <= 0) {
+      throw new HttpsError("invalid-argument", "Monto inválido.");
+    }
+    if (amount > 1000000) {
+      throw new HttpsError("invalid-argument", "El monto excede el límite permitido.");
+    }
+
+    // Resolve target user by walletId
+    const targetQuery = await db
+      .collection("users")
+      .where("walletId", "==", fromWalletId)
+      .limit(1)
+      .get();
+
+    if (targetQuery.empty) {
+      throw new HttpsError("not-found", "No existe una billetera con ese ID.");
+    }
+
+    const targetUid = targetQuery.docs[0].id;
+    if (targetUid === requesterUid) {
+      throw new HttpsError("failed-precondition", "No puedes solicitarte a ti mismo.");
+    }
+
+    // Get requester wallet ID to display in notification
+    const requesterSnap = await db.collection("users").doc(requesterUid).get();
+    const requesterWalletId = String(requesterSnap.data()?.walletId || requesterUid.slice(-6).toUpperCase());
+
+    // Write pending request to target user
+    await db.collection("users").doc(targetUid).collection("walletRequests").add({
+      fromUid: requesterUid,
+      fromWalletId: requesterWalletId,
+      amount,
+      status: "pending",
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+
+    // Notify target user (in their language)
+    const targetLang = await getUserLanguage(targetUid);
+    const requestTitles = { es: "Solicitud de Tzedaká", en: "Tzedakah Request", fr: "Demande de Tzedaka" };
+    const requestBodies = {
+      es: `${requesterWalletId} te solicita $${amount.toFixed(2)}`,
+      en: `${requesterWalletId} is requesting $${amount.toFixed(2)} from you`,
+      fr: `${requesterWalletId} vous demande $${amount.toFixed(2)}`,
+    };
+    await sendToUser(targetUid, {
+      notification: {
+        title: requestTitles[targetLang],
+        body: requestBodies[targetLang],
+      },
+      data: { type: "wallet_request", amount: String(amount), fromWalletId: requesterWalletId },
+    }).catch(() => {});
+
+    return { success: true };
   },
 );
 
@@ -885,6 +1035,7 @@ exports.processWalletAutoTopUps = onSchedule(
     let failed = 0;
 
     for (const doc of dueUsers.docs) {
+      let toppedUpAmount = 0;
       try {
         await db.runTransaction(async (tx) => {
           const userRef = doc.ref;
@@ -910,6 +1061,7 @@ exports.processWalletAutoTopUps = onSchedule(
             return;
           }
 
+          toppedUpAmount = amount;
           const currentBalance = Number(data.walletBalance || 0);
           const frequency = String(data.walletAutoTopUpFrequency || "weekly");
           const weekday = Number(data.walletAutoTopUpWeekday || 1);
@@ -938,9 +1090,29 @@ exports.processWalletAutoTopUps = onSchedule(
             type: "walletFill",
             amount,
             description: "Recarga automática de billetera",
+            skipNotification: true,
             createdAt: admin.firestore.Timestamp.now(),
           });
         });
+
+        // Notify user their wallet was auto-topped up (in their language)
+        if (toppedUpAmount > 0) {
+          const topUpLang = await getUserLanguage(doc.id);
+          const topUpTitles = { es: "Billetera recargada", en: "Wallet topped up", fr: "Portefeuille rechargé" };
+          const topUpBodies = {
+            es: `Tu billetera fue recargada automáticamente con $${toppedUpAmount.toFixed(2)}`,
+            en: `Your wallet was automatically topped up with $${toppedUpAmount.toFixed(2)}`,
+            fr: `Votre portefeuille a été rechargé automatiquement de $${toppedUpAmount.toFixed(2)}`,
+          };
+          await sendToUser(doc.id, {
+            notification: {
+              title: topUpTitles[topUpLang],
+              body: topUpBodies[topUpLang],
+            },
+            data: { type: "walletFill" },
+          }).catch(() => {});
+        }
+
         processed += 1;
       } catch (err) {
         failed += 1;
@@ -1008,6 +1180,7 @@ exports.processPushkaAutoEmpty = onSchedule(
     let failed = 0;
 
     for (const doc of dueUsers.docs) {
+      let emptiedAmount = 0;
       try {
         await db.runTransaction(async (tx) => {
           const userRef = doc.ref;
@@ -1046,10 +1219,13 @@ exports.processPushkaAutoEmpty = onSchedule(
             return;
           }
 
-          const amountToEmpty = currentAmount;
+          emptiedAmount = currentAmount;
+          const topOffEnabled = data.autoEmptyTopOffEnabled === true;
+          const topOffAmount = topOffEnabled ? Number(data.autoEmptyTopOffAmount || 0) : 0;
+          const newPushkaAmount = topOffEnabled && topOffAmount > 0 ? topOffAmount : 0;
 
           tx.set(userRef, {
-            pushkaAmount: 0,
+            pushkaAmount: newPushkaAmount,
             autoEmptyNextRunAt: admin.firestore.Timestamp.fromDate(nextDate),
             updatedAt: admin.firestore.FieldValue.serverTimestamp(),
           }, { merge: true });
@@ -1057,13 +1233,41 @@ exports.processPushkaAutoEmpty = onSchedule(
           const movementRef = userRef.collection("transactions").doc();
           tx.set(movementRef, {
             type: "pushkaEmpty",
-            amount: amountToEmpty,
+            amount: emptiedAmount,
             description: "Vaciado automatico de Pushka",
             paymentMethod: "auto",
             status: "completed",
+            skipNotification: true,
             createdAt: admin.firestore.Timestamp.now(),
           });
         });
+
+        // Send push notification after transaction commits (in user's language)
+        if (emptiedAmount > 0) {
+          try {
+            const tokens = await getUserTokens(doc.id);
+            if (tokens.length > 0) {
+              const emptyLang = await getUserLanguage(doc.id);
+              const amtStr = formatAmount(emptiedAmount * 100);
+              const emptyTitles = { es: "Pushka vaciada ✡", en: "Pushka emptied ✡", fr: "Pushka vidée ✡" };
+              const emptyBodies = {
+                es: `Tu Pushka fue vaciada automáticamente. Donación registrada: $${amtStr}`,
+                en: `Your Pushka was automatically emptied. Donation recorded: $${amtStr}`,
+                fr: `Votre Pushka a été vidée automatiquement. Don enregistré : $${amtStr}`,
+              };
+              await messaging.sendEachForMulticast({
+                notification: {
+                  title: emptyTitles[emptyLang],
+                  body: emptyBodies[emptyLang],
+                },
+                tokens,
+              });
+            }
+          } catch (notifErr) {
+            console.warn("processPushkaAutoEmpty: notification_failed", { uid: doc.id, error: String(notifErr?.message || notifErr) });
+          }
+        }
+
         processed += 1;
       } catch (err) {
         failed += 1;

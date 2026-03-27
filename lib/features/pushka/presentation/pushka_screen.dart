@@ -1,5 +1,8 @@
 import 'dart:async';
 import 'dart:math' as math;
+import 'package:confetti/confetti.dart';
+import 'package:lottie/lottie.dart';
+import '../../../core/hive_cache.dart';
 import '../../../core/format_utils.dart';
 import '../../../app/theme/app_tokens.dart';
 import '../../../core/keyboard_safe_sheet.dart';
@@ -29,23 +32,55 @@ class PushkaScreen extends ConsumerStatefulWidget {
   ConsumerState<PushkaScreen> createState() => _PushkaScreenState();
 }
 
-class _PushkaScreenState extends ConsumerState<PushkaScreen> {
+class _PushkaScreenState extends ConsumerState<PushkaScreen>
+    with SingleTickerProviderStateMixin {
   final _pushkaKey = GlobalKey<Pushka3DWidgetState>();
+  late final ConfettiController _confettiController;
+  late final AnimationController _lottieController;
+  bool _showGoalLottie = false;
   double pushkaAmount = 0;
   double pushkaGoal = 3600.00; // Meta de la pushka
   List<double> _presetAmounts = [];
   bool _loadedRemote = false;
   bool _isProcessing = false;
   int _streakCount = 0;
-  bool _showCelebration = false;
 
+  @override
+  void initState() {
+    super.initState();
+    _confettiController = ConfettiController(
+      duration: const Duration(seconds: 3),
+    );
+    _lottieController = AnimationController(vsync: this);
+    _loadFromCache();
+  }
+
+  void _loadFromCache() {
+    // Show locally-cached amount immediately — no spinner on open
+    final uid = ref.read(currentUserProvider)?.uid;
+    if (uid == null) return;
+    final cached = HiveCache.instance.loadPushkaAmount(uid);
+    final cachedGoal = HiveCache.instance.loadPushkaGoal(uid);
+    if (cached != null) setState(() => pushkaAmount = cached);
+    if (cachedGoal != null) setState(() => pushkaGoal = cachedGoal);
+  }
+
+  @override
+  void dispose() {
+    _confettiController.dispose();
+    _lottieController.dispose();
+    super.dispose();
+  }
 
   void _triggerCelebration() {
-    setState(() => _showCelebration = true);
+    _confettiController.play();
+    setState(() => _showGoalLottie = true);
+    _lottieController
+      ..reset()
+      ..forward().then((_) {
+        if (mounted) setState(() => _showGoalLottie = false);
+      });
     FeedbackService.instance.playSuccess();
-    Future.delayed(const Duration(seconds: 3), () {
-      if (mounted) setState(() => _showCelebration = false);
-    });
   }
 
   Future<void> _updateStreak() async {
@@ -101,13 +136,22 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
   
   Future<void> emptyPushka() async {
     if (pushkaAmount <= 0 || _isProcessing) return;
+    final tr = S.of(context);
     setState(() => _isProcessing = true);
     try {
       if (StripeConfig.publishableKey.isEmpty) {
-        throw Exception(S.of(context).stripeNotConfigured);
+        throw Exception(tr.stripeNotConfigured);
       }
 
-      final amountToEmpty = pushkaAmount;
+      double amountToEmpty = pushkaAmount;
+      if (_partialPaymentsEnabled()) {
+        setState(() => _isProcessing = false);
+        final partial = await _showPartialDonationDialog();
+        if (partial == null || !mounted) return;
+        setState(() => _isProcessing = true);
+        amountToEmpty = partial;
+      }
+
       final currency = _currencyCodeFromProfile();
       final amountCents = ((amountToEmpty * 100) + 0.001).round();
       final minCents = _minAmountCentsForCurrency(currency);
@@ -118,12 +162,17 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
         return;
       }
 
+      setState(() => _isProcessing = false);
+      final confirmed = await _confirmIfLarge(amountToEmpty);
+      if (!confirmed || !mounted) return;
+      setState(() => _isProcessing = true);
+
       if (_biometricEnabled()) {
         final authenticated = await BiometricService.instance.authenticate(
-          reason: S.of(context).biometricReasonEmpty,
+          reason: tr.biometricReasonEmpty,
         );
         if (!authenticated) {
-          _showError(S.of(context).authRequired);
+          _showError(tr.authRequired);
           return;
         }
       }
@@ -143,25 +192,31 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
           uid: user.uid,
           type: TransactionType.pushkaEmpty,
           amount: amountToEmpty,
-          description: S.of(context).pushkaEmptyCardDesc,
+          description: tr.pushkaEmptyCardDesc,
           paymentMethod: PaymentMethod.card,
           status: PaymentStatus.completed,
           docId: paymentIntentId,
+          currencyCode: currency,
         );
       }
 
-      await _persistPushkaAmount(resetToZero: true);
+      final remaining = (pushkaAmount - amountToEmpty).clamp(0.0, double.infinity);
       if (!mounted) return;
-      setState(() => pushkaAmount = 0);
+      setState(() => pushkaAmount = remaining);
+      await _persistPushkaAmount(resetToZero: remaining <= 0);
+      if (!mounted) return;
+      FeedbackService.instance.vibratePushkaEmpty();
       FeedbackService.instance.playSuccess();
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(S.of(context).pushkaEmptied)),
+        SnackBar(content: Text(
+          remaining > 0
+              ? tr.paymentProcessedRemaining(formatMoney(remaining))
+              : tr.pushkaEmptied,
+        )),
       );
-    } catch (error, stack) {
-      debugPrint('emptyPushka error: $error');
-      debugPrint('$stack');
+    } catch (error) {
       if (!mounted) return;
-      _showError(S.of(context).couldNotEmpty);
+      _showError(tr.couldNotEmpty);
     } finally {
       if (mounted) setState(() => _isProcessing = false);
     }
@@ -217,21 +272,24 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
     if (result == null || !mounted) return;
     final donationAmount = result['amount'] as double;
 
+    final confirmed = await _confirmIfLarge(donationAmount);
+    if (!confirmed || !mounted) return;
+
     setState(() => _isProcessing = true);
     try {
       if (_biometricEnabled()) {
         final authenticated = await BiometricService.instance.authenticate(
-          reason: S.of(context).biometricReasonDonate,
+          reason: tr.biometricReasonDonate,
         );
         if (!authenticated) {
-          _showError(S.of(context).authRequiredDonate);
+          _showError(tr.authRequiredDonate);
           return;
         }
       }
       if (!mounted) return;
 
       if (StripeConfig.publishableKey.isEmpty) {
-        throw Exception(S.of(context).stripeNotConfigured);
+        throw Exception(tr.stripeNotConfigured);
       }
 
       final currency = _currencyCodeFromProfile();
@@ -260,10 +318,11 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
           amount: donationAmount,
           description: result['message']?.toString().isNotEmpty == true
               ? result['message'] as String
-              : S.of(context).instantDonation,
+              : tr.instantDonation,
           paymentMethod: PaymentMethod.card,
           status: PaymentStatus.completed,
           docId: paymentIntentId,
+          currencyCode: currency,
         );
       }
 
@@ -274,7 +333,6 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
         );
       }
     } catch (error) {
-      debugPrint('Instant donation error: $error');
       if (!mounted) return;
       _showError(_donationErrorMessage(error, S.of(context)));
     } finally {
@@ -284,10 +342,11 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
 
   Future<void> _processCardPayment(double donationAmount) async {
     if (!mounted) return;
+    final tr = S.of(context);
     setState(() => _isProcessing = true);
     try {
       if (StripeConfig.publishableKey.isEmpty) {
-        throw Exception(S.of(context).stripeNotConfigured);
+        throw Exception(tr.stripeNotConfigured);
       }
 
       final amountCents = ((donationAmount * 100) + 0.001).round();
@@ -318,10 +377,11 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
           uid: user.uid,
           type: TransactionType.tzedaka,
           amount: donationAmount,
-          description: S.of(context).donationWithCard,
+          description: tr.donationWithCard,
           paymentMethod: PaymentMethod.card,
           status: PaymentStatus.completed,
           docId: paymentIntentId,
+          currencyCode: currency,
         );
       }
 
@@ -331,16 +391,15 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
           SnackBar(
             content: Text(
               remaining > 0
-                  ? S.of(context).paymentProcessedRemaining(formatMoney(remaining))
-                  : S.of(context).paymentProcessedHistory,
+                  ? tr.paymentProcessedRemaining(formatMoney(remaining))
+                  : tr.paymentProcessedHistory,
             ),
           ),
         );
       }
     } catch (error) {
-      debugPrint('Card payment error: $error');
       if (!mounted) return;
-      _showError(_donationErrorMessage(error, S.of(context)));
+      _showError(_donationErrorMessage(error, tr));
     } finally {
       if (mounted) setState(() => _isProcessing = false);
     }
@@ -351,26 +410,29 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
     if (confirmed != true) return;
 
     if (!mounted) return;
+    final tr = S.of(context);
     setState(() => _isProcessing = true);
     try {
       final remaining = (pushkaAmount - amount).clamp(0.0, double.infinity);
       if (mounted) setState(() => pushkaAmount = remaining);
       await _persistPushkaAmount(resetToZero: remaining <= 0);
 
+      final currency = _currencyCodeFromProfile();
       final user = ref.read(currentUserProvider);
       if (user != null) {
         final methodLabels = {
-          PaymentMethod.check: S.of(context).methodCheckFull,
-          PaymentMethod.transfer: S.of(context).methodTransferFull,
-          PaymentMethod.daf: S.of(context).methodDafFull,
+          PaymentMethod.check: tr.methodCheckFull,
+          PaymentMethod.transfer: tr.methodTransferFull,
+          PaymentMethod.daf: tr.methodDafFull,
         };
         await ref.read(transactionRepositoryProvider).addTransaction(
           uid: user.uid,
           type: TransactionType.tzedaka,
           amount: amount,
-          description: S.of(context).donationVia(methodLabels[method] ?? method.name),
+          description: tr.donationVia(methodLabels[method] ?? method.name),
           paymentMethod: method,
           status: PaymentStatus.pending,
+          currencyCode: currency,
         );
       }
 
@@ -378,14 +440,14 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
-              S.of(context).donationPending(formatMoney(amount)),
+              tr.donationPending(formatMoney(amount)),
             ),
             duration: const Duration(seconds: 4),
           ),
         );
       }
     } catch (error) {
-      if (mounted) _showError(S.of(context).couldNotRegister);
+      if (mounted) _showError(tr.couldNotRegister);
     } finally {
       if (mounted) setState(() => _isProcessing = false);
     }
@@ -393,13 +455,14 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
 
   Future<void> _processDirectDonation(double amount) async {
     if (amount <= 0 || _isProcessing) return;
+    final tr = S.of(context);
 
     if (_biometricEnabled()) {
       final authenticated = await BiometricService.instance.authenticate(
-        reason: S.of(context).biometricReasonDonate,
+        reason: tr.biometricReasonDonate,
       );
       if (!authenticated) {
-        _showError(S.of(context).authRequiredDonate);
+        _showError(tr.authRequiredDonate);
         return;
       }
     }
@@ -433,11 +496,18 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
     final remotePresets = userProfile?['presetAmounts'];
 
     if (!_loadedRemote && userProfile != null) {
+      final uid = ref.read(currentUserProvider)?.uid;
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
         setState(() {
-          if (remoteGoal is num) pushkaGoal = remoteGoal.toDouble();
-          if (remoteAmount is num) pushkaAmount = remoteAmount.toDouble();
+          if (remoteGoal is num) {
+            pushkaGoal = remoteGoal.toDouble();
+            if (uid != null) HiveCache.instance.savePushkaGoal(uid, pushkaGoal);
+          }
+          if (remoteAmount is num) {
+            pushkaAmount = remoteAmount.toDouble();
+            if (uid != null) HiveCache.instance.savePushkaAmount(uid, pushkaAmount);
+          }
           if (remotePresets is List && remotePresets.length == 3) {
             try {
               _presetAmounts = remotePresets.whereType<num>().map((e) => e.toDouble()).toList();
@@ -619,9 +689,38 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
             return Stack(
               children: [
                 SingleChildScrollView(child: content),
-                if (_showCelebration) const Positioned.fill(
-                  child: IgnorePointer(child: _CelebrationOverlay()),
+                Align(
+                  alignment: Alignment.topCenter,
+                  child: IgnorePointer(
+                    child: ConfettiWidget(
+                      confettiController: _confettiController,
+                      blastDirectionality: BlastDirectionality.explosive,
+                      numberOfParticles: 30,
+                      gravity: 0.3,
+                      emissionFrequency: 0.05,
+                      colors: const [
+                        Color(0xFFFFD700), Color(0xFFFF6B35), Color(0xFF2563EB),
+                        Color(0xFF60A5FA), Color(0xFF10B981), Color(0xFFE040FB),
+                      ],
+                    ),
+                  ),
                 ),
+                if (_showGoalLottie)
+                  Positioned.fill(
+                    child: IgnorePointer(
+                      child: Center(
+                        child: Lottie.asset(
+                          'assets/animations/goal_reached.json',
+                          controller: _lottieController,
+                          width: 300,
+                          height: 300,
+                          onLoaded: (composition) {
+                            _lottieController.duration = composition.duration;
+                          },
+                        ),
+                      ),
+                    ),
+                  ),
               ],
             );
           },
@@ -990,6 +1089,60 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
   }
 
 
+  /// Returns true if the user confirmed (or amount <= threshold — no dialog needed).
+  Future<bool> _confirmIfLarge(double amount) async {
+    const threshold = 100.0;
+    if (amount <= threshold) return true;
+    if (!mounted) return false;
+    final tr = S.of(context);
+    return await showDialog<bool>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(20),
+            ),
+            title: Text(
+              tr.confirmPaymentTitle,
+              style: const TextStyle(fontWeight: FontWeight.w700),
+            ),
+            content: Text(
+              tr.confirmPaymentBody(formatMoney(amount)),
+              style: const TextStyle(fontSize: 15, height: 1.5),
+            ),
+            actionsPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+            actions: [
+              OutlinedButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                style: OutlinedButton.styleFrom(
+                  minimumSize: const Size.fromHeight(44),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                ),
+                child: Text(tr.cancel),
+              ),
+              const SizedBox(height: 8),
+              ElevatedButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppTokens.primaryBlue,
+                  foregroundColor: Colors.white,
+                  minimumSize: const Size.fromHeight(44),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                ),
+                child: Text(
+                  tr.confirmDonate,
+                  style: const TextStyle(fontWeight: FontWeight.w700),
+                ),
+              ),
+            ],
+          ),
+        ) ??
+        false;
+  }
+
   Future<void> _persistPushkaAmount({bool resetToZero = false}) async {
     final user = ref.read(currentUserProvider);
     if (user == null) {
@@ -997,10 +1150,13 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
       return;
     }
     final amount = resetToZero ? 0.0 : pushkaAmount;
-    await ref.read(userRepositoryProvider).updatePushkaAmount(
-          uid: user.uid,
-          amount: amount,
-        );
+    await Future.wait([
+      ref.read(userRepositoryProvider).updatePushkaAmount(
+        uid: user.uid,
+        amount: amount,
+      ),
+      HiveCache.instance.savePushkaAmount(user.uid, amount),
+    ]);
   }
 
   void _showError(String message) {
@@ -1222,6 +1378,8 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen> {
         icon = Icons.volunteer_activism;
         instructionText = tr.dafInstructions(formatMoney(amount));
       case PaymentMethod.card:
+        return null;
+      case PaymentMethod.auto:
         return null;
     }
 
@@ -1941,8 +2099,6 @@ class _HolidayInfo {
   final DateTime startDate;
   final int showDaysBefore;
   final int durationDays;
-  final String? iconAsset;
-
   const _HolidayInfo({
     required this.nameEs,
     required this.descriptionEs,
@@ -1951,7 +2107,6 @@ class _HolidayInfo {
     required this.startDate,
     required this.showDaysBefore,
     this.durationDays = 1,
-    this.iconAsset,
   });
 
   String localizedName(S tr) => switch (key) {
@@ -2064,114 +2219,6 @@ class _HolidayInfo {
       durationDays: 8,
     ),
   ];
-}
-class _CelebrationOverlay extends StatefulWidget {
-  const _CelebrationOverlay();
-
-  @override
-  State<_CelebrationOverlay> createState() => _CelebrationOverlayState();
-}
-
-class _CelebrationOverlayState extends State<_CelebrationOverlay>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _ctrl;
-
-  @override
-  void initState() {
-    super.initState();
-    _ctrl = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 2800),
-    )..forward();
-  }
-
-  @override
-  void dispose() {
-    _ctrl.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return AnimatedBuilder(
-      animation: _ctrl,
-      builder: (context, _) {
-        return CustomPaint(
-          painter: _ConfettiPainter(progress: _ctrl.value),
-        );
-      },
-    );
-  }
-}
-
-class _ConfettiPainter extends CustomPainter {
-  final double progress;
-  _ConfettiPainter({required this.progress});
-
-  static const _colors = [
-    Color(0xFFFFD700), Color(0xFFFF6B35), Color(0xFF2563EB),
-    Color(0xFF60A5FA), Color(0xFF10B981), Color(0xFFE040FB),
-    Color(0xFFFF1744), Color(0xFF00E5FF), Color(0xFFFFC107),
-  ];
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final rng = _SeededRandom(77);
-    const count = 120;
-    final fadeOut = progress > 0.65 ? (1.0 - (progress - 0.65) / 0.35) : 1.0;
-
-    for (int i = 0; i < count; i++) {
-      final startX = rng.next() * size.width;
-      final startY = -30.0 - rng.next() * 120;
-      final speed = 0.3 + rng.next() * 0.7;
-      final drift = (rng.next() - 0.5) * 160;
-      final wobble = (rng.next() - 0.5) * 40 * (0.5 + 0.5 * rng.next());
-      final pSize = 3.0 + rng.next() * 10.0;
-      final delay = rng.next() * 0.2;
-      final p = ((progress - delay) / (1.0 - delay)).clamp(0.0, 1.0);
-
-      final x = startX + drift * p + wobble * (p * 3.14).clamp(0.0, 3.14);
-      final y = startY + size.height * 1.2 * p * speed;
-
-      if (y < -30 || y > size.height + 30 || p <= 0) continue;
-
-      final paint = Paint()
-        ..color = _colors[i % _colors.length].withValues(alpha: fadeOut * 0.9)
-        ..style = PaintingStyle.fill;
-
-      final shape = i % 4;
-      if (shape == 0) {
-        canvas.drawCircle(Offset(x, y), pSize / 2, paint);
-      } else if (shape == 1) {
-        canvas.drawRect(Rect.fromCenter(center: Offset(x, y), width: pSize, height: pSize * 0.5), paint);
-      } else if (shape == 2) {
-        canvas.save();
-        canvas.translate(x, y);
-        canvas.rotate(p * 8.0 * (0.5 + rng.next()));
-        canvas.drawRect(Rect.fromCenter(center: Offset.zero, width: pSize * 1.3, height: pSize * 0.3), paint);
-        canvas.restore();
-      } else {
-        final path = Path()
-          ..moveTo(x, y - pSize * 0.5)
-          ..lineTo(x + pSize * 0.4, y + pSize * 0.3)
-          ..lineTo(x - pSize * 0.4, y + pSize * 0.3)
-          ..close();
-        canvas.drawPath(path, paint);
-      }
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant _ConfettiPainter old) => old.progress != progress;
-}
-
-class _SeededRandom {
-  int _state;
-  _SeededRandom(this._state);
-  double next() {
-    _state = (_state * 1103515245 + 12345) & 0x7fffffff;
-    return _state / 0x7fffffff;
-  }
 }
 
 class _HexBadge extends StatelessWidget {

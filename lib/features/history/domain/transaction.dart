@@ -9,6 +9,7 @@ enum PaymentMethod {
   check,
   transfer,
   daf,
+  auto,
 }
 
 enum PaymentStatus {
@@ -25,6 +26,7 @@ class Transaction {
   final String? description;
   final PaymentMethod paymentMethod;
   final PaymentStatus status;
+  final String currencyCode;
 
   Transaction({
     required this.id,
@@ -34,6 +36,7 @@ class Transaction {
     this.description,
     this.paymentMethod = PaymentMethod.card,
     this.status = PaymentStatus.completed,
+    this.currencyCode = 'USD',
   });
 
   String get typeLabel {
@@ -44,19 +47,6 @@ class Transaction {
         return 'Pushka Vacía';
       case TransactionType.walletFill:
         return 'Billetera Rellena';
-    }
-  }
-
-  String get paymentMethodLabel {
-    switch (paymentMethod) {
-      case PaymentMethod.card:
-        return 'Tarjeta';
-      case PaymentMethod.check:
-        return 'Cheque';
-      case PaymentMethod.transfer:
-        return 'Transferencia';
-      case PaymentMethod.daf:
-        return 'DAF';
     }
   }
 
@@ -71,30 +61,32 @@ class Transaction {
     }
   }
 
+  String get paymentMethodLabel {
+    switch (paymentMethod) {
+      case PaymentMethod.card:
+        return 'Tarjeta';
+      case PaymentMethod.check:
+        return 'Cheque';
+      case PaymentMethod.transfer:
+        return 'Transferencia';
+      case PaymentMethod.daf:
+        return 'DAF';
+      case PaymentMethod.auto:
+        return 'Auto';
+    }
+  }
+
   bool get isPending => status == PaymentStatus.pending;
 
   String get formattedDate {
-    final months = [
-      'Ene',
-      'Feb',
-      'Mar',
-      'Abr',
-      'May',
-      'Jun',
-      'Jul',
-      'Ago',
-      'Sep',
-      'Oct',
-      'Nov',
-      'Dic'
-    ];
+    const months = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun',
+                    'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
     final month = months[dateTime.month - 1];
     final day = dateTime.day;
-    final hour = dateTime.hour;
-    final minute = dateTime.minute;
-    final period = hour >= 12 ? 'PM' : 'AM';
-    final displayHour = hour > 12 ? hour - 12 : (hour == 0 ? 12 : hour);
-    return '$month. $day - $displayHour:${minute.toString().padLeft(2, '0')}$period';
+    final hour = dateTime.hour % 12 == 0 ? 12 : dateTime.hour % 12;
+    final minute = dateTime.minute.toString().padLeft(2, '0');
+    final period = dateTime.hour < 12 ? 'AM' : 'PM';
+    return '$month. $day - $hour:$minute$period';
   }
 }
 

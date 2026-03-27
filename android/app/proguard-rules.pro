@@ -20,6 +20,10 @@
 -keep class com.google.android.gms.** { *; }
 -dontwarn com.google.android.gms.**
 
+## Google Play Core (flutter deferred components — suppress missing class warnings)
+-dontwarn com.google.android.play.core.**
+-keep class com.google.android.play.core.** { *; }
+
 ## Keep annotations
 -keepattributes *Annotation*
 -keepattributes SourceFile,LineNumberTable

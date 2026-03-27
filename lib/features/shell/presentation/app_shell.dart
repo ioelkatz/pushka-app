@@ -1,6 +1,7 @@
 ﻿import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import '../../../app/theme/app_tokens.dart';
+import '../../../core/widgets/offline_banner.dart';
 
 class AppShell extends StatelessWidget {
   final Widget child;
@@ -31,7 +32,7 @@ class AppShell extends StatelessWidget {
       backgroundColor: AppTokens.surface,
       drawer: drawer,
       appBar: appBar,
-      body: body,
+      body: OfflineBanner(child: body),
     );
   }
 }

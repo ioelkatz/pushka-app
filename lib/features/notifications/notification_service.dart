@@ -22,12 +22,47 @@ class NotificationService {
   String? _currentUid;
   bool _useUtcScheduling = false;
 
+  /// Called whenever a notification tap should navigate somewhere.
+  /// Set this from the router/shell once GoRouter is available.
+  void Function(String route)? onNavigate;
+
   Future<void> initialize() async {
     await _configureLocalTimezone();
     await _requestPermissions();
     await _requestLocalNotificationPermissions();
     await _initializeLocalNotifications();
     FirebaseMessaging.onMessage.listen(_showLocalNotification);
+    _listenForNotificationTaps();
+  }
+
+  void _listenForNotificationTaps() {
+    // Background FCM tap
+    FirebaseMessaging.onMessageOpenedApp.listen(_handleRemoteMessageTap);
+
+    // Terminated state FCM tap (check once on launch)
+    FirebaseMessaging.instance.getInitialMessage().then((message) {
+      if (message != null) _handleRemoteMessageTap(message);
+    });
+  }
+
+  void _handleRemoteMessageTap(RemoteMessage message) {
+    final route = _routeFromMessage(message);
+    if (route != null) onNavigate?.call(route);
+  }
+
+  String? _routeFromMessage(RemoteMessage message) {
+    final data = message.data;
+    // Cloud Functions can send { "route": "/history" } etc.
+    final explicit = data['route'] as String?;
+    if (explicit != null && explicit.isNotEmpty) return explicit;
+
+    final type = data['type'] as String?;
+    return switch (type) {
+      'pushkaEmpty' => '/history',
+      'walletFill' || 'walletRequest' => '/wallet',
+      'reminder' => '/',
+      _ => null,
+    };
   }
 
   Future<void> syncFcmToken(String uid) async {
@@ -112,7 +147,15 @@ class NotificationService {
       android: androidSettings,
       iOS: iosSettings,
     );
-    await _localNotifications.initialize(initSettings);
+    await _localNotifications.initialize(
+      initSettings,
+      onDidReceiveNotificationResponse: (response) {
+        final payload = response.payload;
+        if (payload != null && payload.isNotEmpty) {
+          onNavigate?.call(payload);
+        }
+      },
+    );
   }
 
   Future<void> _showLocalNotification(RemoteMessage message) async {

@@ -106,13 +106,13 @@ void main() {
       // Rules only check: presetAmounts is list
       // Client could store [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, ...] 
       final bigList = List<double>.generate(1000, (i) => i.toDouble());
-      expect(bigList is List, true); // would pass the rules
+      expect(bigList, isA<List>()); // would pass the rules
     });
 
     test('BUG: presetAmounts elements are not validated', () {
       // Rules don't check that list elements are numbers or positive
       final badList = [-1.0, 0.0, double.nan];
-      expect(badList is List, true); // would pass the rules
+      expect(badList, isA<List>()); // would pass the rules
     });
 
     test('currencyCode must be exactly 3 characters', () {

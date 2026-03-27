@@ -244,6 +244,10 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // PROFILE NAME
+          _buildProfileNameRow(userName, user?.uid, tr),
+          const SizedBox(height: 24),
+
           // GENERAL Section
           _buildSectionTitle(tr.general),
           const SizedBox(height: 12),
@@ -260,34 +264,13 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
           // PRESET AMOUNTS
           _buildLabel(tr.presetAmount),
-          const SizedBox(height: 6),
-          Row(
-            children: [
-              Expanded(
-                child: _buildPresetButton(
-                  '\$1.00',
-                  selectedPreset == '1.00',
-                  onTap: () => _selectPreset(user, 1.00),
-                ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: _buildPresetButton(
-                  '\$5.00',
-                  selectedPreset == '5.00',
-                  onTap: () => _selectPreset(user, 5.00),
-                ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: _buildPresetButton(
-                  '\$10.00',
-                  selectedPreset == '10.00',
-                  onTap: () => _selectPreset(user, 10.00),
-                ),
-              ),
-            ],
+          const SizedBox(height: 4),
+          Text(
+            tr.presetsFromMain,
+            style: TextStyle(fontSize: 12, color: Colors.grey.shade500),
           ),
+          const SizedBox(height: 8),
+          _buildCurrentPresets(userProfile, blue),
           const SizedBox(height: 18),
 
           // EMPTY PUSHKA
@@ -386,14 +369,16 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             biometricAuthenticationEnabled,
             orange,
             onChanged: (value) async {
+              final messenger = ScaffoldMessenger.of(context);
               if (value) {
                 final success = await _authenticateWithBiometrics();
                 if (!success || !mounted) return;
               }
               setState(() => biometricAuthenticationEnabled = value);
               _updateSettings(user, biometricAuthenticationEnabled: value);
-              if (value && mounted) {
-                ScaffoldMessenger.of(context).showSnackBar(
+              if (value) {
+                if (!mounted) return;
+                messenger.showSnackBar(
                   SnackBar(content: Text(tr.biometricActivated)),
                 );
               }
@@ -606,6 +591,169 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     );
   }
 
+  Widget _buildProfileNameRow(String name, String? uid, S tr) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.grey.shade200),
+      ),
+      child: Row(
+        children: [
+          CircleAvatar(
+            radius: 22,
+            backgroundColor: const Color(0xFF2F60C5).withValues(alpha: 0.12),
+            child: Text(
+              name.isNotEmpty ? name[0].toUpperCase() : '?',
+              style: const TextStyle(
+                fontSize: 20,
+                fontWeight: FontWeight.w700,
+                color: Color(0xFF2F60C5),
+              ),
+            ),
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  name,
+                  style: const TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600,
+                    color: Color(0xFF1E293B),
+                  ),
+                ),
+                Text(
+                  tr.displayNameLabel,
+                  style: TextStyle(fontSize: 12, color: Colors.grey.shade500),
+                ),
+              ],
+            ),
+          ),
+          IconButton(
+            icon: const Icon(Icons.edit_outlined, size: 20),
+            color: const Color(0xFF2F60C5),
+            tooltip: tr.editNameTooltip,
+            onPressed: uid == null ? null : () => _showEditNameSheet(name, uid, tr),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _showEditNameSheet(String current, String uid, S tr) async {
+    final ctrl = TextEditingController(text: current);
+    String? error;
+
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (ctx, setSS) {
+            return Padding(
+              padding: EdgeInsets.only(bottom: MediaQuery.of(ctx).viewInsets.bottom),
+              child: Container(
+                decoration: const BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+                ),
+                padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Center(
+                      child: Container(
+                        width: 36,
+                        height: 4,
+                        margin: const EdgeInsets.only(bottom: 16),
+                        decoration: BoxDecoration(
+                          color: Colors.grey.shade300,
+                          borderRadius: BorderRadius.circular(2),
+                        ),
+                      ),
+                    ),
+                    Text(
+                      tr.editProfileTitle,
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(height: 20),
+                    TextField(
+                      controller: ctrl,
+                      autofocus: true,
+                      textCapitalization: TextCapitalization.words,
+                      decoration: InputDecoration(
+                        labelText: tr.displayNameLabel,
+                        hintText: tr.displayNameHint,
+                        errorText: error,
+                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                        focusedBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: const BorderSide(color: Color(0xFF2F60C5), width: 1.6),
+                        ),
+                      ),
+                      onChanged: (_) {
+                        if (error != null) setSS(() => error = null);
+                      },
+                    ),
+                    const SizedBox(height: 16),
+                    SizedBox(
+                      height: 48,
+                      child: ElevatedButton(
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFF2F60C5),
+                          foregroundColor: Colors.white,
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                        ),
+                        onPressed: () async {
+                          final name = ctrl.text.trim();
+                          if (name.length < 2) {
+                            setSS(() => error = tr.nameTooShort);
+                            return;
+                          }
+                          Navigator.pop(ctx);
+                          try {
+                            await ref.read(userRepositoryProvider).updateProfile(
+                              uid: uid,
+                              displayName: name,
+                            );
+                            if (!mounted) return;
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(content: Text(tr.profileUpdated)),
+                            );
+                          } catch (_) {
+                            if (!mounted) return;
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(content: Text(tr.saveError)),
+                            );
+                          }
+                        },
+                        child: Text(
+                          tr.save,
+                          style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+    ctrl.dispose();
+  }
+
   Widget _buildSectionTitle(String title) {
     return Text(
       title,
@@ -669,62 +817,43 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     );
   }
 
-  Widget _buildPresetButton(
-    String label,
-    bool isSelected, {
-    required VoidCallback onTap,
-  }) {
-    const blue = Color(0xFF2F60C5);
-    return InkWell(
-      borderRadius: BorderRadius.circular(14),
-      onTap: onTap,
-      child: Stack(
-        clipBehavior: Clip.none,
-        children: [
-          AnimatedContainer(
-            duration: const Duration(milliseconds: 180),
-            curve: Curves.easeOut,
-            height: 56,
-            decoration: BoxDecoration(
-              color: isSelected ? blue.withValues(alpha: 0.06) : Colors.white,
-              border: Border.all(
-                color: isSelected ? blue : Colors.grey.shade300,
-                width: isSelected ? 2 : 1.2,
+  Widget _buildCurrentPresets(Map<String, dynamic>? profile, Color blue) {
+    final rawPresets = profile?['presetAmounts'];
+    final List<double> presets;
+    if (rawPresets is List && rawPresets.length >= 3) {
+      final converted = rawPresets.whereType<num>().map((e) => e.toDouble()).toList();
+      presets = converted.length >= 3 ? converted.take(3).toList() : [1.0, 5.0, 10.0];
+    } else {
+      presets = [1.0, 5.0, 10.0];
+    }
+    final sym = _currencySymbol(selectedCurrency);
+    return Row(
+      children: presets.asMap().entries.map((entry) {
+        final idx = entry.key;
+        final amt = entry.value;
+        final label = '$sym${amt == amt.roundToDouble() ? amt.toInt() : amt.toStringAsFixed(2)}';
+        return Expanded(
+          child: Padding(
+            padding: EdgeInsets.only(right: idx < 2 ? 10 : 0),
+            child: Container(
+              height: 46,
+              decoration: BoxDecoration(
+                border: Border.all(color: blue, width: 1.5),
+                borderRadius: BorderRadius.circular(12),
               ),
-              borderRadius: BorderRadius.circular(14),
-            ),
-            alignment: Alignment.center,
-            child: Text(
-              label,
-              style: TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.w600,
-                color: isSelected ? blue : Colors.black87,
+              alignment: Alignment.center,
+              child: Text(
+                label,
+                style: TextStyle(
+                  fontWeight: FontWeight.w700,
+                  color: blue,
+                  fontSize: 15,
+                ),
               ),
             ),
           ),
-          if (isSelected)
-            Positioned(
-              top: -9,
-              left: 10,
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                decoration: BoxDecoration(
-                  color: blue,
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Text(
-                  S.of(context).principalBadge,
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 11,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ),
-            ),
-        ],
-      ),
+        );
+      }).toList(),
     );
   }
 
@@ -819,7 +948,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         borderRadius: BorderRadius.circular(8),
       ),
       child: DropdownButtonFormField<String>(
-        value: currentLocale.languageCode,
+        initialValue: currentLocale.languageCode,
         decoration: const InputDecoration(
           border: InputBorder.none,
           isDense: true,
@@ -842,6 +971,13 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         onChanged: (value) {
           if (value == null) return;
           ref.read(localeProvider.notifier).setLanguageCode(value);
+          final uid = ref.read(currentUserProvider)?.uid;
+          if (uid != null) {
+            ref.read(userRepositoryProvider).updateSettings(
+              uid: uid,
+              language: value,
+            );
+          }
         },
       ),
     );
@@ -1041,50 +1177,44 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   }
 
   Future<bool> _authenticateWithBiometrics() async {
+    final tr = S.of(context);
     final auth = LocalAuthentication();
     try {
       final canAuth = await auth.canCheckBiometrics || await auth.isDeviceSupported();
       if (!canAuth) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text(S.of(context).noBiometric)),
-          );
-        }
+        if (!mounted) return false;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(tr.noBiometric)),
+        );
         return false;
       }
 
       final biometrics = await auth.getAvailableBiometrics();
       if (biometrics.isEmpty) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text(
-              S.of(context).configureDeviceSecurity,
-            ), duration: const Duration(seconds: 4)),
-          );
-        }
+        if (!mounted) return false;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(tr.configureDeviceSecurity),
+              duration: const Duration(seconds: 4)),
+        );
         return false;
       }
 
       return await auth.authenticate(
-        localizedReason: S.of(context).biometricReasonEnable,
+        localizedReason: tr.biometricReasonEnable,
         biometricOnly: false,
       );
     } catch (e) {
       final msg = e.toString();
+      if (!mounted) return false;
       if (msg.contains('NoCredentialSet') || msg.contains('notEnrolled') || msg.contains('notAvailable')) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text(
-              S.of(context).configureDeviceSecurity,
-            ), duration: const Duration(seconds: 4)),
-          );
-        }
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(tr.configureDeviceSecurity),
+              duration: const Duration(seconds: 4)),
+        );
       } else {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text(S.of(context).authCouldNotComplete)),
-          );
-        }
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(tr.authCouldNotComplete)),
+        );
       }
       return false;
     }
@@ -1210,11 +1340,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           phoneNumber: phoneNumber,
           mailingAddress: mailingAddress,
         );
-  }
-
-  void _selectPreset(User? user, double amount) {
-    setState(() => selectedPreset = amount.toStringAsFixed(2));
-    _updateSettings(user, presetAmount: amount);
   }
 
   Future<void> _updateSettings(

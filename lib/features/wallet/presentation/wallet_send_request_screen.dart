@@ -5,7 +5,9 @@ import 'package:mobile_scanner/mobile_scanner.dart';
 
 import '../../users/presentation/user_profile_provider.dart';
 import '../data/wallet_service.dart';
+import '../../../core/format_utils.dart';
 import '../../../core/l10n/s.dart';
+import '../../../core/widgets/empty_state.dart';
 
 class WalletSendRequestScreen extends ConsumerStatefulWidget {
   const WalletSendRequestScreen({super.key});
@@ -42,6 +44,91 @@ class _WalletSendRequestScreenState
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
   }
 
+  Future<double?> _showAmountDialog(String title) async {
+    final tr = S.of(context);
+    return showDialog<double>(
+      context: context,
+      barrierDismissible: true,
+      builder: (ctx) {
+        final controller = TextEditingController();
+        String? error;
+        return StatefulBuilder(
+          builder: (ctx, setDialogState) => AlertDialog(
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(22)),
+            scrollable: true,
+            contentPadding: const EdgeInsets.fromLTRB(20, 22, 20, 0),
+            actionsPadding: const EdgeInsets.fromLTRB(20, 0, 20, 18),
+            content: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+              Text(title, textAlign: TextAlign.center, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
+              const SizedBox(height: 20),
+              Text(tr.enterAmount, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: Color(0xFF5A5A5A))),
+              const SizedBox(height: 10),
+              TextField(
+                controller: controller,
+                autofocus: true,
+                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                textInputAction: TextInputAction.done,
+                onSubmitted: (_) {
+                  final value = double.tryParse(controller.text.trim().replaceAll(',', '.'));
+                  if (value != null && value > 0) Navigator.pop(ctx, value);
+                },
+                decoration: InputDecoration(
+                  hintText: tr.amountHint,
+                  prefixText: '\$ ',
+                  errorText: error,
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                  focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: Color(0xFFE84324), width: 1.6)),
+                ),
+              ),
+            ]),
+            actions: [
+              SizedBox(width: double.infinity, height: 48, child: ElevatedButton(
+                style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFE84324), foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
+                onPressed: () {
+                  final value = double.tryParse(controller.text.trim().replaceAll(',', '.'));
+                  if (value == null || value <= 0) { setDialogState(() => error = tr.enterValidAmount); return; }
+                  Navigator.pop(ctx, value);
+                },
+                child: Text(title, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+              )),
+              SizedBox(width: double.infinity, height: 44, child: TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: Text(tr.cancel, style: TextStyle(color: Colors.grey.shade600, fontWeight: FontWeight.w500)),
+              )),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _executeAction() async {
+    final contactId = _selectedContactWalletId;
+    if (contactId == null) { _showSelectContactBanner(); return; }
+    if (_saving) return;
+
+    final tr = S.of(context);
+    final title = _sendSelected ? tr.send : tr.request;
+    final amount = await _showAmountDialog(title);
+    if (!mounted || amount == null) return;
+
+    setState(() => _saving = true);
+    try {
+      if (_sendSelected) {
+        await WalletService.instance.transfer(targetWalletId: contactId, amount: amount);
+        _showInfo(tr.sent(formatMoney(amount), contactId));
+      } else {
+        await WalletService.instance.requestTransfer(fromWalletId: contactId, amount: amount);
+        _showInfo(tr.requestSent(formatMoney(amount)));
+      }
+      setState(() => _selectedContactWalletId = null);
+    } catch (e) {
+      _showInfo(e.toString().replaceFirst('Exception: ', ''));
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
   void _showSelectContactBanner() {
     if (!mounted) return;
     final messenger = ScaffoldMessenger.of(context);
@@ -67,9 +154,10 @@ class _WalletSendRequestScreenState
   }
 
   Future<void> _addContact(String walletId) async {
+    final tr = S.of(context);
     final normalized = _normalizeWalletId(walletId);
     if (normalized.isEmpty) {
-      _showInfo(S.of(context).invalidWalletId);
+      _showInfo(tr.invalidWalletId);
       return;
     }
     if (_saving) return;
@@ -77,7 +165,7 @@ class _WalletSendRequestScreenState
     setState(() => _saving = true);
     try {
       await WalletService.instance.addContact(normalized);
-      _showInfo(S.of(context).contactAdded);
+      _showInfo(tr.contactAdded);
     } catch (e) {
       final msg = e.toString().replaceFirst('Exception: ', '');
       _showInfo(msg);
@@ -95,6 +183,7 @@ class _WalletSendRequestScreenState
   }
 
   Future<void> _showVerificationDialog() async {
+    final tr = S.of(context);
     bool showManualEntry = false;
     String manualValue = '';
     String? error;
@@ -170,7 +259,7 @@ class _WalletSendRequestScreenState
     if (manualWalletId == null) return;
     final normalizedManual = _normalizeWalletId(manualWalletId.isEmpty ? manualValue : manualWalletId);
     if (manualWalletId.isNotEmpty && normalizedManual.isEmpty) {
-      _showInfo(S.of(context).invalidWalletId);
+      _showInfo(tr.invalidWalletId);
       return;
     }
     if (manualWalletId.isEmpty) {
@@ -247,15 +336,11 @@ class _WalletSendRequestScreenState
                             }
                             final docs = snapshot.data!.docs;
                             if (docs.isEmpty) {
-                              return Center(
-                                child: Text(
-                                  tr.noContacts,
-                                  style: const TextStyle(
-                                    fontSize: 20,
-                                    fontWeight: FontWeight.w400,
-                                    color: Color(0xFF2D2D2D),
-                                  ),
-                                ),
+                              return EmptyState(
+                                icon: Icons.people_outline_rounded,
+                                iconColor: const Color(0xFF7C3AED),
+                                title: tr.noContacts,
+                                subtitle: tr.noContactsSubtitle,
                               );
                             }
 
@@ -357,11 +442,9 @@ class _WalletSendRequestScreenState
                       ),
                       elevation: _sendSelected ? 0 : 1.5,
                     ),
-                    onPressed: () {
+                    onPressed: _saving ? null : () {
                       setState(() => _sendSelected = true);
-                      if (_selectedContactWalletId == null) {
-                        _showSelectContactBanner();
-                      }
+                      _executeAction();
                     },
                     child: Text(
                       tr.send,
@@ -385,11 +468,9 @@ class _WalletSendRequestScreenState
                       ),
                       elevation: _sendSelected ? 1.5 : 0,
                     ),
-                    onPressed: () {
+                    onPressed: _saving ? null : () {
                       setState(() => _sendSelected = false);
-                      if (_selectedContactWalletId == null) {
-                        _showSelectContactBanner();
-                      }
+                      _executeAction();
                     },
                     child: Text(
                       tr.request,

@@ -117,7 +117,7 @@ void main() {
 
     test('holiday mode', () {
       final r = _makeReminder(days: [], isHoliday: true);
-      expect(r.subtitle, contains('Festivos'));
+      expect(r.subtitle, contains('Viernes y festivos'));
     });
 
     test('includes minutesBefore', () {
@@ -155,7 +155,7 @@ void main() {
         secondDays: [],
         secondIsHoliday: true,
       );
-      expect(r.subtitleSecondary, contains('Festivos'));
+      expect(r.subtitleSecondary, contains('Viernes y festivos'));
     });
   });
 }

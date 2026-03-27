@@ -13,6 +13,8 @@ import '../features/shell/presentation/app_shell.dart';
 import '../features/shell/presentation/app_drawer.dart';
 import '../features/auth/presentation/login_screen.dart';
 import '../features/auth/presentation/register_screen.dart';
+import '../features/onboarding/presentation/onboarding_screen.dart';
+import '../features/splash/presentation/splash_screen.dart';
 
 import '../features/pushka/presentation/pushka_screen.dart';
 import '../features/wallet/presentation/wallet_screen.dart';
@@ -25,23 +27,12 @@ import '../features/prayers/presentation/prayers_screen.dart';
 import '../features/support/presentation/support_screen.dart';
 import '../features/about/presentation/about_screen.dart';
 import '../features/users/data/user_repository.dart';
+import '../features/notifications/notification_service.dart';
+import '../core/l10n/s.dart';
 import 'theme/app_tokens.dart';
 
 final _auth = FirebaseAuth.instance;
 final _firestore = FirebaseFirestore.instance;
-const _appShareText = '''
-He estado usando esta increíble nueva app Pushka de Tzedaká. ¡Funciona igual que una pushka real! Con solo un toque puedes "poner una moneda", incluso el monto más pequeño, y cuando estés listo, puedes "vaciarla" para hacer una donación.
-
-Toda la Tzedaká va directamente a Colel Chabad, que hace una labor increíble ayudando a los pobres en Israel.
-
-Mírala aquí: https://pushkapp.cc/share
-''';
-
-String _walletShareMessage(String walletId) {
-  return 'Mi código de billetera Pushka es: $walletId\n'
-      'Escanéalo o ingrésalo manualmente para enviar o solicitar tzedaká.\n'
-      'Descargar app: https://pushkapp.cc/share';
-}
 
 Future<String?> _resolveWalletId() async {
   final uid = _auth.currentUser?.uid;
@@ -58,7 +49,7 @@ Future<void> _openWalletQrDialog(BuildContext context) async {
   if (walletId == null) {
     if (!context.mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Inicia sesión para ver tu código QR')),
+      SnackBar(content: Text(S.of(context).signInToSeeQr)),
     );
     return;
   }
@@ -68,6 +59,7 @@ Future<void> _openWalletQrDialog(BuildContext context) async {
     context: context,
     barrierDismissible: true,
     builder: (dialogContext) {
+      final tr = S.of(dialogContext);
       return Dialog(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
         insetPadding: const EdgeInsets.symmetric(horizontal: 32, vertical: 24),
@@ -84,13 +76,13 @@ Future<void> _openWalletQrDialog(BuildContext context) async {
                   color: AppTokens.textPrimary,
                   padding: EdgeInsets.zero,
                   constraints: const BoxConstraints(),
-                  tooltip: 'Cerrar',
+                  tooltip: tr.closeTooltip,
                 ),
               ),
               const SizedBox(height: 4),
-              const Text(
-                'Tu billetera',
-                style: TextStyle(
+              Text(
+                tr.yourWalletDialog,
+                style: const TextStyle(
                   fontSize: 22,
                   fontWeight: FontWeight.w700,
                   color: AppTokens.textPrimary,
@@ -113,8 +105,8 @@ Future<void> _openWalletQrDialog(BuildContext context) async {
               ),
               const SizedBox(height: 14),
               Text(
-                'Tu código de 6 dígitos',
-                style: TextStyle(
+                tr.yourSixDigitCode,
+                style: const TextStyle(
                   fontSize: 14,
                   color: AppTokens.mutedText,
                 ),
@@ -126,17 +118,17 @@ Future<void> _openWalletQrDialog(BuildContext context) async {
                 child: InkWell(
                   borderRadius: BorderRadius.circular(10),
                   onTap: () async {
-                    final message = _walletShareMessage(walletId);
+                    final message = tr.walletShareMessage(walletId);
                     await Clipboard.setData(ClipboardData(text: message));
                     await SharePlus.instance.share(
                       ShareParams(
                         text: message,
-                        subject: 'Mi código de billetera Pushka',
+                        subject: tr.walletShareSubject,
                       ),
                     );
                     if (!dialogContext.mounted) return;
                     ScaffoldMessenger.of(dialogContext).showSnackBar(
-                      const SnackBar(content: Text('Código copiado y listo para compartir')),
+                      SnackBar(content: Text(tr.walletCodeCopied)),
                     );
                   },
                   child: Padding(
@@ -171,80 +163,117 @@ Future<void> _openWalletQrDialog(BuildContext context) async {
 }
 
 final router = GoRouter(
-  initialLocation: '/login',
+  initialLocation: '/splash',
   refreshListenable: GoRouterRefreshStream(_auth.authStateChanges()),
   observers: [
     FirebaseAnalyticsObserver(analytics: FirebaseAnalytics.instance),
   ],
-  redirect: (context, state) {
+  redirect: (context, state) async {
     final loggedIn = _auth.currentUser != null;
-    final goingToAuth =
-        state.matchedLocation == '/login' || state.matchedLocation == '/register';
+    final loc = state.matchedLocation;
+    final goingToAuth = loc == '/login' || loc == '/register' || loc == '/splash';
+    final goingToOnboarding = loc == '/onboarding';
 
     if (!loggedIn && !goingToAuth) return '/login';
-    if (loggedIn && goingToAuth) return '/';
+    if (loggedIn && goingToAuth) {
+      // Check if onboarding is needed
+      final snap = await _firestore
+          .collection('users')
+          .doc(_auth.currentUser!.uid)
+          .get();
+      final done = snap.data()?['onboardingCompleted'] as bool? ?? false;
+      return done ? '/' : '/onboarding';
+    }
+    if (loggedIn && !goingToOnboarding && loc == '/') {
+      // Only check on initial '/' navigation, not on every redirect
+      final snap = await _firestore
+          .collection('users')
+          .doc(_auth.currentUser!.uid)
+          .get();
+      final done = snap.data()?['onboardingCompleted'] as bool? ?? false;
+      if (!done) return '/onboarding';
+    }
     return null;
   },
   routes: [
     GoRoute(
+      path: '/splash',
+      pageBuilder: (context, state) => _fadePage(state, const SplashScreen()),
+    ),
+    GoRoute(
       path: '/login',
-      builder: (context, state) => const LoginScreen(),
+      pageBuilder: (context, state) => _fadePage(state, const LoginScreen()),
     ),
     GoRoute(
       path: '/register',
-      builder: (context, state) => const RegisterScreen(),
+      pageBuilder: (context, state) => _slidePage(state, const RegisterScreen()),
+    ),
+    GoRoute(
+      path: '/onboarding',
+      pageBuilder: (context, state) => _fadePage(state, const OnboardingScreen()),
     ),
     ShellRoute(
-      builder: (context, state, child) {
+      pageBuilder: (context, state, child) {
         final loc = state.uri.toString();
         final current = _drawerItemFromLocation(loc);
         final appBar = _buildAppBar(context, loc);
-        return AppShell(
-          drawer: AppDrawer(current: current),
-          appBar: appBar,
-          child: child,
+        return _fadePage(
+          state,
+          AppShell(
+            drawer: AppDrawer(current: current),
+            appBar: appBar,
+            child: child,
+          ),
         );
       },
       routes: [
-        GoRoute(path: '/', builder: (context, state) => const PushkaScreen()),
+        GoRoute(path: '/', pageBuilder: (context, state) => _fadePage(state, const PushkaScreen())),
         GoRoute(
           path: '/wallet',
-          builder: (context, state) => const WalletScreen(),
+          pageBuilder: (context, state) => _slidePage(state, const WalletScreen()),
           routes: [
             GoRoute(
               path: 'send-request',
-              builder: (context, state) => const WalletSendRequestScreen(),
+              pageBuilder: (context, state) => _slidePage(state, const WalletSendRequestScreen()),
             ),
             GoRoute(
               path: 'auto-refill',
-              builder: (context, state) => const WalletAutoRefillScreen(),
+              pageBuilder: (context, state) => _slidePage(state, const WalletAutoRefillScreen()),
             ),
           ],
         ),
         GoRoute(
           path: '/wallet-auto-refill',
-          builder: (context, state) => const WalletAutoRefillScreen(),
+          pageBuilder: (context, state) => _slidePage(state, const WalletAutoRefillScreen()),
         ),
-        GoRoute(path: '/reminders', builder: (context, state) => const RemindersScreen()),
-        GoRoute(path: '/history', builder: (context, state) => const HistoryScreen()),
-        GoRoute(path: '/settings', builder: (context, state) => const SettingsScreen()),
-        GoRoute(path: '/prayers', builder: (context, state) => const PrayersScreen()),
-        GoRoute(path: '/support', builder: (context, state) => const SupportScreen()),
-        GoRoute(path: '/about', builder: (context, state) => const AboutScreen()),
+        GoRoute(path: '/reminders', pageBuilder: (context, state) => _slidePage(state, const RemindersScreen())),
+        GoRoute(path: '/history', pageBuilder: (context, state) => _slidePage(state, const HistoryScreen())),
+        GoRoute(path: '/settings', pageBuilder: (context, state) => _slidePage(state, const SettingsScreen())),
+        GoRoute(path: '/prayers', pageBuilder: (context, state) => _slidePage(state, const PrayersScreen())),
+        GoRoute(path: '/support', pageBuilder: (context, state) => _slidePage(state, const SupportScreen())),
+        GoRoute(path: '/about', pageBuilder: (context, state) => _slidePage(state, const AboutScreen())),
       ],
     ),
   ],
 );
 
+/// Wire notification taps → GoRouter navigation. Call once after Flutter init.
+void initNotificationNavigation() {
+  NotificationService.instance.onNavigate = (route) {
+    router.go(route);
+  };
+}
+
 PreferredSizeWidget? _buildAppBar(BuildContext context, String location) {
+  final tr = S.of(context);
   if (location == '/') {
     return AppBar(
       elevation: 0,
       backgroundColor: Colors.white,
       foregroundColor: AppTokens.textPrimary,
-      title: const Text(
-        'Mi Pushka',
-        style: TextStyle(fontWeight: FontWeight.w600),
+      title: Text(
+        tr.navPushka,
+        style: const TextStyle(fontWeight: FontWeight.w600),
       ),
       centerTitle: true,
       actions: [
@@ -253,7 +282,7 @@ PreferredSizeWidget? _buildAppBar(BuildContext context, String location) {
           onPressed: () async {
             await SharePlus.instance.share(
               ShareParams(
-                text: _appShareText,
+                text: tr.appShareText,
                 subject: 'Pushka App',
               ),
             );
@@ -263,19 +292,19 @@ PreferredSizeWidget? _buildAppBar(BuildContext context, String location) {
     );
   } else if (location == '/wallet') {
     return AppBar(
-      title: const Text('Billetera'),
+      title: Text(tr.navWallet),
       centerTitle: true,
       actions: [
         IconButton(
           icon: const Icon(Icons.qr_code_scanner_rounded),
           onPressed: () => _openWalletQrDialog(context),
-          tooltip: 'Mostrar mi QR',
+          tooltip: tr.showMyQr,
         ),
       ],
     );
   } else if (location == '/wallet/send-request') {
     return AppBar(
-      title: const Text('Enviar/Solicitar'),
+      title: Text(tr.navSendRequest),
       centerTitle: true,
       leading: IconButton(
         icon: const Icon(Icons.arrow_back),
@@ -285,12 +314,13 @@ PreferredSizeWidget? _buildAppBar(BuildContext context, String location) {
         IconButton(
           icon: const Icon(Icons.qr_code_scanner_rounded),
           onPressed: () => _openWalletQrDialog(context),
+          tooltip: tr.showMyQr,
         ),
       ],
     );
   } else if (location == '/wallet/auto-refill' || location == '/wallet-auto-refill') {
     return AppBar(
-      title: const Text('RECARGA AUTOMÁTICA'),
+      title: Text(tr.navAutoRefill),
       centerTitle: true,
       leading: IconButton(
         icon: const Icon(Icons.arrow_back),
@@ -298,35 +328,17 @@ PreferredSizeWidget? _buildAppBar(BuildContext context, String location) {
       ),
     );
   } else if (location == '/reminders') {
-    return AppBar(
-      title: const Text('Recordatorios'),
-      centerTitle: true,
-    );
+    return AppBar(title: Text(tr.navReminders), centerTitle: true);
   } else if (location == '/history') {
-    return AppBar(
-      title: const Text('Historial'),
-      centerTitle: true,
-    );
+    return AppBar(title: Text(tr.navHistory), centerTitle: true);
   } else if (location == '/settings') {
-    return AppBar(
-      title: const Text('Configuración'),
-      centerTitle: true,
-    );
+    return AppBar(title: Text(tr.navSettings), centerTitle: true);
   } else if (location == '/prayers') {
-    return AppBar(
-      title: const Text('Segulot y Rezos'),
-      centerTitle: true,
-    );
+    return AppBar(title: Text(tr.navPrayers), centerTitle: true);
   } else if (location == '/support') {
-    return AppBar(
-      title: const Text('Soporte'),
-      centerTitle: true,
-    );
+    return AppBar(title: Text(tr.navSupport), centerTitle: true);
   } else if (location == '/about') {
-    return AppBar(
-      title: const Text('Acerca de'),
-      centerTitle: true,
-    );
+    return AppBar(title: Text(tr.aboutTitle), centerTitle: true);
   }
   return null;
 }
@@ -340,6 +352,42 @@ DrawerItem _drawerItemFromLocation(String loc) {
   if (loc.startsWith('/support')) return DrawerItem.support;
   if (loc.startsWith('/about')) return DrawerItem.about;
   return DrawerItem.pushka;
+}
+
+// --- Page transition helpers ---
+
+CustomTransitionPage<void> _fadePage(GoRouterState state, Widget child) {
+  return CustomTransitionPage<void>(
+    key: state.pageKey,
+    child: child,
+    transitionDuration: const Duration(milliseconds: 220),
+    reverseTransitionDuration: const Duration(milliseconds: 180),
+    transitionsBuilder: (context, animation, secondaryAnimation, child) {
+      return FadeTransition(
+        opacity: CurvedAnimation(parent: animation, curve: Curves.easeOut),
+        child: child,
+      );
+    },
+  );
+}
+
+CustomTransitionPage<void> _slidePage(GoRouterState state, Widget child) {
+  return CustomTransitionPage<void>(
+    key: state.pageKey,
+    child: child,
+    transitionDuration: const Duration(milliseconds: 260),
+    reverseTransitionDuration: const Duration(milliseconds: 200),
+    transitionsBuilder: (context, animation, secondaryAnimation, child) {
+      final slide = Tween<Offset>(
+        begin: const Offset(0.06, 0),
+        end: Offset.zero,
+      ).animate(CurvedAnimation(parent: animation, curve: Curves.easeOutCubic));
+      return FadeTransition(
+        opacity: CurvedAnimation(parent: animation, curve: Curves.easeOut),
+        child: SlideTransition(position: slide, child: child),
+      );
+    },
+  );
 }
 
 class GoRouterRefreshStream extends ChangeNotifier {

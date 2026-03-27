@@ -1,6 +1,5 @@
-import 'dart:io';
-
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:sign_in_with_apple/sign_in_with_apple.dart';
@@ -34,8 +33,10 @@ class AuthController {
     if (user != null) {
       await AnalyticsService.instance.setUserId(user.uid);
       await AnalyticsService.instance.logLogin('email');
-      await NotificationService.instance.syncFcmToken(user.uid);
-      NotificationService.instance.listenForTokenRefresh(user.uid);
+      if (!kIsWeb) {
+        await NotificationService.instance.syncFcmToken(user.uid);
+        NotificationService.instance.listenForTokenRefresh(user.uid);
+      }
     }
   }
 
@@ -57,18 +58,24 @@ class AuthController {
     if (user != null) {
       await AnalyticsService.instance.setUserId(user.uid);
       await AnalyticsService.instance.logSignUp('email');
-      await NotificationService.instance.syncFcmToken(user.uid);
-      NotificationService.instance.listenForTokenRefresh(user.uid);
+      if (!kIsWeb) {
+        await NotificationService.instance.syncFcmToken(user.uid);
+        NotificationService.instance.listenForTokenRefresh(user.uid);
+      }
     }
   }
 
   Future<void> signOut() async {
-    try {
-      await GoogleSignIn().signOut();
-    } catch (_) {}
+    if (!kIsWeb) {
+      try {
+        await GoogleSignIn().signOut();
+      } catch (_) {}
+    }
     await _auth.signOut();
     await AnalyticsService.instance.setUserId(null);
-    await NotificationService.instance.stopTokenRefresh();
+    if (!kIsWeb) {
+      await NotificationService.instance.stopTokenRefresh();
+    }
   }
 
   Future<void> sendPasswordResetEmail(String email) async {
@@ -76,21 +83,29 @@ class AuthController {
   }
 
   Future<void> signInWithGoogle() async {
-    final googleUser = await GoogleSignIn().signIn();
-    if (googleUser == null) {
-      throw Exception('Inicio de sesión cancelado');
+    UserCredential result;
+
+    if (kIsWeb) {
+      // Web: use Firebase Auth popup — no extra client ID needed
+      final provider = GoogleAuthProvider();
+      result = await _auth.signInWithPopup(provider);
+    } else {
+      // Mobile: use google_sign_in package
+      final googleUser = await GoogleSignIn().signIn();
+      if (googleUser == null) {
+        throw Exception('Inicio de sesión cancelado');
+      }
+      final googleAuth = await googleUser.authentication;
+      if (googleAuth.idToken == null) {
+        throw Exception('No se recibió idToken de Google');
+      }
+      final credential = GoogleAuthProvider.credential(
+        accessToken: googleAuth.accessToken,
+        idToken: googleAuth.idToken,
+      );
+      result = await _auth.signInWithCredential(credential);
     }
 
-    final googleAuth = await googleUser.authentication;
-    if (googleAuth.idToken == null) {
-      throw Exception('No se recibió idToken de Google');
-    }
-    final credential = GoogleAuthProvider.credential(
-      accessToken: googleAuth.accessToken,
-      idToken: googleAuth.idToken,
-    );
-
-    final result = await _auth.signInWithCredential(credential);
     await _userRepository.ensureUserDocument(
       user: result.user,
       displayName: result.user?.displayName,
@@ -99,16 +114,18 @@ class AuthController {
     if (user != null) {
       await AnalyticsService.instance.setUserId(user.uid);
       await AnalyticsService.instance.logLogin('google');
-      await NotificationService.instance.syncFcmToken(user.uid);
-      NotificationService.instance.listenForTokenRefresh(user.uid);
+      if (!kIsWeb) {
+        await NotificationService.instance.syncFcmToken(user.uid);
+        NotificationService.instance.listenForTokenRefresh(user.uid);
+      }
     }
   }
 
   Future<void> signInWithApple() async {
-    if (!Platform.isIOS) {
-      throw Exception('Inicio de sesión con Apple solo está disponible en iOS');
+    if (kIsWeb) {
+      throw Exception('Inicio de sesión con Apple no está disponible en web');
     }
-
+    // Apple Sign-In is only available on iOS and macOS
     final appleCredential = await SignInWithApple.getAppleIDCredential(
       scopes: [
         AppleIDAuthorizationScopes.email,

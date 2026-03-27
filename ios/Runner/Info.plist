@@ -5,7 +5,7 @@
 		<key>CFBundleDevelopmentRegion</key>
 		<string>$(DEVELOPMENT_LANGUAGE)</string>
 		<key>CFBundleDisplayName</key>
-		<string>Pushka App</string>
+		<string>Pushka</string>
 		<key>CFBundleExecutable</key>
 		<string>$(EXECUTABLE_NAME)</string>
 		<key>CFBundleIdentifier</key>
@@ -57,6 +57,22 @@
 					<string>com.googleusercontent.apps.846580817724-6p5ee1ns0osgvgml7oa6hg2li39dlka3</string>
 				</array>
 			</dict>
+			<dict>
+				<key>CFBundleTypeRole</key>
+				<string>Editor</string>
+				<key>CFBundleURLName</key>
+				<string>pushka-deeplink</string>
+				<key>CFBundleURLSchemes</key>
+				<array>
+					<string>pushka</string>
+				</array>
+			</dict>
 		</array>
+		<key>NSCameraUsageDescription</key>
+		<string>Pushka uses the camera to scan wallet QR codes.</string>
+		<key>NSFaceIDUsageDescription</key>
+		<string>Pushka uses Face ID to confirm donations securely.</string>
+		<key>NSPhotoLibraryUsageDescription</key>
+		<string>Pushka may access your photo library to save QR codes.</string>
 	</dict>
 </plist>

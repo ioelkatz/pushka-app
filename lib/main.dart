@@ -13,6 +13,8 @@ import 'app/app.dart';
 import 'features/notifications/notification_service.dart';
 import 'config/stripe_config.dart';
 import 'features/feedback/feedback_service.dart';
+import 'core/hive_cache.dart';
+import 'app/router.dart' show initNotificationNavigation;
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -68,6 +70,8 @@ Future<void> main() async {
   }
 
   await FeedbackService.instance.init();
+  await HiveCache.instance.init();
+  if (!kIsWeb) initNotificationNavigation();
 
   runApp(
     const ProviderScope(

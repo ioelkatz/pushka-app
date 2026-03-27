@@ -220,19 +220,18 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
                       onPressed: user == null
                           ? null
                           : () async {
+                              final messenger = ScaffoldMessenger.of(context);
                               try {
                                 await _saveConfig(user.uid);
-                              if (mounted) {
-                                ScaffoldMessenger.of(context).showSnackBar(
+                                if (!mounted) return;
+                                messenger.showSnackBar(
                                   SnackBar(content: Text(tr.settingsSaved)),
                                 );
-                              }
                               } catch (_) {
-                                if (mounted) {
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                    SnackBar(content: Text(tr.saveError)),
-                                  );
-                                }
+                                if (!mounted) return;
+                                messenger.showSnackBar(
+                                  SnackBar(content: Text(tr.saveError)),
+                                );
                               }
                             },
                       style: OutlinedButton.styleFrom(
@@ -286,6 +285,7 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
 
   Future<void> _saveConfig(String uid) async {
     final repo = ref.read(userRepositoryProvider);
+    final nextRunAt = _frequency == 'manual' ? null : _computeNextRunAt();
     await repo.updateSettings(
       uid: uid,
       autoEmptyFrequency: _frequency,
@@ -294,7 +294,54 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
       autoEmptyTopOffEnabled: _frequency == 'manual' ? false : _topOffEnabled,
       autoEmptyTopOffAmount:
           _frequency == 'manual' ? null : (_topOffAmount ?? 0),
+      autoEmptyNextRunAt: nextRunAt,
+      autoEmptyClearNextRunAt: _frequency == 'manual',
     );
+  }
+
+  DateTime _computeNextRunAt() {
+    final now = DateTime.now().toUtc();
+    if (_frequency == 'weekly') {
+      var next = DateTime.utc(now.year, now.month, now.day, 8, 0, 0);
+      while (next.weekday != _weekday || !next.isAfter(now)) {
+        next = next.add(const Duration(days: 1));
+      }
+      return next;
+    }
+    if (_frequency == 'monthly') {
+      var next = DateTime.utc(now.year, now.month, _dayOfMonth, 8, 0, 0);
+      if (!next.isAfter(now)) {
+        final nm = now.month == 12 ? 1 : now.month + 1;
+        final ny = now.month == 12 ? now.year + 1 : now.year;
+        next = DateTime.utc(ny, nm, _dayOfMonth, 8, 0, 0);
+      }
+      return next;
+    }
+    if (_frequency == 'erev_rosh_chodesh') {
+      return _computeNextErevRoshChodesh(now);
+    }
+    return now.add(const Duration(days: 30));
+  }
+
+  DateTime _computeNextErevRoshChodesh(DateTime now) {
+    // months are 0-indexed to match the Cloud Function table (JS convention)
+    const table = <int, List<List<int>>>{
+      2025: [[0,29],[1,27],[2,29],[3,27],[4,27],[5,25],[6,25],[7,23],[9,21],[10,20],[11,19]],
+      2026: [[0,18],[1,16],[2,18],[3,16],[4,16],[5,14],[6,14],[7,12],[9,10],[10,9],[11,9]],
+      2027: [[0,8],[1,6],[2,8],[3,7],[4,6],[5,5],[6,4],[7,3],[8,1],[9,30],[10,29],[11,29]],
+      2028: [[0,28],[1,26],[2,27],[3,25],[4,25],[5,23],[6,23],[7,21],[9,19],[10,18],[11,17]],
+      2029: [[0,16],[1,14],[2,16],[3,14],[4,14],[5,12],[6,12],[7,10],[9,8],[10,7],[11,6]],
+      2030: [[0,4],[1,2],[2,4],[3,3],[4,2],[5,1],[5,30],[6,30],[7,28],[9,26],[10,25],[11,25]],
+    };
+    for (final year in [now.year, now.year + 1]) {
+      final yearDates = table[year];
+      if (yearDates == null) continue;
+      for (final md in yearDates) {
+        final candidate = DateTime.utc(year, md[0] + 1, md[1], 8, 0, 0);
+        if (candidate.isAfter(now)) return candidate;
+      }
+    }
+    return now.add(const Duration(days: 30));
   }
 
   Future<void> _showWeeklyDialog() async {

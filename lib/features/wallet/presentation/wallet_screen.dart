@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_stripe/flutter_stripe.dart';
+import 'package:flutter_windowmanager/flutter_windowmanager.dart';
 import 'package:go_router/go_router.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 
@@ -24,6 +25,30 @@ class WalletScreen extends ConsumerStatefulWidget {
 class _WalletScreenState extends ConsumerState<WalletScreen> {
   bool _processing = false;
 
+  @override
+  void initState() {
+    super.initState();
+    _setSecure(true);
+  }
+
+  @override
+  void dispose() {
+    _setSecure(false);
+    super.dispose();
+  }
+
+  Future<void> _setSecure(bool secure) async {
+    try {
+      if (secure) {
+        await FlutterWindowManager.addFlags(FlutterWindowManager.FLAG_SECURE);
+      } else {
+        await FlutterWindowManager.clearFlags(FlutterWindowManager.FLAG_SECURE);
+      }
+    } catch (_) {
+      // Not supported on this platform — ignore silently
+    }
+  }
+
   void _showInfo(String message) {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
@@ -31,6 +56,7 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
 
   Future<double?> _showAmountDialog({
     String? hint,
+    String currencySymbol = '\$',
   }) async {
     final tr = S.of(context);
     final hintText = hint ?? tr.amountHint;
@@ -61,7 +87,7 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
                   if (value != null && value > 0) Navigator.pop(ctx, value);
                 },
                 decoration: InputDecoration(
-                  hintText: hintText, prefixText: '\$ ', errorText: error,
+                  hintText: hintText, prefixText: '$currencySymbol ', errorText: error,
                   border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
                   focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: Color(0xFFE05A4F), width: 1.6)),
                 ),
@@ -141,9 +167,6 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
 
   Future<void> _addFunds() async {
     if (_processing) return;
-    final amount = await _showAmountDialog();
-    if (!mounted || amount == null) return;
-
     final user = ref.read(currentUserProvider);
     final profile = ref.read(userProfileProvider).valueOrNull;
     if (user == null) {
@@ -151,9 +174,12 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
       return;
     }
 
+    final currency = ((profile?['currencyCode'] as String?) ?? 'USD').toLowerCase();
+    final amount = await _showAmountDialog(currencySymbol: _currencySymbol(currency));
+    if (!mounted || amount == null) return;
+
     setState(() => _processing = true);
     try {
-      final currency = ((profile?['currencyCode'] as String?) ?? 'USD').toLowerCase();
       final amountCents = (amount * 100).round();
       final minCents = _minAmountCentsForCurrency(currency);
       if (amountCents < minCents) {
@@ -235,14 +261,32 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
             ),
           ),
           SizedBox(height: compact ? 4 : 8),
-          Text(
-            tr.learnMore,
-            textAlign: TextAlign.center,
-            style: const TextStyle(
-              color: blue,
-              fontWeight: FontWeight.w600,
-              decoration: TextDecoration.underline,
-              decorationThickness: 1.2,
+          GestureDetector(
+            onTap: () {
+              showDialog<void>(
+                context: context,
+                builder: (ctx) => AlertDialog(
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                  title: Text(tr.walletInfoTitle, style: const TextStyle(fontWeight: FontWeight.w700)),
+                  content: Text(tr.walletInfoBody, style: const TextStyle(height: 1.6)),
+                  actions: [
+                    TextButton(
+                      onPressed: () => Navigator.pop(ctx),
+                      child: const Text('OK'),
+                    ),
+                  ],
+                ),
+              );
+            },
+            child: Text(
+              tr.learnMore,
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                color: blue,
+                fontWeight: FontWeight.w600,
+                decoration: TextDecoration.underline,
+                decorationThickness: 1.2,
+              ),
             ),
           ),
 

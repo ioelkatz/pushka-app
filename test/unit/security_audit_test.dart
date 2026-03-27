@@ -24,14 +24,12 @@ void main() {
     test('different UIDs can produce same wallet ID (collision demo)', () {
       // Brute-force search for a collision to prove the vulnerability
       final seen = <String, String>{};
-      bool collisionFound = false;
 
       // With 900k possible values, we expect collision within ~1200 attempts
       for (int i = 0; i < 5000; i++) {
         final uid = 'user_$i';
         final walletId = UserRepository.walletIdFromUid(uid);
         if (seen.containsKey(walletId)) {
-          collisionFound = true;
           break;
         }
         seen[walletId] = uid;

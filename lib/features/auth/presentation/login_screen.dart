@@ -1,4 +1,5 @@
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -135,15 +136,17 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                   label: Text(_tr.continueGoogle),
                 ),
               ),
-              const SizedBox(height: 12),
-              SizedBox(
-                width: double.infinity,
-                child: OutlinedButton.icon(
-                  onPressed: _isLoading ? null : _signInWithApple,
-                  icon: const Icon(Icons.apple),
-                  label: Text(_tr.continueApple),
+              if (!kIsWeb) ...[
+                const SizedBox(height: 12),
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton.icon(
+                    onPressed: _isLoading ? null : _signInWithApple,
+                    icon: const Icon(Icons.apple),
+                    label: Text(_tr.continueApple),
+                  ),
                 ),
-              ),
+              ],
               const SizedBox(height: 24),
 
               Row(

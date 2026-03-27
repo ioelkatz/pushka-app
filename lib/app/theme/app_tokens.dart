@@ -39,4 +39,7 @@ class AppTokens {
 
   // Sizes
   static const double buttonHeight = 48;
+
+  // App version — single source of truth
+  static const String appVersion = '1.0.0';
 }

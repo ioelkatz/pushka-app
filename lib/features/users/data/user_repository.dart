@@ -62,6 +62,7 @@ class UserRepository {
       'autoEmptyTopOffAmount': null,
       'streakCount': 0,
       'lastStreakDate': null,
+      'language': 'es',
     }, SetOptions(merge: true));
   }
 
@@ -137,6 +138,7 @@ class UserRepository {
 
   Future<void> updateSettings({
     required String uid,
+    String? language,
     double? pushkaGoal,
     double? presetAmount,
     List<double>? presetAmounts,
@@ -167,6 +169,7 @@ class UserRepository {
       'updatedAt': FieldValue.serverTimestamp(),
     };
 
+    if (language != null) data['language'] = language;
     if (pushkaGoal != null) data['pushkaGoal'] = pushkaGoal;
     if (presetAmount != null) data['presetAmount'] = presetAmount;
     if (presetAmounts != null) data['presetAmounts'] = presetAmounts;

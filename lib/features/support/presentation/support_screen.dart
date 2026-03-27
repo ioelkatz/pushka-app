@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../../../app/theme/app_tokens.dart';
 import '../../../core/l10n/s.dart';
 
 class SupportScreen extends StatelessWidget {
@@ -101,7 +102,7 @@ class SupportScreen extends StatelessWidget {
           ),
           const SizedBox(height: 8),
           const Text(
-            '3.3.1',
+            AppTokens.appVersion,
             style: TextStyle(
               fontSize: 18,
               fontWeight: FontWeight.w600,
