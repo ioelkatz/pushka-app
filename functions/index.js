@@ -112,7 +112,7 @@ async function getUserLanguage(uid) {
   try {
     const snap = await db.collection("users").doc(uid).get();
     const lang = snap.data()?.language;
-    if (lang === "en" || lang === "fr") return lang;
+    if (lang === "en" || lang === "fr" || lang === "he") return lang;
   } catch (_) { /* default */ }
   return "es";
 }
@@ -279,9 +279,12 @@ exports.sendTestNotification = onCall({ enforceAppCheck: true }, async (request)
     throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
   }
 
+  // 5 test notifications per hour per user
+  await enforceRateLimit(request.auth.uid, "sendTestNotification", 5, 3600);
+
   const uid = request.auth.uid;
-  const title = request.data?.title || "Pushka";
-  const body = request.data?.body || "Notificación de prueba";
+  const title = String(request.data?.title || "Pushka").slice(0, 100);
+  const body = String(request.data?.body || "Notificación de prueba").slice(0, 500);
 
   const response = await sendToUser(uid, {
     notification: { title, body },
@@ -310,7 +313,8 @@ exports.createPaymentIntent = onCall(
 
   const amount = Number(request.data?.amount || 0);
   const currency = (request.data?.currency || "usd").toLowerCase();
-  const customerEmail = request.data?.customerEmail || null;
+  const rawEmail = request.data?.customerEmail || null;
+  const customerEmail = rawEmail ? String(rawEmail).slice(0, 254) : null;
   const purpose = String(request.data?.purpose || "donation").toLowerCase();
   if (purpose !== "donation" && purpose !== "wallet_topup" && purpose !== "pushka_empty") {
     throw new HttpsError("invalid-argument", "Propósito de pago inválido.");
@@ -577,6 +581,13 @@ exports.onTransactionCreated = onDocumentCreated(
         walletFillNeg: `Transfert envoyé : ${fmt(abs)}`,
         default:       "Nouvelle transaction enregistrée",
       },
+      he: {
+        tzedaka:       `תודה על תרומתך! ${fmt(amount)}`,
+        pushkaEmpty:   `הפושקה שלך רוקנה. תרומה: ${fmt(amount)}`,
+        walletFillPos: `הארנק נטען ב-${fmt(amount)}`,
+        walletFillNeg: `העברה נשלחה: ${fmt(abs)}`,
+        default:       "עסקה חדשה נרשמה",
+      },
     };
 
     const m = messages[lang];
@@ -602,6 +613,9 @@ exports.walletTopUpFromPaymentIntent = onCall(
     if (!stripeSecret.value()) {
       throw new HttpsError("failed-precondition", "Stripe no configurado.");
     }
+
+    // 20 top-up confirmations per hour per user
+    await enforceRateLimit(request.auth.uid, "walletTopUpFromPaymentIntent", 20, 3600);
 
     const uid = request.auth.uid;
     const paymentIntentId = String(request.data?.paymentIntentId || "").trim();
@@ -687,8 +701,8 @@ exports.walletTransfer = onCall(
     const targetWalletId = String(request.data?.targetWalletId || "").trim();
     const amount = Number(request.data?.amount || 0);
 
-    if (!targetWalletId) {
-      throw new HttpsError("invalid-argument", "ID destino inválido.");
+    if (!targetWalletId || !/^\d{6}$/.test(targetWalletId)) {
+      throw new HttpsError("invalid-argument", "ID destino debe ser de 6 dígitos.");
     }
     if (!Number.isFinite(amount) || amount <= 0) {
       throw new HttpsError("invalid-argument", "Monto inválido.");
@@ -784,8 +798,8 @@ exports.walletRequestTransfer = onCall(
     const fromWalletId = String(request.data?.fromWalletId || "").trim();
     const amount = Number(request.data?.amount || 0);
 
-    if (!fromWalletId) {
-      throw new HttpsError("invalid-argument", "ID de billetera inválido.");
+    if (!fromWalletId || !/^\d{6}$/.test(fromWalletId)) {
+      throw new HttpsError("invalid-argument", "ID de billetera debe ser de 6 dígitos.");
     }
     if (!Number.isFinite(amount) || amount <= 0) {
       throw new HttpsError("invalid-argument", "Monto inválido.");
@@ -825,11 +839,12 @@ exports.walletRequestTransfer = onCall(
 
     // Notify target user (in their language)
     const targetLang = await getUserLanguage(targetUid);
-    const requestTitles = { es: "Solicitud de Tzedaká", en: "Tzedakah Request", fr: "Demande de Tzedaka" };
+    const requestTitles = { es: "Solicitud de Tzedaká", en: "Tzedakah Request", fr: "Demande de Tzedaka", he: "בקשת צדקה" };
     const requestBodies = {
       es: `${requesterWalletId} te solicita $${amount.toFixed(2)}`,
       en: `${requesterWalletId} is requesting $${amount.toFixed(2)} from you`,
       fr: `${requesterWalletId} vous demande $${amount.toFixed(2)}`,
+      he: `${requesterWalletId} מבקש $${amount.toFixed(2)} ממך`,
     };
     await sendToUser(targetUid, {
       notification: {
@@ -849,6 +864,9 @@ exports.addWalletContact = onCall(
     if (!request.auth?.uid) {
       throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
     }
+
+    // 30 contact additions per hour per user
+    await enforceRateLimit(request.auth.uid, "addWalletContact", 30, 3600);
 
     const uid = request.auth.uid;
     const walletId = String(request.data?.walletId || "").trim();
@@ -1098,11 +1116,12 @@ exports.processWalletAutoTopUps = onSchedule(
         // Notify user their wallet was auto-topped up (in their language)
         if (toppedUpAmount > 0) {
           const topUpLang = await getUserLanguage(doc.id);
-          const topUpTitles = { es: "Billetera recargada", en: "Wallet topped up", fr: "Portefeuille rechargé" };
+          const topUpTitles = { es: "Billetera recargada", en: "Wallet topped up", fr: "Portefeuille rechargé", he: "הארנק נטען" };
           const topUpBodies = {
             es: `Tu billetera fue recargada automáticamente con $${toppedUpAmount.toFixed(2)}`,
             en: `Your wallet was automatically topped up with $${toppedUpAmount.toFixed(2)}`,
             fr: `Votre portefeuille a été rechargé automatiquement de $${toppedUpAmount.toFixed(2)}`,
+            he: `הארנק שלך נטען אוטומטית ב-$${toppedUpAmount.toFixed(2)}`,
           };
           await sendToUser(doc.id, {
             notification: {
@@ -1249,11 +1268,12 @@ exports.processPushkaAutoEmpty = onSchedule(
             if (tokens.length > 0) {
               const emptyLang = await getUserLanguage(doc.id);
               const amtStr = formatAmount(emptiedAmount * 100);
-              const emptyTitles = { es: "Pushka vaciada ✡", en: "Pushka emptied ✡", fr: "Pushka vidée ✡" };
+              const emptyTitles = { es: "Pushka vaciada ✡", en: "Pushka emptied ✡", fr: "Pushka vidée ✡", he: "הפושקה רוקנה ✡" };
               const emptyBodies = {
                 es: `Tu Pushka fue vaciada automáticamente. Donación registrada: $${amtStr}`,
                 en: `Your Pushka was automatically emptied. Donation recorded: $${amtStr}`,
                 fr: `Votre Pushka a été vidée automatiquement. Don enregistré : $${amtStr}`,
+                he: `הפושקה שלך רוקנה אוטומטית. תרומה שנרשמה: $${amtStr}`,
               };
               await messaging.sendEachForMulticast({
                 notification: {

@@ -12,33 +12,6 @@ class PrayersScreen extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Nota de ejemplo
-          Container(
-            padding: const EdgeInsets.all(12),
-            margin: const EdgeInsets.only(bottom: 20),
-            decoration: BoxDecoration(
-              color: Colors.orange.shade50,
-              border: Border.all(color: Colors.orange.shade200),
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: Row(
-              children: [
-                Icon(Icons.info_outline, color: Colors.orange.shade700, size: 20),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    tr.prayersNote,
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: Colors.orange.shade900,
-                      fontStyle: FontStyle.italic,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-
           // Título en Hebreo
           const Text(
             'אלקא דמאיר ענני',

@@ -143,7 +143,8 @@ service cloud.firestore {
               (request.resource.data.language is string &&
                   (request.resource.data.language == 'es' ||
                       request.resource.data.language == 'en' ||
-                      request.resource.data.language == 'fr')));
+                      request.resource.data.language == 'fr' ||
+                      request.resource.data.language == 'he')));
     }
 
     function validTransactionDoc() {
@@ -279,6 +280,10 @@ service cloud.firestore {
       match /walletContacts/{contactId} {
         allow read: if isOwner(uid);
         allow write: if false;
+      }
+
+      match /walletRequests/{requestId} {
+        allow read, write: if false;
       }
     }
   }
