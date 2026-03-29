@@ -181,7 +181,9 @@ final router = GoRouter(
   redirect: (context, state) async {
     final loggedIn = _auth.currentUser != null;
     final loc = state.matchedLocation;
-    final goingToAuth = loc == '/login' || loc == '/register' || loc == '/splash';
+    // Always let the splash run — it handles its own navigation when done
+    if (loc == '/splash') return null;
+    final goingToAuth = loc == '/login' || loc == '/register';
     if (!loggedIn && !goingToAuth) return '/login';
     if (loggedIn && goingToAuth) {
       // Check if onboarding is needed
