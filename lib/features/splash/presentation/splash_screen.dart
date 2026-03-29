@@ -6,7 +6,7 @@ import 'package:go_router/go_router.dart';
 import 'package:lottie/lottie.dart';
 
 // ---------------------------------------------------------------------------
-// Splash screen — premium experience
+// Splash screen — seamless blue gradient, logo blends with background
 // ---------------------------------------------------------------------------
 
 class SplashScreen extends StatefulWidget {
@@ -24,9 +24,8 @@ class _SplashScreenState extends State<SplashScreen>
   late final Animation<double> _glowAnim;
   late final AnimationController _flashCtrl;
 
-  static const _gold = Color(0xFFD4AF37);
-  static const _blue = Color(0xFF1A4A9E);
-  static const _navyBg = Color(0xFF060F1A);
+  static const _logoBlueDark = Color(0xFF1A4FA8);
+  static const _gold         = Color(0xFFD4AF37);
 
   @override
   void initState() {
@@ -34,13 +33,13 @@ class _SplashScreenState extends State<SplashScreen>
 
     _glowCtrl = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 2000),
+      duration: const Duration(milliseconds: 2200),
     )..repeat(reverse: true);
     _glowAnim = CurvedAnimation(parent: _glowCtrl, curve: Curves.easeInOut);
 
     _flashCtrl = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 800),
+      duration: const Duration(milliseconds: 900),
     );
 
     _runSequence();
@@ -54,8 +53,7 @@ class _SplashScreenState extends State<SplashScreen>
   }
 
   Future<void> _runSequence() async {
-    // Coin drops at 900ms — everything else enters immediately via flutter_animate
-    await Future.delayed(const Duration(milliseconds: 900));
+    await Future.delayed(const Duration(milliseconds: 950));
     if (!mounted) return;
     setState(() => _showCoin = true);
     _flashCtrl.forward();
@@ -63,8 +61,6 @@ class _SplashScreenState extends State<SplashScreen>
       final player = AudioPlayer();
       await player.play(AssetSource('sounds/coin.wav'));
     } catch (_) {}
-
-    // Navigate after user has time to enjoy the full screen
     await Future.delayed(const Duration(milliseconds: 2400));
     if (!mounted) return;
     context.go('/');
@@ -72,66 +68,67 @@ class _SplashScreenState extends State<SplashScreen>
 
   @override
   Widget build(BuildContext context) {
-    final size = MediaQuery.sizeOf(context);
-
     return Scaffold(
-      backgroundColor: _navyBg,
+      // Base colour matches the mid-logo blue so there is never a flash
+      backgroundColor: _logoBlueDark,
       body: Stack(
         fit: StackFit.expand,
         children: [
-          // ── Rich dark gradient ────────────────────────────────────────────
+          // ── Seamless background: same blues as the logo, radiating out ───
+          // Center (behind logo) = logo's own blue → edges = deep navy
           const DecoratedBox(
             decoration: BoxDecoration(
               gradient: RadialGradient(
-                center: Alignment(0, -0.2),
-                radius: 1.1,
+                center: Alignment(0, -0.18),
+                radius: 1.15,
                 colors: [
-                  Color(0xFF0F2040),
-                  Color(0xFF060F1A),
+                  Color(0xFF5BA4EE), // highlight — top of logo
+                  Color(0xFF3A7FD8), // mid — body of logo
+                  Color(0xFF1A4FA8), // lower — logo shadow
+                  Color(0xFF0C2250), // screen lower-mid
+                  Color(0xFF060E22), // deep bottom edge
                 ],
+                stops: [0.0, 0.22, 0.45, 0.72, 1.0],
               ),
             ),
           ),
 
-          // ── Wide gold glow at bottom ──────────────────────────────────────
+          // ── Subtle gold warmth at the very bottom ────────────────────────
           Positioned(
-            bottom: -100,
+            bottom: -80,
             left: 0,
             right: 0,
             child: Container(
-              height: size.height * 0.5,
+              height: 280,
               decoration: BoxDecoration(
                 gradient: RadialGradient(
                   colors: [
-                    _gold.withValues(alpha: 0.11),
-                    _gold.withValues(alpha: 0.04),
+                    _gold.withValues(alpha: 0.07),
                     Colors.transparent,
                   ],
-                  stops: const [0.0, 0.4, 1.0],
-                  radius: 0.65,
+                  radius: 0.7,
                 ),
               ),
             ),
-          ).animate().fadeIn(duration: 600.ms),
+          ),
 
-          // ── Floating gold particles ───────────────────────────────────────
+          // ── Gold particles drifting upward ───────────────────────────────
           const _GoldParticles(),
 
-          // ── Gold radial flash on coin drop ────────────────────────────────
+          // ── Soft gold radial burst when coin drops ────────────────────────
           AnimatedBuilder(
             animation: _flashCtrl,
             builder: (_, _) {
               final v = _flashCtrl.value;
-              final alpha = v < 0.3
-                  ? v / 0.3
-                  : (1.0 - v) / 0.7;
+              final alpha =
+                  v < 0.30 ? v / 0.30 : (1.0 - v) / 0.70;
               return DecoratedBox(
                 decoration: BoxDecoration(
                   gradient: RadialGradient(
-                    center: const Alignment(0, -0.25),
-                    radius: 0.65,
+                    center: const Alignment(0, -0.30),
+                    radius: 0.55,
                     colors: [
-                      _gold.withValues(alpha: 0.22 * alpha),
+                      _gold.withValues(alpha: 0.28 * alpha),
                       Colors.transparent,
                     ],
                   ),
@@ -140,116 +137,64 @@ class _SplashScreenState extends State<SplashScreen>
             },
           ),
 
-          // ── Main content ──────────────────────────────────────────────────
+          // ── Soft pulsing halo behind logo (same blues, no visible edge) ──
+          AnimatedBuilder(
+            animation: _glowAnim,
+            builder: (_, _) {
+              final r = 180.0 + _glowAnim.value * 38;
+              return Center(
+                child: SizedBox(
+                  width: r,
+                  height: r,
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      gradient: RadialGradient(
+                        colors: [
+                          // same family as background → invisible edge
+                          Color(0xFF5BA4EE)
+                              .withValues(alpha: 0.18 + _glowAnim.value * 0.14),
+                          Colors.transparent,
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              );
+            },
+          ).animate().fadeIn(duration: 900.ms),
+
+          // ── Main content ─────────────────────────────────────────────────
           Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              // ── Logo area ────────────────────────────────────────────────
+              // ── Logo (no rings, no circular frame — sits inside gradient) ─
               SizedBox(
-                width: 230,
-                height: 270,
+                width: 210,
+                height: 250,
                 child: Stack(
                   alignment: Alignment.center,
                   children: [
-                    // Outer blue glow pulse
-                    AnimatedBuilder(
-                      animation: _glowAnim,
-                      builder: (_, _) => Container(
-                        width: 210 + _glowAnim.value * 40,
-                        height: 210 + _glowAnim.value * 40,
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          gradient: RadialGradient(
-                            colors: [
-                              _blue.withValues(
-                                  alpha: 0.16 + _glowAnim.value * 0.12),
-                              Colors.transparent,
-                            ],
-                          ),
-                        ),
-                      ),
-                    ).animate().fadeIn(duration: 1000.ms),
-
-                    // Inner gold glow pulse
-                    AnimatedBuilder(
-                      animation: _glowAnim,
-                      builder: (_, _) => Container(
-                        width: 140 + _glowAnim.value * 22,
-                        height: 140 + _glowAnim.value * 22,
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          gradient: RadialGradient(
-                            colors: [
-                              _gold.withValues(
-                                  alpha: 0.12 + _glowAnim.value * 0.10),
-                              Colors.transparent,
-                            ],
-                          ),
-                        ),
-                      ),
-                    ).animate().fadeIn(duration: 700.ms, delay: 150.ms),
-
-                    // Outer gold ring
-                    Container(
-                      width: 192,
-                      height: 192,
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        border: Border.all(
-                          color: _gold.withValues(alpha: 0.20),
-                          width: 1.0,
-                        ),
-                      ),
-                    )
-                        .animate()
-                        .fadeIn(duration: 800.ms, delay: 100.ms)
-                        .scale(
-                          begin: const Offset(0.6, 0.6),
-                          end: const Offset(1.0, 1.0),
-                          duration: 700.ms,
-                          curve: Curves.easeOutCubic,
-                        ),
-
-                    // Inner gold ring
-                    Container(
-                      width: 165,
-                      height: 165,
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        border: Border.all(
-                          color: _gold.withValues(alpha: 0.30),
-                          width: 1.5,
-                        ),
-                      ),
-                    )
-                        .animate()
-                        .fadeIn(duration: 700.ms, delay: 50.ms)
-                        .scale(
-                          begin: const Offset(0.6, 0.6),
-                          end: const Offset(1.0, 1.0),
-                          duration: 650.ms,
-                          curve: Curves.easeOutCubic,
-                        ),
-
-                    // Pushka logo
+                    // splash_icon.png — the 3-D blue box with star + coin slot
+                    // Its own blue background blends with the radial gradient
                     Positioned(
-                      bottom: 24,
+                      bottom: 20,
                       child: Image.asset(
-                        'assets/images/pushka.png',
-                        width: 148,
-                        height: 148,
+                        'assets/images/splash_icon.png',
+                        width: 168,
+                        height: 168,
                       )
                           .animate()
                           .fadeIn(duration: 500.ms, curve: Curves.easeOut)
                           .scale(
-                            begin: const Offset(0.65, 0.65),
+                            begin: const Offset(0.72, 0.72),
                             end: const Offset(1.0, 1.0),
-                            duration: 600.ms,
+                            duration: 650.ms,
                             curve: Curves.easeOutBack,
                           ),
                     ),
 
-                    // Coin Lottie
+                    // Coin Lottie drops into slot
                     if (_showCoin)
                       Positioned(
                         top: 0,
@@ -265,9 +210,9 @@ class _SplashScreenState extends State<SplashScreen>
                 ),
               ),
 
-              const SizedBox(height: 48),
+              const SizedBox(height: 44),
 
-              // ── PUSHKA — gold shimmer ─────────────────────────────────────
+              // ── PUSHKA — gold-shimmer letters ────────────────────────────
               ShaderMask(
                 shaderCallback: (bounds) => const LinearGradient(
                   colors: [
@@ -277,7 +222,7 @@ class _SplashScreenState extends State<SplashScreen>
                     Colors.white,
                     Color(0xFFD4AF37),
                   ],
-                  stops: [0.0, 0.25, 0.5, 0.75, 1.0],
+                  stops: [0.0, 0.25, 0.50, 0.75, 1.0],
                 ).createShader(bounds),
                 child: const Text(
                   'PUSHKA',
@@ -290,18 +235,18 @@ class _SplashScreenState extends State<SplashScreen>
                 ),
               )
                   .animate()
-                  .fadeIn(duration: 700.ms, delay: 200.ms)
+                  .fadeIn(duration: 700.ms, delay: 150.ms)
                   .slideY(
-                    begin: 0.4,
+                    begin: 0.35,
                     end: 0.0,
                     duration: 700.ms,
-                    delay: 200.ms,
+                    delay: 150.ms,
                     curve: Curves.easeOutCubic,
                   ),
 
-              const SizedBox(height: 20),
+              const SizedBox(height: 18),
 
-              // ── Gold divider ──────────────────────────────────────────────
+              // ── Thin gold divider ─────────────────────────────────────────
               Container(
                 width: 90,
                 height: 1,
@@ -309,22 +254,20 @@ class _SplashScreenState extends State<SplashScreen>
                   gradient: LinearGradient(
                     colors: [
                       Colors.transparent,
-                      _gold.withValues(alpha: 0.90),
+                      _gold.withValues(alpha: 0.85),
                       Colors.transparent,
                     ],
                   ),
                 ),
-              )
-                  .animate()
-                  .fadeIn(duration: 900.ms, delay: 350.ms),
+              ).animate().fadeIn(duration: 900.ms, delay: 300.ms),
 
-              const SizedBox(height: 20),
+              const SizedBox(height: 18),
 
               // ── Hebrew tagline ────────────────────────────────────────────
               Text(
                 'צדקת רבי מאיר בעל הנס',
                 style: TextStyle(
-                  color: Colors.white.withValues(alpha: 0.68),
+                  color: Colors.white.withValues(alpha: 0.72),
                   fontSize: 15,
                   letterSpacing: 1.2,
                   height: 1.4,
@@ -332,18 +275,18 @@ class _SplashScreenState extends State<SplashScreen>
                 textDirection: TextDirection.rtl,
               )
                   .animate()
-                  .fadeIn(duration: 900.ms, delay: 400.ms)
+                  .fadeIn(duration: 900.ms, delay: 350.ms)
                   .slideY(
                     begin: 0.3,
                     end: 0.0,
                     duration: 700.ms,
-                    delay: 400.ms,
+                    delay: 350.ms,
                     curve: Curves.easeOutCubic,
                   ),
 
               const SizedBox(height: 52),
 
-              // ── COLEL CHABAD ─────────────────────────────────────────────
+              // ── COLEL CHABAD ──────────────────────────────────────────────
               Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
@@ -356,7 +299,7 @@ class _SplashScreenState extends State<SplashScreen>
                   Text(
                     'COLEL CHABAD',
                     style: TextStyle(
-                      color: _gold.withValues(alpha: 0.60),
+                      color: _gold.withValues(alpha: 0.65),
                       fontSize: 11,
                       letterSpacing: 5,
                       fontWeight: FontWeight.w600,
@@ -369,7 +312,7 @@ class _SplashScreenState extends State<SplashScreen>
                     color: _gold.withValues(alpha: 0.40),
                   ),
                 ],
-              ).animate().fadeIn(duration: 1100.ms, delay: 550.ms),
+              ).animate().fadeIn(duration: 1100.ms, delay: 500.ms),
             ],
           ),
         ],
