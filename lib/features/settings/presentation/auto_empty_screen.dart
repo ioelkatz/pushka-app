@@ -39,8 +39,8 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
         if (!mounted) return;
         setState(() {
           _frequency = (profile['autoEmptyFrequency'] as String?) ?? 'manual';
-          _weekday = (profile['autoEmptyWeekday'] as int?) ?? DateTime.monday;
-          _dayOfMonth = (profile['autoEmptyDayOfMonth'] as int?) ?? 1;
+          _weekday = (profile['autoEmptyWeekday'] as num?)?.toInt() ?? DateTime.monday;
+          _dayOfMonth = (profile['autoEmptyDayOfMonth'] as num?)?.toInt() ?? 1;
           _topOffEnabled =
               (profile['autoEmptyTopOffEnabled'] as bool?) ?? false;
           _topOffAmount = (profile['autoEmptyTopOffAmount'] as num?)?.toDouble();
@@ -220,15 +220,26 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
                       onPressed: user == null
                           ? null
                           : () async {
+                              if (_frequency != 'manual' &&
+                                  _topOffEnabled &&
+                                  (_topOffAmount == null || _topOffAmount! <= 0)) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(content: Text(tr.enterValidAmount)),
+                                );
+                                return;
+                              }
                               final messenger = ScaffoldMessenger.of(context);
+                              final navigator = Navigator.of(context);
                               try {
                                 await _saveConfig(user.uid);
                                 if (!mounted) return;
+                                navigator.pop();
                                 messenger.showSnackBar(
                                   SnackBar(content: Text(tr.settingsSaved)),
                                 );
-                              } catch (_) {
+                              } catch (e) {
                                 if (!mounted) return;
+                                debugPrint('auto-empty save error: $e');
                                 messenger.showSnackBar(
                                   SnackBar(content: Text(tr.saveError)),
                                 );

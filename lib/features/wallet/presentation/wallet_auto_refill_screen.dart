@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../../core/l10n/s.dart';
 import '../../users/data/user_repository.dart';
@@ -104,7 +105,7 @@ class _WalletAutoRefillScreenState extends ConsumerState<WalletAutoRefillScreen>
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(S.of(context).autoRefillSaved)),
       );
-      Navigator.of(context).pop();
+      context.go('/wallet');
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -254,7 +255,7 @@ class _WalletAutoRefillScreenState extends ConsumerState<WalletAutoRefillScreen>
                     children: [
                       Expanded(
                         child: OutlinedButton(
-                          onPressed: _saving ? null : () => Navigator.of(context).pop(),
+                          onPressed: _saving ? null : () => context.go('/wallet'),
                           style: OutlinedButton.styleFrom(
                             minimumSize: const Size(0, 52),
                             side: BorderSide(color: Colors.grey.shade400, width: 2),
@@ -297,15 +298,18 @@ class _WalletAutoRefillScreenState extends ConsumerState<WalletAutoRefillScreen>
                       ),
                     ],
                   ),
-                const SizedBox(height: 16),
-                TextButton(
-                  onPressed: _saving ? null : _disableAutoRefill,
-                  child: Text(
-                    tr.disableAutoRefill,
-                    style: const TextStyle(
-                      color: Colors.grey,
-                      fontWeight: FontWeight.w600,
-                      fontSize: 13,
+                const SizedBox(height: 8),
+                Center(
+                  child: TextButton.icon(
+                    onPressed: _saving ? null : _disableAutoRefill,
+                    icon: const Icon(Icons.cancel_outlined, size: 16, color: Color(0xFFDC2626)),
+                    label: Text(
+                      tr.disableAutoRefill,
+                      style: const TextStyle(
+                        color: Color(0xFFDC2626),
+                        fontWeight: FontWeight.w500,
+                        fontSize: 13,
+                      ),
                     ),
                   ),
                 ),
@@ -332,7 +336,7 @@ class _WalletAutoRefillScreenState extends ConsumerState<WalletAutoRefillScreen>
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text(S.of(context).autoRefillDisabled)),
         );
-        Navigator.of(context).pop();
+        context.go('/wallet');
       }
     } catch (e) {
       if (mounted) {

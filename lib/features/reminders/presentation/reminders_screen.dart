@@ -75,7 +75,7 @@ class _RemindersScreenState extends ConsumerState<RemindersScreen> {
               ),
         ),
         Padding(
-          padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
           child: SafeArea(
             child: SizedBox(
               width: double.infinity,
@@ -201,8 +201,8 @@ class _RemindersScreenState extends ConsumerState<RemindersScreen> {
     );
 
     if (result != null) {
-      await _saveReminder(result);
-      if (mounted) {
+      final ok = await _saveReminder(result);
+      if (ok && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text(S.of(context).reminderAdded)),
         );
@@ -218,8 +218,8 @@ class _RemindersScreenState extends ConsumerState<RemindersScreen> {
     );
 
     if (result != null) {
-      await _saveReminder(result, existingId: reminder.id);
-      if (mounted) {
+      final ok = await _saveReminder(result, existingId: reminder.id);
+      if (ok && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text(S.of(context).reminderUpdated)),
         );
@@ -227,13 +227,13 @@ class _RemindersScreenState extends ConsumerState<RemindersScreen> {
     }
   }
 
-  Future<void> _saveReminder(ReminderDraft draft,
+  Future<bool> _saveReminder(ReminderDraft draft,
       {String? existingId}) async {
     final tr = S.of(context);
     final user = ref.read(currentUserProvider);
     if (user == null) {
       _showMessage(tr.signInToSaveReminders);
-      return;
+      return false;
     }
     final repo = ref.read(reminderRepositoryProvider);
 
@@ -253,23 +253,39 @@ class _RemindersScreenState extends ConsumerState<RemindersScreen> {
     if (existingId == null) {
       try {
         final id = await repo.addReminder(user.uid, reminder);
-        await NotificationService.instance.scheduleReminder(
-          reminder.copyWith(id: id),
-        );
+        try {
+          await NotificationService.instance.scheduleReminder(
+            reminder.copyWith(id: id),
+          );
+        } catch (e) {
+          // Notification scheduling may fail if exact-alarm permission is not
+          // granted on Android 12+. The reminder is still saved in Firestore.
+          debugPrint('scheduleReminder failed: $e');
+        }
         await AnalyticsService.instance.logReminderCreated();
-      } catch (_) {
-        _showMessage(tr.couldNotSaveReminder);
+        return true;
+      } catch (e, st) {
+        debugPrint('addReminder failed: $e\n$st');
+        if (mounted) _showMessage(tr.couldNotSaveReminder);
+        return false;
       }
     } else {
       try {
         await repo.updateReminder(
             user.uid, reminder.copyWith(id: existingId));
-        await NotificationService.instance.scheduleReminder(
-          reminder.copyWith(id: existingId),
-        );
+        try {
+          await NotificationService.instance.scheduleReminder(
+            reminder.copyWith(id: existingId),
+          );
+        } catch (e) {
+          debugPrint('scheduleReminder failed: $e');
+        }
         await AnalyticsService.instance.logReminderUpdated();
-      } catch (_) {
-        _showMessage(tr.couldNotUpdateReminder);
+        return true;
+      } catch (e, st) {
+        debugPrint('updateReminder failed: $e\n$st');
+        if (mounted) _showMessage(tr.couldNotUpdateReminder);
+        return false;
       }
     }
   }
@@ -285,9 +301,14 @@ class _RemindersScreenState extends ConsumerState<RemindersScreen> {
     final updated = reminder.copyWith(isEnabled: value);
     try {
       await repo.updateReminder(user.uid, updated);
-      await NotificationService.instance.scheduleReminder(updated);
     } catch (_) {
-      _showMessage(tr.couldNotUpdateReminder);
+      if (mounted) _showMessage(tr.couldNotUpdateReminder);
+      return;
+    }
+    try {
+      await NotificationService.instance.scheduleReminder(updated);
+    } catch (e) {
+      debugPrint('scheduleReminder failed: $e');
     }
   }
 
@@ -301,11 +322,16 @@ class _RemindersScreenState extends ConsumerState<RemindersScreen> {
     final repo = ref.read(reminderRepositoryProvider);
     try {
       await repo.deleteReminder(user.uid, reminder.id);
-      await NotificationService.instance.cancelReminder(reminder);
-      await AnalyticsService.instance.logReminderDeleted();
     } catch (_) {
-      _showMessage(tr.couldNotDelete);
+      if (mounted) _showMessage(tr.couldNotDelete);
+      return;
     }
+    try {
+      await NotificationService.instance.cancelReminder(reminder);
+    } catch (e) {
+      debugPrint('cancelReminder failed: $e');
+    }
+    await AnalyticsService.instance.logReminderDeleted();
   }
 
   void _showMessage(String message) {

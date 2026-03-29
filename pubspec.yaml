@@ -68,7 +68,8 @@ dependencies:
   flutter_haptic_feedback: ^1.0.0
   google_fonts: ^6.2.1
   hive_flutter: ^1.1.0
-  flutter_windowmanager: ^0.2.0
+  image_picker: ^1.1.2
+  firebase_storage: ^12.3.5
 
 
 dev_dependencies:

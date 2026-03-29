@@ -9,12 +9,7 @@ class WalletService {
     final callable = FirebaseFunctions.instance.httpsCallable(
       'walletTopUpFromPaymentIntent',
     );
-    try {
-      await callable.call({'paymentIntentId': paymentIntentId});
-    } on FirebaseFunctionsException catch (error) {
-      final message = error.message ?? 'Could not confirm the top-up.';
-      throw Exception(message);
-    }
+    await callable.call({'paymentIntentId': paymentIntentId});
   }
 
   Future<void> transfer({
@@ -22,15 +17,10 @@ class WalletService {
     required double amount,
   }) async {
     final callable = FirebaseFunctions.instance.httpsCallable('walletTransfer');
-    try {
-      await callable.call({
-        'targetWalletId': targetWalletId,
-        'amount': amount,
-      });
-    } on FirebaseFunctionsException catch (error) {
-      final message = error.message ?? 'Could not complete the transfer.';
-      throw Exception(message);
-    }
+    await callable.call({
+      'targetWalletId': targetWalletId,
+      'amount': amount,
+    });
   }
 
   Future<void> requestTransfer({
@@ -38,25 +28,14 @@ class WalletService {
     required double amount,
   }) async {
     final callable = FirebaseFunctions.instance.httpsCallable('walletRequestTransfer');
-    try {
-      await callable.call({
-        'fromWalletId': fromWalletId,
-        'amount': amount,
-      });
-    } on FirebaseFunctionsException catch (error) {
-      final message = error.message ?? 'Could not send the request.';
-      throw Exception(message);
-    }
+    await callable.call({
+      'fromWalletId': fromWalletId,
+      'amount': amount,
+    });
   }
 
-    Future<void> addContact(String walletId) async {
+  Future<void> addContact(String walletId) async {
     final callable = FirebaseFunctions.instance.httpsCallable('addWalletContact');
-    try {
-      await callable.call({'walletId': walletId});
-    } on FirebaseFunctionsException catch (error) {
-      final message = error.message ?? 'Could not add the contact.';
-      throw Exception(message);
-    }
+    await callable.call({'walletId': walletId});
   }
 }
-

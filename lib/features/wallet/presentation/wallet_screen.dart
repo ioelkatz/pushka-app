@@ -2,9 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_stripe/flutter_stripe.dart';
-import 'package:flutter_windowmanager/flutter_windowmanager.dart';
 import 'package:go_router/go_router.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 
 import '../../analytics/analytics_service.dart';
 import '../../payments/stripe_service.dart';
@@ -28,25 +28,6 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
   @override
   void initState() {
     super.initState();
-    _setSecure(true);
-  }
-
-  @override
-  void dispose() {
-    _setSecure(false);
-    super.dispose();
-  }
-
-  Future<void> _setSecure(bool secure) async {
-    try {
-      if (secure) {
-        await FlutterWindowManager.addFlags(FlutterWindowManager.FLAG_SECURE);
-      } else {
-        await FlutterWindowManager.clearFlags(FlutterWindowManager.FLAG_SECURE);
-      }
-    } catch (_) {
-      // Not supported on this platform — ignore silently
-    }
   }
 
   void _showInfo(String message) {
@@ -70,8 +51,8 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
           builder: (ctx, setDialogState) => AlertDialog(
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(22)),
             scrollable: true,
-            contentPadding: const EdgeInsets.fromLTRB(20, 22, 20, 0),
-            actionsPadding: const EdgeInsets.fromLTRB(20, 0, 20, 18),
+            contentPadding: const EdgeInsets.fromLTRB(24, 28, 24, 8),
+            actionsPadding: const EdgeInsets.fromLTRB(24, 4, 24, 24),
             content: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
               Text(tr.addFunds, textAlign: TextAlign.center, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
               const SizedBox(height: 20),
@@ -149,20 +130,28 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
   }
 
   String _walletPaymentErrorMessage(Object error) {
+    final tr = S.of(context);
     if (error is StripeException) {
       if (error.error.code == FailureCode.Canceled) {
-        return S.of(context).paymentCanceled;
+        return tr.paymentCanceled;
       }
       final message = error.error.localizedMessage ?? error.error.message;
       if (message != null && message.trim().isNotEmpty) {
         return message;
       }
     }
-    final raw = error.toString();
-    if (raw.startsWith('Exception: ')) {
-      return raw.replaceFirst('Exception: ', '');
+    if (error is StripeServiceException) {
+      return tr.couldNotStartPayment;
     }
-    return S.of(context).paymentCouldNotProcess;
+    if (error is FirebaseFunctionsException) {
+      return switch (error.code) {
+        'not-found' => tr.walletNotFound,
+        'failed-precondition' => tr.insufficientFunds,
+        'invalid-argument' => tr.invalidWalletId,
+        _ => tr.couldNotConfirmTopUp,
+      };
+    }
+    return tr.paymentCouldNotProcess;
   }
 
   Future<void> _addFunds() async {
@@ -200,6 +189,7 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
       if (!mounted) return;
       _showInfo(S.of(context).fundsAdded(formatMoney(amount, symbol: _currencySymbol(currency))));
     } catch (error) {
+      if (!mounted) return;
       _showInfo(_walletPaymentErrorMessage(error));
     } finally {
       if (mounted) setState(() => _processing = false);

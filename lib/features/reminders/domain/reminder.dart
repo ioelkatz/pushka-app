@@ -60,10 +60,10 @@ class Reminder {
       'timeMinute': time.minute,
       'days': days,
       'isHoliday': isHoliday,
-      'minutesBefore': minutesBefore,
+      if (minutesBefore != null) 'minutesBefore': minutesBefore,
       'isEnabled': isEnabled,
-      'secondTimeHour': secondTime?.hour,
-      'secondTimeMinute': secondTime?.minute,
+      if (secondTime != null) 'secondTimeHour': secondTime!.hour,
+      if (secondTime != null) 'secondTimeMinute': secondTime!.minute,
       'secondDays': secondDays,
       'secondIsHoliday': secondIsHoliday,
     };

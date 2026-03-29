@@ -18,7 +18,7 @@ class PushkaApp extends ConsumerWidget {
     ref.listen(userProfileProvider, (_, next) {
       final lang = next.valueOrNull?['language'] as String?;
       if (lang != null && lang.isNotEmpty) {
-        ref.read(localeProvider.notifier).setLanguageCode(lang);
+        ref.read(localeProvider.notifier).syncFromRemote(lang);
       }
     });
 

@@ -9,7 +9,7 @@ class AppTokens {
   static const Color turquoise = Color(0xFF38BDF8);
 
   // Surfaces
-  static const Color surface = Color(0xFFF8FAFC);
+  static const Color surface = Colors.white;
   static const Color cardSilver = Color(0xFFF1F5F9);
   static const Color white = Colors.white;
 

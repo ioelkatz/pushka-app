@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
@@ -44,6 +45,19 @@ class _WalletSendRequestScreenState
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
   }
 
+  String _walletError(Object e, String defaultMsg) {
+    final tr = S.of(context);
+    if (e is FirebaseFunctionsException) {
+      return switch (e.code) {
+        'not-found' => tr.walletUserNotFound,
+        'failed-precondition' => tr.insufficientFunds,
+        'invalid-argument' => tr.invalidWalletId,
+        _ => defaultMsg,
+      };
+    }
+    return defaultMsg;
+  }
+
   Future<double?> _showAmountDialog(String title) async {
     final tr = S.of(context);
     return showDialog<double>(
@@ -56,8 +70,8 @@ class _WalletSendRequestScreenState
           builder: (ctx, setDialogState) => AlertDialog(
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(22)),
             scrollable: true,
-            contentPadding: const EdgeInsets.fromLTRB(20, 22, 20, 0),
-            actionsPadding: const EdgeInsets.fromLTRB(20, 0, 20, 18),
+            contentPadding: const EdgeInsets.fromLTRB(24, 28, 24, 8),
+            actionsPadding: const EdgeInsets.fromLTRB(24, 4, 24, 24),
             content: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
               Text(title, textAlign: TextAlign.center, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
               const SizedBox(height: 20),
@@ -112,9 +126,10 @@ class _WalletSendRequestScreenState
     final amount = await _showAmountDialog(title);
     if (!mounted || amount == null) return;
 
+    final isSend = _sendSelected;
     setState(() => _saving = true);
     try {
-      if (_sendSelected) {
+      if (isSend) {
         await WalletService.instance.transfer(targetWalletId: contactId, amount: amount);
         _showInfo(tr.sent(formatMoney(amount), contactId));
       } else {
@@ -123,7 +138,8 @@ class _WalletSendRequestScreenState
       }
       setState(() => _selectedContactWalletId = null);
     } catch (e) {
-      _showInfo(e.toString().replaceFirst('Exception: ', ''));
+      if (!mounted) return;
+      _showInfo(_walletError(e, isSend ? S.of(context).couldNotTransfer : S.of(context).couldNotSendRequest));
     } finally {
       if (mounted) setState(() => _saving = false);
     }
@@ -167,8 +183,8 @@ class _WalletSendRequestScreenState
       await WalletService.instance.addContact(normalized);
       _showInfo(tr.contactAdded);
     } catch (e) {
-      final msg = e.toString().replaceFirst('Exception: ', '');
-      _showInfo(msg);
+      if (!mounted) return;
+      _showInfo(_walletError(e, S.of(context).couldNotAddContact));
     } finally {
       if (mounted) setState(() => _saving = false);
     }
@@ -191,6 +207,7 @@ class _WalletSendRequestScreenState
     final manualWalletId = await showModalBottomSheet<String>(
       context: context,
       isScrollControlled: true,
+      useSafeArea: true,
       backgroundColor: Colors.transparent,
       builder: (ctx) {
         return StatefulBuilder(

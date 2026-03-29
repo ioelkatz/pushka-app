@@ -26,6 +26,7 @@ class HistoryScreen extends ConsumerStatefulWidget {
 
 class _HistoryScreenState extends ConsumerState<HistoryScreen> {
   _HistoryFilter selectedFilter = _HistoryFilter.all;
+  bool _chartExpanded = false;
   late S _tr;
 
   @override
@@ -131,7 +132,50 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
 
               return Column(
                 children: [
-                  DonationChart(transactions: transactions),
+                  // Chart accordion header
+                  GestureDetector(
+                    onTap: () => setState(() => _chartExpanded = !_chartExpanded),
+                    child: Container(
+                      margin: const EdgeInsets.fromLTRB(18, 0, 18, 8),
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: Colors.grey.shade300),
+                      ),
+                      child: Row(
+                        children: [
+                          const Icon(Icons.bar_chart_rounded, size: 20, color: Color(0xFF2F60C5)),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Text(
+                              _chartExpanded ? _tr.chartHideGraph : _tr.chartShowGraph,
+                              style: const TextStyle(
+                                color: Color(0xFF2F60C5),
+                                fontSize: 16,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                          ),
+                          AnimatedRotation(
+                            turns: _chartExpanded ? 0.5 : 0,
+                            duration: const Duration(milliseconds: 250),
+                            child: const Icon(Icons.keyboard_arrow_down, color: Colors.grey),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  // Collapsible chart
+                  AnimatedCrossFade(
+                    firstChild: const SizedBox.shrink(),
+                    secondChild: DonationChart(transactions: transactions),
+                    crossFadeState: _chartExpanded
+                        ? CrossFadeState.showSecond
+                        : CrossFadeState.showFirst,
+                    duration: const Duration(milliseconds: 280),
+                    sizeCurve: Curves.easeInOut,
+                  ),
                   if (filtered.isEmpty)
                     Expanded(
                       child: EmptyState(
@@ -196,6 +240,7 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
     showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
+      useSafeArea: true,
       backgroundColor: Colors.transparent,
       builder: (ctx) {
         return Container(

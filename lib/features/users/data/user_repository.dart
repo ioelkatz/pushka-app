@@ -1,5 +1,7 @@
-﻿import 'package:cloud_firestore/cloud_firestore.dart';
+﻿import 'dart:typed_data';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 class UserRepository {
@@ -124,6 +126,25 @@ class UserRepository {
     if (mailingAddress != null) data['mailingAddress'] = mailingAddress;
 
     await _users.doc(uid).set(data, SetOptions(merge: true));
+  }
+
+  /// Uploads [bytes] to Firebase Storage and saves the download URL to Firestore.
+  /// Returns the public download URL.
+  Future<String> uploadProfilePhoto({
+    required String uid,
+    required Uint8List bytes,
+  }) async {
+    final ref = FirebaseStorage.instance
+        .ref()
+        .child('profile_photos')
+        .child('$uid.jpg');
+    await ref.putData(bytes, SettableMetadata(contentType: 'image/jpeg'));
+    final url = await ref.getDownloadURL();
+    await _users.doc(uid).set({
+      'photoURL': url,
+      'updatedAt': FieldValue.serverTimestamp(),
+    }, SetOptions(merge: true));
+    return url;
   }
 
   Future<void> updatePushkaAmount({

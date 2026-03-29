@@ -28,10 +28,14 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
   Future<void> _complete() async {
     final uid = FirebaseAuth.instance.currentUser?.uid;
     if (uid != null) {
-      await FirebaseFirestore.instance
-          .collection('users')
-          .doc(uid)
-          .set({'onboardingCompleted': true}, SetOptions(merge: true));
+      try {
+        await FirebaseFirestore.instance
+            .collection('users')
+            .doc(uid)
+            .set({'onboardingCompleted': true}, SetOptions(merge: true));
+      } catch (_) {
+        // Firestore write failed — navigate anyway, will retry on next launch
+      }
     }
     if (!mounted) return;
     context.go('/');

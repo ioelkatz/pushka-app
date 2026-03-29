@@ -1,4 +1,4 @@
-﻿rules_version = '2';
+rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     function isSignedIn() {
@@ -21,6 +21,7 @@ service cloud.firestore {
             'uid',
             'email',
             'displayName',
+            'photoURL',
             'createdAt',
             'lastLoginAt',
             'billingEmail',
@@ -134,6 +135,8 @@ service cloud.firestore {
           (!('autoEmptyNextRunAt' in request.resource.data) ||
               request.resource.data.autoEmptyNextRunAt is timestamp ||
               request.resource.data.autoEmptyNextRunAt == null) &&
+          (!('photoURL' in request.resource.data) ||
+              request.resource.data.photoURL is string) &&
           (!('onboardingCompleted' in request.resource.data) ||
               request.resource.data.onboardingCompleted is bool) &&
           (!('language' in request.resource.data) ||
@@ -280,3 +283,4 @@ service cloud.firestore {
     }
   }
 }
+

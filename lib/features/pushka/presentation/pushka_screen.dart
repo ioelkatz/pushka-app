@@ -139,10 +139,6 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
     final tr = S.of(context);
     setState(() => _isProcessing = true);
     try {
-      if (StripeConfig.publishableKey.isEmpty) {
-        throw Exception(tr.stripeNotConfigured);
-      }
-
       double amountToEmpty = pushkaAmount;
       if (_partialPaymentsEnabled()) {
         setState(() => _isProcessing = false);
@@ -175,6 +171,10 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
           _showError(tr.authRequired);
           return;
         }
+      }
+
+      if (StripeConfig.publishableKey.isEmpty) {
+        throw Exception(tr.stripeNotConfigured);
       }
 
       final paymentIntentId = await StripeService.instance.pay(
@@ -216,12 +216,12 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
       );
     } catch (error) {
       if (!mounted) return;
-      _showError(tr.couldNotEmpty);
+      _showError(_donationErrorMessage(error, tr));
     } finally {
       if (mounted) setState(() => _isProcessing = false);
     }
   }
-  
+
   Future<void> _donateNow() async {
     if (_isProcessing) return;
     final tr = S.of(context);
@@ -517,7 +517,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
             }
           }
           _loadedRemote = true;
-          _streakCount = (userProfile['streakCount'] as int?) ?? 0;
+          _streakCount = (userProfile['streakCount'] as num?)?.toInt() ?? 0;
           FeedbackService.instance.updatePreferences(
             sound: (userProfile['soundEnabled'] as bool?) ?? true,
             coinJingle: (userProfile['coinJingleEnabled'] as bool?) ?? true,
@@ -1260,6 +1260,9 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
         return tr.paymentFailed(msg);
       }
     }
+    if (error is StripeServiceException) {
+      return tr.couldNotStartPayment;
+    }
     if (error is Exception) {
       final msg = error.toString().replaceFirst('Exception: ', '');
       if (msg.isNotEmpty && msg != 'null') {
@@ -1386,6 +1389,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
     return showModalBottomSheet<bool>(
       context: context,
       isScrollControlled: true,
+      useSafeArea: true,
       backgroundColor: Colors.transparent,
       builder: (ctx) => Padding(
         padding: EdgeInsets.only(bottom: MediaQuery.of(ctx).viewInsets.bottom),
@@ -1446,6 +1450,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
     return showModalBottomSheet<double>(
       context: context,
       isScrollControlled: true,
+      useSafeArea: true,
       backgroundColor: Colors.transparent,
       builder: (_) => _PartialDonationSheet(available: pushkaAmount),
     );

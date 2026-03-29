@@ -1,6 +1,11 @@
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter_stripe/flutter_stripe.dart';
 
+class StripeServiceException implements Exception {
+  final String code;
+  const StripeServiceException(this.code);
+}
+
 class StripeService {
   StripeService._();
 
@@ -29,7 +34,7 @@ class StripeService {
 
     final clientSecret = result.data['clientSecret'] as String?;
     if (clientSecret == null || clientSecret.isEmpty) {
-      throw Exception('Could not initiate payment');
+      throw const StripeServiceException('no-client-secret');
     }
 
     await Stripe.instance.initPaymentSheet(
@@ -45,7 +50,7 @@ class StripeService {
     const separator = '_secret_';
     final index = clientSecret.indexOf(separator);
     if (index <= 0) {
-      throw Exception('Could not identify payment');
+      throw const StripeServiceException('no-payment-id');
     }
     return clientSecret.substring(0, index);
   }

@@ -1,8 +1,10 @@
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:country_picker/country_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:local_auth/local_auth.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 
@@ -36,6 +38,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   String selectedCountry = 'Estados Unidos';
   String selectedFlag = '🇺🇸';
   bool _loadedProfile = false;
+  bool _uploadingPhoto = false;
 
   Stream<QuerySnapshot<Map<String, dynamic>>> _pushkasStream(String uid) {
     return FirebaseFirestore.instance
@@ -79,10 +82,17 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       );
     } catch (e) {
       if (!mounted) return;
-      final msg = e.toString().replaceFirst('Exception: ', '');
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(msg)),
-      );
+      final String msg;
+      if (e is FirebaseFunctionsException) {
+        msg = switch (e.code) {
+          'not-found' => S.of(context).walletUserNotFound,
+          'invalid-argument' => S.of(context).invalidPushkaId,
+          _ => S.of(context).couldNotAddContact,
+        };
+      } else {
+        msg = S.of(context).couldNotAddContact;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
     }
   }
 
@@ -102,6 +112,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     final manualWalletId = await showModalBottomSheet<String>(
       context: context,
       isScrollControlled: true,
+      useSafeArea: true,
       backgroundColor: Colors.transparent,
       builder: (ctx) {
         return StatefulBuilder(
@@ -245,7 +256,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           // PROFILE NAME
-          _buildProfileNameRow(userName, user?.uid, tr),
+          _buildProfileNameRow(userName, user?.uid, tr, getProfileString('photoURL')),
           const SizedBox(height: 24),
 
           // GENERAL Section
@@ -264,20 +275,30 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
           // PRESET AMOUNTS
           _buildLabel(tr.presetAmount),
-          const SizedBox(height: 4),
-          Text(
-            tr.presetsFromMain,
-            style: TextStyle(fontSize: 12, color: Colors.grey.shade500),
-          ),
           const SizedBox(height: 8),
-          _buildCurrentPresets(userProfile, blue),
+          _buildCurrentPresets(userProfile, blue, onTap: () {
+            final rawPresets = userProfile?['presetAmounts'];
+            final List<double> current;
+            if (rawPresets is List && rawPresets.length >= 3) {
+              final c = rawPresets.whereType<num>().map((e) => e.toDouble()).toList();
+              current = c.length >= 3 ? c.take(3).toList() : [1.0, 5.0, 10.0];
+            } else {
+              current = [1.0, 5.0, 10.0];
+            }
+            _showEditPresetsDialog(user, current);
+          }),
           const SizedBox(height: 18),
 
           // EMPTY PUSHKA
           _buildLabel(tr.emptyPushkaSetting),
           const SizedBox(height: 6),
           _buildActionButton(
-            tr.manualEmpty,
+            switch (getProfileString('autoEmptyFrequency') ?? 'manual') {
+              'weekly'           => tr.freqWeekly,
+              'monthly'          => tr.freqMonthly,
+              'erev_rosh_chodesh'=> tr.freqErevRosh,
+              _                  => tr.manualEmpty,
+            },
             onTap: () {
               Navigator.of(context, rootNavigator: true).push(
                 MaterialPageRoute(builder: (_) => const AutoEmptyScreen()),
@@ -591,7 +612,59 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     );
   }
 
-  Widget _buildProfileNameRow(String name, String? uid, S tr) {
+  Widget _buildProfileNameRow(String name, String? uid, S tr, String? photoURL) {
+    const blue = Color(0xFF2F60C5);
+    final avatar = GestureDetector(
+      onTap: uid == null ? null : () => _pickAndUploadPhoto(uid, tr),
+      child: Stack(
+        children: [
+          CircleAvatar(
+            radius: 26,
+            backgroundColor: blue.withValues(alpha: 0.12),
+            backgroundImage: (photoURL != null && photoURL.isNotEmpty)
+                ? NetworkImage(photoURL)
+                : null,
+            child: (photoURL == null || photoURL.isEmpty)
+                ? Text(
+                    name.isNotEmpty ? name[0].toUpperCase() : '?',
+                    style: const TextStyle(
+                      fontSize: 22,
+                      fontWeight: FontWeight.w700,
+                      color: blue,
+                    ),
+                  )
+                : null,
+          ),
+          if (_uploadingPhoto)
+            const Positioned.fill(
+              child: CircleAvatar(
+                backgroundColor: Colors.black45,
+                child: SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                ),
+              ),
+            )
+          else
+            Positioned(
+              right: 0,
+              bottom: 0,
+              child: Container(
+                width: 18,
+                height: 18,
+                decoration: BoxDecoration(
+                  color: blue,
+                  shape: BoxShape.circle,
+                  border: Border.all(color: Colors.white, width: 1.5),
+                ),
+                child: const Icon(Icons.camera_alt, size: 10, color: Colors.white),
+              ),
+            ),
+        ],
+      ),
+    );
+
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
       decoration: BoxDecoration(
@@ -601,18 +674,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       ),
       child: Row(
         children: [
-          CircleAvatar(
-            radius: 22,
-            backgroundColor: const Color(0xFF2F60C5).withValues(alpha: 0.12),
-            child: Text(
-              name.isNotEmpty ? name[0].toUpperCase() : '?',
-              style: const TextStyle(
-                fontSize: 20,
-                fontWeight: FontWeight.w700,
-                color: Color(0xFF2F60C5),
-              ),
-            ),
-          ),
+          avatar,
           const SizedBox(width: 14),
           Expanded(
             child: Column(
@@ -635,13 +697,45 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           ),
           IconButton(
             icon: const Icon(Icons.edit_outlined, size: 20),
-            color: const Color(0xFF2F60C5),
+            color: blue,
             tooltip: tr.editNameTooltip,
             onPressed: uid == null ? null : () => _showEditNameSheet(name, uid, tr),
           ),
         ],
       ),
     );
+  }
+
+  Future<void> _pickAndUploadPhoto(String uid, S tr) async {
+    final picker = ImagePicker();
+    final picked = await picker.pickImage(
+      source: ImageSource.gallery,
+      maxWidth: 512,
+      maxHeight: 512,
+      imageQuality: 85,
+    );
+    if (picked == null || !mounted) return;
+    final bytes = await picked.readAsBytes();
+    if (!mounted) return;
+    setState(() => _uploadingPhoto = true);
+    try {
+      await ref.read(userRepositoryProvider).uploadProfilePhoto(
+        uid: uid,
+        bytes: bytes,
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(tr.photoUpdated)),
+      );
+    } catch (e) {
+      debugPrint('uploadProfilePhoto error: $e');
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(tr.couldNotUploadPhoto)),
+      );
+    } finally {
+      if (mounted) setState(() => _uploadingPhoto = false);
+    }
   }
 
   Future<void> _showEditNameSheet(String current, String uid, S tr) async {
@@ -651,6 +745,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
+      useSafeArea: true,
       backgroundColor: Colors.transparent,
       builder: (ctx) {
         return StatefulBuilder(
@@ -720,21 +815,19 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                             setSS(() => error = tr.nameTooShort);
                             return;
                           }
-                          Navigator.pop(ctx);
                           try {
                             await ref.read(userRepositoryProvider).updateProfile(
                               uid: uid,
                               displayName: name,
                             );
-                            if (!mounted) return;
+                            if (!mounted || !ctx.mounted) return;
+                            Navigator.pop(ctx);
                             ScaffoldMessenger.of(context).showSnackBar(
                               SnackBar(content: Text(tr.profileUpdated)),
                             );
                           } catch (_) {
-                            if (!mounted) return;
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(content: Text(tr.saveError)),
-                            );
+                            if (!mounted || !ctx.mounted) return;
+                            setSS(() => error = tr.saveError);
                           }
                         },
                         child: Text(
@@ -751,7 +844,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         );
       },
     );
-    ctrl.dispose();
   }
 
   Widget _buildSectionTitle(String title) {
@@ -817,7 +909,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     );
   }
 
-  Widget _buildCurrentPresets(Map<String, dynamic>? profile, Color blue) {
+  Widget _buildCurrentPresets(Map<String, dynamic>? profile, Color blue, {VoidCallback? onTap}) {
     final rawPresets = profile?['presetAmounts'];
     final List<double> presets;
     if (rawPresets is List && rawPresets.length >= 3) {
@@ -835,19 +927,22 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         return Expanded(
           child: Padding(
             padding: EdgeInsets.only(right: idx < 2 ? 10 : 0),
-            child: Container(
-              height: 46,
-              decoration: BoxDecoration(
-                border: Border.all(color: blue, width: 1.5),
-                borderRadius: BorderRadius.circular(12),
-              ),
-              alignment: Alignment.center,
-              child: Text(
-                label,
-                style: TextStyle(
-                  fontWeight: FontWeight.w700,
-                  color: blue,
-                  fontSize: 15,
+            child: GestureDetector(
+              onTap: onTap,
+              child: Container(
+                height: 46,
+                decoration: BoxDecoration(
+                  border: Border.all(color: blue, width: 1.5),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                alignment: Alignment.center,
+                child: Text(
+                  label,
+                  style: TextStyle(
+                    fontWeight: FontWeight.w700,
+                    color: blue,
+                    fontSize: 15,
+                  ),
                 ),
               ),
             ),
@@ -938,6 +1033,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       {'label': tr.langSpanish, 'code': 'es'},
       {'label': tr.langEnglish, 'code': 'en'},
       {'label': tr.langFrench, 'code': 'fr'},
+      {'label': tr.langHebrew, 'code': 'he'},
     ];
 
     return Container(
@@ -949,8 +1045,11 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       ),
       child: DropdownButtonFormField<String>(
         initialValue: currentLocale.languageCode,
+        focusColor: Colors.transparent,
         decoration: const InputDecoration(
           border: InputBorder.none,
+          enabledBorder: InputBorder.none,
+          focusedBorder: InputBorder.none,
           isDense: true,
           contentPadding: EdgeInsets.symmetric(vertical: 12),
         ),
@@ -990,15 +1089,17 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     required ValueChanged<bool> onChanged,
   }) {
     return Row(
-      mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
-        Text(
-          label,
-          style: const TextStyle(
-            fontSize: 16,
-            fontWeight: FontWeight.w500,
+        Expanded(
+          child: Text(
+            label,
+            style: const TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.w500,
+            ),
           ),
         ),
+        const SizedBox(width: 8),
         Switch(
           value: value,
           onChanged: onChanged,
@@ -1346,6 +1447,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     User? user, {
     double? pushkaGoal,
     double? presetAmount,
+    List<double>? presetAmounts,
     bool? soundEnabled,
     bool? coinJingleEnabled,
     bool? vibrationEnabled,
@@ -1360,6 +1462,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           uid: user.uid,
           pushkaGoal: pushkaGoal,
           presetAmount: presetAmount,
+          presetAmounts: presetAmounts,
           soundEnabled: soundEnabled,
           coinJingleEnabled: coinJingleEnabled,
           vibrationEnabled: vibrationEnabled,
@@ -1370,6 +1473,107 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           currencyCode: currencyCode,
         );
   }
+
+  Future<void> _showEditPresetsDialog(
+    User? user,
+    List<double> current,
+  ) async {
+    if (user == null) return;
+    final tr = S.of(context);
+    final sym = _currencySymbol(selectedCurrency);
+    final c1 = TextEditingController(text: _formatPresetVal(current[0]));
+    final c2 = TextEditingController(text: _formatPresetVal(current[1]));
+    final c3 = TextEditingController(text: _formatPresetVal(current[2]));
+    String? err;
+
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: true,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setSS) => AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(22)),
+          contentPadding: const EdgeInsets.fromLTRB(24, 28, 24, 8),
+          actionsPadding: const EdgeInsets.fromLTRB(24, 4, 24, 24),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(
+                tr.presetAmount,
+                textAlign: TextAlign.center,
+                style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                tr.editQuickAmountHint,
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 13, color: Colors.grey.shade600),
+              ),
+              const SizedBox(height: 20),
+              if (err != null) ...[
+                Text(err!, style: const TextStyle(color: Color(0xFFDC2626), fontSize: 13)),
+                const SizedBox(height: 8),
+              ],
+              Row(
+                children: [c1, c2, c3].asMap().entries.map((e) {
+                  return Expanded(
+                    child: Padding(
+                      padding: EdgeInsets.only(right: e.key < 2 ? 8 : 0),
+                      child: TextField(
+                        controller: e.value,
+                        keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                        textAlign: TextAlign.center,
+                        decoration: InputDecoration(
+                          prefixText: sym,
+                          contentPadding: const EdgeInsets.symmetric(horizontal: 6, vertical: 12),
+                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                          focusedBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(12),
+                            borderSide: const BorderSide(color: Color(0xFF2F60C5), width: 1.8),
+                          ),
+                        ),
+                        onChanged: (_) { if (err != null) setSS(() => err = null); },
+                      ),
+                    ),
+                  );
+                }).toList(),
+              ),
+            ],
+          ),
+          actions: [
+            SizedBox(
+              width: double.infinity,
+              height: 48,
+              child: ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF2F60C5),
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                ),
+                onPressed: () async {
+                  final p1 = double.tryParse(c1.text.replaceAll(',', '.')) ?? 0;
+                  final p2 = double.tryParse(c2.text.replaceAll(',', '.')) ?? 0;
+                  final p3 = double.tryParse(c3.text.replaceAll(',', '.')) ?? 0;
+                  if (p1 <= 0 || p2 <= 0 || p3 <= 0) {
+                    setSS(() => err = tr.allAmountsMustBePositive);
+                    return;
+                  }
+                  await _updateSettings(user, presetAmounts: [p1, p2, p3]);
+                  if (!mounted || !ctx.mounted) return;
+                  Navigator.pop(ctx);
+                },
+                child: Text(tr.save, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+
+  }
+
+  String _formatPresetVal(double v) =>
+      v == v.roundToDouble() ? v.toInt().toString() : v.toStringAsFixed(2);
 
   Future<void> _showDeleteAccountDialog() async {
     final result = await showDialog<bool>(
@@ -1396,9 +1600,22 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       ),
     );
 
-    if (result == true && mounted) {
+    if (result != true) return;
+    if (!mounted) return;
+
+    try {
+      await FirebaseAuth.instance.currentUser?.delete();
+      // GoRouter refresh stream detects auth state change and redirects to /login
+    } on FirebaseAuthException catch (e) {
+      if (!mounted) return;
+      final msg = e.code == 'requires-recent-login'
+          ? S.of(context).requiresRecentLogin
+          : S.of(context).couldNotDeleteAccount;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+    } catch (_) {
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(S.of(context).accountDeleted)),
+        SnackBar(content: Text(S.of(context).couldNotDeleteAccount)),
       );
     }
   }

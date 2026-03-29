@@ -14,6 +14,7 @@ Future<T?> showKeyboardSafeSheet<T>({
   return showModalBottomSheet<T>(
     context: context,
     isScrollControlled: true,
+    useSafeArea: true,
     shape: const RoundedRectangleBorder(
       borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
     ),

@@ -33,30 +33,39 @@ import 'theme/app_tokens.dart';
 
 final _auth = FirebaseAuth.instance;
 final _firestore = FirebaseFirestore.instance;
+final navigatorKey = GlobalKey<NavigatorState>();
 
 Future<String?> _resolveWalletId() async {
   final uid = _auth.currentUser?.uid;
   if (uid == null || uid.isEmpty) return null;
-  final snap = await _firestore.collection('users').doc(uid).get();
-  final data = snap.data();
-  final fromProfile = (data?['walletId'] as String?)?.trim();
-  if (fromProfile != null && fromProfile.isNotEmpty) return fromProfile;
+  try {
+    final snap = await _firestore.collection('users').doc(uid).get();
+    final data = snap.data();
+    final fromProfile = (data?['walletId'] as String?)?.trim();
+    if (fromProfile != null && fromProfile.isNotEmpty) return fromProfile;
+  } catch (_) {
+    // fall through to derive from uid
+  }
   return UserRepository.walletIdFromUid(uid);
 }
 
 Future<void> _openWalletQrDialog(BuildContext context) async {
   final walletId = await _resolveWalletId();
+  // Use the global navigator context so the dialog always opens even if the
+  // original build context became stale after the async Firestore read.
+  final ctx = navigatorKey.currentContext ?? context;
+  if (!ctx.mounted) return;
+
   if (walletId == null) {
-    if (!context.mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(S.of(context).signInToSeeQr)),
+    ScaffoldMessenger.of(ctx).showSnackBar(
+      SnackBar(content: Text(S.of(ctx).signInToSeeQr)),
     );
     return;
   }
-  if (!context.mounted) return;
 
   await showDialog<void>(
-    context: context,
+    context: ctx,
+    useRootNavigator: true,
     barrierDismissible: true,
     builder: (dialogContext) {
       final tr = S.of(dialogContext);
@@ -163,6 +172,7 @@ Future<void> _openWalletQrDialog(BuildContext context) async {
 }
 
 final router = GoRouter(
+  navigatorKey: navigatorKey,
   initialLocation: '/splash',
   refreshListenable: GoRouterRefreshStream(_auth.authStateChanges()),
   observers: [
@@ -172,8 +182,6 @@ final router = GoRouter(
     final loggedIn = _auth.currentUser != null;
     final loc = state.matchedLocation;
     final goingToAuth = loc == '/login' || loc == '/register' || loc == '/splash';
-    final goingToOnboarding = loc == '/onboarding';
-
     if (!loggedIn && !goingToAuth) return '/login';
     if (loggedIn && goingToAuth) {
       // Check if onboarding is needed
@@ -183,15 +191,6 @@ final router = GoRouter(
           .get();
       final done = snap.data()?['onboardingCompleted'] as bool? ?? false;
       return done ? '/' : '/onboarding';
-    }
-    if (loggedIn && !goingToOnboarding && loc == '/') {
-      // Only check on initial '/' navigation, not on every redirect
-      final snap = await _firestore
-          .collection('users')
-          .doc(_auth.currentUser!.uid)
-          .get();
-      final done = snap.data()?['onboardingCompleted'] as bool? ?? false;
-      if (!done) return '/onboarding';
     }
     return null;
   },
