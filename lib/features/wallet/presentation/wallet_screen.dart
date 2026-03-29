@@ -280,7 +280,7 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
             ),
           ),
 
-          SizedBox(height: sectionGap),
+          SizedBox(height: compact ? 24.0 : 32.0),
 
           // Wallet ID pill
           Material(
@@ -319,7 +319,7 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
             ),
           ),
 
-          SizedBox(height: sectionGap),
+          SizedBox(height: compact ? 24.0 : 32.0),
 
           // Balance
           Text(
@@ -338,7 +338,7 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
             ),
           ),
 
-          SizedBox(height: sectionGap),
+          SizedBox(height: compact ? 24.0 : 32.0),
 
           // Add funds button
           OutlinedButton(

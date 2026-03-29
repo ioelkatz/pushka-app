@@ -324,10 +324,10 @@ class S {
   String get manualEmpty => _t('Vaciar Manualmente', 'Manual Empty', 'Vidage manuel', 'ריקון ידני');
   String get currency => _t('MONEDA', 'CURRENCY', 'DEVISE', 'מטבע');
   String get language => _t('IDIOMA', 'LANGUAGE', 'LANGUE', 'שפה');
-  String get langSpanish => _t('Español', 'Spanish', 'Espagnol', 'ספרדית');
-  String get langEnglish => _t('English', 'English', 'English', 'אנגלית');
-  String get langFrench => _t('Français', 'French', 'Français', 'צרפתית');
-  String get langHebrew => _t('עברית', 'עברית', 'עברית', 'עברית');
+  String get langSpanish => 'Español';
+  String get langEnglish => 'English';
+  String get langFrench => 'Français';
+  String get langHebrew => 'עברית';
   String get sound => _t('SONIDO', 'SOUND', 'SON', 'צליל');
   String get coinJingle => _t('SONIDO DE MONEDA', 'COIN JINGLE', 'SON DE PIÈCE', 'צליל מטבע');
   String get confettiSound => _t('SONIDO DE CONFETI', 'CONFETTI SOUND', 'SON DE CONFETTIS', 'צליל קונפטי');
