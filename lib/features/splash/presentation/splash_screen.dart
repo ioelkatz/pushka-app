@@ -5,7 +5,7 @@ import 'package:flutter_animate/flutter_animate.dart';
 import 'package:go_router/go_router.dart';
 
 // ---------------------------------------------------------------------------
-// Splash screen
+// Splash screen — fully custom-drawn pushka + animated coin drop
 // ---------------------------------------------------------------------------
 
 class SplashScreen extends StatefulWidget {
@@ -17,135 +17,129 @@ class SplashScreen extends StatefulWidget {
 
 class _SplashScreenState extends State<SplashScreen>
     with TickerProviderStateMixin {
+  // Phase flags
+  bool _boxVisible   = false;
   bool _coinDropping = false;
+  bool _coinInSlot   = false;
 
-  late final AnimationController _glowCtrl;
+  late final AnimationController _boxCtrl;    // box entrance  600 ms
+  late final AnimationController _coinCtrl;   // coin drop     460 ms
+  late final AnimationController _bounceCtrl; // box bounce    360 ms
+  late final AnimationController _flashCtrl;  // gold flash    700 ms
+  late final AnimationController _glowCtrl;   // idle glow    2200 ms
+  late final AnimationController _shimmerCtrl;// coin shimmer 1800 ms
+
+  late final Animation<double> _boxScale;
+  late final Animation<double> _coinY;       // 0.0 = above, 1.0 = in slot
   late final Animation<double> _glowAnim;
-  late final AnimationController _coinCtrl;   // coin fall (480 ms)
-  late final AnimationController _bounceCtrl; // box bounce on impact (340 ms)
-  late final AnimationController _flashCtrl;  // gold flash (700 ms)
-
-  static const _gold = Color(0xFFD4AF37);
-
-  // ── Coin Y animation ────────────────────────────────────────────────────
-  // SizedBox is 230×270. Image (168×168) sits at bottom: 24.
-  //   image-top  = 270 − 168 − 24 = 78
-  //   clip hides top 28 % of image (≈ 47 px) → clip-boundary = 78 + 47 = 125
-  //   coin-center should end at y = 125 → coin-top end = 125 − 22 = 103
-  //   coin continues to 155 so it fully disappears behind the image.
-  late final Animation<double> _coinY;
-  late final Animation<double> _coinRotation;
+  late final Animation<double> _shimmerAnim;
 
   @override
   void initState() {
     super.initState();
 
-    _glowCtrl = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 2200),
-    )..repeat(reverse: true);
+    _boxCtrl = AnimationController(vsync: this,
+        duration: const Duration(milliseconds: 600));
+    _boxScale = CurvedAnimation(parent: _boxCtrl, curve: Curves.easeOutBack);
+
+    _coinCtrl = AnimationController(vsync: this,
+        duration: const Duration(milliseconds: 460));
+    _coinY = CurvedAnimation(parent: _coinCtrl, curve: Curves.easeIn);
+
+    _bounceCtrl = AnimationController(vsync: this,
+        duration: const Duration(milliseconds: 360));
+    _flashCtrl = AnimationController(vsync: this,
+        duration: const Duration(milliseconds: 700));
+
+    _glowCtrl = AnimationController(vsync: this,
+        duration: const Duration(milliseconds: 2200))
+      ..repeat(reverse: true);
     _glowAnim = CurvedAnimation(parent: _glowCtrl, curve: Curves.easeInOut);
 
-    _coinCtrl = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 480),
-    );
-    _coinY = Tween<double>(begin: -108.0, end: 155.0).animate(
-      CurvedAnimation(parent: _coinCtrl, curve: Curves.easeIn),
-    );
-    _coinRotation = Tween<double>(begin: -0.18, end: 0.18).animate(
-      CurvedAnimation(parent: _coinCtrl, curve: Curves.easeIn),
-    );
-
-    _bounceCtrl = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 340),
-    );
-    _flashCtrl = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 700),
-    );
+    _shimmerCtrl = AnimationController(vsync: this,
+        duration: const Duration(milliseconds: 1800))
+      ..repeat();
+    _shimmerAnim = CurvedAnimation(parent: _shimmerCtrl,
+        curve: Curves.easeInOut);
 
     _runSequence();
   }
 
   @override
   void dispose() {
-    _glowCtrl.dispose();
+    _boxCtrl.dispose();
     _coinCtrl.dispose();
     _bounceCtrl.dispose();
     _flashCtrl.dispose();
+    _glowCtrl.dispose();
+    _shimmerCtrl.dispose();
     super.dispose();
   }
 
   Future<void> _runSequence() async {
-    await Future.delayed(const Duration(milliseconds: 880));
+    // 1. Box entrance
+    await Future.delayed(const Duration(milliseconds: 300));
+    if (!mounted) return;
+    setState(() => _boxVisible = true);
+    _boxCtrl.forward();
+
+    // 2. Coin drops after box settles
+    await Future.delayed(const Duration(milliseconds: 700));
     if (!mounted) return;
     setState(() => _coinDropping = true);
     _coinCtrl.forward();
 
-    // Wait for coin to reach slot
-    await Future.delayed(const Duration(milliseconds: 480));
+    // 3. Impact
+    await Future.delayed(const Duration(milliseconds: 460));
     if (!mounted) return;
-
-    // Impact
+    setState(() { _coinDropping = false; _coinInSlot = true; });
     _bounceCtrl.forward();
     _flashCtrl.forward();
     try {
-      final player = AudioPlayer();
-      await player.play(AssetSource('sounds/coin.wav'));
+      final p = AudioPlayer();
+      await p.play(AssetSource('sounds/coin.wav'));
     } catch (_) {}
 
-    await Future.delayed(const Duration(milliseconds: 2200));
+    // 4. Stay and navigate
+    await Future.delayed(const Duration(milliseconds: 2300));
     if (!mounted) return;
     context.go('/');
-  }
-
-  double _boxScale() {
-    final t = _bounceCtrl.value;
-    if (t < 0.25) return 1.0 + t / 0.25 * 0.07;        // 1.00 → 1.07
-    if (t < 0.55) return 1.07 - (t - 0.25) / 0.30 * 0.11; // 1.07 → 0.96
-    if (t < 0.80) return 0.96 + (t - 0.55) / 0.25 * 0.05; // 0.96 → 1.01
-    return 1.01 - (t - 0.80) / 0.20 * 0.01;               // 1.01 → 1.00
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      // Matches the native-splash blue → no dark flash on transition
       backgroundColor: const Color(0xFF3B7FD8),
       body: Stack(
         fit: StackFit.expand,
         children: [
-          // ── Background: same blues as splash_icon.png, radial from center ──
+          // ── Background radial gradient ──────────────────────────────────
           const DecoratedBox(
             decoration: BoxDecoration(
               gradient: RadialGradient(
-                center: Alignment(0, -0.20),
+                center: Alignment(0, -0.25),
                 radius: 1.15,
                 colors: [
-                  Color(0xFF5BA4EE), // bright centre — matches logo highlight
-                  Color(0xFF3A7FD8), // mid blue — logo body
-                  Color(0xFF1A4FA8), // deeper — logo shadow
-                  Color(0xFF0C2250), // lower screen
-                  Color(0xFF060E22), // deep bottom edge
+                  Color(0xFF5BA4EE),
+                  Color(0xFF3A7FD8),
+                  Color(0xFF1A4FA8),
+                  Color(0xFF0C2250),
+                  Color(0xFF060E22),
                 ],
                 stops: [0.0, 0.22, 0.45, 0.72, 1.0],
               ),
             ),
           ),
 
-          // ── Subtle warm glow at bottom ────────────────────────────────────
+          // ── Warm gold at bottom ─────────────────────────────────────────
           Positioned(
-            bottom: -80,
-            left: 0,
-            right: 0,
+            bottom: -60, left: 0, right: 0,
             child: Container(
-              height: 260,
+              height: 240,
               decoration: BoxDecoration(
                 gradient: RadialGradient(
                   colors: [
-                    _gold.withValues(alpha: 0.07),
+                    const Color(0xFFD4AF37).withValues(alpha: 0.08),
                     Colors.transparent,
                   ],
                   radius: 0.7,
@@ -154,22 +148,22 @@ class _SplashScreenState extends State<SplashScreen>
             ),
           ),
 
-          // ── Gold particles ────────────────────────────────────────────────
+          // ── Gold particles ──────────────────────────────────────────────
           const _GoldParticles(),
 
-          // ── Gold radial burst on coin impact ──────────────────────────────
+          // ── Gold flash on impact ────────────────────────────────────────
           AnimatedBuilder(
             animation: _flashCtrl,
             builder: (_, _) {
               final v = _flashCtrl.value;
-              final alpha = v < 0.30 ? v / 0.30 : (1.0 - v) / 0.70;
+              final a = v < 0.3 ? v / 0.3 : (1.0 - v) / 0.7;
               return DecoratedBox(
                 decoration: BoxDecoration(
                   gradient: RadialGradient(
-                    center: const Alignment(0, -0.28),
-                    radius: 0.50,
+                    center: const Alignment(0, -0.25),
+                    radius: 0.55,
                     colors: [
-                      _gold.withValues(alpha: 0.32 * alpha),
+                      const Color(0xFFD4AF37).withValues(alpha: 0.35 * a),
                       Colors.transparent,
                     ],
                   ),
@@ -178,293 +172,462 @@ class _SplashScreenState extends State<SplashScreen>
             },
           ),
 
-          // ── Main content ──────────────────────────────────────────────────
+          // ── Main content ────────────────────────────────────────────────
           Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              // ── Logo area ────────────────────────────────────────────────
-              SizedBox(
-                width: 230,
-                height: 270,
-                child: Stack(
-                  // Clip.none lets the coin start above this SizedBox
-                  clipBehavior: Clip.none,
-                  children: [
-                    // Pulsing blue halo (same colour family → no visible rim)
-                    AnimatedBuilder(
-                      animation: _glowAnim,
-                      builder: (_, _) {
-                        final r = 185.0 + _glowAnim.value * 36;
-                        return Positioned.fill(
-                          child: Center(
-                            child: SizedBox(
-                              width: r,
-                              height: r,
-                              child: DecoratedBox(
-                                decoration: BoxDecoration(
-                                  shape: BoxShape.circle,
-                                  gradient: RadialGradient(
-                                    colors: [
-                                      const Color(0xFF5BA4EE).withValues(
-                                          alpha: 0.20 + _glowAnim.value * 0.14),
-                                      Colors.transparent,
-                                    ],
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ),
-                        );
-                      },
-                    ).animate().fadeIn(duration: 800.ms),
-
-                    // ── Animated coin (BEHIND the logo image in z-order) ────
-                    // When it crosses the clip boundary (y ≈ 125) the image
-                    // covers it, giving the illusion it entered the slot.
-                    if (_coinDropping)
-                      AnimatedBuilder(
-                        animation: _coinCtrl,
-                        builder: (_, _) => Positioned(
-                          left: (230 - 44) / 2, // centred
-                          top: _coinY.value,
-                          child: Transform.rotate(
-                            angle: _coinRotation.value,
-                            child: const _GoldCoin(size: 44),
-                          ),
-                        ),
+              // ── Pushka + coin (custom drawn) ─────────────────────────────
+              if (_boxVisible)
+                AnimatedBuilder(
+                  animation: Listenable.merge(
+                      [_boxScale, _bounceCtrl, _glowAnim, _coinCtrl]),
+                  builder: (_, _) {
+                    return CustomPaint(
+                      painter: _PushkaPainter(
+                        boxEntrance: _boxScale.value,
+                        bounceT:     _bounceCtrl.value,
+                        glow:        _glowAnim.value,
+                        coinProgress: _coinDropping ? _coinY.value : null,
+                        coinInSlot:   _coinInSlot,
+                        shimmer:      _shimmerAnim.value,
                       ),
+                      size: const Size(240, 280),
+                    );
+                  },
+                )
+              else
+                const SizedBox(height: 280),
 
-                    // ── Logo image — ON TOP of coin in z-order ───────────
-                    // Clipped: hides top 28 % (the static coin of the PNG).
-                    // When the animated coin falls to y ≈ 125, it passes
-                    // behind this widget and disappears — entering the slot.
-                    Positioned(
-                      bottom: 24,
-                      left: (230 - 168) / 2,
-                      child: AnimatedBuilder(
-                        animation: _bounceCtrl,
-                        builder: (_, child) => Transform.scale(
-                          scale: _boxScale(),
-                          child: child,
-                        ),
-                        child: ClipRect(
-                          child: Align(
-                            alignment: Alignment.bottomCenter,
-                            heightFactor: 0.72, // hide top 28 % (coin area)
-                            child: Image.asset(
-                              'assets/images/splash_icon.png',
-                              width: 168,
-                              height: 168,
-                            ),
-                          ),
-                        ),
-                      ),
-                    )
-                        .animate()
-                        .fadeIn(duration: 500.ms)
-                        .scale(
-                          begin: const Offset(0.72, 0.72),
-                          end: const Offset(1.0, 1.0),
-                          duration: 600.ms,
-                          curve: Curves.easeOutBack,
-                        ),
-                  ],
-                ),
-              ),
+              const SizedBox(height: 38),
 
-              const SizedBox(height: 44),
-
-              // ── "PUSHKA" gold-shimmer ─────────────────────────────────────
+              // ── PUSHKA ────────────────────────────────────────────────────
               ShaderMask(
-                shaderCallback: (bounds) => const LinearGradient(
+                shaderCallback: (b) => const LinearGradient(
                   colors: [
-                    Color(0xFFD4AF37),
-                    Colors.white,
-                    Color(0xFFF5E6A0),
-                    Colors.white,
+                    Color(0xFFD4AF37), Colors.white,
+                    Color(0xFFF5E6A0), Colors.white,
                     Color(0xFFD4AF37),
                   ],
                   stops: [0.0, 0.25, 0.50, 0.75, 1.0],
-                ).createShader(bounds),
-                child: const Text(
-                  'PUSHKA',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 38,
-                    fontWeight: FontWeight.w800,
-                    letterSpacing: 14,
-                  ),
-                ),
+                ).createShader(b),
+                child: const Text('PUSHKA',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 36,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: 13,
+                    )),
               )
                   .animate()
-                  .fadeIn(duration: 700.ms, delay: 150.ms)
-                  .slideY(
-                    begin: 0.35,
-                    end: 0.0,
-                    duration: 700.ms,
-                    delay: 150.ms,
-                    curve: Curves.easeOutCubic,
-                  ),
+                  .fadeIn(duration: 700.ms, delay: 200.ms)
+                  .slideY(begin: 0.4, end: 0.0,
+                      duration: 700.ms, delay: 200.ms,
+                      curve: Curves.easeOutCubic),
 
-              const SizedBox(height: 18),
+              const SizedBox(height: 16),
 
               // ── Gold divider ──────────────────────────────────────────────
               Container(
-                width: 90,
-                height: 1,
+                width: 80, height: 1,
                 decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    colors: [
-                      Colors.transparent,
-                      _gold.withValues(alpha: 0.85),
-                      Colors.transparent,
-                    ],
-                  ),
+                  gradient: LinearGradient(colors: [
+                    Colors.transparent,
+                    const Color(0xFFD4AF37).withValues(alpha: 0.90),
+                    Colors.transparent,
+                  ]),
                 ),
-              ).animate().fadeIn(duration: 900.ms, delay: 300.ms),
+              ).animate().fadeIn(duration: 900.ms, delay: 360.ms),
 
-              const SizedBox(height: 18),
+              const SizedBox(height: 16),
 
               // ── Hebrew tagline ────────────────────────────────────────────
               Text(
                 'צדקת רבי מאיר בעל הנס',
+                textDirection: TextDirection.rtl,
                 style: TextStyle(
-                  color: Colors.white.withValues(alpha: 0.72),
-                  fontSize: 15,
-                  letterSpacing: 1.2,
+                  color: Colors.white.withValues(alpha: 0.70),
+                  fontSize: 14,
+                  letterSpacing: 1.1,
                   height: 1.4,
                 ),
-                textDirection: TextDirection.rtl,
               )
                   .animate()
-                  .fadeIn(duration: 900.ms, delay: 350.ms)
-                  .slideY(
-                    begin: 0.3,
-                    end: 0.0,
-                    duration: 700.ms,
-                    delay: 350.ms,
-                    curve: Curves.easeOutCubic,
-                  ),
+                  .fadeIn(duration: 900.ms, delay: 420.ms)
+                  .slideY(begin: 0.3, end: 0.0,
+                      duration: 700.ms, delay: 420.ms,
+                      curve: Curves.easeOutCubic),
 
-              const SizedBox(height: 52),
+              const SizedBox(height: 48),
 
               // ── COLEL CHABAD ──────────────────────────────────────────────
               Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Container(
-                      width: 28,
-                      height: 1,
-                      color: _gold.withValues(alpha: 0.40)),
+                  _goldLine(),
                   const SizedBox(width: 12),
-                  Text(
-                    'COLEL CHABAD',
-                    style: TextStyle(
-                      color: _gold.withValues(alpha: 0.65),
-                      fontSize: 11,
-                      letterSpacing: 5,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
+                  Text('COLEL CHABAD',
+                      style: TextStyle(
+                        color: const Color(0xFFD4AF37).withValues(alpha: 0.65),
+                        fontSize: 11,
+                        letterSpacing: 5,
+                        fontWeight: FontWeight.w600,
+                      )),
                   const SizedBox(width: 12),
-                  Container(
-                      width: 28,
-                      height: 1,
-                      color: _gold.withValues(alpha: 0.40)),
+                  _goldLine(),
                 ],
-              ).animate().fadeIn(duration: 1100.ms, delay: 500.ms),
+              ).animate().fadeIn(duration: 1100.ms, delay: 560.ms),
             ],
           ),
         ],
       ),
     );
   }
+
+  Widget _goldLine() => Container(
+      width: 26, height: 1,
+      color: const Color(0xFFD4AF37).withValues(alpha: 0.40));
 }
 
 // ---------------------------------------------------------------------------
-// Gold coin widget (drawn via CustomPainter to match splash_icon.png style)
+// Pushka CustomPainter — draws the 3-D box + coin entirely in code
 // ---------------------------------------------------------------------------
 
-class _GoldCoin extends StatelessWidget {
-  final double size;
-  const _GoldCoin({required this.size});
+class _PushkaPainter extends CustomPainter {
+  final double boxEntrance;   // 0.0 → 1.0 (scale in)
+  final double bounceT;       // 0.0 → 1.0 (impact squish)
+  final double glow;          // 0.0 → 1.0 (idle pulse)
+  final double? coinProgress; // null = no fall; 0→1 = above→slot
+  final bool   coinInSlot;    // coin resting in slot
+  final double shimmer;       // 0.0→1.0 shimmer sweep
 
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: size,
-      height: size,
-      decoration: BoxDecoration(
-        shape: BoxShape.circle,
-        boxShadow: [
-          BoxShadow(
-            color: const Color(0xFFFFD700).withValues(alpha: 0.70),
-            blurRadius: 18,
-            spreadRadius: 5,
-          ),
-        ],
-      ),
-      child: CustomPaint(
-        painter: const _CoinPainter(),
-        size: Size(size, size),
-      ),
-    );
-  }
-}
+  const _PushkaPainter({
+    required this.boxEntrance,
+    required this.bounceT,
+    required this.glow,
+    required this.coinProgress,
+    required this.coinInSlot,
+    required this.shimmer,
+  });
 
-class _CoinPainter extends CustomPainter {
-  const _CoinPainter();
+  // ── Box geometry constants ──────────────────────────────────────────────
+  static const _fw  = 118.0; // front face width
+  static const _fh  = 100.0; // front face height
+  static const _ox  = 38.0;  // perspective x-offset
+  static const _oy  = 17.0;  // perspective y-offset
+  static const _cr  = 10.0;  // corner radius (front face)
+
+  // ── Colours ────────────────────────────────────────────────────────────
+  static const _frontTop    = Color(0xFF4A93E8);
+  static const _frontBot    = Color(0xFF2860B8);
+  static const _sideTop     = Color(0xFF2060C0);
+  static const _sideBot     = Color(0xFF0E3880);
+  static const _topLight    = Color(0xFF72BBFF);
+  static const _topDark     = Color(0xFF3A85E0);
+  static const _rimColor    = Color(0xFF143268);
+  static const _slotColor   = Color(0xFF0A1E48);
+  static const _goldBright  = Color(0xFFFFF5A0);
+  static const _goldMid     = Color(0xFFFFD700);
+  static const _goldDeep    = Color(0xFFD4AF37);
+  static const _goldDark    = Color(0xFF9A7020);
 
   @override
   void paint(Canvas canvas, Size size) {
-    final c = Offset(size.width / 2, size.height / 2);
-    final r = size.width / 2;
+    final cx = size.width  / 2;
+    final cy = size.height / 2 + 8;
 
-    // Main gold radial gradient
+    // Bounce / entrance transform applied to the whole box
+    final scale = boxEntrance * _bounceScale();
+    canvas.save();
+    canvas.translate(cx, cy);
+    canvas.scale(scale);
+    canvas.translate(-cx, -cy);
+
+    // Box center shifted slightly up so coin has room above
+    final boxCy = cy + 10;
+
+    // ── Vertices ──────────────────────────────────────────────────────────
+    final fTL = Offset(cx - _fw / 2, boxCy - _fh / 2);
+    final fTR = Offset(cx + _fw / 2, boxCy - _fh / 2);
+    final fBR = Offset(cx + _fw / 2, boxCy + _fh / 2);
+    const d = Offset(_ox, -_oy);
+
+    // ── Ambient glow behind box ───────────────────────────────────────────
+    final glowR = 100.0 + glow * 28;
     canvas.drawCircle(
-      c,
-      r,
+      Offset(cx, boxCy),
+      glowR,
+      Paint()
+        ..shader = RadialGradient(colors: [
+          const Color(0xFF5BA4EE).withValues(alpha: 0.22 + glow * 0.14),
+          Colors.transparent,
+        ]).createShader(Rect.fromCircle(
+            center: Offset(cx, boxCy), radius: glowR)),
+    );
+
+    // ── Right side face ───────────────────────────────────────────────────
+    _drawFace(canvas, [fTR, fTR + d, fBR + d, fBR],
+        _sideTop, _sideBot, Alignment.topLeft, Alignment.bottomRight);
+
+    // ── Front face (with rounded corners) ────────────────────────────────
+    _drawFrontFace(canvas, fTL, fBR, cx, boxCy);
+
+    // ── Top face ──────────────────────────────────────────────────────────
+    _drawFace(canvas, [fTL, fTR, fTR + d, fTL + d],
+        _topLight, _topDark, Alignment.topLeft, Alignment.bottomRight);
+
+    // ── Coin slot ─────────────────────────────────────────────────────────
+    _drawCoinSlot(canvas, cx, boxCy, fTR + d, fTL + d);
+
+    canvas.restore();
+
+    // ── Coin (outside box transform so it animates independently) ─────────
+    // Slot world Y after scale transform
+    final slotWorldY = cy + (boxCy - _fh / 2 - cy - _oy) * scale;
+    final coinRadius = 18.0;
+
+    if (coinProgress != null) {
+      // Coin falls from 170 px above slot to slot
+      final startY = slotWorldY - 170;
+      final endY   = slotWorldY + coinRadius * 0.3; // just entering slot
+      final coinCY = startY + (endY - startY) * coinProgress!;
+      _drawCoin(canvas, Offset(cx, coinCY), coinRadius,
+          rotation: (coinProgress! * 0.4) - 0.2);
+    } else if (coinInSlot) {
+      // Coin resting in slot with shimmer
+      _drawCoin(canvas, Offset(cx, slotWorldY), coinRadius,
+          shimmer: shimmer);
+    }
+  }
+
+  // ── Front face with rounded corners and gradient + Star of David ────────
+  void _drawFrontFace(Canvas canvas, Offset tl, Offset br, double cx, double cy) {
+    final rect = RRect.fromLTRBR(
+      tl.dx, tl.dy, br.dx, br.dy,
+      const Radius.circular(_cr),
+    );
+
+    // Gradient fill
+    canvas.drawRRect(
+      rect,
+      Paint()
+        ..shader = LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: const [_frontTop, _frontBot],
+        ).createShader(Rect.fromLTRB(tl.dx, tl.dy, br.dx, br.dy)),
+    );
+
+    // Inner highlight (glass gloss on top-left)
+    canvas.drawRRect(
+      RRect.fromLTRBR(
+        tl.dx + 4, tl.dy + 4,
+        br.dx - 4, tl.dy + _fh * 0.38,
+        const Radius.circular(_cr - 2),
+      ),
+      Paint()
+        ..shader = LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [
+            Colors.white.withValues(alpha: 0.18),
+            Colors.white.withValues(alpha: 0.0),
+          ],
+        ).createShader(Rect.fromLTRB(
+            tl.dx + 4, tl.dy + 4, br.dx - 4, tl.dy + _fh * 0.38)),
+    );
+
+    // Rim / border
+    canvas.drawRRect(
+      rect,
+      Paint()
+        ..color = _rimColor
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.5,
+    );
+
+    // Star of David
+    final starC = Offset(cx, (tl.dy + br.dy) / 2 + 4);
+    _drawStarOfDavid(canvas, starC, 28);
+  }
+
+  // ── Generic parallelogram face ───────────────────────────────────────────
+  void _drawFace(Canvas canvas, List<Offset> pts,
+      Color c1, Color c2, Alignment a1, Alignment a2) {
+    final path = Path()
+      ..moveTo(pts[0].dx, pts[0].dy)
+      ..lineTo(pts[1].dx, pts[1].dy)
+      ..lineTo(pts[2].dx, pts[2].dy)
+      ..lineTo(pts[3].dx, pts[3].dy)
+      ..close();
+
+    final bounds = path.getBounds();
+    canvas.drawPath(
+      path,
+      Paint()
+        ..shader = LinearGradient(
+          begin: a1, end: a2, colors: [c1, c2],
+        ).createShader(bounds),
+    );
+    canvas.drawPath(
+      path,
+      Paint()
+        ..color = _rimColor
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.2,
+    );
+  }
+
+  // ── Coin slot on top face ────────────────────────────────────────────────
+  void _drawCoinSlot(Canvas canvas, double cx, double boxCy,
+      Offset topRight, Offset topLeft) {
+    // Slot is a dark rounded rectangle near the front edge of the top face
+    final slotMidX = cx;
+    final slotMidY = boxCy - _fh / 2 - _oy / 2;
+    final slotW = 28.0;
+    final slotH = 8.0;
+
+    final slotRect = RRect.fromRectAndRadius(
+      Rect.fromCenter(
+          center: Offset(slotMidX, slotMidY),
+          width: slotW,
+          height: slotH),
+      const Radius.circular(4),
+    );
+
+    // Shadow inside slot (depth)
+    canvas.drawRRect(
+      slotRect,
+      Paint()
+        ..color = _slotColor
+        ..style = PaintingStyle.fill,
+    );
+
+    // Inner glow (light reflecting off slot edge)
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(
+        Rect.fromCenter(
+            center: Offset(slotMidX, slotMidY - 1),
+            width: slotW - 4,
+            height: 2),
+        const Radius.circular(1),
+      ),
+      Paint()..color = Colors.white.withValues(alpha: 0.15),
+    );
+  }
+
+  // ── Star of David ────────────────────────────────────────────────────────
+  void _drawStarOfDavid(Canvas canvas, Offset c, double size) {
+    final paint = Paint()
+      ..color = Colors.white.withValues(alpha: 0.85)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 2.2
+      ..strokeJoin = StrokeJoin.round
+      ..strokeCap = StrokeCap.round;
+
+    final r = size / 2;
+    // Triangle pointing up
+    _drawTriangle(canvas, c, r, 0, paint);
+    // Triangle pointing down
+    _drawTriangle(canvas, c, r, pi, paint);
+  }
+
+  void _drawTriangle(
+      Canvas canvas, Offset c, double r, double rot, Paint paint) {
+    final path = Path();
+    for (int i = 0; i < 3; i++) {
+      final angle = rot + (i * 2 * pi / 3) - pi / 2;
+      final pt = Offset(c.dx + r * cos(angle), c.dy + r * sin(angle));
+      i == 0 ? path.moveTo(pt.dx, pt.dy) : path.lineTo(pt.dx, pt.dy);
+    }
+    path.close();
+    canvas.drawPath(path, paint);
+  }
+
+  // ── Coin ─────────────────────────────────────────────────────────────────
+  void _drawCoin(Canvas canvas, Offset c, double r,
+      {double rotation = 0, double shimmer = 0}) {
+    canvas.save();
+    canvas.translate(c.dx, c.dy);
+    canvas.rotate(rotation);
+    canvas.translate(-c.dx, -c.dy);
+
+    // Outer glow
+    final glowR = r + 10 + glow * 4;
+    canvas.drawCircle(
+      c, glowR,
+      Paint()
+        ..shader = RadialGradient(colors: [
+          _goldMid.withValues(alpha: 0.55 + glow * 0.15),
+          _goldMid.withValues(alpha: 0.0),
+        ]).createShader(Rect.fromCircle(center: c, radius: glowR)),
+    );
+
+    // Main gold gradient
+    canvas.drawCircle(
+      c, r,
       Paint()
         ..shader = RadialGradient(
           center: const Alignment(-0.30, -0.40),
           radius: 0.90,
-          colors: const [
-            Color(0xFFFFF5A0), // bright top-left highlight
-            Color(0xFFFFD700), // pure gold
-            Color(0xFFD4AF37), // mid gold
-            Color(0xFF9A7020), // dark edge
-          ],
+          colors: const [_goldBright, _goldMid, _goldDeep, _goldDark],
           stops: const [0.0, 0.28, 0.65, 1.0],
         ).createShader(Rect.fromCircle(center: c, radius: r)),
     );
 
-    // Outer rim
+    // Rim
+    canvas.drawCircle(c, r - 1.5,
+        Paint()
+          ..color = _goldDark
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 2.0);
+
+    // Specular highlight
+    final hiC = Offset(c.dx - r * 0.22, c.dy - r * 0.24);
     canvas.drawCircle(
-      c,
-      r - 1.5,
+      hiC, r * 0.36,
       Paint()
-        ..color = const Color(0xFFA07820)
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 2.0,
+        ..shader = RadialGradient(colors: [
+          Colors.white.withValues(alpha: 0.60),
+          Colors.white.withValues(alpha: 0.0),
+        ]).createShader(Rect.fromCircle(center: hiC, radius: r * 0.36)),
     );
 
-    // Inner specular shine
-    final shineC = Offset(c.dx - r * 0.20, c.dy - r * 0.22);
-    canvas.drawCircle(
-      shineC,
-      r * 0.36,
-      Paint()
-        ..shader = RadialGradient(
-          colors: [
-            Colors.white.withValues(alpha: 0.55),
+    // Shimmer sweep when at rest
+    if (shimmer > 0) {
+      final sweepX = c.dx - r + shimmer * r * 2.4;
+      canvas.drawCircle(
+        Offset(sweepX, c.dy - r * 0.1),
+        r * 0.28,
+        Paint()
+          ..shader = RadialGradient(colors: [
+            Colors.white.withValues(alpha: 0.45 * sin(shimmer * pi)),
             Colors.white.withValues(alpha: 0.0),
-          ],
-        ).createShader(Rect.fromCircle(center: shineC, radius: r * 0.36)),
-    );
+          ]).createShader(Rect.fromCircle(
+              center: Offset(sweepX, c.dy - r * 0.1), radius: r * 0.28)),
+      );
+    }
+
+    canvas.restore();
+  }
+
+  // ── Bounce scale ─────────────────────────────────────────────────────────
+  double _bounceScale() {
+    if (bounceT == 0) return 1.0;
+    final t = bounceT;
+    if (t < 0.22) return 1.0 + t / 0.22 * 0.06;
+    if (t < 0.52) return 1.06 - (t - 0.22) / 0.30 * 0.10;
+    if (t < 0.78) return 0.96 + (t - 0.52) / 0.26 * 0.05;
+    return 1.01 - (t - 0.78) / 0.22 * 0.01;
   }
 
   @override
-  bool shouldRepaint(_CoinPainter old) => false;
+  bool shouldRepaint(_PushkaPainter o) =>
+      o.boxEntrance != boxEntrance ||
+      o.bounceT     != bounceT     ||
+      o.glow        != glow        ||
+      o.coinProgress != coinProgress ||
+      o.coinInSlot  != coinInSlot  ||
+      o.shimmer     != shimmer;
 }
 
 // ---------------------------------------------------------------------------
@@ -481,7 +644,7 @@ class _GoldParticles extends StatefulWidget {
 class _GoldParticlesState extends State<_GoldParticles>
     with SingleTickerProviderStateMixin {
   late final AnimationController _ctrl;
-  final List<_Particle> _particles = [];
+  final _particles = <_Particle>[];
 
   @override
   void initState() {
@@ -489,47 +652,37 @@ class _GoldParticlesState extends State<_GoldParticles>
     final rng = Random(17);
     for (int i = 0; i < 30; i++) {
       _particles.add(_Particle(
-        x: rng.nextDouble(),
-        phase: rng.nextDouble(),
-        speed: 0.09 + rng.nextDouble() * 0.11,
-        radius: 1.6 + rng.nextDouble() * 3.0,
-        opacity: 0.28 + rng.nextDouble() * 0.48,
-        drift: (rng.nextDouble() - 0.5) * 0.06,
+        x:       rng.nextDouble(),
+        phase:   rng.nextDouble(),
+        speed:   0.09 + rng.nextDouble() * 0.11,
+        radius:  1.6  + rng.nextDouble() * 2.8,
+        opacity: 0.28 + rng.nextDouble() * 0.46,
+        drift:   (rng.nextDouble() - 0.5) * 0.06,
       ));
     }
     _ctrl = AnimationController(
-      vsync: this,
-      duration: const Duration(seconds: 8),
-    )..repeat();
+        vsync: this, duration: const Duration(seconds: 8))
+      ..repeat();
   }
 
   @override
-  void dispose() {
-    _ctrl.dispose();
-    super.dispose();
-  }
+  void dispose() { _ctrl.dispose(); super.dispose(); }
 
   @override
-  Widget build(BuildContext context) {
-    return AnimatedBuilder(
-      animation: _ctrl,
-      builder: (_, _) => CustomPaint(
-        painter: _ParticlePainter(_particles, _ctrl.value),
-        size: Size.infinite,
-      ),
-    );
-  }
+  Widget build(BuildContext context) => AnimatedBuilder(
+        animation: _ctrl,
+        builder: (_, _) => CustomPaint(
+          painter: _ParticlePainter(_particles, _ctrl.value),
+          size: Size.infinite,
+        ),
+      );
 }
 
 class _Particle {
   final double x, phase, speed, radius, opacity, drift;
   const _Particle({
-    required this.x,
-    required this.phase,
-    required this.speed,
-    required this.radius,
-    required this.opacity,
-    required this.drift,
+    required this.x, required this.phase, required this.speed,
+    required this.radius, required this.opacity, required this.drift,
   });
 }
 
@@ -538,29 +691,25 @@ class _ParticlePainter extends CustomPainter {
   final double progress;
   const _ParticlePainter(this.particles, this.progress);
 
-  static const _gold = Color(0xFFD4AF37);
-
   @override
   void paint(Canvas canvas, Size size) {
     for (final p in particles) {
       final t = (p.phase + progress * p.speed * 8) % 1.0;
-      final alpha = t < 0.10
-          ? t / 0.10
-          : t > 0.75
-              ? (1.0 - t) / 0.25
-              : 1.0;
-      final px = (p.x + sin(t * pi * 2) * p.drift) * size.width;
-      final py = size.height * (1.0 - t);
+      final alpha =
+          t < 0.10 ? t / 0.10 : t > 0.75 ? (1 - t) / 0.25 : 1.0;
       canvas.drawCircle(
-        Offset(px, py),
+        Offset(
+          (p.x + sin(t * pi * 2) * p.drift) * size.width,
+          size.height * (1.0 - t),
+        ),
         p.radius,
         Paint()
-          ..color = _gold.withValues(alpha: p.opacity * alpha)
-          ..style = PaintingStyle.fill,
+          ..color = const Color(0xFFD4AF37).withValues(
+              alpha: p.opacity * alpha),
       );
     }
   }
 
   @override
-  bool shouldRepaint(_ParticlePainter old) => old.progress != progress;
+  bool shouldRepaint(_ParticlePainter o) => o.progress != progress;
 }
