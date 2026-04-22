@@ -3,6 +3,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../domain/reminder.dart';
 
+/// Maximum number of reminders a single user may have.
+/// Enforced in [addReminder] via a server-side aggregate COUNT query.
+const int kMaxReminders = 25;
+
 class ReminderRepository {
   ReminderRepository(this._firestore);
 
@@ -23,26 +27,70 @@ class ReminderRepository {
     });
   }
 
+  static const _keyReminderCount = 'reminderCount';
+
+  firestore.DocumentReference<Map<String, dynamic>> _userRef(String uid) =>
+      _firestore.collection('users').doc(uid);
+
+  /// Adds a new reminder, enforcing [kMaxReminders] atomically via a
+  /// transaction counter on the user document.  This eliminates the
+  /// TOCTOU race between a count read and the subsequent write.
   Future<String> addReminder(String uid, Reminder reminder) async {
-    final doc = await _collection(uid).add({
-      ...reminder.toMap(),
-      'createdAt': firestore.Timestamp.now(),
+    final collection = _collection(uid);
+    final userRef = _userRef(uid);
+    // Pre-generate doc ID outside the transaction (cannot call .add() inside).
+    final newDocRef = collection.doc();
+
+    // Bootstrap the counter the first time this code runs for a user:
+    // if the field is missing, seed it from the aggregate count.
+    // A tiny race remains on the very first concurrent add but disappears
+    // permanently once the counter exists.
+    final userSnap = await userRef.get();
+    if (userSnap.data()?[_keyReminderCount] == null) {
+      final aggSnap = await collection.count().get();
+      await userRef.set(
+        {_keyReminderCount: aggSnap.count ?? 0},
+        firestore.SetOptions(merge: true),
+      );
+    }
+
+    await _firestore.runTransaction((txn) async {
+      final snap = await txn.get(userRef);
+      final count = (snap.data()?[_keyReminderCount] as int?) ?? 0;
+      if (count >= kMaxReminders) {
+        throw firestore.FirebaseException(
+          plugin: 'cloud_firestore',
+          code: 'resource-exhausted',
+          message: 'Se alcanzó el límite de $kMaxReminders recordatorios.',
+        );
+      }
+      txn.update(userRef, {_keyReminderCount: firestore.FieldValue.increment(1)});
+      txn.set(newDocRef, {
+        ...reminder.toMap(),
+        'createdAt': firestore.FieldValue.serverTimestamp(),
+      });
     });
-    return doc.id;
+
+    return newDocRef.id;
   }
 
   Future<void> updateReminder(String uid, Reminder reminder) async {
     await _collection(uid).doc(reminder.id).set(
-          {
-            ...reminder.toMap(),
-            'createdAt': firestore.Timestamp.now(),
-          },
+          reminder.toMap(),
           firestore.SetOptions(merge: true),
         );
   }
 
   Future<void> deleteReminder(String uid, String reminderId) async {
-    await _collection(uid).doc(reminderId).delete();
+    final userRef = _userRef(uid);
+    await _firestore.runTransaction((txn) async {
+      final snap = await txn.get(userRef);
+      final count = (snap.data()?[_keyReminderCount] as int?) ?? 0;
+      txn.delete(_collection(uid).doc(reminderId));
+      if (count > 0) {
+        txn.update(userRef, {_keyReminderCount: firestore.FieldValue.increment(-1)});
+      }
+    });
   }
 }
 

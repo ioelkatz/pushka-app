@@ -16,7 +16,35 @@ service cloud.firestore {
           value == 'erev_rosh_chodesh';
     }
 
+    // Fields that only Cloud Functions may write (server-side only).
+    // hasNoStripeFields() is for CREATE (new doc must not contain them).
+    // hasNoStripeFieldsWritten() is for UPDATE (checks the diff — existing CF-written
+    // Stripe fields in the resulting doc are fine; writing/changing them is not).
+    function hasNoStripeFields() {
+      return !('stripeCustomerId' in request.resource.data) &&
+             !('stripeDefaultPaymentMethodId' in request.resource.data) &&
+             !('stripeDefaultPaymentMethodLast4' in request.resource.data) &&
+             !('stripeDefaultPaymentMethodBrand' in request.resource.data) &&
+             !('stripeCustomerIdPending' in request.resource.data);
+    }
+
+    function hasNoStripeFieldsWritten() {
+      // On UPDATE, request.resource.data is the full resulting document — it may
+      // include Stripe fields that Cloud Functions previously wrote (Admin SDK bypasses
+      // rules). We must only check what is being *changed*, not what's already there.
+      return !request.resource.data.diff(resource.data).affectedKeys()
+               .hasAny(['stripeCustomerId',
+                        'stripeDefaultPaymentMethodId',
+                        'stripeDefaultPaymentMethodLast4',
+                        'stripeDefaultPaymentMethodBrand',
+                        'stripeCustomerIdPending']);
+    }
+
     function validUserDoc(uid) {
+      // hasOnly includes Stripe fields so that on UPDATE, pre-existing CF-written
+      // Stripe data in the resulting document doesn't fail the check.
+      // Writing/changing Stripe fields is separately blocked by hasNoStripeFields()
+      // (create) and hasNoStripeFieldsWritten() (update).
       return request.resource.data.keys().hasOnly([
             'uid',
             'email',
@@ -55,16 +83,22 @@ service cloud.firestore {
             'autoEmptyNextRunAt',
             'lastStreakDate',
             'streakCount',
+            'reminderCount',
             'onboardingCompleted',
             'language',
-            'updatedAt'
+            'updatedAt',
+            'stripeCustomerId',
+            'stripeDefaultPaymentMethodId',
+            'stripeDefaultPaymentMethodLast4',
+            'stripeDefaultPaymentMethodBrand',
+            'stripeCustomerIdPending'
           ]) &&
           request.resource.data.uid is string &&
           request.resource.data.uid == uid &&
           (!('walletId' in request.resource.data) ||
               (request.resource.data.walletId is string &&
-                  request.resource.data.walletId.size() >= 4 &&
-                  request.resource.data.walletId.size() <= 16)) &&
+                  request.resource.data.walletId.size() >= 1 &&
+                  request.resource.data.walletId.size() <= 20)) &&
           (!('walletBalance' in request.resource.data) ||
               request.resource.data.walletBalance is number) &&
           (!('walletAutoTopUpEnabled' in request.resource.data) ||
@@ -89,10 +123,12 @@ service cloud.firestore {
               request.resource.data.walletAutoTopUpNextRunAt == null) &&
           (!('pushkaAmount' in request.resource.data) ||
               (request.resource.data.pushkaAmount is number &&
-                  request.resource.data.pushkaAmount >= 0)) &&
+                  request.resource.data.pushkaAmount >= 0 &&
+                  request.resource.data.pushkaAmount <= 100000)) &&
           (!('pushkaGoal' in request.resource.data) ||
               (request.resource.data.pushkaGoal is number &&
-                  request.resource.data.pushkaGoal > 0)) &&
+                  request.resource.data.pushkaGoal > 0 &&
+                  request.resource.data.pushkaGoal <= 100000)) &&
           (!('presetAmount' in request.resource.data) ||
               (request.resource.data.presetAmount is number &&
                   request.resource.data.presetAmount > 0)) &&
@@ -135,8 +171,27 @@ service cloud.firestore {
           (!('autoEmptyNextRunAt' in request.resource.data) ||
               request.resource.data.autoEmptyNextRunAt is timestamp ||
               request.resource.data.autoEmptyNextRunAt == null) &&
+          (!('email' in request.resource.data) ||
+              (request.resource.data.email is string &&
+                  request.resource.data.email.size() <= 254)) &&
+          (!('displayName' in request.resource.data) ||
+              (request.resource.data.displayName is string &&
+                  request.resource.data.displayName.size() <= 100)) &&
+          (!('billingEmail' in request.resource.data) ||
+              (request.resource.data.billingEmail is string &&
+                  request.resource.data.billingEmail.size() <= 254)) &&
+          (!('phoneNumber' in request.resource.data) ||
+              (request.resource.data.phoneNumber is string &&
+                  request.resource.data.phoneNumber.size() <= 30)) &&
+          (!('mailingAddress' in request.resource.data) ||
+              (request.resource.data.mailingAddress is string &&
+                  request.resource.data.mailingAddress.size() <= 500)) &&
           (!('photoURL' in request.resource.data) ||
-              request.resource.data.photoURL is string) &&
+              (request.resource.data.photoURL is string &&
+                  request.resource.data.photoURL.size() <= 2048)) &&
+          (!('reminderCount' in request.resource.data) ||
+              (request.resource.data.reminderCount is int &&
+                  request.resource.data.reminderCount >= 0)) &&
           (!('onboardingCompleted' in request.resource.data) ||
               request.resource.data.onboardingCompleted is bool) &&
           (!('language' in request.resource.data) ||
@@ -157,16 +212,24 @@ service cloud.firestore {
             'currencyCode',
             'createdAt'
           ]) &&
+          // Only client-writable types; 'walletFill' is exclusively written by CFs.
           (request.resource.data.type == 'tzedaka' ||
-              request.resource.data.type == 'pushkaEmpty' ||
-              request.resource.data.type == 'walletFill') &&
+              request.resource.data.type == 'pushkaEmpty') &&
           request.resource.data.amount is number &&
+          // Amount must be positive and within a sane ceiling (100 000 in major currency units).
+          request.resource.data.amount > 0 &&
+          request.resource.data.amount <= 100000 &&
+          // createdAt must equal the server request time — prevents backdating / future-dating.
+          request.resource.data.createdAt == request.time &&
           (!('description' in request.resource.data) ||
-              request.resource.data.description is string) &&
+              (request.resource.data.description is string &&
+                  request.resource.data.description.size() <= 500)) &&
           (!('paymentMethod' in request.resource.data) ||
-              request.resource.data.paymentMethod is string) &&
+              (request.resource.data.paymentMethod is string &&
+                  request.resource.data.paymentMethod.size() <= 100)) &&
           (!('status' in request.resource.data) ||
-              request.resource.data.status is string) &&
+              (request.resource.data.status is string &&
+                  request.resource.data.status.size() <= 50)) &&
           (!('currencyCode' in request.resource.data) ||
               (request.resource.data.currencyCode is string &&
                   request.resource.data.currencyCode.size() == 3));
@@ -188,6 +251,7 @@ service cloud.firestore {
             'createdAt'
           ]) &&
           request.resource.data.title is string &&
+          request.resource.data.title.size() <= 100 &&
           request.resource.data.timeHour is int &&
           request.resource.data.timeHour >= 0 &&
           request.resource.data.timeHour <= 23 &&
@@ -195,6 +259,7 @@ service cloud.firestore {
           request.resource.data.timeMinute >= 0 &&
           request.resource.data.timeMinute <= 59 &&
           request.resource.data.days is list &&
+          request.resource.data.days.size() <= 7 &&
           request.resource.data.isHoliday is bool &&
           (!('minutesBefore' in request.resource.data) ||
               (request.resource.data.minutesBefore is int &&
@@ -202,6 +267,7 @@ service cloud.firestore {
                   request.resource.data.minutesBefore <= 1440)) &&
           request.resource.data.isEnabled is bool &&
           request.resource.data.secondDays is list &&
+          request.resource.data.secondDays.size() <= 7 &&
           request.resource.data.secondIsHoliday is bool &&
           (
             (
@@ -227,8 +293,13 @@ service cloud.firestore {
             'lastUsedAt'
           ]) &&
           request.resource.data.token is string &&
+          // FCM tokens are typically 140–200 characters; reject obviously bogus values.
+          request.resource.data.token.size() >= 100 &&
+          request.resource.data.token.size() <= 4096 &&
           request.resource.data.token == tokenId &&
-          request.resource.data.platform is string;
+          request.resource.data.platform is string &&
+          (request.resource.data.platform == 'android' ||
+              request.resource.data.platform == 'ios');
     }
 
     // Rate limit documents are written server-side only; clients are denied all access.
@@ -238,9 +309,21 @@ service cloud.firestore {
 
     match /users/{uid} {
       allow read: if isOwner(uid);
-      allow create: if isOwner(uid) && validUserDoc(uid);
+      // On create: walletBalance must be 0 (server-side CFs credit the balance).
+      // Stripe fields must not be present — they are written exclusively by CFs.
+      allow create: if isOwner(uid) &&
+          validUserDoc(uid) &&
+          hasNoStripeFields() &&
+          (!('walletBalance' in request.resource.data) ||
+              request.resource.data.walletBalance == 0);
+      // On update: walletId and walletBalance are immutable from the client side.
+      // Stripe fields must not be written or changed — CFs own them via Admin SDK.
+      // NOTE: hasNoStripeFieldsWritten() checks the diff (not request.resource.data),
+      // because request.resource.data on update includes pre-existing CF-written Stripe
+      // fields — checking the full doc would block all updates for users who have a card.
       allow update: if isOwner(uid) &&
           validUserDoc(uid) &&
+          hasNoStripeFieldsWritten() &&
           (
             request.resource.data.walletId == resource.data.walletId ||
             !('walletId' in resource.data)
@@ -253,10 +336,9 @@ service cloud.firestore {
 
       match /transactions/{transactionId} {
         allow read: if isOwner(uid);
-        allow create: if isOwner(uid) &&
-            validTransactionDoc() &&
-            (request.resource.data.type == 'pushkaEmpty' ||
-             request.resource.data.type == 'tzedaka');
+        // validTransactionDoc() already restricts type to 'tzedaka' | 'pushkaEmpty';
+        // 'walletFill' is exclusively written by Cloud Functions (admin SDK bypasses rules).
+        allow create: if isOwner(uid) && validTransactionDoc();
         allow update, delete: if false;
       }
 
@@ -283,7 +365,8 @@ service cloud.firestore {
       }
 
       match /walletRequests/{requestId} {
-        allow read, write: if false;
+        allow read: if isOwner(uid);
+        allow write: if false;
       }
     }
   }

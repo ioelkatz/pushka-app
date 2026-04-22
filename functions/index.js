@@ -29,8 +29,8 @@ async function enforceRateLimit(uid, action, maxCalls, windowSeconds) {
     const snap = await tx.get(ref);
     const data = snap.exists ? snap.data() : { calls: [], updatedAt: now };
 
-    // Keep only calls within the current window
-    const recentCalls = (data.calls || []).filter((ts) => ts > windowStart);
+    // Keep only calls within the current window; cap length to prevent doc bloat.
+    const recentCalls = (data.calls || []).filter((ts) => ts > windowStart).slice(-maxCalls * 2);
 
     if (recentCalls.length >= maxCalls) {
       const retryAfter = Math.ceil((recentCalls[0] + windowSeconds * 1000 - now) / 1000);
@@ -45,25 +45,72 @@ async function enforceRateLimit(uid, action, maxCalls, windowSeconds) {
   });
 }
 
+// Exhaustive list of currencies accepted by the app and their Stripe minimum
+// charge amounts (in the smallest currency unit, e.g. cents).
+// Any currency NOT in this map is rejected before reaching Stripe.
+const CURRENCY_MINIMUMS = {
+  usd: 50,
+  eur: 50,
+  gbp: 30,
+  cad: 50,
+  ils: 200,
+  mxn: 1000,
+  brl: 100,
+  ars: 100000,
+  clp: 50000,
+  cop: 200000,
+};
+
+const SUPPORTED_CURRENCIES = new Set(Object.keys(CURRENCY_MINIMUMS));
+
+/**
+ * Validates that `currency` is a supported ISO 4217 code (lowercase).
+ * Throws HttpsError("invalid-argument") if not.
+ * Returns the normalised lowercase code.
+ */
+function validateCurrency(currency) {
+  const code = String(currency || "").toLowerCase().trim();
+  if (!SUPPORTED_CURRENCIES.has(code)) {
+    throw new HttpsError(
+      "invalid-argument",
+      `Moneda no soportada: ${code || "(vacío)"}. Monedas válidas: ${[...SUPPORTED_CURRENCIES].join(", ")}.`
+    );
+  }
+  return code;
+}
+
 function minAmountForCurrency(currency) {
   const code = String(currency || "usd").toLowerCase();
-  const minimums = {
-    usd: 50,
-    eur: 50,
-    gbp: 30,
-    cad: 50,
-    ils: 200,
-    mxn: 1000,
-    brl: 100,
-    ars: 100000,
-    clp: 50000,
-    cop: 200000,
-  };
-  return minimums[code] ?? 100;
+  return CURRENCY_MINIMUMS[code] ?? 100;
 }
 
 function formatAmount(cents) {
   return (Number(cents) / 100).toFixed(2);
+}
+
+/**
+ * Returns a display symbol for the given ISO 4217 currency code (lowercase).
+ * Falls back to the uppercased code itself for any unknown currency.
+ */
+function currencySymbol(code) {
+  const symbols = {
+    usd: "$", eur: "€", gbp: "£", cad: "CA$", ils: "₪",
+    mxn: "MX$", brl: "R$", ars: "AR$", clp: "CL$", cop: "COP$",
+  };
+  return symbols[String(code || "usd").toLowerCase()] ?? String(code || "USD").toUpperCase();
+}
+
+/**
+ * Returns the user's currency code from Firestore (lowercase), defaulting to "usd".
+ */
+async function getUserCurrency(uid) {
+  try {
+    const snap = await db.collection("users").doc(uid).get();
+    const code = String(snap.data()?.currencyCode || "usd").toLowerCase().trim();
+    return SUPPORTED_CURRENCIES.has(code) ? code : "usd";
+  } catch (_) {
+    return "usd";
+  }
 }
 
 function computeNextWalletTopUpDate({
@@ -76,7 +123,8 @@ function computeNextWalletTopUpDate({
   if (frequency === "monthly") {
     let year = now.getUTCFullYear();
     let month = now.getUTCMonth();
-    let run = new Date(Date.UTC(year, month, dayOfMonth, 8, 0, 0));
+    const maxDayCurrent = new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
+    let run = new Date(Date.UTC(year, month, Math.min(Math.max(dayOfMonth, 1), maxDayCurrent), 8, 0, 0));
     if (run <= now) {
       month += 1;
       if (month > 11) {
@@ -103,7 +151,6 @@ function computeNextWalletTopUpDate({
   const jsWeekday = run.getUTCDay() === 0 ? 7 : run.getUTCDay();
   let offset = target - jsWeekday;
   if (offset < 0 || (offset === 0 && run <= now)) offset += 7;
-  if (offset === 0 && run <= now) offset = 7;
   run.setUTCDate(run.getUTCDate() + offset);
   return run;
 }
@@ -283,8 +330,11 @@ exports.sendTestNotification = onCall({ enforceAppCheck: true }, async (request)
   await enforceRateLimit(request.auth.uid, "sendTestNotification", 5, 3600);
 
   const uid = request.auth.uid;
-  const title = String(request.data?.title || "Pushka").slice(0, 100);
-  const body = String(request.data?.body || "Notificación de prueba").slice(0, 500);
+  // Strip control characters (including null bytes) before truncating.
+  // eslint-disable-next-line no-control-regex
+  const sanitize = (s) => String(s || "").replace(/[\x00-\x1F\x7F]/g, " ").trim();
+  const title = sanitize(request.data?.title || "Pushka").slice(0, 100);
+  const body = sanitize(request.data?.body || "Notificación de prueba").slice(0, 500);
 
   const response = await sendToUser(uid, {
     notification: { title, body },
@@ -312,9 +362,13 @@ exports.createPaymentIntent = onCall(
   }
 
   const amount = Number(request.data?.amount || 0);
-  const currency = (request.data?.currency || "usd").toLowerCase();
-  const rawEmail = request.data?.customerEmail || null;
-  const customerEmail = rawEmail ? String(rawEmail).slice(0, 254) : null;
+  // Validate currency against supported list before touching Stripe.
+  const currency = validateCurrency(request.data?.currency || "usd");
+  // Use the email from the verified Firebase ID token — never trust client-supplied
+  // email, as it could be another user's address (Stripe would send them the receipt).
+  const customerEmail = request.auth.token?.email
+    ? String(request.auth.token.email).slice(0, 254)
+    : null;
   const purpose = String(request.data?.purpose || "donation").toLowerCase();
   if (purpose !== "donation" && purpose !== "wallet_topup" && purpose !== "pushka_empty") {
     throw new HttpsError("invalid-argument", "Propósito de pago inválido.");
@@ -334,6 +388,11 @@ exports.createPaymentIntent = onCall(
     );
   }
 
+  // Idempotency key: uid + purpose + amount + currency + minute-bucket.
+  // The minute bucket means a retry within the same minute reuses the same PI,
+  // while a genuine second charge (new minute) gets a fresh PI.
+  const idempotencyKey = `pi_${request.auth.uid}_${purpose}_${currency}_${amount}_${Math.floor(Date.now() / 60000)}`;
+
   let paymentIntent;
   try {
     const stripe = require("stripe")(stripeSecret.value());
@@ -349,7 +408,7 @@ exports.createPaymentIntent = onCall(
         amount: String(amount),
         purpose,
       },
-    });
+    }, { idempotencyKey });
   } catch (err) {
     console.error("createPaymentIntent: Stripe API error", {
       uid: request.auth.uid,
@@ -369,6 +428,284 @@ exports.createPaymentIntent = onCall(
 
   return { clientSecret: paymentIntent.client_secret };
 });
+
+// ---------------------------------------------------------------------------
+// Stripe Customer — SetupIntent (save card for future off-session charges)
+// ---------------------------------------------------------------------------
+
+exports.createSetupIntent = onCall(
+  { secrets: [stripeSecret], enforceAppCheck: true },
+  async (request) => {
+    if (!request.auth?.uid) {
+      throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
+    }
+    if (!stripeSecret.value()) {
+      throw new HttpsError("failed-precondition", "Stripe no configurado.");
+    }
+    await enforceRateLimit(request.auth.uid, "createSetupIntent", 5, 3600);
+
+    const uid = request.auth.uid;
+    const stripe = require("stripe")(stripeSecret.value());
+    const userRef = db.collection("users").doc(uid);
+
+    // Resolve (or create) Stripe customer inside a Firestore transaction to
+    // prevent a race condition where two concurrent calls both find
+    // stripeCustomerId === null and each create a separate Stripe customer.
+    let customerId = null;
+    let customerEmail = null;
+    await db.runTransaction(async (tx) => {
+      const userSnap = await tx.get(userRef);
+      const userData = userSnap.data() || {};
+      customerEmail = userData.email || request.auth.token?.email || null;
+      customerId = userData.stripeCustomerId || null;
+      if (!customerId) {
+        // Create customer outside the transaction body is unsafe;
+        // we mark a "pending" placeholder first so a concurrent call
+        // reading inside its own transaction sees it and waits for the real ID.
+        // Instead, we write a sentinel so the second concurrent call skips creation.
+        // Pattern: write a temporary marker, then overwrite after Stripe responds.
+        // Using a separate key prevents the second call from also creating a customer.
+        tx.set(userRef, {
+          stripeCustomerIdPending: true,
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        }, { merge: true });
+      }
+    });
+
+    if (!customerId) {
+      // Use a Stripe idempotency key keyed to the UID so concurrent calls produce
+      // exactly one customer regardless of how many reach this point.
+      try {
+        const customer = await stripe.customers.create({
+          email: customerEmail || undefined,
+          metadata: { uid },
+        }, { idempotencyKey: `customer_create_${uid}` });
+        customerId = customer.id;
+        await userRef.set({
+          stripeCustomerId: customerId,
+          stripeCustomerIdPending: admin.firestore.FieldValue.delete(),
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        }, { merge: true });
+      } catch (stripeErr) {
+        // Clear the pending sentinel so the next attempt is not blocked.
+        await userRef.set({
+          stripeCustomerIdPending: admin.firestore.FieldValue.delete(),
+        }, { merge: true }).catch(() => {});
+        throw stripeErr;
+      }
+    }
+
+    // Idempotency key: uid + minute bucket — retries within the same minute
+    // reuse the same SetupIntent instead of creating an orphaned one.
+    const siIdempotencyKey = `si_${uid}_${Math.floor(Date.now() / 60000)}`;
+    const setupIntent = await stripe.setupIntents.create({
+      customer: customerId,
+      payment_method_types: ["card"],
+      usage: "off_session",
+      metadata: { uid },
+    }, { idempotencyKey: siIdempotencyKey });
+
+    return { clientSecret: setupIntent.client_secret };
+  }
+);
+
+// ---------------------------------------------------------------------------
+// List saved cards for current user
+// ---------------------------------------------------------------------------
+
+exports.listSavedCards = onCall(
+  { secrets: [stripeSecret], enforceAppCheck: true },
+  async (request) => {
+    if (!request.auth?.uid) {
+      throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
+    }
+    if (!stripeSecret.value()) {
+      throw new HttpsError("failed-precondition", "Stripe no configurado.");
+    }
+    // 30 card-list calls per hour per user
+    await enforceRateLimit(request.auth.uid, "listSavedCards", 30, 3600);
+
+    const uid = request.auth.uid;
+    const userSnap = await db.collection("users").doc(uid).get();
+    const customerId = userSnap.data()?.stripeCustomerId || null;
+
+    if (!customerId) {
+      return { cards: [], defaultPaymentMethodId: null };
+    }
+
+    const stripe = require("stripe")(stripeSecret.value());
+    const customer = await stripe.customers.retrieve(customerId);
+
+    // Customer was deleted directly in Stripe — clear the stale ID and return empty.
+    if (customer.deleted) {
+      await db.collection("users").doc(uid).set(
+        { stripeCustomerId: null, stripeCustomerIdPending: null },
+        { merge: true },
+      ).catch(() => {});
+      return { cards: [], defaultPaymentMethodId: null };
+    }
+
+    const defaultPmId = customer.invoice_settings?.default_payment_method || null;
+
+    // Fetch all cards (limit: 100; practical ceiling — no user has >100 saved cards).
+    // Stripe's default page size is 10, which would silently omit extra cards.
+    const pmList = await stripe.paymentMethods.list({
+      customer: customerId,
+      type: "card",
+      limit: 100,
+    });
+
+    const cards = pmList.data.map((pm) => ({
+      id: pm.id,
+      brand: pm.card?.brand || "card",
+      last4: pm.card?.last4 || "****",
+      expMonth: pm.card?.exp_month || 0,
+      expYear: pm.card?.exp_year || 0,
+      isDefault: pm.id === defaultPmId,
+    }));
+
+    return { cards, defaultPaymentMethodId: defaultPmId };
+  }
+);
+
+// ---------------------------------------------------------------------------
+// Delete a saved payment method
+// ---------------------------------------------------------------------------
+
+exports.deletePaymentMethod = onCall(
+  { secrets: [stripeSecret], enforceAppCheck: true },
+  async (request) => {
+    if (!request.auth?.uid) {
+      throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
+    }
+    if (!stripeSecret.value()) {
+      throw new HttpsError("failed-precondition", "Stripe no configurado.");
+    }
+    // 10 PM deletions per hour per user
+    await enforceRateLimit(request.auth.uid, "deletePaymentMethod", 10, 3600);
+
+    const uid = request.auth.uid;
+    const pmId = String(request.data?.paymentMethodId || "").trim();
+    if (!pmId.startsWith("pm_")) {
+      throw new HttpsError("invalid-argument", "paymentMethodId inválido.");
+    }
+
+    const stripe = require("stripe")(stripeSecret.value());
+    const userRef = db.collection("users").doc(uid);
+    const userSnap = await userRef.get();
+    const customerId = userSnap.data()?.stripeCustomerId || null;
+
+    if (!customerId) {
+      throw new HttpsError("not-found", "No hay cliente Stripe para este usuario.");
+    }
+
+    // Retrieve PM — it may no longer exist if already deleted on another device.
+    let pm;
+    try {
+      pm = await stripe.paymentMethods.retrieve(pmId);
+    } catch (stripeErr) {
+      if (stripeErr.statusCode === 404 || stripeErr.code === "resource_missing") {
+        return { success: true }; // Already gone — idempotent success.
+      }
+      throw new HttpsError("internal", "Error al verificar el método de pago.");
+    }
+
+    // PM already detached (customer === null) — treat as idempotent success.
+    if (pm.customer === null) {
+      return { success: true };
+    }
+
+    if (pm.customer !== customerId) {
+      throw new HttpsError("permission-denied", "Este método de pago no pertenece a tu cuenta.");
+    }
+
+    // Detach — a concurrent request may have beaten us; that's fine.
+    try {
+      await stripe.paymentMethods.detach(pmId);
+    } catch (stripeErr) {
+      if (stripeErr.statusCode !== 404 && stripeErr.code !== "resource_missing") {
+        throw new HttpsError("internal", "Error al eliminar el método de pago.");
+      }
+      // Race: already detached between retrieve and detach — success.
+    }
+
+    // If deleted PM was the Stripe customer's invoice default, clear it there too.
+    // Otherwise future off-session charges that rely on invoice_settings.default_payment_method
+    // will fail because the PM is now detached.
+    const stripeCustomer = await stripe.customers.retrieve(customerId);
+    if (stripeCustomer.invoice_settings?.default_payment_method === pmId) {
+      await stripe.customers.update(customerId, {
+        invoice_settings: { default_payment_method: null },
+      });
+    }
+
+    // If deleted PM was the Firestore-cached default, clear it from Firestore
+    const defaultPmId = userSnap.data()?.stripeDefaultPaymentMethodId || null;
+    if (defaultPmId === pmId) {
+      await userRef.set({
+        stripeDefaultPaymentMethodId: null,
+        stripeDefaultPaymentMethodLast4: null,
+        stripeDefaultPaymentMethodBrand: null,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      }, { merge: true });
+    }
+
+    return { success: true };
+  }
+);
+
+// ---------------------------------------------------------------------------
+// Set a payment method as default for off-session charges
+// ---------------------------------------------------------------------------
+
+exports.setDefaultPaymentMethod = onCall(
+  { secrets: [stripeSecret], enforceAppCheck: true },
+  async (request) => {
+    if (!request.auth?.uid) {
+      throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
+    }
+    if (!stripeSecret.value()) {
+      throw new HttpsError("failed-precondition", "Stripe no configurado.");
+    }
+    // 20 default-PM changes per hour per user
+    await enforceRateLimit(request.auth.uid, "setDefaultPaymentMethod", 20, 3600);
+
+    const uid = request.auth.uid;
+    const pmId = String(request.data?.paymentMethodId || "").trim();
+    if (!pmId.startsWith("pm_")) {
+      throw new HttpsError("invalid-argument", "paymentMethodId inválido.");
+    }
+
+    const stripe = require("stripe")(stripeSecret.value());
+    const userRef = db.collection("users").doc(uid);
+    const userSnap = await userRef.get();
+    const customerId = userSnap.data()?.stripeCustomerId || null;
+
+    if (!customerId) {
+      throw new HttpsError("not-found", "No hay cliente Stripe para este usuario.");
+    }
+
+    const pm = await stripe.paymentMethods.retrieve(pmId);
+    if (pm.customer !== customerId) {
+      throw new HttpsError("permission-denied", "Este método de pago no pertenece a tu cuenta.");
+    }
+
+    // Update Stripe Customer's default payment method
+    await stripe.customers.update(customerId, {
+      invoice_settings: { default_payment_method: pmId },
+    });
+
+    // Cache brand/last4 in Firestore for display in settings
+    await userRef.set({
+      stripeDefaultPaymentMethodId: pmId,
+      stripeDefaultPaymentMethodLast4: pm.card?.last4 || null,
+      stripeDefaultPaymentMethodBrand: pm.card?.brand || null,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    }, { merge: true });
+
+    return { success: true };
+  }
+);
 
 exports.stripeWebhook = onRequest(
   { secrets: [stripeSecret, stripeWebhookSecret] },
@@ -419,7 +756,17 @@ exports.stripeWebhook = onRequest(
       const amount = (intent.amount || 0) / 100;
       const docId = intent.id;
 
-      if (uid && (purpose === "donation" || purpose === "pushka_empty")) {
+      // wallet_auto_topup / pushka_auto_empty: state already updated by the
+      // scheduled CF that confirmed the charge. Just mark the event as processed.
+      if (uid && (purpose === "wallet_auto_topup" || purpose === "pushka_auto_empty")) {
+        await finalizeWebhookEvent(eventRef, {
+          status: "processed",
+          uid,
+          paymentIntentId: docId,
+          amount,
+          outcome: purpose,
+        });
+      } else if (uid && (purpose === "donation" || purpose === "pushka_empty")) {
         const txType = purpose === "pushka_empty" ? "pushkaEmpty" : "tzedaka";
         const txDesc = purpose === "pushka_empty" ? "Vaciado de Pushka (Stripe)" : "Donación Stripe";
         await db
@@ -526,10 +873,14 @@ exports.stripeWebhook = onRequest(
 
     res.json({ received: true });
   } catch (err) {
-    await finalizeWebhookEvent(eventRef, {
-      status: "failed",
-      error: String(err?.message || err || "unknown_error"),
-    });
+    try {
+      await finalizeWebhookEvent(eventRef, {
+        status: "failed",
+        error: String(err?.message || err || "unknown_error"),
+      });
+    } catch (finalizeErr) {
+      console.error("stripeWebhook: Failed to finalize failed event", finalizeErr?.message);
+    }
     console.error("stripeWebhook: Processing failed", err?.message || err);
     res.status(500).send("Webhook processing failed.");
   }
@@ -548,15 +899,31 @@ exports.onTransactionCreated = onDocumentCreated(
     // Scheduled jobs (auto-empty, auto-topup) send their own notification
     if (data.skipNotification === true) return;
 
-    // Detect user language from profile
+    // Rate-limit transaction notifications to prevent a client that spams
+    // client-writable transaction types (tzedaka / pushkaEmpty) from flooding
+    // their own device (and burning Cloud Messaging quota).
+    // 30 notifications per hour is well above any legitimate usage.
+    try {
+      await enforceRateLimit(uid, "onTransactionCreated", 30, 3600);
+    } catch (_) {
+      // Silently drop the notification — do NOT rethrow, as that would cause
+      // the Firestore trigger to retry indefinitely.
+      return;
+    }
+
+    // Detect user language and currency from profile
     let lang = "es";
+    let sym = "$";
     try {
       const userSnap = await admin.firestore().collection("users").doc(uid).get();
-      const userLang = userSnap.data()?.language;
-      if (userLang === "en" || userLang === "fr") lang = userLang;
-    } catch (_) { /* default to Spanish */ }
+      const userData = userSnap.data() || {};
+      const userLang = userData.language;
+      if (userLang === "en" || userLang === "fr" || userLang === "he") lang = userLang;
+      const rawCode = String(userData.currencyCode || "usd").toLowerCase().trim();
+      sym = currencySymbol(SUPPORTED_CURRENCIES.has(rawCode) ? rawCode : "usd");
+    } catch (_) { /* default to Spanish / USD */ }
 
-    const fmt = (n) => `$${Number(n).toFixed(2)}`;
+    const fmt = (n) => `${sym}${Number(n).toFixed(2)}`;
     const abs = Math.abs(Number(amount));
 
     const messages = {
@@ -657,7 +1024,7 @@ exports.walletTopUpFromPaymentIntent = onCall(
       }
       const userData = userSnap.data() || {};
       const currentBalance = Number(userData.walletBalance || 0);
-      updatedBalance = currentBalance + amount;
+      updatedBalance = Math.round((currentBalance + amount) * 100) / 100;
 
       tx.set(
         userRef,
@@ -673,7 +1040,7 @@ exports.walletTopUpFromPaymentIntent = onCall(
         type: "walletFill",
         amount,
         description: "Recarga de billetera con tarjeta",
-        createdAt: admin.firestore.Timestamp.now(),
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
       });
 
       tx.set(consumeRef, {
@@ -699,10 +1066,12 @@ exports.walletTransfer = onCall(
 
     const senderUid = request.auth.uid;
     const targetWalletId = String(request.data?.targetWalletId || "").trim();
-    const amount = Number(request.data?.amount || 0);
+    const rawAmount = Number(request.data?.amount || 0);
+    // Round to 2 decimal places to avoid floating-point precision issues.
+    const amount = Math.round(rawAmount * 100) / 100;
 
-    if (!targetWalletId || !/^\d{6}$/.test(targetWalletId)) {
-      throw new HttpsError("invalid-argument", "ID destino debe ser de 6 dígitos.");
+    if (!targetWalletId || !/^\d{8}$/.test(targetWalletId)) {
+      throw new HttpsError("invalid-argument", "ID destino debe ser de 8 dígitos.");
     }
     if (!Number.isFinite(amount) || amount <= 0) {
       throw new HttpsError("invalid-argument", "Monto inválido.");
@@ -738,6 +1107,12 @@ exports.walletTransfer = onCall(
         throw new HttpsError("not-found", "No se pudo completar la transferencia.");
       }
 
+      // Re-validate that the receiver's walletId hasn't changed since the
+      // pre-transaction query (walletIds should be immutable, but verify defensively).
+      if ((receiverSnap.data() || {}).walletId !== targetWalletId) {
+        throw new HttpsError("not-found", "La billetera destino ya no existe.");
+      }
+
       const senderBalance = Number((senderSnap.data() || {}).walletBalance || 0);
       const receiverBalance = Number((receiverSnap.data() || {}).walletBalance || 0);
 
@@ -745,8 +1120,8 @@ exports.walletTransfer = onCall(
         throw new HttpsError("failed-precondition", "Saldo insuficiente.");
       }
 
-      senderBalanceAfter = senderBalance - amount;
-      const receiverBalanceAfter = receiverBalance + amount;
+      senderBalanceAfter = Math.round((senderBalance - amount) * 100) / 100;
+      const receiverBalanceAfter = Math.round((receiverBalance + amount) * 100) / 100;
 
       tx.set(
         senderRef,
@@ -770,14 +1145,14 @@ exports.walletTransfer = onCall(
         type: "walletFill",
         amount: -amount,
         description: `Transferencia enviada a ${targetWalletId}`,
-        createdAt: admin.firestore.Timestamp.now(),
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
       });
 
       tx.set(receiverRef.collection("transactions").doc(), {
         type: "walletFill",
         amount,
         description: "Transferencia recibida",
-        createdAt: admin.firestore.Timestamp.now(),
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
       });
     });
 
@@ -796,10 +1171,12 @@ exports.walletRequestTransfer = onCall(
 
     const requesterUid = request.auth.uid;
     const fromWalletId = String(request.data?.fromWalletId || "").trim();
-    const amount = Number(request.data?.amount || 0);
+    const rawAmount = Number(request.data?.amount || 0);
+    // Round to 2 decimal places to avoid floating-point precision issues.
+    const amount = Math.round(rawAmount * 100) / 100;
 
-    if (!fromWalletId || !/^\d{6}$/.test(fromWalletId)) {
-      throw new HttpsError("invalid-argument", "ID de billetera debe ser de 6 dígitos.");
+    if (!fromWalletId || !/^\d{8}$/.test(fromWalletId)) {
+      throw new HttpsError("invalid-argument", "ID de billetera debe ser de 8 dígitos.");
     }
     if (!Number.isFinite(amount) || amount <= 0) {
       throw new HttpsError("invalid-argument", "Monto inválido.");
@@ -824,15 +1201,21 @@ exports.walletRequestTransfer = onCall(
       throw new HttpsError("failed-precondition", "No puedes solicitarte a ti mismo.");
     }
 
-    // Get requester wallet ID to display in notification
+    // Get requester wallet ID and currency to display in notification
     const requesterSnap = await db.collection("users").doc(requesterUid).get();
-    const requesterWalletId = String(requesterSnap.data()?.walletId || requesterUid.slice(-6).toUpperCase());
+    const requesterWalletId = String(requesterSnap.data()?.walletId || "");
+    if (!requesterWalletId || !/^\d{8}$/.test(requesterWalletId)) {
+      throw new HttpsError("not-found", "Tu billetera no está configurada correctamente.");
+    }
+    const requesterCurrencyCode = String(requesterSnap.data()?.currencyCode || "usd").toLowerCase().trim();
+    const requesterSym = currencySymbol(SUPPORTED_CURRENCIES.has(requesterCurrencyCode) ? requesterCurrencyCode : "usd");
 
     // Write pending request to target user
     await db.collection("users").doc(targetUid).collection("walletRequests").add({
       fromUid: requesterUid,
       fromWalletId: requesterWalletId,
       amount,
+      currency: requesterCurrencyCode,
       status: "pending",
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
     });
@@ -841,10 +1224,10 @@ exports.walletRequestTransfer = onCall(
     const targetLang = await getUserLanguage(targetUid);
     const requestTitles = { es: "Solicitud de Tzedaká", en: "Tzedakah Request", fr: "Demande de Tzedaka", he: "בקשת צדקה" };
     const requestBodies = {
-      es: `${requesterWalletId} te solicita $${amount.toFixed(2)}`,
-      en: `${requesterWalletId} is requesting $${amount.toFixed(2)} from you`,
-      fr: `${requesterWalletId} vous demande $${amount.toFixed(2)}`,
-      he: `${requesterWalletId} מבקש $${amount.toFixed(2)} ממך`,
+      es: `${requesterWalletId} te solicita ${requesterSym}${amount.toFixed(2)}`,
+      en: `${requesterWalletId} is requesting ${requesterSym}${amount.toFixed(2)} from you`,
+      fr: `${requesterWalletId} vous demande ${requesterSym}${amount.toFixed(2)}`,
+      he: `${requesterWalletId} מבקש ${requesterSym}${amount.toFixed(2)} ממך`,
     };
     await sendToUser(targetUid, {
       notification: {
@@ -853,6 +1236,191 @@ exports.walletRequestTransfer = onCall(
       },
       data: { type: "wallet_request", amount: String(amount), fromWalletId: requesterWalletId },
     }).catch(() => {});
+
+    return { success: true };
+  },
+);
+
+// ---------------------------------------------------------------------------
+// Accept a pending wallet payment request (caller = target user who was asked)
+// ---------------------------------------------------------------------------
+
+exports.acceptWalletRequest = onCall(
+  { enforceAppCheck: true },
+  async (request) => {
+    if (!request.auth?.uid) {
+      throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
+    }
+    await enforceRateLimit(request.auth.uid, "acceptWalletRequest", 20, 3600);
+
+    const uid = request.auth.uid;
+    const requestId = String(request.data?.requestId || "").trim();
+    if (!requestId) {
+      throw new HttpsError("invalid-argument", "requestId inválido.");
+    }
+
+    const requestRef = db.collection("users").doc(uid).collection("walletRequests").doc(requestId);
+
+    // All reads — including requestRef status — happen INSIDE the transaction.
+    // This closes the TOCTOU race where two concurrent acceptWalletRequest calls
+    // both pass a pre-transaction status check and both execute the debit.
+    let fromUid = "";
+    let amount = 0;
+    let fromWalletId = "";
+    await db.runTransaction(async (tx) => {
+      // Re-read the request inside the transaction so Firestore serialises
+      // concurrent accept calls on this document.
+      const requestSnap = await tx.get(requestRef);
+
+      if (!requestSnap.exists) {
+        throw new HttpsError("not-found", "Solicitud no encontrada.");
+      }
+
+      const reqData = requestSnap.data() || {};
+      if (reqData.status !== "pending") {
+        throw new HttpsError("failed-precondition", "Esta solicitud ya fue procesada.");
+      }
+
+      fromUid = String(reqData.fromUid || "");
+      amount = Number(reqData.amount || 0);
+      fromWalletId = String(reqData.fromWalletId || "");
+
+      if (!fromUid || !Number.isFinite(amount) || amount <= 0) {
+        throw new HttpsError("internal", "Datos de solicitud inválidos.");
+      }
+      if (amount > 1000000) {
+        throw new HttpsError("invalid-argument", "El monto de la solicitud excede el límite permitido.");
+      }
+
+      const senderRef = db.collection("users").doc(uid);
+      const receiverRef = db.collection("users").doc(fromUid);
+
+      const senderSnap = await tx.get(senderRef);
+      const receiverSnap = await tx.get(receiverRef);
+
+      if (!senderSnap.exists || !receiverSnap.exists) {
+        throw new HttpsError("not-found", "No se pudo completar la transferencia.");
+      }
+
+      const senderBalance = Number((senderSnap.data() || {}).walletBalance || 0);
+      if (senderBalance < amount) {
+        throw new HttpsError("failed-precondition", "Saldo insuficiente.");
+      }
+
+      const receiverBalance = Number((receiverSnap.data() || {}).walletBalance || 0);
+      const senderWalletId = String((senderSnap.data() || {}).walletId || uid);
+
+      tx.set(senderRef, {
+        walletBalance: Math.round((senderBalance - amount) * 100) / 100,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      }, { merge: true });
+
+      tx.set(receiverRef, {
+        walletBalance: Math.round((receiverBalance + amount) * 100) / 100,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      }, { merge: true });
+
+      tx.set(senderRef.collection("transactions").doc(), {
+        type: "walletFill",
+        amount: -amount,
+        description: `Solicitud aceptada — enviado a ${fromWalletId}`,
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+
+      tx.set(receiverRef.collection("transactions").doc(), {
+        type: "walletFill",
+        amount,
+        description: `Solicitud aceptada — recibido de ${senderWalletId}`,
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+
+      // Mark request as accepted atomically with the balance update.
+      tx.set(requestRef, {
+        status: "accepted",
+        resolvedAt: admin.firestore.FieldValue.serverTimestamp(),
+      }, { merge: true });
+    });
+
+    // Notify the requester (in their language)
+    const receiverLang = await getUserLanguage(fromUid);
+    const acceptCurrency = await getUserCurrency(fromUid);
+    const acceptSym = currencySymbol(acceptCurrency);
+    const acceptTitles = { es: "Solicitud aceptada ✓", en: "Request accepted ✓", fr: "Demande acceptée ✓", he: "הבקשה אושרה ✓" };
+    const acceptBodies = {
+      es: `Tu solicitud de ${acceptSym}${amount.toFixed(2)} fue aceptada.`,
+      en: `Your request for ${acceptSym}${amount.toFixed(2)} was accepted.`,
+      fr: `Votre demande de ${acceptSym}${amount.toFixed(2)} a été acceptée.`,
+      he: `בקשתך ל-${acceptSym}${amount.toFixed(2)} אושרה.`,
+    };
+    await sendToUser(fromUid, {
+      notification: { title: acceptTitles[receiverLang], body: acceptBodies[receiverLang] },
+      data: { type: "walletFill", amount: String(amount) },
+    }).catch(() => {});
+
+    return { success: true };
+  },
+);
+
+// ---------------------------------------------------------------------------
+// Reject a pending wallet payment request
+// ---------------------------------------------------------------------------
+
+exports.rejectWalletRequest = onCall(
+  { enforceAppCheck: true },
+  async (request) => {
+    if (!request.auth?.uid) {
+      throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
+    }
+    await enforceRateLimit(request.auth.uid, "rejectWalletRequest", 20, 3600);
+
+    const uid = request.auth.uid;
+    const requestId = String(request.data?.requestId || "").trim();
+    if (!requestId) {
+      throw new HttpsError("invalid-argument", "requestId inválido.");
+    }
+
+    const requestRef = db.collection("users").doc(uid).collection("walletRequests").doc(requestId);
+
+    // Use a transaction to atomically check status and set rejected,
+    // preventing a race condition where two simultaneous calls both succeed.
+    let reqData = {};
+    await db.runTransaction(async (tx) => {
+      const requestSnap = await tx.get(requestRef);
+
+      if (!requestSnap.exists) {
+        throw new HttpsError("not-found", "Solicitud no encontrada.");
+      }
+
+      reqData = requestSnap.data() || {};
+      if (reqData.status !== "pending") {
+        throw new HttpsError("failed-precondition", "Esta solicitud ya fue procesada.");
+      }
+
+      tx.set(requestRef, {
+        status: "rejected",
+        resolvedAt: admin.firestore.FieldValue.serverTimestamp(),
+      }, { merge: true });
+    });
+
+    // Optionally notify the requester
+    const fromUid = String(reqData.fromUid || "");
+    const amount = Number(reqData.amount || 0);
+    if (fromUid) {
+      const rejectLang = await getUserLanguage(fromUid);
+      const rejectCurrency = await getUserCurrency(fromUid);
+      const rejectSym = currencySymbol(rejectCurrency);
+      const rejectTitles = { es: "Solicitud rechazada", en: "Request rejected", fr: "Demande rejetée", he: "הבקשה נדחתה" };
+      const rejectBodies = {
+        es: `Tu solicitud de ${rejectSym}${amount.toFixed(2)} fue rechazada.`,
+        en: `Your request for ${rejectSym}${amount.toFixed(2)} was rejected.`,
+        fr: `Votre demande de ${rejectSym}${amount.toFixed(2)} a été rejetée.`,
+        he: `בקשתך ל-${rejectSym}${amount.toFixed(2)} נדחתה.`,
+      };
+      await sendToUser(fromUid, {
+        notification: { title: rejectTitles[rejectLang], body: rejectBodies[rejectLang] },
+        data: { type: "walletRequestRejected", amount: String(amount) },
+      }).catch(() => {});
+    }
 
     return { success: true };
   },
@@ -870,8 +1438,8 @@ exports.addWalletContact = onCall(
 
     const uid = request.auth.uid;
     const walletId = String(request.data?.walletId || "").trim();
-    if (!walletId) {
-      throw new HttpsError("invalid-argument", "ID de billetera inválido.");
+    if (!walletId || !/^\d{8}$/.test(walletId)) {
+      throw new HttpsError("invalid-argument", "ID de billetera debe ser de 8 dígitos numéricos.");
     }
 
     const ownSnap = await db.collection("users").doc(uid).get();
@@ -925,7 +1493,9 @@ exports.cleanupStaleFcmTokens = onSchedule(
     );
 
     let totalDeleted = 0;
-    while (true) {
+    const MAX_BATCHES = 100; // 100 × 400 = 40,000 max deletions per run
+    let batches = 0;
+    while (batches++ < MAX_BATCHES) {
       const deleted = await deleteQueryBatch(
         db
           .collectionGroup("fcmTokens")
@@ -934,6 +1504,9 @@ exports.cleanupStaleFcmTokens = onSchedule(
       );
       totalDeleted += deleted;
       if (deleted === 0) break;
+    }
+    if (batches >= MAX_BATCHES) {
+      console.warn("cleanupStaleFcmTokens: hit batch limit, may need another run");
     }
 
     console.info("cleanupStaleFcmTokens: completed", { totalDeleted });
@@ -951,7 +1524,9 @@ exports.cleanupOldStripeWebhookEvents = onSchedule(
     );
 
     let totalDeleted = 0;
-    while (true) {
+    const MAX_BATCHES = 100;
+    let batches = 0;
+    while (batches++ < MAX_BATCHES) {
       const deleted = await deleteQueryBatch(
         db
           .collection("_stripeWebhookEvents")
@@ -960,6 +1535,9 @@ exports.cleanupOldStripeWebhookEvents = onSchedule(
       );
       totalDeleted += deleted;
       if (deleted === 0) break;
+    }
+    if (batches >= MAX_BATCHES) {
+      console.warn("cleanupOldStripeWebhookEvents: hit batch limit, may need another run");
     }
 
     console.info("cleanupOldStripeWebhookEvents: completed", { totalDeleted });
@@ -1035,11 +1613,20 @@ exports.processWalletAutoTopUps = onSchedule(
   {
     schedule: "every 60 minutes",
     timeZone: "Etc/UTC",
+    secrets: [stripeSecret],
   },
   async () => {
+    if (!stripeSecret.value()) {
+      console.error("processWalletAutoTopUps: STRIPE_SECRET_KEY missing");
+      return;
+    }
+
     const nowTs = admin.firestore.Timestamp.now();
+    // Pre-filter on walletAutoTopUpEnabled to avoid burning the 150-doc page
+    // limit on users who have disabled auto top-up but still have a stale nextRunAt.
     const dueUsers = await db
       .collection("users")
+      .where("walletAutoTopUpEnabled", "==", true)
       .where("walletAutoTopUpNextRunAt", "<=", nowTs)
       .limit(150)
       .get();
@@ -1051,86 +1638,197 @@ exports.processWalletAutoTopUps = onSchedule(
 
     let processed = 0;
     let failed = 0;
+    const stripe = require("stripe")(stripeSecret.value());
 
     for (const doc of dueUsers.docs) {
-      let toppedUpAmount = 0;
+      let chargeData = null; // captured inside transaction, used outside
       try {
+        // Step 1: Firestore transaction — verify due, grab data, advance schedule.
+        // Does NOT update the balance yet (that happens only after Stripe confirms).
         await db.runTransaction(async (tx) => {
           const userRef = doc.ref;
           const snap = await tx.get(userRef);
           if (!snap.exists) return;
 
           const data = snap.data() || {};
-          const enabled = data.walletAutoTopUpEnabled === true;
+          if (data.walletAutoTopUpEnabled !== true) return;
           const nextRun = data.walletAutoTopUpNextRunAt;
-          if (!enabled || !nextRun || nextRun.toMillis() > Date.now()) return;
+          if (!nextRun || nextRun.toMillis() > Date.now()) return;
 
           const amount = Number(data.walletAutoTopUpAmount || 0);
           if (!Number.isFinite(amount) || amount <= 0) {
-            tx.set(
-              userRef,
-              {
-                walletAutoTopUpEnabled: false,
-                walletAutoTopUpNextRunAt: null,
-                updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-              },
-              { merge: true },
-            );
+            // Invalid config — disable to stop retrying
+            tx.set(userRef, {
+              walletAutoTopUpEnabled: false,
+              walletAutoTopUpNextRunAt: null,
+              updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            }, { merge: true });
             return;
           }
 
-          toppedUpAmount = amount;
-          const currentBalance = Number(data.walletBalance || 0);
+          const customerId = String(data.stripeCustomerId || "").trim();
+          const pmId = String(data.stripeDefaultPaymentMethodId || "").trim();
+          if (!customerId || !pmId) {
+            // No saved card — advance schedule and skip charge
+            console.warn("processWalletAutoTopUps: no_saved_card", { uid: doc.id });
+            const frequency = String(data.walletAutoTopUpFrequency || "weekly");
+            const weekday = Number(data.walletAutoTopUpWeekday || 1);
+            const dayOfMonth = Number(data.walletAutoTopUpDayOfMonth || 1);
+            const nextDate = computeNextWalletTopUpDate({ frequency, weekday, dayOfMonth, baseDate: new Date() });
+            tx.set(userRef, {
+              walletAutoTopUpNextRunAt: admin.firestore.Timestamp.fromDate(nextDate),
+              updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            }, { merge: true });
+            return;
+          }
+
           const frequency = String(data.walletAutoTopUpFrequency || "weekly");
           const weekday = Number(data.walletAutoTopUpWeekday || 1);
           const dayOfMonth = Number(data.walletAutoTopUpDayOfMonth || 1);
+          const nextDate = computeNextWalletTopUpDate({ frequency, weekday, dayOfMonth, baseDate: new Date() });
 
-          const updatedBalance = currentBalance + amount;
-          const nextDate = computeNextWalletTopUpDate({
-            frequency,
-            weekday,
-            dayOfMonth,
-            baseDate: new Date(),
-          });
-
-          tx.set(
-            userRef,
-            {
-              walletBalance: updatedBalance,
+          // Validate currency from user profile before it reaches Stripe.
+          // If the stored value is not in the supported list, skip this user.
+          const rawCurrency = String(data.currencyCode || "usd").toLowerCase().trim();
+          if (!SUPPORTED_CURRENCIES.has(rawCurrency)) {
+            console.warn("processWalletAutoTopUps: unsupported_currency", { uid: doc.id, rawCurrency });
+            tx.set(userRef, {
               walletAutoTopUpNextRunAt: admin.firestore.Timestamp.fromDate(nextDate),
               updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-            },
-            { merge: true },
-          );
+            }, { merge: true });
+            return;
+          }
+          const currency = rawCurrency;
 
-          const movementRef = userRef.collection("transactions").doc();
-          tx.set(movementRef, {
-            type: "walletFill",
-            amount,
-            description: "Recarga automática de billetera",
-            skipNotification: true,
-            createdAt: admin.firestore.Timestamp.now(),
-          });
+          // Capture current nextRunAt as a stable key for Stripe idempotency.
+          // Using the scheduled run timestamp (truncated to seconds) ensures
+          // crash-and-retry never creates a duplicate charge for the same cycle.
+          const runTs = nextRun.toMillis();
+
+          // Advance schedule now — charge happens outside the transaction
+          tx.set(userRef, {
+            walletAutoTopUpNextRunAt: admin.firestore.Timestamp.fromDate(nextDate),
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          }, { merge: true });
+
+          chargeData = { amount, currency, customerId, pmId, nextRunDateKey: String(runTs) };
         });
 
-        // Notify user their wallet was auto-topped up (in their language)
-        if (toppedUpAmount > 0) {
-          const topUpLang = await getUserLanguage(doc.id);
-          const topUpTitles = { es: "Billetera recargada", en: "Wallet topped up", fr: "Portefeuille rechargé", he: "הארנק נטען" };
-          const topUpBodies = {
-            es: `Tu billetera fue recargada automáticamente con $${toppedUpAmount.toFixed(2)}`,
-            en: `Your wallet was automatically topped up with $${toppedUpAmount.toFixed(2)}`,
-            fr: `Votre portefeuille a été rechargé automatiquement de $${toppedUpAmount.toFixed(2)}`,
-            he: `הארנק שלך נטען אוטומטית ב-$${toppedUpAmount.toFixed(2)}`,
+        if (!chargeData) continue;
+
+        // Step 2: Off-session Stripe charge
+        const amountCents = Math.round(chargeData.amount * 100);
+        const minCents = minAmountForCurrency(chargeData.currency);
+        if (amountCents < minCents) {
+          console.warn("processWalletAutoTopUps: amount_below_minimum", { uid: doc.id, amountCents, minCents });
+          continue;
+        }
+
+        // Idempotency key: uid + scheduled run date (truncated to day) ensures
+        // a crash-and-retry never double-charges the same scheduled cycle.
+        const topUpIdempotencyKey = `wallet_auto_topup_${doc.id}_${chargeData.nextRunDateKey}`;
+
+        let paymentIntent;
+        try {
+          paymentIntent = await stripe.paymentIntents.create({
+            amount: amountCents,
+            currency: chargeData.currency,
+            customer: chargeData.customerId,
+            payment_method: chargeData.pmId,
+            off_session: true,
+            confirm: true,
+            error_on_requires_action: true,
+            metadata: {
+              uid: doc.id,
+              source: "pushka",
+              purpose: "wallet_auto_topup",
+            },
+          }, { idempotencyKey: topUpIdempotencyKey });
+        } catch (stripeErr) {
+          console.error("processWalletAutoTopUps: stripe_charge_failed", {
+            uid: doc.id,
+            error: String(stripeErr?.message || stripeErr),
+            code: stripeErr?.code,
+          });
+          // Notify user their card was declined
+          const failLang = await getUserLanguage(doc.id);
+          const failTitles = { es: "Recarga fallida", en: "Refill failed", fr: "Recharge échouée", he: "הטעינה נכשלה" };
+          const failBodies = {
+            es: "No pudimos cargar tu tarjeta para la recarga automática. Revisá tu tarjeta en Configuración.",
+            en: "We couldn't charge your card for the automatic refill. Please check your card in Settings.",
+            fr: "Nous n'avons pas pu débiter votre carte pour la recharge automatique. Vérifiez votre carte dans Paramètres.",
+            he: "לא הצלחנו לחייב את הכרטיס שלך לטעינה האוטומטית. בדוק את הכרטיס שלך בהגדרות.",
           };
           await sendToUser(doc.id, {
-            notification: {
-              title: topUpTitles[topUpLang],
-              body: topUpBodies[topUpLang],
-            },
-            data: { type: "walletFill" },
+            notification: { title: failTitles[failLang], body: failBodies[failLang] },
+            data: { type: "walletAutoTopUpFailed" },
           }).catch(() => {});
+          failed += 1;
+          continue;
         }
+
+        if (paymentIntent.status !== "succeeded") {
+          console.warn("processWalletAutoTopUps: payment_not_succeeded", { uid: doc.id, status: paymentIntent.status });
+          failed += 1;
+          continue;
+        }
+
+        // Step 3: Charge confirmed — update wallet balance.
+        // Use the paymentIntentId as the transaction doc ID to make this step
+        // idempotent: if it crashes and retries, the duplicate set() on the same
+        // doc ID will be a no-op (merge: true with same data).
+        const toppedUpAmount = chargeData.amount;
+        const piId = paymentIntent.id;
+        try {
+          await db.runTransaction(async (tx) => {
+            // Read the movement doc first — if it already exists this step was
+            // already applied (e.g. on a CF retry), so skip the balance update
+            // to prevent double-crediting.
+            const movementRef = doc.ref.collection("transactions").doc(piId);
+            const movementSnap = await tx.get(movementRef);
+            if (movementSnap.exists) return;
+
+            const snap = await tx.get(doc.ref);
+            const currentBalance = Number(snap.data()?.walletBalance || 0);
+            tx.set(doc.ref, {
+              walletBalance: Math.round((currentBalance + toppedUpAmount) * 100) / 100,
+              updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            }, { merge: true });
+            tx.set(movementRef, {
+              type: "walletFill",
+              amount: toppedUpAmount,
+              description: "Recarga automática de billetera",
+              skipNotification: true,
+              createdAt: admin.firestore.FieldValue.serverTimestamp(),
+            });
+          });
+        } catch (step3Err) {
+          // CRITICAL: Stripe charge succeeded but balance update failed.
+          // Log with paymentIntentId so this can be manually recovered.
+          console.error("processWalletAutoTopUps: step3_balance_update_failed_after_charge", {
+            uid: doc.id,
+            paymentIntentId: piId,
+            amount: toppedUpAmount,
+            error: String(step3Err?.message || step3Err),
+          });
+          failed += 1;
+          continue;
+        }
+
+        // Step 4: Notify success
+        const topUpLang = await getUserLanguage(doc.id);
+        const topUpSym = currencySymbol(chargeData.currency);
+        const topUpTitles = { es: "Billetera recargada", en: "Wallet topped up", fr: "Portefeuille rechargé", he: "הארנק נטען" };
+        const topUpBodies = {
+          es: `Tu billetera fue recargada automáticamente con ${topUpSym}${toppedUpAmount.toFixed(2)}`,
+          en: `Your wallet was automatically topped up with ${topUpSym}${toppedUpAmount.toFixed(2)}`,
+          fr: `Votre portefeuille a été rechargé automatiquement de ${topUpSym}${toppedUpAmount.toFixed(2)}`,
+          he: `הארנק שלך נטען אוטומטית ב-${topUpSym}${toppedUpAmount.toFixed(2)}`,
+        };
+        await sendToUser(doc.id, {
+          notification: { title: topUpTitles[topUpLang], body: topUpBodies[topUpLang] },
+          data: { type: "walletFill" },
+        }).catch(() => {});
 
         processed += 1;
       } catch (err) {
@@ -1147,7 +1845,8 @@ exports.processWalletAutoTopUps = onSchedule(
 );
 
 
-// --- Erev Rosh Chodesh lookup (Gregorian dates for years 2025-2030) ---
+// --- Erev Rosh Chodesh lookup (Gregorian dates for years 2025-2035) ---
+// Format: [month 0-indexed, day]. Tishrei (month 7 Hebrew) is skipped (Rosh HaShana).
 const erevRoshChodeshDates = {
   2025: [[0,29],[1,27],[2,29],[3,27],[4,27],[5,25],[6,25],[7,23],[9,21],[10,20],[11,19]],
   2026: [[0,18],[1,16],[2,18],[3,16],[4,16],[5,14],[6,14],[7,12],[9,10],[10,9],[11,9]],
@@ -1155,6 +1854,11 @@ const erevRoshChodeshDates = {
   2028: [[0,28],[1,26],[2,27],[3,25],[4,25],[5,23],[6,23],[7,21],[9,19],[10,18],[11,17]],
   2029: [[0,16],[1,14],[2,16],[3,14],[4,14],[5,12],[6,12],[7,10],[9,8],[10,7],[11,6]],
   2030: [[0,4],[1,2],[2,4],[3,3],[4,2],[5,1],[5,30],[6,30],[7,28],[9,26],[10,25],[11,25]],
+  2031: [[0,24],[1,22],[2,24],[3,22],[4,22],[5,20],[6,20],[7,18],[9,16],[10,15],[11,15]],
+  2032: [[0,13],[1,12],[2,12],[3,11],[4,10],[5,9],[6,8],[7,7],[9,5],[10,3],[11,3]],
+  2033: [[0,2],[1,1],[1,28],[2,30],[3,29],[4,28],[5,27],[6,26],[7,25],[9,22],[10,22],[11,21]],
+  2034: [[0,21],[1,19],[2,21],[3,19],[4,19],[5,17],[6,17],[7,15],[9,13],[10,12],[11,12]],
+  2035: [[0,10],[1,9],[2,11],[3,9],[4,9],[5,7],[6,7],[7,5],[9,3],[10,2],[11,1],[11,31]],
 };
 
 function computeNextErevRoshChodesh(baseDate) {
@@ -1168,6 +1872,7 @@ function computeNextErevRoshChodesh(baseDate) {
       candidates.push(new Date(Date.UTC(y, m, d, 8, 0, 0)));
     }
   }
+  candidates.sort((a, b) => a - b);
   for (const d of candidates) {
     if (d > now) return d;
   }
@@ -1181,9 +1886,25 @@ exports.processPushkaAutoEmpty = onSchedule(
   {
     schedule: "every 60 minutes",
     timeZone: "Etc/UTC",
+    secrets: [stripeSecret],
   },
   async () => {
+    if (!stripeSecret.value()) {
+      console.error("processPushkaAutoEmpty: STRIPE_SECRET_KEY missing");
+      return;
+    }
+
     const nowTs = admin.firestore.Timestamp.now();
+    // Pre-filter on autoEmptyFrequency to avoid burning the 150-doc page limit on
+    // users who have autoEmptyFrequency === "manual" but a stale past autoEmptyNextRunAt.
+    // Firestore inequality + != filters don't mix with other inequalities, so we
+    // use an existence-based guard: only users who have stored a non-"manual" value.
+    // The transaction body still double-checks freq === "manual" as a safety net.
+    // NOTE: Firestore does not allow two inequality filters on different fields
+    // in the same query (e.g., "<=" on autoEmptyNextRunAt and "!=" on
+    // autoEmptyFrequency). We therefore filter only on the timestamp here and
+    // guard against freq === "manual" inside the transaction body (which already
+    // does this). This keeps the query valid and avoids a runtime Firestore error.
     const dueUsers = await db
       .collection("users")
       .where("autoEmptyNextRunAt", "<=", nowTs)
@@ -1197,10 +1918,13 @@ exports.processPushkaAutoEmpty = onSchedule(
 
     let processed = 0;
     let failed = 0;
+    const stripe = require("stripe")(stripeSecret.value());
 
     for (const doc of dueUsers.docs) {
-      let emptiedAmount = 0;
+      let chargeData = null; // set inside transaction, used outside
       try {
+        // Step 1: Firestore transaction — verify due, grab data, advance schedule.
+        // Does NOT reset the pushka yet (that happens only after Stripe confirms).
         await db.runTransaction(async (tx) => {
           const userRef = doc.ref;
           const snap = await tx.get(userRef);
@@ -1222,14 +1946,10 @@ exports.processPushkaAutoEmpty = onSchedule(
           if (freq === "erev_rosh_chodesh") {
             nextDate = computeNextErevRoshChodesh(new Date());
           } else {
-            nextDate = computeNextWalletTopUpDate({
-              frequency: freq,
-              weekday,
-              dayOfMonth,
-              baseDate: new Date(),
-            });
+            nextDate = computeNextWalletTopUpDate({ frequency: freq, weekday, dayOfMonth, baseDate: new Date() });
           }
 
+          // Below minimum — advance schedule without charging
           if (currentAmount < minBalance) {
             tx.set(userRef, {
               autoEmptyNextRunAt: admin.firestore.Timestamp.fromDate(nextDate),
@@ -1238,54 +1958,158 @@ exports.processPushkaAutoEmpty = onSchedule(
             return;
           }
 
-          emptiedAmount = currentAmount;
+          const customerId = String(data.stripeCustomerId || "").trim();
+          const pmId = String(data.stripeDefaultPaymentMethodId || "").trim();
+          if (!customerId || !pmId) {
+            // No saved card — advance schedule without charging
+            console.warn("processPushkaAutoEmpty: no_saved_card", { uid: doc.id });
+            tx.set(userRef, {
+              autoEmptyNextRunAt: admin.firestore.Timestamp.fromDate(nextDate),
+              updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            }, { merge: true });
+            return;
+          }
+
           const topOffEnabled = data.autoEmptyTopOffEnabled === true;
           const topOffAmount = topOffEnabled ? Number(data.autoEmptyTopOffAmount || 0) : 0;
           const newPushkaAmount = topOffEnabled && topOffAmount > 0 ? topOffAmount : 0;
 
+          // Validate currency from user profile before it reaches Stripe.
+          // If the stored value is not in the supported list, skip this user.
+          const rawCurrency = String(data.currencyCode || "usd").toLowerCase().trim();
+          if (!SUPPORTED_CURRENCIES.has(rawCurrency)) {
+            console.warn("processPushkaAutoEmpty: unsupported_currency", { uid: doc.id, rawCurrency });
+            tx.set(userRef, {
+              autoEmptyNextRunAt: admin.firestore.Timestamp.fromDate(nextDate),
+              updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            }, { merge: true });
+            return;
+          }
+          const currency = rawCurrency;
+
+          // Capture current nextRunAt as a stable key for Stripe idempotency.
+          const runTs = nextRun.toMillis();
+
+          // Advance schedule — charge and pushka reset happen outside the transaction
           tx.set(userRef, {
-            pushkaAmount: newPushkaAmount,
             autoEmptyNextRunAt: admin.firestore.Timestamp.fromDate(nextDate),
             updatedAt: admin.firestore.FieldValue.serverTimestamp(),
           }, { merge: true });
 
-          const movementRef = userRef.collection("transactions").doc();
-          tx.set(movementRef, {
-            type: "pushkaEmpty",
-            amount: emptiedAmount,
-            description: "Vaciado automatico de Pushka",
-            paymentMethod: "auto",
-            status: "completed",
-            skipNotification: true,
-            createdAt: admin.firestore.Timestamp.now(),
-          });
+          chargeData = { amount: currentAmount, currency, customerId, pmId, newPushkaAmount, nextRunDateKey: String(runTs) };
         });
 
-        // Send push notification after transaction commits (in user's language)
-        if (emptiedAmount > 0) {
-          try {
-            const tokens = await getUserTokens(doc.id);
-            if (tokens.length > 0) {
-              const emptyLang = await getUserLanguage(doc.id);
-              const amtStr = formatAmount(emptiedAmount * 100);
-              const emptyTitles = { es: "Pushka vaciada ✡", en: "Pushka emptied ✡", fr: "Pushka vidée ✡", he: "הפושקה רוקנה ✡" };
-              const emptyBodies = {
-                es: `Tu Pushka fue vaciada automáticamente. Donación registrada: $${amtStr}`,
-                en: `Your Pushka was automatically emptied. Donation recorded: $${amtStr}`,
-                fr: `Votre Pushka a été vidée automatiquement. Don enregistré : $${amtStr}`,
-                he: `הפושקה שלך רוקנה אוטומטית. תרומה שנרשמה: $${amtStr}`,
-              };
-              await messaging.sendEachForMulticast({
-                notification: {
-                  title: emptyTitles[emptyLang],
-                  body: emptyBodies[emptyLang],
-                },
-                tokens,
-              });
-            }
-          } catch (notifErr) {
-            console.warn("processPushkaAutoEmpty: notification_failed", { uid: doc.id, error: String(notifErr?.message || notifErr) });
-          }
+        if (!chargeData) continue;
+
+        // Step 2: Off-session Stripe charge
+        const amountCents = Math.round(chargeData.amount * 100);
+        const minCents = minAmountForCurrency(chargeData.currency);
+        if (amountCents < minCents) {
+          console.warn("processPushkaAutoEmpty: amount_below_stripe_minimum", { uid: doc.id, amountCents, minCents });
+          continue;
+        }
+
+        // Idempotency key: uid + scheduled run date prevents double-charges on retry.
+        const emptyIdempotencyKey = `pushka_auto_empty_${doc.id}_${chargeData.nextRunDateKey}`;
+
+        let paymentIntent;
+        try {
+          paymentIntent = await stripe.paymentIntents.create({
+            amount: amountCents,
+            currency: chargeData.currency,
+            customer: chargeData.customerId,
+            payment_method: chargeData.pmId,
+            off_session: true,
+            confirm: true,
+            error_on_requires_action: true,
+            metadata: {
+              uid: doc.id,
+              source: "pushka",
+              purpose: "pushka_auto_empty",
+            },
+          }, { idempotencyKey: emptyIdempotencyKey });
+        } catch (stripeErr) {
+          console.error("processPushkaAutoEmpty: stripe_charge_failed", {
+            uid: doc.id,
+            error: String(stripeErr?.message || stripeErr),
+            code: stripeErr?.code,
+          });
+          // Notify user their card was declined
+          const failLang = await getUserLanguage(doc.id);
+          const failTitles = { es: "Vaciado fallido", en: "Empty failed", fr: "Vidage échoué", he: "הריקון נכשל" };
+          const failBodies = {
+            es: "No pudimos cobrar tu tarjeta para el vaciado automático. Revisá tu tarjeta en Configuración.",
+            en: "We couldn't charge your card for the automatic empty. Please check your card in Settings.",
+            fr: "Nous n'avons pas pu débiter votre carte pour le vidage automatique. Vérifiez votre carte dans Paramètres.",
+            he: "לא הצלחנו לחייב את הכרטיס שלך לריקון האוטומטי. בדוק את הכרטיס שלך בהגדרות.",
+          };
+          await sendToUser(doc.id, {
+            notification: { title: failTitles[failLang], body: failBodies[failLang] },
+            data: { type: "pushkaAutoEmptyFailed" },
+          }).catch(() => {});
+          failed += 1;
+          continue;
+        }
+
+        if (paymentIntent.status !== "succeeded") {
+          console.warn("processPushkaAutoEmpty: payment_not_succeeded", { uid: doc.id, status: paymentIntent.status });
+          failed += 1;
+          continue;
+        }
+
+        // Step 3: Charge confirmed — reset pushka and write transaction.
+        // Use paymentIntentId as the transaction doc ID so a retry of this step
+        // is idempotent and cannot create a duplicate record.
+        const emptiedAmount = chargeData.amount;
+        const emptyPiId = paymentIntent.id;
+        try {
+          await db.runTransaction(async (tx) => {
+            tx.set(doc.ref, {
+              pushkaAmount: chargeData.newPushkaAmount,
+              updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            }, { merge: true });
+            const movementRef = doc.ref.collection("transactions").doc(emptyPiId);
+            tx.set(movementRef, {
+              type: "pushkaEmpty",
+              amount: emptiedAmount,
+              description: "Vaciado automático de Pushka",
+              paymentMethod: "auto_card",
+              status: "completed",
+              skipNotification: true,
+              createdAt: admin.firestore.FieldValue.serverTimestamp(),
+            });
+          });
+        } catch (step3Err) {
+          // CRITICAL: Stripe charge succeeded but pushka reset failed.
+          // Log with paymentIntentId so this can be manually recovered.
+          console.error("processPushkaAutoEmpty: step3_reset_failed_after_charge", {
+            uid: doc.id,
+            paymentIntentId: emptyPiId,
+            amount: emptiedAmount,
+            error: String(step3Err?.message || step3Err),
+          });
+          failed += 1;
+          continue;
+        }
+
+        // Step 4: Notify success
+        try {
+          const emptyLang = await getUserLanguage(doc.id);
+          const emptySym = currencySymbol(chargeData.currency);
+          const amtStr = Number(emptiedAmount).toFixed(2);
+          const emptyTitles = { es: "Pushka vaciada ✡", en: "Pushka emptied ✡", fr: "Pushka vidée ✡", he: "הפושקה רוקנה ✡" };
+          const emptyBodies = {
+            es: `Tu Pushka fue vaciada automáticamente. Donación: ${emptySym}${amtStr}`,
+            en: `Your Pushka was automatically emptied. Donation: ${emptySym}${amtStr}`,
+            fr: `Votre Pushka a été vidée automatiquement. Don : ${emptySym}${amtStr}`,
+            he: `הפושקה שלך רוקנה אוטומטית. תרומה: ${emptySym}${amtStr}`,
+          };
+          await sendToUser(doc.id, {
+            notification: { title: emptyTitles[emptyLang], body: emptyBodies[emptyLang] },
+            data: { type: "pushkaEmpty", amount: String(emptiedAmount) },
+          }).catch(() => {});
+        } catch (notifErr) {
+          console.warn("processPushkaAutoEmpty: notification_failed", { uid: doc.id, error: String(notifErr?.message || notifErr) });
         }
 
         processed += 1;
