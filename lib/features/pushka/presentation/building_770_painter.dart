@@ -1,756 +1,658 @@
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 
-/// Oblique-projection illustration of 770 Eastern Parkway.
-///
-/// Two visible faces give immediate depth perception without real 3D:
-///   • Front face  — the full facade (brick, gables, windows, entrance)
-///   • Left side face — recedes up-left at a fixed angle, darker shading
-///
-/// [fillFraction] 0.0–1.0 drives the golden glow that rises from the bottom.
-/// [glowPhase]   0.0–1.0 animates the shimmer shimmer on the fill edge.
+/// Front-facing illustration of 770 Eastern Parkway.
+/// Built from AI reference image: vivid red brick, cream trim, stained glass.
+/// [fillFraction] 0.0–1.0 → golden glow rising from base.
+/// [glowPhase]   0.0–1.0 → shimmer animation on fill edge.
 class Building770Painter extends CustomPainter {
   final double fillFraction;
   final double glowPhase;
 
   const Building770Painter({required this.fillFraction, this.glowPhase = 0});
 
-  // ── Palette ──────────────────────────────────────────────────────────────────
-  static const _brickF  = Color(0xFFC1440E); // front face brick
-  static const _brickS  = Color(0xFF7A2806); // side face brick (in shadow)
-  static const _brickH  = Color(0xFFD05A30); // highlight brick (lit areas)
-  static const _brickD  = Color(0xFF5C1C02); // deep shadow brick
-  static const _trim    = Color(0xFFF5F0E8); // stone cream
-  static const _trimSh  = Color(0xFFCEC3AB); // stone in shadow
-  static const _trimD   = Color(0xFFAA9880); // stone edge shadow
-  static const _winDark = Color(0xFF120A04); // unlit window
-  static const _winLit  = Color(0xFFFFDD88); // lit window warm
-  static const _wood    = Color(0xFF5C3010); // door wood
-  static const _skyT    = Color(0xFFBDD4E8);
-  static const _skyB    = Color(0xFFE8EFF4);
-  static const _glowHot = Color(0xFFFFAA00);
-  static const _glowWrm = Color(0xFFFFD060);
-  static const _glowCl  = Color(0xFFFFF0B0);
-  static const _glBlue  = Color(0xFF1A56A8);
-  static const _glGreen = Color(0xFF2A8040);
-  static const _glYellow= Color(0xFFE8B800);
-  static const _fenceB  = Color(0xFFAA3308);
+  // ── Palette (from reference image) ──────────────────────────────────────
+  static const _brick    = Color(0xFFC43A18);
+  static const _brickLt  = Color(0xFFD24828);
+  static const _brickDk  = Color(0xFF8A2808);
+  static const _trim     = Color(0xFFF0E4B0);
+  static const _trimLt   = Color(0xFFF8F0D0);
+  static const _trimDk   = Color(0xFFB8A870);
+  static const _roof     = Color(0xFF5A2412);
+  static const _roofLt   = Color(0xFF7A3820);
+  static const _winGrey  = Color(0xFF404858);
+  static const _winLit   = Color(0xFFFFE090);
+  static const _glassG   = Color(0xFF2A8848);
+  static const _glassB   = Color(0xFF1840A0);
+  static const _glassY   = Color(0xFFCC9800);
+  static const _glassPu  = Color(0xFF7030A8);
+  static const _glassTe  = Color(0xFF188870);
+  static const _bayF     = Color(0xFF6A3018);
+  static const _door     = Color(0xFF4A2010);
+  static const _iron     = Color(0xFF181008);
+  static const _stepGrey = Color(0xFF7A8898);
+  static const _glowHot  = Color(0xFFFFAA00);
+  static const _glowWrm  = Color(0xFFFFD060);
+  static const _glowCl   = Color(0xFFFFF0B0);
 
-  // ── Layout (all fractions of canvas w/h) ─────────────────────────────────────
-  // Front face rectangle
-  static const double _fL   = 0.23;  // front left
-  static const double _fR   = 0.975; // front right
-  static const double _fTop = 0.225; // gable base Y (top of main wall)
-  static const double _fBot = 0.815; // bottom of main wall
+  // ── Layout (fractions of canvas w / h) — from approved wireframe ────────
+  static const _bL    = 0.060;   // building left
+  static const _bR    = 0.941;   // building right
+  static const _bTop  = 0.340;   // gable base Y
+  static const _bBot  = 0.860;   // building base Y
+  static const _d1    = 0.405;   // left / center bay divider
+  static const _d2    = 0.595;   // center / right bay divider
 
-  // Side face recession (each front-face left-edge point shifts by this amount)
-  static const double _sX = 0.145; // leftward recession (fraction of w)
-  static const double _sY = 0.090; // upward recession (fraction of h)
+  // Gable geometry
+  static const _lgCX  = 0.231;
+  static const _cgCX  = 0.500;
+  static const _rgCX  = 0.769;
+  static const _lgHW  = 0.171;
+  static const _cgHW  = 0.095;
+  static const _lgApY = 0.136;
+  static const _cgApY = 0.204;
 
-  // Derived side face edges
-  static const double _sL    = _fL - _sX;   // = 0.085
-  static const double _sTop  = _fTop - _sY; // = 0.135
-  static const double _sBot  = _fBot - _sY; // = 0.725
+  // Floor bands
+  static const _f3T   = 0.372;
+  static const _f3B   = 0.476;
+  static const _f2T   = 0.538;
+  static const _f2B   = 0.672;
+  static const _f1T   = 0.724;
+  static const _f1B   = 0.860;
 
-  // Front face width
-  static const double _bW = _fR - _fL; // = 0.745
-
-  // Three gable centers (fraction of w) and half-widths
-  static const double _lgCX  = _fL + _bW * 0.225; // left gable CX   ≈ 0.398
-  static const double _cgCX  = _fL + _bW * 0.500; // center gable CX ≈ 0.603
-  static const double _rgCX  = _fL + _bW * 0.775; // right gable CX  ≈ 0.807
-  static const double _lgHW  = _bW * 0.170;        // large half-width ≈ 0.127
-  static const double _cgHW  = _bW * 0.088;        // center half-width≈ 0.066
-  static const double _lgAp  = 0.040;              // large gable apex Y
-  static const double _cgAp  = 0.076;              // center gable apex Y
-
-  // Floor cornice Y fractions
-  static const double _c32 = 0.430; // 3rd→2nd floor
-  static const double _c21 = 0.628; // 2nd→1st floor
-  static const double _cPl = 0.800; // base plinth
-
-  // ── paint ────────────────────────────────────────────────────────────────────
+  // ── paint ────────────────────────────────────────────────────────────────
   @override
   void paint(Canvas canvas, Size size) {
     final w = size.width;
     final h = size.height;
-    _drawSky(canvas, w, h);
-    _drawGroundShadow(canvas, w, h);
-    _drawSideFace(canvas, w, h);
-    _drawFrontFace(canvas, w, h);
-    _drawSideBrickPattern(canvas, w, h);
-    _drawFrontBrickPattern(canvas, w, h);
-    _drawSideCornices(canvas, w, h);
-    _drawFrontCornices(canvas, w, h);
-    _drawGables(canvas, w, h);
+    _drawBackground(canvas, w, h);
+    _drawRoofBody(canvas, w, h);
+    _drawFacade(canvas, w, h);
+    _drawMortar(canvas, w, h);
+    _drawCornices(canvas, w, h);
     _drawQuoins(canvas, w, h);
-    _drawThirdFloorWindows(canvas, w, h);
-    _drawSecondFloor(canvas, w, h);
-    _drawGroundFloor(canvas, w, h);
+    _drawGables(canvas, w, h);
+    _drawChimneys(canvas, w, h);
+    _drawFloor3(canvas, w, h);
+    _drawFloor2(canvas, w, h);
+    _drawFloor1(canvas, w, h);
     _drawGlowOverlay(canvas, w, h);
-    _drawEdgeShadows(canvas, w, h);
     _drawFence(canvas, w, h);
   }
 
-  // ── Clip paths ───────────────────────────────────────────────────────────────
-
-  Path _frontFaceClip(double w, double h) {
-    final fL = w * _fL; final fR = w * _fR;
-    final fTop = h * _fTop; final fBot = h * _fBot;
-    final p = Path();
-    p.moveTo(fR, fBot);
-    p.lineTo(fR, fTop);
-    p.lineTo(w * (_rgCX + _lgHW), fTop);
-    p.lineTo(w * _rgCX, h * _lgAp);
-    p.lineTo(w * (_rgCX - _lgHW), fTop);
-    p.lineTo(w * (_cgCX + _cgHW), fTop);
-    p.lineTo(w * _cgCX, h * _cgAp);
-    p.lineTo(w * (_cgCX - _cgHW), fTop);
-    p.lineTo(w * (_lgCX + _lgHW), fTop);
-    p.lineTo(w * _lgCX, h * _lgAp);
-    p.lineTo(w * (_lgCX - _lgHW), fTop);
-    p.lineTo(fL, fTop);
-    p.lineTo(fL, fBot);
-    p.close();
-    return p;
-  }
-
-  Path _sideFaceClip(double w, double h) {
-    final fL = w * _fL; final fBot = h * _fBot; final fTop = h * _fTop;
-    final sL = w * _sL; final sTop = h * _sTop; final sBot = h * _sBot;
+  // ── Facade clip ──────────────────────────────────────────────────────────
+  Path _clip(double w, double h) {
+    final fT = h * _bTop;
     return Path()
-      ..moveTo(fL, fTop)
-      ..lineTo(sL, sTop)
-      ..lineTo(sL, sBot)
-      ..lineTo(fL, fBot)
+      ..moveTo(w * _bL,              h * _bBot)
+      ..lineTo(w * _bL,              fT)
+      ..lineTo(w * (_lgCX - _lgHW), fT)
+      ..lineTo(w * _lgCX,           h * _lgApY)
+      ..lineTo(w * (_lgCX + _lgHW), fT)
+      ..lineTo(w * (_cgCX - _cgHW), fT)
+      ..lineTo(w * _cgCX,           h * _cgApY)
+      ..lineTo(w * (_cgCX + _cgHW), fT)
+      ..lineTo(w * (_rgCX - _lgHW), fT)
+      ..lineTo(w * _rgCX,           h * _lgApY)
+      ..lineTo(w * (_rgCX + _lgHW), fT)
+      ..lineTo(w * _bR,              fT)
+      ..lineTo(w * _bR,              h * _bBot)
       ..close();
   }
 
-  // ── Sky ──────────────────────────────────────────────────────────────────────
-  void _drawSky(Canvas canvas, double w, double h) {
-    final r = Rect.fromLTWH(0, 0, w, h * 0.28);
-    canvas.drawRect(r, Paint()
-      ..shader = const LinearGradient(
-        begin: Alignment.topCenter, end: Alignment.bottomCenter,
-        colors: [_skyT, _skyB],
-      ).createShader(r));
+  // ── White background ─────────────────────────────────────────────────────
+  void _drawBackground(Canvas canvas, double w, double h) {
+    canvas.drawRect(Rect.fromLTWH(0, 0, w, h), Paint()..color = Colors.white);
   }
 
-  void _drawGroundShadow(Canvas canvas, double w, double h) {
-    for (int i = 5; i >= 0; i--) {
-      canvas.drawOval(
-        Rect.fromCenter(center: Offset(w * 0.55, h * 0.965),
-            width: w * 0.82 + i * 5, height: h * 0.020 + i * 2),
-        Paint()..color = const Color(0xFF1A0800).withAlpha(6 + i * 3),
-      );
-    }
+  // ── Dark roof body between gables ────────────────────────────────────────
+  void _drawRoofBody(Canvas canvas, double w, double h) {
+    final rY   = h * _cgApY;
+    final fTop = h * _bTop;
+    final paint = Paint()..color = _roof;
+
+    // Rear horizontal band (full width, gables will overdraw their triangles)
+    canvas.drawRect(Rect.fromLTRB(w * _bL, rY, w * _bR, fTop), paint);
+
+    // Diagonal flanks connecting rear line to outer corners
+    canvas.drawPath(
+      Path()
+        ..moveTo(w * _bL + w * 0.014, rY)
+        ..lineTo(w * _bL,              fTop)
+        ..lineTo(w * _bL,              rY)
+        ..close(),
+      paint,
+    );
+    canvas.drawPath(
+      Path()
+        ..moveTo(w * _bR - w * 0.014, rY)
+        ..lineTo(w * _bR,              fTop)
+        ..lineTo(w * _bR,              rY)
+        ..close(),
+      paint,
+    );
   }
 
-  // ── Side face (left, darker — in shadow) ─────────────────────────────────────
-  void _drawSideFace(Canvas canvas, double w, double h) {
-    final clip = _sideFaceClip(w, h);
-    final bounds = Rect.fromLTRB(w * _sL, h * _sTop, w * _fL, h * _fBot);
-
-    // Base brick color (darker — shadow side)
-    canvas.drawPath(clip, Paint()
-      ..shader = LinearGradient(
-        begin: Alignment.topCenter, end: Alignment.bottomCenter,
-        colors: const [_brickD, _brickS, _brickS, _brickD],
-        stops: const [0.0, 0.15, 0.80, 1.0],
-      ).createShader(bounds));
-
-    // Left-edge vignette
-    final se = Rect.fromLTRB(w * _sL, h * _sTop, w * (_sL + 0.03), h * _sBot);
-    canvas.drawRect(se, Paint()
-      ..shader = LinearGradient(begin: Alignment.centerLeft, end: Alignment.centerRight,
-        colors: [Colors.black.withAlpha(80), Colors.transparent]).createShader(se));
-  }
-
-  // ── Side face brick mortar ────────────────────────────────────────────────────
-  void _drawSideBrickPattern(Canvas canvas, double w, double h) {
-    canvas.save();
-    canvas.clipPath(_sideFaceClip(w, h));
-
-    final sL = w * _sL; final sR = w * _fL;
-    final sTop = h * _sTop; final sBot = h * _sBot;
-    final courseH = h * 0.017;
-    final p = Paint()..color = _brickD.withAlpha(55)..strokeWidth = 0.7;
-    var y = sTop;
-    // Horizontal mortar lines run parallel to the side face angle
-    // In cabinet projection the side lines are perfectly horizontal too.
-    while (y < sBot) {
-      canvas.drawLine(Offset(sL, y - (y - sTop) * 0), Offset(sR, y), p);
-      y += courseH;
-    }
-    canvas.restore();
-  }
-
-  // ── Front face (main facade) ──────────────────────────────────────────────────
-  void _drawFrontFace(Canvas canvas, double w, double h) {
-    final clip = _frontFaceClip(w, h);
-    final r = Rect.fromLTRB(w * _fL, h * _lgAp, w * _fR, h * _fBot);
-
-    canvas.drawPath(clip, Paint()
+  // ── Main brick facade ────────────────────────────────────────────────────
+  void _drawFacade(Canvas canvas, double w, double h) {
+    final r = Rect.fromLTRB(w * _bL, h * _lgApY, w * _bR, h * _bBot);
+    canvas.drawPath(_clip(w, h), Paint()
       ..shader = LinearGradient(
         begin: Alignment.centerLeft, end: Alignment.centerRight,
-        colors: const [_brickS, _brickF, _brickH, _brickF, _brickS],
-        stops: const [0.0, 0.08, 0.50, 0.92, 1.0],
+        colors: const [_brickDk, _brick, _brickLt, _brick, _brickDk],
+        stops: const [0.0, 0.10, 0.50, 0.90, 1.0],
       ).createShader(r));
-
-    canvas.drawPath(clip, Paint()
+    // Top shadow
+    canvas.drawPath(_clip(w, h), Paint()
       ..shader = LinearGradient(
         begin: Alignment.topCenter, end: Alignment.bottomCenter,
-        colors: [
-          Colors.black.withAlpha(55), Colors.transparent,
-          Colors.transparent, Colors.black.withAlpha(22),
-        ],
-        stops: const [0.0, 0.12, 0.82, 1.0],
+        colors: [Colors.black.withAlpha(55), Colors.transparent],
+        stops: const [0.0, 0.20],
       ).createShader(r));
   }
 
-  // ── Front face brick mortar pattern ──────────────────────────────────────────
-  void _drawFrontBrickPattern(Canvas canvas, double w, double h) {
+  // ── Brick mortar lines ───────────────────────────────────────────────────
+  void _drawMortar(Canvas canvas, double w, double h) {
     canvas.save();
-    canvas.clipPath(_frontFaceClip(w, h));
-
-    final fL = w * _fL; final fR = w * _fR;
-    final fTop = h * _lgAp; final fBot = h * _fBot;
-    final cH = h * 0.016;
-    final hP = Paint()..color = _brickD.withAlpha(38)..strokeWidth = 0.7;
-    var y = fTop;
-    while (y < fBot) { canvas.drawLine(Offset(fL, y), Offset(fR, y), hP); y += cH; }
-
-    final vP = Paint()..color = _brickD.withAlpha(18)..strokeWidth = 0.5;
-    final bW = w * 0.048; var row = 0; y = fTop;
-    while (y < fBot) {
-      final off = (row % 2 == 0) ? 0.0 : bW / 2;
-      var x = fL + off;
-      while (x < fR) { canvas.drawLine(Offset(x, y), Offset(x, y + cH), vP); x += bW; }
-      y += cH; row++;
+    canvas.clipPath(_clip(w, h));
+    final cH = h * 0.018;
+    final hp = Paint()..color = _brickDk.withAlpha(35)..strokeWidth = 0.6;
+    var y = h * _lgApY;
+    while (y < h * _bBot) {
+      canvas.drawLine(Offset(w * _bL, y), Offset(w * _bR, y), hp);
+      y += cH;
     }
     canvas.restore();
   }
 
-  // ── Side face cornice bands (wrap around corner) ──────────────────────────────
-  void _drawSideCornices(Canvas canvas, double w, double h) {
-    final fL = w * _fL;
-    final sL = w * _sL;
-
-    void sideBand(double yFrac) {
-      final yF = h * yFrac;
-      final yS = yF - h * _sY; // same cornice on side face goes up by _sY
-      // Side face cornice is a parallelogram strip
-      canvas.drawPath(
-        Path()
-          ..moveTo(sL, yS)
-          ..lineTo(fL, yF)
-          ..lineTo(fL, yF + h * 0.022)
-          ..lineTo(sL, yS + h * 0.022)
-          ..close(),
-        Paint()..color = _trimSh,
-      );
-      canvas.drawPath(
-        Path()
-          ..moveTo(sL, yS + h * 0.022)
-          ..lineTo(fL, yF + h * 0.022)
-          ..lineTo(fL, yF + h * 0.028)
-          ..lineTo(sL, yS + h * 0.028)
-          ..close(),
-        Paint()..color = _trimD.withAlpha(80),
-      );
+  // ── Horizontal cream cornice bands ───────────────────────────────────────
+  void _drawCornices(Canvas canvas, double w, double h) {
+    final fL = w * _bL; final bW = w * (_bR - _bL);
+    for (final yf in [_bTop, _f3B, _f2B, _f1B]) {
+      final y = h * yf;
+      canvas.drawRect(Rect.fromLTWH(fL, y, bW, h * 0.022), Paint()..color = _trim);
+      canvas.drawRect(Rect.fromLTWH(fL, y + h * 0.022, bW, h * 0.005),
+          Paint()..color = _trimDk.withAlpha(90));
+      canvas.drawRect(Rect.fromLTWH(fL, y, bW, h * 0.003),
+          Paint()..color = _trimLt.withAlpha(80));
     }
-
-    sideBand(0.222);
-    sideBand(_c32);
-    sideBand(_c21);
-    sideBand(_cPl);
   }
 
-  // ── Front face cornice bands ──────────────────────────────────────────────────
-  void _drawFrontCornices(Canvas canvas, double w, double h) {
-    final fL = w * _fL; final fR = w * _fR;
-    final bW2 = fR - fL;
-
-    void band(double yFrac) {
-      final y = h * yFrac;
-      canvas.drawRect(Rect.fromLTWH(fL, y, bW2, h * 0.022), Paint()..color = _trim);
-      canvas.drawRect(Rect.fromLTWH(fL, y + h * 0.022, bW2, h * 0.006),
-          Paint()..color = _trimD.withAlpha(75));
-      canvas.drawRect(Rect.fromLTWH(fL, y, bW2, h * 0.004),
-          Paint()..color = Colors.white.withAlpha(65));
-    }
-    band(0.222);
-    band(_c32);
-    band(_c21);
-    band(_cPl);
-  }
-
-  // ── Three Gothic gables ───────────────────────────────────────────────────────
-  void _drawGables(Canvas canvas, double w, double h) {
-    final fTop = h * _fTop;
-    final fL = w * _fL;
-
-    // Left gable side face (visible left side of the gable prism)
-    final lgApexFront = Offset(w * _lgCX, h * _lgAp);
-    final lgBaseLeft  = Offset(w * (_lgCX - _lgHW), fTop);
-    // Project left base point onto side face plane
-    final lgSideApex  = Offset(lgApexFront.dx - w * _sX * 0.55, lgApexFront.dy - h * _sY * 0.55);
-    final lgSideBase  = Offset(lgBaseLeft.dx - w * _sX * 0.55, lgBaseLeft.dy - h * _sY * 0.55);
-
-    // Only draw side face of left gable (it's visible from our viewing angle)
-    if (lgBaseLeft.dx > fL) {
-      canvas.drawPath(
-        Path()
-          ..moveTo(lgApexFront.dx, lgApexFront.dy)
-          ..lineTo(lgBaseLeft.dx,  lgBaseLeft.dy)
-          ..lineTo(lgSideBase.dx,  lgSideBase.dy)
-          ..lineTo(lgSideApex.dx,  lgSideApex.dy)
-          ..close(),
-        Paint()..color = _brickS.withAlpha(200),
-      );
-    }
-
-    void gable(double cx, double apexY, double halfW, bool large) {
-      final base = h * _fTop;
-      final ap   = h * apexY;
-      final hW   = w * halfW;
-
-      final tri = Path()
-        ..moveTo(cx - hW, base)..lineTo(cx, ap)..lineTo(cx + hW, base)..close();
-
-      canvas.drawPath(tri, Paint()
-        ..color = _trim..style = PaintingStyle.stroke
-        ..strokeWidth = large ? 5.5 : 4.0);
-      canvas.drawPath(tri, Paint()
-        ..color = _trimSh..style = PaintingStyle.stroke
-        ..strokeWidth = large ? 2.5 : 1.8);
-
-      // Finial ball
-      final r = large ? 7.5 : 5.5;
-      canvas.drawCircle(Offset(cx, ap), r + 1.5, Paint()..color = _trimSh);
-      canvas.drawCircle(Offset(cx, ap), r, Paint()..color = _trim);
-      canvas.drawCircle(Offset(cx, ap - 1.5), r * 0.40,
-          Paint()..color = Colors.white.withAlpha(100));
-
-      // Medallion
-      if (large) {
-        final mY = ap + (base - ap) * 0.52;
-        canvas.drawCircle(Offset(cx, mY), w * 0.030, Paint()..color = _trimSh);
-        canvas.drawCircle(Offset(cx, mY), w * 0.023, Paint()..color = _trim);
-        canvas.drawCircle(Offset(cx, mY), w * 0.014,
-            Paint()..color = _brickF.withAlpha(85));
-      }
-    }
-
-    gable(w * _lgCX, _lgAp, _lgHW, true);
-    gable(w * _cgCX, _cgAp, _cgHW, false);
-    gable(w * _rgCX, _lgAp, _lgHW, true);
-  }
-
-  // ── Quoins (corner stone blocks on front-face left edge) ─────────────────────
+  // ── Quoin corner blocks (alternating long/short cream blocks) ────────────
   void _drawQuoins(Canvas canvas, double w, double h) {
-    final fL = w * _fL; final fR = w * _fR;
-    final qW = w * 0.038; final qH = h * 0.032; final qGap = h * 0.015;
-    var y = h * _fTop + 5; var lo = true;
-    while (y < h * _fBot - qH) {
-      final thisW = lo ? qW : qW * 0.62;
-      // Front face right edge quoins
-      canvas.drawRect(Rect.fromLTWH(fR - thisW, y, thisW, qH), Paint()..color = _trim);
-      canvas.drawRect(Rect.fromLTWH(fR - thisW, y, thisW, qH),
-          Paint()..color = _trimD.withAlpha(50)..style = PaintingStyle.stroke..strokeWidth = 0.6);
-      // Front face left edge quoins (corner between front and side)
-      canvas.drawRect(Rect.fromLTWH(fL, y, thisW, qH), Paint()..color = _trimSh);
-      canvas.drawRect(Rect.fromLTWH(fL, y, thisW, qH),
-          Paint()..color = _trimD.withAlpha(50)..style = PaintingStyle.stroke..strokeWidth = 0.6);
-      y += qH + qGap; lo = !lo;
-    }
-  }
-
-  // ── 3rd floor: groups of 3 narrow windows under each gable ───────────────────
-  void _drawThirdFloorWindows(Canvas canvas, double w, double h) {
-    final lit = fillFraction > 0.72;
-    final wCY = h * ((_fTop + _c32) / 2);
-
-    for (final gCX in [w * _lgCX, w * _rgCX]) {
-      for (int i = -1; i <= 1; i++) {
-        _narrowWin(canvas, gCX + w * 0.065 * i, wCY, w * 0.050, h * 0.100, lit);
+    final qW = w * 0.028; final qH = h * 0.029; final qGap = h * 0.012;
+    // Edges: outer left, bay dividers, outer right
+    final edgesLeft  = [w * _bL, w * _d1, w * _d2];
+    final edgesRight = [w * _d1, w * _d2, w * _bR];
+    for (int ei = 0; ei < edgesLeft.length; ei++) {
+      final xL = edgesLeft[ei]; final xR = edgesRight[ei];
+      var y = h * _bTop + 4; var alt = false;
+      while (y < h * _bBot - qH) {
+        final thisW = alt ? qW * 0.65 : qW;
+        // Left quoin of each section
+        canvas.drawRect(Rect.fromLTWH(xL, y, thisW, qH),
+            Paint()..color = ei == 0 ? _trimDk : _trim);
+        // Right quoin of each section
+        canvas.drawRect(Rect.fromLTWH(xR - thisW, y, thisW, qH),
+            Paint()..color = ei == 2 ? _trimDk : _trim);
+        // Subtle border
+        final qp = Paint()
+          ..color = _trimDk.withAlpha(40)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 0.5;
+        canvas.drawRect(Rect.fromLTWH(xL, y, thisW, qH), qp);
+        canvas.drawRect(Rect.fromLTWH(xR - thisW, y, thisW, qH), qp);
+        y += qH + qGap; alt = !alt;
       }
     }
-    for (int i = -1; i <= 1; i++) {
-      _narrowWin(canvas, w * _cgCX + w * 0.052 * i, wCY, w * 0.038, h * 0.085, lit);
+  }
+
+  // ── Three Gothic gables ──────────────────────────────────────────────────
+  void _drawGables(Canvas canvas, double w, double h) {
+    _gable(canvas, w, h, _lgCX, _lgApY, _lgHW, large: true);
+    _gable(canvas, w, h, _cgCX, _cgApY, _cgHW, large: false);
+    _gable(canvas, w, h, _rgCX, _lgApY, _lgHW, large: true);
+  }
+
+  void _gable(Canvas canvas, double w, double h,
+      double cxF, double apYF, double hwF, {required bool large}) {
+    final cx   = w * cxF;
+    final ap   = h * apYF;
+    final hW   = w * hwF;
+    final base = h * _bTop;
+    final sw   = large ? 7.0 : 5.0;
+
+    // Roof fill inside triangle
+    canvas.drawPath(
+      Path()..moveTo(cx - hW, base)..lineTo(cx, ap)..lineTo(cx + hW, base)..close(),
+      Paint()
+        ..shader = LinearGradient(
+          begin: Alignment.topCenter, end: Alignment.bottomCenter,
+          colors: const [_roof, _roofLt],
+        ).createShader(Rect.fromLTRB(cx - hW, ap, cx + hW, base)),
+    );
+
+    // Cream trim (shadow + main + highlight)
+    final tri = Path()
+      ..moveTo(cx - hW, base)..lineTo(cx, ap)..lineTo(cx + hW, base);
+    canvas.drawPath(tri,
+        Paint()..color = _trimDk..style = PaintingStyle.stroke..strokeWidth = sw + 3.5);
+    canvas.drawPath(tri,
+        Paint()..color = _trim..style = PaintingStyle.stroke..strokeWidth = sw);
+    canvas.drawPath(tri,
+        Paint()..color = _trimLt.withAlpha(70)..style = PaintingStyle.stroke..strokeWidth = 1.5);
+
+    // Inner coping line
+    final innerAp = Offset(cx, ap + 6.0);
+    canvas.drawPath(
+      Path()
+        ..moveTo(cx - hW + 2, base)
+        ..lineTo(innerAp.dx, innerAp.dy)
+        ..lineTo(cx + hW - 2, base),
+      Paint()..color = _trimDk.withAlpha(120)..style = PaintingStyle.stroke..strokeWidth = 1.0,
+    );
+
+    // Finial
+    final fr = large ? 7.0 : 5.5;
+    final fcy = ap - fr;
+    canvas.drawRect(Rect.fromCenter(center: Offset(cx, ap), width: 5, height: fr * 1.2),
+        Paint()..color = _trim);
+    canvas.drawCircle(Offset(cx, fcy), fr + 1.5, Paint()..color = _trimDk);
+    canvas.drawCircle(Offset(cx, fcy), fr,        Paint()..color = _trim);
+    canvas.drawCircle(Offset(cx, fcy - fr * 0.45), fr * 0.32,
+        Paint()..color = _trimLt.withAlpha(130));
+
+    // Medallion square
+    final mY = ap + (base - ap) * (large ? 0.52 : 0.50);
+    final mS = large ? w * 0.058 : w * 0.034;
+    canvas.drawRect(Rect.fromCenter(center: Offset(cx, mY), width: mS + 5, height: mS + 5),
+        Paint()..color = _trimDk);
+    canvas.drawRect(Rect.fromCenter(center: Offset(cx, mY), width: mS, height: mS),
+        Paint()..color = _trim);
+    canvas.drawRect(
+        Rect.fromCenter(center: Offset(cx, mY), width: mS * 0.58, height: mS * 0.58),
+        Paint()..color = _brickDk.withAlpha(90));
+  }
+
+  // ── Chimney stacks ───────────────────────────────────────────────────────
+  void _drawChimneys(Canvas canvas, double w, double h) {
+    final base = h * _bTop;
+    final chW  = w * 0.015;
+    final chH  = h * 0.115;
+    for (final xF in [
+      w * (_lgCX - _lgHW) - w * 0.028,
+      w * (_lgCX - _lgHW) - w * 0.052,
+      w * (_rgCX + _lgHW) + w * 0.028,
+      w * (_rgCX + _lgHW) + w * 0.052,
+    ]) {
+      canvas.drawRect(Rect.fromLTWH(xF - chW / 2, base - chH, chW, chH),
+          Paint()..color = _brickDk);
+      canvas.drawRect(Rect.fromLTWH(xF - chW / 2 - 2, base - chH, chW + 4, h * 0.013),
+          Paint()..color = _trimDk);
     }
   }
 
-  void _narrowWin(Canvas canvas, double cx, double cy, double ww, double wh, bool lit) {
-    final out = Rect.fromCenter(center: Offset(cx, cy), width: ww + 8, height: wh + 6);
-    final mid = Rect.fromCenter(center: Offset(cx, cy), width: ww + 5, height: wh + 3);
-    final inn = Rect.fromCenter(center: Offset(cx, cy), width: ww - 4, height: wh - 4);
-    canvas.drawRRect(RRect.fromRectAndRadius(out, const Radius.circular(1.5)), Paint()..color = _trimSh);
-    canvas.drawRRect(RRect.fromRectAndRadius(mid, const Radius.circular(1.5)), Paint()..color = _trim);
-    canvas.drawRect(inn, Paint()..color = lit ? _winLit.withAlpha(195) : _winDark);
-    if (lit) {
-      canvas.drawRect(inn, Paint()
-        ..shader = RadialGradient(center: const Alignment(-0.2, -0.4), radius: 0.8,
-          colors: [Colors.white.withAlpha(85), Colors.transparent]).createShader(inn));
-    }
-    final dp = Paint()..color = _trim.withAlpha(lit ? 145 : 210)..strokeWidth = 1.6;
-    canvas.drawLine(Offset(inn.left, cy), Offset(inn.right, cy), dp);
-    canvas.drawLine(Offset(cx, inn.top), Offset(cx, inn.bottom),
-        Paint()..color = _trim.withAlpha(lit ? 85 : 130)..strokeWidth = 1.0);
+  // ── 3rd floor: 3 narrow windows per bay ─────────────────────────────────
+  void _drawFloor3(Canvas canvas, double w, double h) {
+    final lit = fillFraction > 0.72;
+    final cy  = h * (_f3T + (_f3B - _f3T) / 2);
+    final wh  = h * (_f3B - _f3T) * 0.76;
+    final ww  = w * 0.040;
+    _winGroup3(canvas, w * _lgCX, cy, ww,        wh,        lit);
+    _winGroup3(canvas, w * _cgCX, cy, ww * 0.78, wh * 0.84, lit);
+    _winGroup3(canvas, w * _rgCX, cy, ww,        wh,        lit);
   }
 
-  // ── 2nd floor: bay window + side windows ─────────────────────────────────────
-  void _drawSecondFloor(Canvas canvas, double w, double h) {
+  void _winGroup3(Canvas canvas, double cx, double cy,
+      double ww, double wh, bool lit) {
+    final gap    = ww * 0.28;
+    final totalW = ww * 3 + gap * 2;
+    // Outer quoin frame
+    canvas.drawRect(
+        Rect.fromCenter(center: Offset(cx, cy), width: totalW + 17, height: wh + 15),
+        Paint()..color = _trimDk);
+    canvas.drawRect(
+        Rect.fromCenter(center: Offset(cx, cy), width: totalW + 10, height: wh + 8),
+        Paint()..color = _trim);
+    // 3 panes
+    for (int i = 0; i < 3; i++) {
+      final wx  = cx - totalW / 2 + ww / 2 + i * (ww + gap);
+      final inn = Rect.fromCenter(center: Offset(wx, cy), width: ww - 2, height: wh - 4);
+      canvas.drawRect(inn, Paint()..color = lit ? _winLit.withAlpha(200) : _winGrey);
+      if (lit) {
+        canvas.drawRect(inn, Paint()
+          ..shader = RadialGradient(center: const Alignment(-0.2, -0.4), radius: 0.8,
+            colors: [Colors.white.withAlpha(85), Colors.transparent]).createShader(inn));
+      }
+      canvas.drawLine(Offset(wx, inn.top), Offset(wx, inn.bottom),
+          Paint()..color = _trim.withAlpha(lit ? 100 : 160)..strokeWidth = 1.2);
+    }
+  }
+
+  // ── 2nd floor: bay window + 3 windows L/R ───────────────────────────────
+  void _drawFloor2(Canvas canvas, double w, double h) {
     final lit = fillFraction > 0.44;
     _drawBayWindow(canvas, w, h, lit);
 
-    final sCY = h * ((_c32 + _c21) / 2 + 0.010);
-    final sWW = w * 0.085;
-    final sWH = h * 0.108;
-    final iL  = w * (_fL + 0.040);
-    final iR  = w * (_fR - 0.008);
-    final bayHalf = w * 0.120;
-    final cx  = w * (_fL + _bW * 0.500);
-    final leftW  = cx - bayHalf - iL;
-    final rStart = cx + bayHalf;
-    final rightW = iR - rStart;
-
-    _classicWin(canvas, iL + leftW * 0.25, sCY, sWW, sWH, lit);
-    _classicWin(canvas, iL + leftW * 0.72, sCY, sWW, sWH, lit);
-    _classicWin(canvas, rStart + rightW * 0.28, sCY, sWW, sWH, lit);
-    _classicWin(canvas, rStart + rightW * 0.75, sCY, sWW, sWH, lit);
-
-    // Side face 2nd floor window (one visible on the side face)
-    final sWinCX = w * _fL - w * _sX * 0.50;
-    final sWinCY = sCY - h * _sY * 0.50;
-    _sideWin(canvas, sWinCX, sWinCY, w * 0.042, h * 0.090, lit);
+    final cy  = h * (_f2T + (_f2B - _f2T) / 2);
+    final wh  = h * (_f2B - _f2T) * 0.74;
+    final ww  = w * 0.046;
+    _winGroup3(canvas, w * _lgCX, cy, ww, wh, lit);
+    _winGroup3(canvas, w * _rgCX, cy, ww, wh, lit);
   }
 
   void _drawBayWindow(Canvas canvas, double w, double h, bool lit) {
-    final cx    = w * (_fL + _bW * 0.500);
-    final faceW = w * 0.178;
-    final faceH = h * 0.155;
-    final top   = h * (_c32 + 0.026);
-    final bot   = top + faceH;
-    final mid   = (top + bot) / 2;
-    final sideD = w * 0.030; // how far bay protrudes
-    final sideH = faceH + h * 0.018;
+    final cx    = w * _cgCX;
+    final faceW = w * 0.158;
+    final top   = h * _f2T + h * 0.005;
+    final bot   = h * _f2B - h * 0.005;
+    final faceH = bot - top;
+    final protr = w * 0.020;
 
-    // LEFT side face of bay (deeper shadow, very visible — this is key depth cue)
+    // Left & right depth faces
     canvas.drawPath(
       Path()
-        ..moveTo(cx - faceW / 2, top - h * 0.010)
-        ..lineTo(cx - faceW / 2 - sideD, top + h * 0.016)
-        ..lineTo(cx - faceW / 2 - sideD, top + sideH)
-        ..lineTo(cx - faceW / 2, bot)
+        ..moveTo(cx - faceW / 2,          top)
+        ..lineTo(cx - faceW / 2 - protr,  top + faceH * 0.18)
+        ..lineTo(cx - faceW / 2 - protr,  bot - faceH * 0.18)
+        ..lineTo(cx - faceW / 2,          bot)
         ..close(),
-      Paint()..color = _brickD.withAlpha(185),
+      Paint()..color = _brickDk.withAlpha(200),
     );
-    // RIGHT side face
     canvas.drawPath(
       Path()
-        ..moveTo(cx + faceW / 2, top - h * 0.010)
-        ..lineTo(cx + faceW / 2 + sideD, top + h * 0.016)
-        ..lineTo(cx + faceW / 2 + sideD, top + sideH)
-        ..lineTo(cx + faceW / 2, bot)
+        ..moveTo(cx + faceW / 2,          top)
+        ..lineTo(cx + faceW / 2 + protr,  top + faceH * 0.18)
+        ..lineTo(cx + faceW / 2 + protr,  bot - faceH * 0.18)
+        ..lineTo(cx + faceW / 2,          bot)
         ..close(),
-      Paint()..color = _brickD.withAlpha(120),
+      Paint()..color = _brickDk.withAlpha(130),
     );
 
-    // Front face of bay
-    final fR2 = Rect.fromLTWH(cx - faceW / 2, top, faceW, faceH);
-    canvas.drawRect(fR2, Paint()..color = _brickH.withAlpha(235));
-    canvas.drawRect(fR2, Paint()
-      ..color = _trim..style = PaintingStyle.stroke..strokeWidth = 5.5);
+    // Front face (dark wood frame)
+    canvas.drawRect(Rect.fromLTWH(cx - faceW / 2, top, faceW, faceH),
+        Paint()..color = _bayF);
+    canvas.drawRect(Rect.fromLTWH(cx - faceW / 2, top, faceW, faceH),
+        Paint()..color = _trim..style = PaintingStyle.stroke..strokeWidth = 4.5);
 
-    // 3 stained glass panels
-    final pW = faceW * 0.280; final pH = faceH * 0.670;
-    final pCY = mid + faceH * 0.055;
-    final offsets = [-faceW * 0.295, 0.0, faceW * 0.295];
-    final colors  = [_glGreen, _glBlue, _glYellow];
-    for (int i = 0; i < 3; i++) {
-      final px = cx + offsets[i];
-      final pr = Rect.fromCenter(center: Offset(px, pCY), width: pW, height: pH);
-      final fp = _arch(px, pCY, pW + 5, pH + 5, pW * 0.52);
-      final gp = _arch(px, pCY, pW - 2, pH - 2, pW * 0.46);
-      canvas.drawPath(fp, Paint()..color = _trim);
+    // Faceted grey roof cap
+    final roofH = h * 0.044;
+    canvas.drawPath(
+      Path()
+        ..moveTo(cx - faceW / 2 - protr - 2, top + faceH * 0.18)
+        ..lineTo(cx - faceW / 2 - 2,          top)
+        ..lineTo(cx + faceW / 2 + 2,          top)
+        ..lineTo(cx + faceW / 2 + protr + 2,  top + faceH * 0.18)
+        ..lineTo(cx,                           top - roofH)
+        ..close(),
+      Paint()..color = const Color(0xFF808898),
+    );
+    // Roof shading (left face darker)
+    canvas.drawPath(
+      Path()
+        ..moveTo(cx - faceW / 2 - protr - 2, top + faceH * 0.18)
+        ..lineTo(cx - faceW / 2 - 2,          top)
+        ..lineTo(cx,                           top - roofH)
+        ..close(),
+      Paint()..color = Colors.black.withAlpha(40),
+    );
+
+    // 5 stained glass panels
+    const pCount = 5;
+    final pW = (faceW - 8) / pCount;
+    final pH = faceH * 0.68;
+    final pCY = top + faceH * 0.48;
+    const bayCols = [_glassTe, _glassG, _glassTe, _glassG, _glassTe];
+    for (int i = 0; i < pCount; i++) {
+      final px = cx - faceW / 2 + 4 + pW * i + pW / 2;
+      final pR = Rect.fromCenter(center: Offset(px, pCY), width: pW - 2, height: pH);
+      canvas.drawRect(pR,
+          Paint()..color = lit ? bayCols[i].withAlpha(215) : _bayF.withAlpha(200));
       if (lit) {
-        canvas.drawPath(gp, Paint()..color = colors[i].withAlpha(220));
-        canvas.save(); canvas.clipPath(gp);
-        canvas.drawRect(pr, Paint()
-          ..shader = RadialGradient(center: const Alignment(-0.3, -0.5), radius: 0.85,
-            colors: [Colors.white.withAlpha(115), Colors.transparent]).createShader(pr));
-        canvas.restore();
-      } else {
-        canvas.drawPath(gp, Paint()..color = _winDark);
+        canvas.drawRect(pR, Paint()
+          ..shader = RadialGradient(center: const Alignment(-0.2, -0.5), radius: 0.85,
+            colors: [Colors.white.withAlpha(100), Colors.transparent]).createShader(pR));
+      }
+      if (i < pCount - 1) {
+        canvas.drawLine(
+          Offset(cx - faceW / 2 + 4 + pW * (i + 1), pR.top),
+          Offset(cx - faceW / 2 + 4 + pW * (i + 1), pR.bottom),
+          Paint()..color = _trim.withAlpha(100)..strokeWidth = 1.0,
+        );
       }
     }
 
-    // Pediment
-    final pedHW = faceW * 0.56; final pedH = h * 0.034;
+    // Pediment below bay (inverted triangle = sill/base)
+    final pedH  = h * 0.034;
+    final pedHW = faceW * 0.55;
     canvas.drawPath(
-      Path()..moveTo(cx - pedHW, top)..lineTo(cx, top - pedH)..lineTo(cx + pedHW, top)..close(),
+      Path()
+        ..moveTo(cx - pedHW, bot)
+        ..lineTo(cx,          bot + pedH)
+        ..lineTo(cx + pedHW, bot)
+        ..close(),
       Paint()..color = _trim,
     );
     canvas.drawPath(
-      Path()..moveTo(cx - pedHW, top)..lineTo(cx, top - pedH)..lineTo(cx + pedHW, top)..close(),
-      Paint()..color = _trimSh..style = PaintingStyle.stroke..strokeWidth = 2.0,
-    );
-    canvas.drawArc(
-      Rect.fromCenter(center: Offset(cx, top), width: faceW * 1.10, height: h * 0.046),
-      math.pi, math.pi, false,
-      Paint()..color = _trim..style = PaintingStyle.stroke..strokeWidth = 4.5,
+      Path()
+        ..moveTo(cx - pedHW, bot)
+        ..lineTo(cx,          bot + pedH)
+        ..lineTo(cx + pedHW, bot),
+      Paint()..color = _trimDk..style = PaintingStyle.stroke..strokeWidth = 2.0,
     );
   }
 
-  void _classicWin(Canvas canvas, double cx, double cy, double ww, double wh, bool lit) {
-    final out = Rect.fromCenter(center: Offset(cx, cy), width: ww + 10, height: wh + 8);
-    final mid = Rect.fromCenter(center: Offset(cx, cy), width: ww + 6,  height: wh + 4);
-    final inn = Rect.fromCenter(center: Offset(cx, cy), width: ww - 4,  height: wh - 4);
-    canvas.drawRRect(RRect.fromRectAndRadius(out, const Radius.circular(2)), Paint()..color = _trimSh);
-    canvas.drawRRect(RRect.fromRectAndRadius(mid, const Radius.circular(2)), Paint()..color = _trim);
-    canvas.drawRect(inn, Paint()..color = lit ? _winLit.withAlpha(195) : _winDark);
-    if (lit) {
-      canvas.drawRect(inn, Paint()
-        ..shader = RadialGradient(center: const Alignment(-0.3, -0.3), radius: 0.9,
-          colors: [Colors.white.withAlpha(80), Colors.transparent]).createShader(inn));
-    }
-    final dp = Paint()..color = _trim.withAlpha(lit ? 155 : 225)..strokeWidth = 1.8;
-    canvas.drawLine(Offset(cx, inn.top), Offset(cx, inn.bottom), dp);
-    canvas.drawLine(Offset(inn.left, cy), Offset(inn.right, cy), dp);
-  }
+  // ── 1st floor: stained glass + arched entrance ───────────────────────────
+  void _drawFloor1(Canvas canvas, double w, double h) {
+    final lit   = fillFraction > 0.06;
+    final cx    = w * _cgCX;
+    final cy    = h * (_f1T + (_f1B - _f1T) * 0.44);
+    final gh    = h * (_f1B - _f1T) * 0.80;
+    final gw    = w * 0.165;
+    final eHW   = w * 0.082;
 
-  void _sideWin(Canvas canvas, double cx, double cy, double ww, double wh, bool lit) {
-    canvas.drawRect(
-      Rect.fromCenter(center: Offset(cx, cy), width: ww + 4, height: wh + 4),
-      Paint()..color = _trimSh,
-    );
-    canvas.drawRect(
-      Rect.fromCenter(center: Offset(cx, cy), width: ww, height: wh),
-      Paint()..color = lit ? _winLit.withAlpha(140) : _winDark.withAlpha(180),
-    );
-  }
+    _stainedGroup(canvas,
+        cx - eHW - (cx - eHW - w * (_bL + 0.078)) * 0.50,
+        cy, gw, gh, lit,
+        cols: [_glassPu, _glassG, _glassY, _glassB]);
 
-  // ── Ground floor: stained glass + entrance ────────────────────────────────────
-  void _drawGroundFloor(Canvas canvas, double w, double h) {
-    final lit  = fillFraction > 0.06;
-    final cx   = w * (_fL + _bW * 0.500);
-    final gCY  = h * ((_c21 + _cPl) / 2 + 0.008);
-    final gH   = h * 0.122;
-    final gW   = w * 0.162;
-    final eHW  = w * 0.075; // entrance half-width
-
-    final lCX = cx - eHW - (cx - eHW - w * (_fL + 0.042)) * 0.52;
-    _stainedGlass(canvas, lCX, gCY, gW, gH, lit,
-        colors: [_glBlue, _glGreen, _glYellow]);
-
-    final rCX = cx + eHW + (w * (_fR - 0.010) - cx - eHW) * 0.52;
-    _stainedGlass(canvas, rCX, gCY, gW, gH, lit,
-        colors: [_glYellow, _glBlue, _glGreen]);
+    _stainedGroup(canvas,
+        cx + eHW + (w * (_bR - 0.010) - cx - eHW) * 0.50,
+        cy, gw, gh, lit,
+        cols: [_glassY, _glassB, _glassPu, _glassG]);
 
     _drawEntrance(canvas, cx, w, h);
-
-    // Side face ground floor window
-    final swCX = w * _fL - w * _sX * 0.45;
-    final swCY = gCY - h * _sY * 0.45;
-    _sideWin(canvas, swCX, swCY, w * 0.038, h * 0.080, lit);
   }
 
-  void _stainedGlass(Canvas canvas, double cx, double cy, double ww, double wh,
-      bool lit, {required List<Color> colors}) {
-    final aR = ww * 0.50;
-    canvas.drawPath(_arch(cx, cy, ww + 12, wh + 10, aR + 6), Paint()..color = _trimSh);
-    canvas.drawPath(_arch(cx, cy, ww + 7,  wh + 5,  aR + 3), Paint()..color = _trim);
-    final pW = (ww - 8) / 3; final pH = wh - 6;
-    for (int i = 0; i < 3; i++) {
+  void _stainedGroup(Canvas canvas, double cx, double cy,
+      double ww, double wh, bool lit, {required List<Color> cols}) {
+    canvas.drawRect(
+        Rect.fromCenter(center: Offset(cx, cy), width: ww + 17, height: wh + 15),
+        Paint()..color = _trimDk);
+    canvas.drawRect(
+        Rect.fromCenter(center: Offset(cx, cy), width: ww + 10, height: wh + 8),
+        Paint()..color = _trim);
+
+    final pW = (ww - 8) / cols.length;
+    final pH = wh - 8;
+    for (int i = 0; i < cols.length; i++) {
       final px  = cx - ww / 2 + 4 + pW * i + pW / 2;
-      final pT  = cy - wh / 2 + 3;
-      final pR  = Rect.fromLTWH(px - pW / 2, pT, pW, pH);
-      final pP  = _arch(px, pT + pH / 2, pW, pH, pW * 0.50);
+      final pR  = Rect.fromCenter(center: Offset(px, cy), width: pW - 1, height: pH);
+      final sqH = pW * 0.92;
       if (lit) {
-        canvas.drawPath(pP, Paint()..color = colors[i].withAlpha(218));
-        canvas.save(); canvas.clipPath(pP);
+        canvas.drawRect(pR, Paint()..color = cols[i].withAlpha(215));
         canvas.drawRect(pR, Paint()
-          ..shader = RadialGradient(center: const Alignment(-0.2, -0.5), radius: 0.8,
-            colors: [Colors.white.withAlpha(105), Colors.transparent]).createShader(pR));
-        canvas.restore();
+          ..shader = RadialGradient(center: const Alignment(-0.2, -0.5), radius: 0.85,
+            colors: [Colors.white.withAlpha(100), Colors.transparent]).createShader(pR));
       } else {
-        canvas.drawPath(pP, Paint()..color = _winDark);
+        canvas.drawRect(pR, Paint()..color = _brickDk.withAlpha(180));
       }
-      canvas.drawPath(pP, Paint()
-        ..color = _trim..style = PaintingStyle.stroke..strokeWidth = 2.5);
+      // Horizontal divider: square top + tall bottom
+      final divY = pR.top + sqH;
+      canvas.drawLine(Offset(pR.left, divY), Offset(pR.right, divY),
+          Paint()..color = _trim..strokeWidth = 1.5);
     }
-    canvas.drawLine(Offset(cx - ww / 2 + 4, cy + wh * 0.10),
-        Offset(cx + ww / 2 - 4, cy + wh * 0.10),
-        Paint()..color = _trim..strokeWidth = 2.0);
   }
 
   void _drawEntrance(Canvas canvas, double cx, double w, double h) {
-    final dW  = w * 0.138;
-    final dH  = h * 0.130;
-    final dT  = h * (_c21 + 0.026);
-    final dB  = dT + dH;
+    final dW = w * 0.124;
+    final dH = h * (_f1B - _f1T) * 0.90;
+    final dT = h * _f1T + h * 0.008;
+    final aR = dW * 0.58;
 
-    for (int s in [-1, 1]) {
-      canvas.drawRect(Rect.fromCenter(
-        center: Offset(cx + s * dW * 0.64, dT + dH * 0.50), width: w * 0.020, height: dH * 1.03),
+    // Outer frame
+    canvas.drawPath(_archP(cx, dT, dW * 1.25, dH, aR + 6),
+        Paint()..color = _trimDk);
+    canvas.drawPath(_archP(cx, dT, dW * 1.18, dH, aR + 3),
         Paint()..color = _trim);
-    }
-    canvas.drawPath(_arch(cx, dT + dH * 0.42, dW * 1.20, dH * 0.94, dW * 0.60), Paint()..color = _trim);
 
-    for (int s in [-1, 1]) {
-      final px = cx + s * dW * 0.22;
-      canvas.drawRRect(
-        RRect.fromRectAndRadius(Rect.fromCenter(center: Offset(px, dT + dH * 0.58),
-            width: dW * 0.42, height: dH * 0.80), const Radius.circular(2)),
-        Paint()..color = _wood);
-      canvas.drawCircle(Offset(cx + s * dW * 0.06, dT + dH * 0.60), 2.2,
-          Paint()..color = const Color(0xFFD4A820));
+    // Side pilasters
+    for (final s in [-1, 1]) {
+      canvas.drawRect(
+        Rect.fromCenter(
+          center: Offset(cx + s * dW * 0.68, dT + dH * 0.52),
+          width: dW * 0.17, height: dH * 0.90,
+        ),
+        Paint()..color = _trim,
+      );
     }
+
+    // Double door panels
+    for (final s in [-1, 1]) {
+      final px = cx + s * dW * 0.24;
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(
+          Rect.fromCenter(center: Offset(px, dT + dH * 0.58),
+              width: dW * 0.44, height: dH * 0.82),
+          const Radius.circular(2),
+        ),
+        Paint()..color = _door,
+      );
+      canvas.drawCircle(Offset(cx + s * dW * 0.07, dT + dH * 0.60),
+          2.5, Paint()..color = const Color(0xFFD4A820));
+    }
+
+    // Steps (grey)
     for (int i = 0; i < 3; i++) {
-      final sW = dW * (1.75 - i * 0.22);
-      final sH = h * 0.019;
-      final sY = dB + (2 - i) * sH;
-      canvas.drawRect(Rect.fromCenter(center: Offset(cx, sY + sH / 2), width: sW, height: sH),
-          Paint()..color = _trim);
-      canvas.drawRect(Rect.fromCenter(center: Offset(cx, sY + sH / 2), width: sW, height: sH),
-          Paint()..color = _trimD.withAlpha(60)..style = PaintingStyle.stroke..strokeWidth = 0.7);
+      final sW = dW * (1.80 - i * 0.22);
+      final sH = h * 0.020;
+      final sY = dT + dH + i * sH;
+      canvas.drawRect(
+          Rect.fromCenter(center: Offset(cx, sY + sH / 2), width: sW, height: sH),
+          Paint()..color = _stepGrey);
     }
   }
 
-  // ── Golden glow fill animation ────────────────────────────────────────────────
+  // ── Golden glow fill animation ───────────────────────────────────────────
   void _drawGlowOverlay(Canvas canvas, double w, double h) {
     if (fillFraction <= 0.005) return;
-
-    final bBot = h * _fBot;
-    final bTop = h * _lgAp;
+    final bBot    = h * _bBot;
+    final bTop    = h * _lgApY;
     final glowTop = bBot - (bBot - bTop) * fillFraction;
+    final pulse   = (math.sin(glowPhase * 2 * math.pi) * 0.08 + 0.92).clamp(0.80, 1.0);
+    final hotA    = (200 * pulse).round();
+    final warmA   = (155 * pulse).round();
 
-    final pulse    = (math.sin(glowPhase * 2 * math.pi) * 0.08 + 0.92).clamp(0.80, 1.0);
-    final hotA     = (200 * pulse).round();
-    final warmA    = (160 * pulse).round();
-
-    // Front face glow
     canvas.save();
-    canvas.clipPath(_frontFaceClip(w, h));
-    final fGlow = Rect.fromLTRB(w * _fL, glowTop, w * _fR, bBot);
-    canvas.drawRect(fGlow, Paint()
+    canvas.clipPath(_clip(w, h));
+    final glow = Rect.fromLTRB(w * _bL, glowTop, w * _bR, bBot);
+    canvas.drawRect(glow, Paint()
       ..shader = LinearGradient(
         begin: Alignment.bottomCenter, end: Alignment.topCenter,
-        colors: [_glowHot.withAlpha(hotA), _glowWrm.withAlpha(warmA),
-          _glowCl.withAlpha(100), Colors.transparent],
+        colors: [
+          _glowHot.withAlpha(hotA), _glowWrm.withAlpha(warmA),
+          _glowCl.withAlpha(90), Colors.transparent,
+        ],
         stops: const [0.0, 0.35, 0.70, 1.0],
-      ).createShader(fGlow));
-    canvas.restore();
+      ).createShader(glow));
 
-    // Side face glow (slightly darker — it's in shadow)
-    canvas.save();
-    canvas.clipPath(_sideFaceClip(w, h));
-    final sGlowTop = glowTop - h * _sY * fillFraction;
-    final sBotY    = h * _sBot;
-    if (sGlowTop < sBotY) {
-      final sGlow = Rect.fromLTRB(w * _sL, sGlowTop, w * _fL, sBotY);
-      canvas.drawRect(sGlow, Paint()
-        ..shader = LinearGradient(
-          begin: Alignment.bottomCenter, end: Alignment.topCenter,
-          colors: [_glowHot.withAlpha((hotA * 0.55).round()), _glowWrm.withAlpha((warmA * 0.40).round()),
-            Colors.transparent],
-          stops: const [0.0, 0.50, 1.0],
-        ).createShader(sGlow));
-    }
-    canvas.restore();
-
-    // Shimmer line at fill edge
     if (fillFraction > 0.015) {
-      final sr = Rect.fromLTWH(w * _fL, glowTop - 3, w * (_fR - _fL), 6);
+      final sr = Rect.fromLTWH(w * _bL, glowTop - 3, w * (_bR - _bL), 6);
       canvas.drawRect(sr, Paint()
         ..shader = LinearGradient(
           begin: Alignment.centerLeft, end: Alignment.centerRight,
-          colors: [Colors.transparent, Colors.white.withAlpha(150),
-            Colors.white.withAlpha(195), Colors.white.withAlpha(150), Colors.transparent],
+          colors: [
+            Colors.transparent, Colors.white.withAlpha(155),
+            Colors.white.withAlpha(200), Colors.white.withAlpha(155), Colors.transparent,
+          ],
           stops: const [0.0, 0.25, 0.50, 0.75, 1.0],
         ).createShader(sr));
     }
+    canvas.restore();
   }
 
-  // ── Edge shadows ──────────────────────────────────────────────────────────────
-  void _drawEdgeShadows(Canvas canvas, double w, double h) {
-    // Right edge
-    final sr = Rect.fromLTWH(w * _fR - w * 0.035, h * 0.10, w * 0.035, h * 0.70);
-    canvas.drawRect(sr, Paint()
-      ..shader = LinearGradient(begin: Alignment.centerRight, end: Alignment.centerLeft,
-        colors: [Colors.black.withAlpha(50), Colors.transparent]).createShader(sr));
-    // Corner edge (front/side junction)
-    final sc = Rect.fromLTWH(w * _fL - w * 0.005, h * 0.10, w * 0.010, h * 0.70);
-    canvas.drawRect(sc, Paint()..color = Colors.black.withAlpha(55));
-  }
-
-  // ── Front fence with gate + pillars ──────────────────────────────────────────
+  // ── Fence wall + iron railings + gate ────────────────────────────────────
   void _drawFence(Canvas canvas, double w, double h) {
-    final fTop = h * _fBot;
-    final fH   = h * 0.098;
-    final cx   = w * (_fL + _bW * 0.500);
+    final fTop = h * _bBot;
+    final fH   = h * 0.095;
+    final cx   = w * _cgCX;
+    final fL   = w * _bL; final fR = w * _bR;
+    final bW   = fR - fL;
 
-    // Side face of fence (3D wrap-around)
-    final sfPath = Path()
-      ..moveTo(w * _fL, fTop)
-      ..lineTo(w * _sL, fTop - h * _sY)
-      ..lineTo(w * _sL, fTop - h * _sY + fH * 0.85)
-      ..lineTo(w * _fL, fTop + fH * 0.85)
-      ..close();
-    canvas.drawPath(sfPath, Paint()..color = _brickS.withAlpha(220));
-    canvas.drawRect(Rect.fromLTWH(w * _sL, fTop - h * _sY, w * _sX, h * 0.008),
-        Paint()..color = _trimSh);
-
-    // Front fence wall
-    final wr = Rect.fromLTWH(w * _fL, fTop, w * (_fR - _fL), fH);
+    // Brick wall
+    final wr = Rect.fromLTWH(fL, fTop, bW, fH);
     canvas.drawRect(wr, Paint()
-      ..shader = LinearGradient(begin: Alignment.topCenter, end: Alignment.bottomCenter,
-        colors: const [_fenceB, _brickS]).createShader(wr));
-
-    final mP = Paint()..color = _brickD.withAlpha(55)..strokeWidth = 0.9;
+      ..shader = LinearGradient(
+        begin: Alignment.topCenter, end: Alignment.bottomCenter,
+        colors: const [_brick, _brickDk],
+      ).createShader(wr));
+    // Mortar
     for (int i = 1; i < 4; i++) {
-      canvas.drawLine(Offset(w * _fL, fTop + fH * i / 4),
-          Offset(w * _fR, fTop + fH * i / 4), mP);
+      canvas.drawLine(Offset(fL, fTop + fH * i / 4), Offset(fR, fTop + fH * i / 4),
+          Paint()..color = _brickDk.withAlpha(50)..strokeWidth = 0.8);
     }
-
-    // White capping
-    canvas.drawRect(Rect.fromLTWH(w * _fL, fTop, w * (_fR - _fL), h * 0.010),
-        Paint()..color = _trim);
-    canvas.drawRect(Rect.fromLTWH(w * _fL, fTop + h * 0.010, w * (_fR - _fL), h * 0.005),
-        Paint()..color = _trimD.withAlpha(70));
+    // Cream capping
+    canvas.drawRect(Rect.fromLTWH(fL, fTop, bW, h * 0.010), Paint()..color = _trim);
 
     // Gate opening
-    final gW = w * 0.188;
-    canvas.drawRect(Rect.fromLTWH(cx - gW / 2, fTop, gW, fH * 0.84), Paint()..color = _skyB);
+    final gW = w * 0.168;
+    canvas.drawRect(Rect.fromLTWH(cx - gW / 2, fTop + h * 0.010, gW, fH - h * 0.010),
+        Paint()..color = Colors.black.withAlpha(25));
 
-    // Two pillars
-    final pW = w * 0.028;
-    for (int s in [-1, 1]) {
-      final px = cx + s * (gW / 2 + pW * 0.60);
-      canvas.drawRect(Rect.fromCenter(center: Offset(px, fTop + fH * 0.46),
-          width: pW, height: fH * 0.92), Paint()..color = _trim);
-      canvas.drawRect(Rect.fromCenter(center: Offset(px, fTop + fH * 0.46),
-          width: pW, height: fH * 0.92),
-          Paint()..color = _trimD.withAlpha(45)..style = PaintingStyle.stroke..strokeWidth = 0.7);
-      canvas.drawCircle(Offset(px, fTop - h * 0.007), 7.0, Paint()..color = _trimSh);
-      canvas.drawCircle(Offset(px, fTop - h * 0.007), 5.8, Paint()..color = _trim);
-      canvas.drawCircle(Offset(px, fTop - h * 0.011), 2.2,
+    // Gate pillars with ball caps
+    final pW = w * 0.025;
+    for (final s in [-1, 1]) {
+      final px = cx + s * (gW / 2 + pW * 0.55);
+      canvas.drawRect(
+          Rect.fromCenter(center: Offset(px, fTop + fH * 0.48), width: pW, height: fH * 0.90),
+          Paint()..color = _trim);
+      canvas.drawCircle(Offset(px, fTop - h * 0.007), 6.5, Paint()..color = _trimDk);
+      canvas.drawCircle(Offset(px, fTop - h * 0.007), 5.2, Paint()..color = _trim);
+      canvas.drawCircle(Offset(px, fTop - h * 0.011), 2.0,
           Paint()..color = Colors.white.withAlpha(100));
+    }
+
+    // Iron railings left & right of gate
+    final rTop = fTop + h * 0.012;
+    final rBot = fTop + fH * 0.85;
+    final rP   = Paint()..color = _iron..strokeWidth = 1.5;
+    final lEnd  = cx - gW / 2 - pW;
+    final rStart = cx + gW / 2 + pW;
+    for (int side = 0; side < 2; side++) {
+      final segL = side == 0 ? fL + pW : rStart;
+      final segR = side == 0 ? lEnd     : fR - pW;
+      if (segR <= segL) continue;
+      canvas.drawLine(Offset(segL, rTop), Offset(segR, rTop), rP);
+      final count = ((segR - segL) / (w * 0.022)).round().clamp(2, 40);
+      for (int i = 0; i <= count; i++) {
+        final rx = segL + (segR - segL) * i / count;
+        canvas.drawLine(Offset(rx, rTop), Offset(rx, rBot), rP);
+      }
     }
   }
 
-  // ── Arch path helper ──────────────────────────────────────────────────────────
-  Path _arch(double cx, double cy, double ww, double wh, double archR) {
-    final l = cx - ww / 2; final r = cx + ww / 2;
-    final t = cy - wh / 2; final b = cy + wh / 2;
+  // ── Path helpers ─────────────────────────────────────────────────────────
+
+  /// Open-top arch outline (no bottom closing line).
+  Path _archP(double cx, double dT, double dW, double dH, double aR) {
+    final l = cx - dW / 2; final r = cx + dW / 2;
     return Path()
-      ..moveTo(l, b)
-      ..lineTo(l, t + archR)
-      ..arcTo(Rect.fromCenter(center: Offset(cx, t + archR), width: ww, height: archR * 2),
+      ..moveTo(l, dT + dH)
+      ..lineTo(l, dT + aR)
+      ..arcTo(
+          Rect.fromCenter(center: Offset(cx, dT + aR), width: dW, height: aR * 2),
           math.pi, math.pi, false)
-      ..lineTo(r, b)
-      ..close();
+      ..lineTo(r, dT + dH);
   }
 
   @override
