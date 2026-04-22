@@ -42,20 +42,30 @@ void main() {
   });
 
   group('Currency minimum amounts', () {
+    // Canonical values — must match server (functions/index.js) and
+    // currency_logic_test.dart.
     int minAmountCentsForCurrency(String currency) {
       switch (currency.toLowerCase()) {
         case 'usd':
         case 'eur':
-        case 'gbp':
+        case 'cad':
           return 50;
+        case 'gbp':
+          return 30;
         case 'mxn':
           return 1000;
-        case 'ars':
-          return 10000;
-        case 'ils':
+        case 'brl':
           return 100;
+        case 'ars':
+          return 100000;
+        case 'clp':
+          return 50000;
+        case 'cop':
+          return 200000;
+        case 'ils':
+          return 200;
         default:
-          return 50;
+          return 100;
       }
     }
 
@@ -63,20 +73,24 @@ void main() {
       expect(minAmountCentsForCurrency('usd'), 50);
     });
 
+    test('GBP minimum is 30 pence', () {
+      expect(minAmountCentsForCurrency('gbp'), 30);
+    });
+
     test('MXN minimum is 10 pesos (1000 centavos)', () {
       expect(minAmountCentsForCurrency('mxn'), 1000);
     });
 
-    test('ARS minimum is 100 pesos (10000 centavos)', () {
-      expect(minAmountCentsForCurrency('ars'), 10000);
+    test('ARS minimum is 1000 pesos (100000 centavos)', () {
+      expect(minAmountCentsForCurrency('ars'), 100000);
     });
 
-    test('ILS minimum is 1 shekel (100 agorot)', () {
-      expect(minAmountCentsForCurrency('ils'), 100);
+    test('ILS minimum is 2 shekels (200 agorot)', () {
+      expect(minAmountCentsForCurrency('ils'), 200);
     });
 
-    test('unknown currency defaults to 50', () {
-      expect(minAmountCentsForCurrency('xyz'), 50);
+    test('unknown currency defaults to 100', () {
+      expect(minAmountCentsForCurrency('xyz'), 100);
     });
 
     test('case insensitive', () {
@@ -96,8 +110,8 @@ void main() {
         status: PaymentStatus.pending,
       );
       expect(txn.isPending, true);
-      expect(txn.paymentMethodLabel, 'Cheque');
-      expect(txn.statusLabel, 'Pendiente');
+      expect(txn.paymentMethod, PaymentMethod.check);
+      expect(txn.status, PaymentStatus.pending);
     });
 
     test('transfer donation creates pending transaction', () {
@@ -110,7 +124,7 @@ void main() {
         status: PaymentStatus.pending,
       );
       expect(txn.isPending, true);
-      expect(txn.paymentMethodLabel, 'Transferencia');
+      expect(txn.paymentMethod, PaymentMethod.transfer);
     });
 
     test('DAF donation creates pending transaction', () {
@@ -123,7 +137,7 @@ void main() {
         status: PaymentStatus.pending,
       );
       expect(txn.isPending, true);
-      expect(txn.paymentMethodLabel, 'DAF');
+      expect(txn.paymentMethod, PaymentMethod.daf);
     });
 
     test('card donation creates completed transaction', () {
@@ -136,7 +150,7 @@ void main() {
         status: PaymentStatus.completed,
       );
       expect(txn.isPending, false);
-      expect(txn.statusLabel, 'Completado');
+      expect(txn.status, PaymentStatus.completed);
     });
   });
 

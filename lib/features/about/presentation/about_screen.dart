@@ -135,7 +135,14 @@ class _LegalLink extends StatelessWidget {
   Widget build(BuildContext context) {
     return InkWell(
       borderRadius: BorderRadius.circular(12),
-      onTap: () => launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication),
+      onTap: () async {
+        final uri = Uri.parse(url);
+        try {
+          if (await canLaunchUrl(uri)) {
+            await launchUrl(uri, mode: LaunchMode.externalApplication);
+          }
+        } catch (_) {}
+      },
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
         decoration: BoxDecoration(

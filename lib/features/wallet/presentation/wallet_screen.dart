@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:flutter_stripe/flutter_stripe.dart';
 import 'package:go_router/go_router.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
@@ -9,6 +8,7 @@ import 'package:cloud_functions/cloud_functions.dart';
 import '../../analytics/analytics_service.dart';
 import '../../payments/stripe_service.dart';
 import '../data/wallet_service.dart';
+import 'wallet_requests_screen.dart';
 import '../../users/data/user_repository.dart';
 import '../../users/presentation/user_profile_provider.dart';
 import '../../../app/theme/app_tokens.dart';
@@ -65,7 +65,11 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
                 textInputAction: TextInputAction.done,
                 onSubmitted: (_) {
                   final value = double.tryParse(controller.text.trim().replaceAll(',', '.'));
-                  if (value != null && value > 0) Navigator.pop(ctx, value);
+                  if (value != null && value > 0) {
+                    Navigator.pop(ctx, value);
+                  } else {
+                    setDialogState(() => error = tr.enterValidAmount);
+                  }
                 },
                 decoration: InputDecoration(
                   hintText: hintText, prefixText: '$currencySymbol ', errorText: error,
@@ -131,16 +135,8 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
 
   String _walletPaymentErrorMessage(Object error) {
     final tr = S.of(context);
-    if (error is StripeException) {
-      if (error.error.code == FailureCode.Canceled) {
-        return tr.paymentCanceled;
-      }
-      final message = error.error.localizedMessage ?? error.error.message;
-      if (message != null && message.trim().isNotEmpty) {
-        return message;
-      }
-    }
     if (error is StripeServiceException) {
+      if (error.code.toLowerCase() == 'canceled') return tr.paymentCanceled;
       return tr.couldNotStartPayment;
     }
     if (error is FirebaseFunctionsException) {
@@ -184,9 +180,11 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
         purpose: 'wallet_topup',
       );
 
+      if (!mounted) return;
       await WalletService.instance.confirmTopUpFromPaymentIntent(paymentIntentId);
       await AnalyticsService.instance.logWalletFill(amount);
       if (!mounted) return;
+      ref.invalidate(userProfileProvider);
       _showInfo(S.of(context).fundsAdded(formatMoney(amount, symbol: _currencySymbol(currency))));
     } catch (error) {
       if (!mounted) return;
@@ -209,11 +207,12 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
     const blue = Color(0xFF2F60C5);
     final profile = ref.watch(userProfileProvider).valueOrNull;
     final uid = ref.watch(currentUserProvider)?.uid;
+    final pendingRequests = ref.watch(pendingWalletRequestsProvider).valueOrNull ?? 0;
     final walletId =
         (profile?['walletId'] as String?)?.trim().isNotEmpty == true
             ? (profile?['walletId'] as String).trim()
             : (uid != null ? UserRepository.walletIdFromUid(uid) : '------');
-    final walletBalance = (profile?['walletBalance'] as num?)?.toDouble() ?? 0.0;
+    final walletBalance = ((profile?['walletBalance'] as num?)?.toDouble() ?? 0.0).clamp(0.0, double.infinity);
     final currencyCode = ((profile?['currencyCode'] as String?) ?? 'USD').toLowerCase();
     final autoEnabled = (profile?['walletAutoTopUpEnabled'] as bool?) ?? false;
     final autoAmount = (profile?['walletAutoTopUpAmount'] as num?)?.toDouble() ?? 0.0;
@@ -361,6 +360,18 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
           SizedBox(height: sectionGap),
 
           // Cards
+          if (pendingRequests > 0) ...[
+            _WalletCard(
+              icon: Icons.mark_email_unread_outlined,
+              iconBg: blue,
+              title: tr.pendingRequests,
+              subtitle: '$pendingRequests ${tr.pendingRequestsBadge}',
+              onTap: () => context.go('/wallet/requests'),
+              compact: compact,
+              badgeCount: pendingRequests,
+            ),
+            SizedBox(height: walletCardGap),
+          ],
           _WalletCard(
             icon: Icons.swap_vert,
             iconBg: red,
@@ -424,6 +435,7 @@ class _WalletCard extends StatelessWidget {
   final String subtitle;
   final VoidCallback? onTap;
   final bool compact;
+  final int badgeCount;
 
   const _WalletCard({
     required this.icon,
@@ -432,6 +444,7 @@ class _WalletCard extends StatelessWidget {
     required this.subtitle,
     this.onTap,
     this.compact = false,
+    this.badgeCount = 0,
   });
 
   @override
@@ -449,14 +462,39 @@ class _WalletCard extends StatelessWidget {
           ),
           child: Row(
             children: [
-              Container(
-                width: compact ? 46 : 54,
-                height: compact ? 46 : 54,
-                decoration: BoxDecoration(
-                  color: iconBg,
-                  borderRadius: BorderRadius.circular(compact ? 13 : 16),
-                ),
-                child: Icon(icon, color: Colors.white, size: compact ? 22 : 24),
+              Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  Container(
+                    width: compact ? 46 : 54,
+                    height: compact ? 46 : 54,
+                    decoration: BoxDecoration(
+                      color: iconBg,
+                      borderRadius: BorderRadius.circular(compact ? 13 : 16),
+                    ),
+                    child: Icon(icon, color: Colors.white, size: compact ? 22 : 24),
+                  ),
+                  if (badgeCount > 0)
+                    PositionedDirectional(
+                      end: -4,
+                      top: -4,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+                        decoration: const BoxDecoration(
+                          color: Color(0xFFE05A4F),
+                          borderRadius: BorderRadius.all(Radius.circular(10)),
+                        ),
+                        child: Text(
+                          '$badgeCount',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 11,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                    ),
+                ],
               ),
               SizedBox(width: compact ? 10 : 14),
               Expanded(

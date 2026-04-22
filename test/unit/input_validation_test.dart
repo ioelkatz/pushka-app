@@ -239,10 +239,10 @@ void main() {
   });
 
   group('Wallet ID validation', () {
-    test('valid 6-digit wallet ID', () {
-      const id = '123456';
+    test('valid 8-digit wallet ID', () {
+      const id = '12345678';
       expect(id.trim().isNotEmpty, true);
-      expect(id.length, 6);
+      expect(id.length, 8);
     });
 
     test('empty wallet ID', () {
@@ -251,8 +251,8 @@ void main() {
     });
 
     test('wallet ID with spaces', () {
-      const id = ' 123456 ';
-      expect(id.trim(), '123456');
+      const id = ' 12345678 ';
+      expect(id.trim(), '12345678');
     });
 
     test('BUG: no server-side validation of wallet ID format in addWalletContact', () {

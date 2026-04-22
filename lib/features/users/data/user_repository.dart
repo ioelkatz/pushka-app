@@ -12,10 +12,35 @@ class UserRepository {
   CollectionReference<Map<String, dynamic>> get _users =>
       _firestore.collection('users');
 
+  /// Returns the default pushka goal for a given currency code.
+  /// Values are multiples of 18 (חי) or 770 (770 Eastern Pkwy),
+  /// calibrated to be roughly equivalent to $180 USD.
+  static double defaultGoalForCurrency(String currencyCode) {
+    switch (currencyCode.toUpperCase()) {
+      case 'EUR': return 180;
+      case 'GBP': return 180;
+      case 'CAD': return 180;
+      case 'ILS': return 770;
+      case 'MXN': return 1800;
+      case 'BRL': return 770;
+      case 'ARS': return 180000;
+      case 'CLP': return 180000;
+      case 'COP': return 770000;
+      case 'USD':
+      default:    return 180;
+    }
+  }
+
   static String walletIdFromUid(String uid) {
-    final hash = uid.codeUnits.fold<int>(17, (acc, c) => (acc * 31 + c) & 0x7fffffff);
-    final code = 100000 + (hash % 900000);
-    return code.toString();
+    // FNV-1a 32-bit hash — better avalanche effect than a Horner polynomial,
+    // reducing practical collision probability across similar-looking UIDs.
+    // 8-digit IDs (10M–99M space): ~50% collision probability at ~9,500 users.
+    var h = 0x811c9dc5;
+    for (final c in uid.codeUnits) {
+      h ^= c;
+      h = (h * 0x01000193) & 0xFFFFFFFF;
+    }
+    return (10000000 + (h % 90000000)).toString();
   }
 
   Stream<Map<String, dynamic>?> watchUser(String uid) {
@@ -46,7 +71,7 @@ class UserRepository {
       'walletAutoTopUpDayOfMonth': 1,
       'walletAutoTopUpNextRunAt': null,
       'pushkaAmount': 0.0,
-      'pushkaGoal': 3600.00,
+      'pushkaGoal': defaultGoalForCurrency('USD'),
       'presetAmount': 1.00,
       'presetAmounts': <double>[],
       'soundEnabled': true,
@@ -58,10 +83,10 @@ class UserRepository {
       'currencyCountry': 'Estados Unidos',
       'currencyCode': 'USD',
       'autoEmptyFrequency': 'manual',
-      'autoEmptyWeekday': null,
-      'autoEmptyDayOfMonth': null,
+      // autoEmptyWeekday, autoEmptyDayOfMonth, autoEmptyTopOffAmount are omitted
+      // intentionally: Firestore rules type-validate them (is int / is number) and
+      // do not allow null. Fields are absent until the user configures auto-empty.
       'autoEmptyTopOffEnabled': false,
-      'autoEmptyTopOffAmount': null,
       'streakCount': 0,
       'lastStreakDate': null,
       'language': 'es',
@@ -80,6 +105,7 @@ class UserRepository {
     } else {
       final data = doc.data() ?? const <String, dynamic>{};
       final patch = <String, dynamic>{
+        'uid': user.uid,
         'lastLoginAt': FieldValue.serverTimestamp(),
       };
       if ((data['walletId'] as String?)?.trim().isEmpty != false) {
@@ -117,6 +143,7 @@ class UserRepository {
     String? mailingAddress,
   }) async {
     final data = <String, dynamic>{
+      'uid': uid,
       'updatedAt': FieldValue.serverTimestamp(),
     };
 
@@ -141,6 +168,7 @@ class UserRepository {
     await ref.putData(bytes, SettableMetadata(contentType: 'image/jpeg'));
     final url = await ref.getDownloadURL();
     await _users.doc(uid).set({
+      'uid': uid,
       'photoURL': url,
       'updatedAt': FieldValue.serverTimestamp(),
     }, SetOptions(merge: true));
@@ -152,6 +180,7 @@ class UserRepository {
     required double amount,
   }) async {
     await _users.doc(uid).set({
+      'uid': uid,
       'pushkaAmount': amount,
       'updatedAt': FieldValue.serverTimestamp(),
     }, SetOptions(merge: true));
@@ -187,6 +216,7 @@ class UserRepository {
     bool walletAutoTopUpClearNextRunAt = false,
   }) async {
     final data = <String, dynamic>{
+      'uid': uid,
       'updatedAt': FieldValue.serverTimestamp(),
     };
 

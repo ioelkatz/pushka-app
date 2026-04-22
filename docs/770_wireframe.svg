@@ -1,0 +1,60 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 360 500" width="360" height="500" style="background:#f0f0f0">
+
+  <!-- ===== GABLE TRIANGLES ===== -->
+  <!-- Left gable (large) -->
+  <polygon points="84,40  30,165  138,165"
+           fill="none" stroke="#222" stroke-width="2.5"/>
+
+  <!-- Center gable (small) -->
+  <polygon points="180,95  155,165  205,165"
+           fill="none" stroke="#222" stroke-width="2.5"/>
+
+  <!-- Right gable (large, mirror of left) -->
+  <polygon points="276,40  222,165  330,165"
+           fill="none" stroke="#222" stroke-width="2.5"/>
+
+  <!-- ===== VERTICAL LINES DOWN FROM EACH GABLE ===== -->
+  <!-- Left gable: left line and right line -->
+  <line x1="30"  y1="165" x2="30"  y2="430" stroke="#222" stroke-width="2"/>
+  <line x1="138" y1="165" x2="138" y2="430" stroke="#222" stroke-width="2"/>
+
+  <!-- Center gable: left line and right line -->
+  <line x1="155" y1="165" x2="155" y2="430" stroke="#222" stroke-width="2"/>
+  <line x1="205" y1="165" x2="205" y2="430" stroke="#222" stroke-width="2"/>
+
+  <!-- Right gable: left line and right line -->
+  <line x1="222" y1="165" x2="222" y2="430" stroke="#222" stroke-width="2"/>
+  <line x1="330" y1="165" x2="330" y2="430" stroke="#222" stroke-width="2"/>
+
+  <!-- ===== HORIZONTAL BASE LINES (cornices) ===== -->
+  <!-- Gable base / top of wall -->
+  <line x1="30" y1="165" x2="330" y2="165" stroke="#555" stroke-width="1.5" stroke-dasharray="4,3"/>
+
+  <!-- 3rd / 2nd floor cornice -->
+  <line x1="30" y1="270" x2="330" y2="270" stroke="#555" stroke-width="1.5" stroke-dasharray="4,3"/>
+
+  <!-- 2nd / 1st floor cornice -->
+  <line x1="30" y1="370" x2="330" y2="370" stroke="#555" stroke-width="1.5" stroke-dasharray="4,3"/>
+
+  <!-- Top of fence / base of building -->
+  <line x1="30" y1="430" x2="330" y2="430" stroke="#222" stroke-width="2"/>
+
+  <!-- ===== FENCE ===== -->
+  <!-- Fence wall -->
+  <rect x="30" y="430" width="300" height="50" fill="none" stroke="#222" stroke-width="2"/>
+
+  <!-- Gate opening in center -->
+  <line x1="152" y1="430" x2="152" y2="480" stroke="#f0f0f0" stroke-width="36"/>
+  <line x1="152" y1="430" x2="152" y2="480" stroke="#222" stroke-width="1.5" stroke-dasharray="3,3"/>
+  <line x1="208" y1="430" x2="208" y2="480" stroke="#222" stroke-width="1.5" stroke-dasharray="3,3"/>
+
+  <!-- Gate pillars -->
+  <rect x="143" y="424" width="9"  height="58" fill="none" stroke="#222" stroke-width="1.5"/>
+  <rect x="208" y="424" width="9"  height="58" fill="none" stroke="#222" stroke-width="1.5"/>
+
+  <!-- ===== LABELS ===== -->
+  <text x="84"  y="22" text-anchor="middle" font-family="sans-serif" font-size="10" fill="#888">gable L</text>
+  <text x="180" y="82" text-anchor="middle" font-family="sans-serif" font-size="10" fill="#888">gable C</text>
+  <text x="276" y="22" text-anchor="middle" font-family="sans-serif" font-size="10" fill="#888">gable R</text>
+
+</svg>

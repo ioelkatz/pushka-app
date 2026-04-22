@@ -5,6 +5,7 @@ import '../../../core/format_utils.dart';
 import '../../../core/l10n/s.dart';
 import '../../../core/widgets/shimmer_list.dart';
 import '../../../core/widgets/empty_state.dart';
+import '../data/transaction_repository.dart';
 import '../domain/transaction.dart';
 import '../providers/transactions_provider.dart';
 import '../../users/presentation/user_profile_provider.dart';
@@ -193,8 +194,30 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
                             ref.invalidate(userTransactionsProvider),
                         child: ListView.builder(
                           padding: const EdgeInsets.fromLTRB(18, 4, 18, 18),
-                          itemCount: filtered.length,
+                          itemCount: filtered.length +
+                              // Show footer only when the full unfiltered page
+                              // hit the cap — not when a filter is narrowing.
+                              (selectedFilter == _HistoryFilter.all &&
+                                      transactions.length >= TransactionRepository.pageSize
+                                  ? 1
+                                  : 0),
                           itemBuilder: (context, index) {
+                            final showFooter = selectedFilter == _HistoryFilter.all &&
+                                transactions.length >= TransactionRepository.pageSize;
+                            if (showFooter && index == filtered.length) {
+                              // Footer notice: data may be truncated
+                              return Padding(
+                                padding: const EdgeInsets.only(top: 8, bottom: 4),
+                                child: Text(
+                                  _tr.showingLastN(TransactionRepository.pageSize),
+                                  textAlign: TextAlign.center,
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: Colors.grey.shade500,
+                                  ),
+                                ),
+                              );
+                            }
                             return GestureDetector(
                               onTap: () => _showTransactionDetail(
                                   context, filtered[index], currencySymbol),
@@ -231,7 +254,7 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
 
     final (typeIcon, typeColor) = switch (t.type) {
       TransactionType.tzedaka     => (Icons.volunteer_activism_rounded, const Color(0xFF2563EB)),
-      TransactionType.pushkaEmpty => (Icons.savings_rounded,            const Color(0xFF059669)),
+      TransactionType.pushkaEmpty => (Icons.monetization_on_rounded,            const Color(0xFF059669)),
       TransactionType.walletFill  => amount >= 0
           ? (Icons.arrow_downward_rounded, const Color(0xFF059669))
           : (Icons.arrow_upward_rounded,   const Color(0xFFE05A4F)),
@@ -282,7 +305,7 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
               ),
               const SizedBox(height: 4),
               Text(
-                t.typeLabel,
+                _typeLabel(t.type),
                 style: TextStyle(fontSize: 16, color: Colors.grey.shade600),
               ),
               const SizedBox(height: 24),
@@ -352,7 +375,7 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
 
     final (typeIcon, typeColor) = switch (transaction.type) {
       TransactionType.tzedaka      => (Icons.volunteer_activism_rounded, const Color(0xFF2563EB)),
-      TransactionType.pushkaEmpty  => (Icons.savings_rounded,            const Color(0xFF059669)),
+      TransactionType.pushkaEmpty  => (Icons.monetization_on_rounded,            const Color(0xFF059669)),
       TransactionType.walletFill   => amount >= 0
           ? (Icons.arrow_downward_rounded, const Color(0xFF059669))
           : (Icons.arrow_upward_rounded,   const Color(0xFFE05A4F)),
@@ -385,7 +408,7 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  transaction.typeLabel,
+                  _typeLabel(transaction.type),
                   style: const TextStyle(
                     fontSize: 14,
                     fontWeight: FontWeight.w600,
@@ -447,6 +470,17 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
     final period = hour >= 12 ? 'PM' : 'AM';
     final displayHour = hour > 12 ? hour - 12 : (hour == 0 ? 12 : hour);
     return '$month. ${dt.day} - $displayHour:${minute.toString().padLeft(2, '0')}$period';
+  }
+
+  String _typeLabel(TransactionType type) {
+    switch (type) {
+      case TransactionType.tzedaka:
+        return _tr.filterTzedaka;
+      case TransactionType.pushkaEmpty:
+        return _tr.filterPushkaEmpty;
+      case TransactionType.walletFill:
+        return _tr.filterWalletFill;
+    }
   }
 
   String _methodLabel(PaymentMethod method) {

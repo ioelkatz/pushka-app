@@ -1,0 +1,55 @@
+import 'package:flutter/foundation.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_app_check/firebase_app_check.dart';
+import 'package:flutter_stripe/flutter_stripe.dart';
+
+import '../features/notifications/notification_service.dart';
+import '../config/stripe_config.dart';
+import '../features/feedback/feedback_service.dart';
+import '../core/hive_cache.dart';
+import 'router.dart' show initNotificationNavigation;
+
+/// Deferred initialization future — started in main(), awaited in splash.
+late final Future<void> appDeferredInit;
+
+void scheduleDeferredInit() {
+  appDeferredInit = _performDeferredInit();
+}
+
+Future<void> _performDeferredInit() async {
+  if (kIsWeb) {
+    await FirebaseAppCheck.instance.activate(
+      webProvider: ReCaptchaV3Provider(
+        const String.fromEnvironment('RECAPTCHA_SITE_KEY', defaultValue: ''),
+      ),
+    );
+  } else {
+    await FirebaseAppCheck.instance.activate(
+      androidProvider:
+          kReleaseMode ? AndroidProvider.playIntegrity : AndroidProvider.debug,
+      appleProvider:
+          kReleaseMode ? AppleProvider.deviceCheck : AppleProvider.debug,
+    );
+  }
+
+  if (!kIsWeb) {
+    await NotificationService.instance.initialize();
+    final user = FirebaseAuth.instance.currentUser;
+    if (user != null) {
+      await NotificationService.instance.syncFcmToken(user.uid);
+      NotificationService.instance.listenForTokenRefresh(user.uid);
+    }
+  }
+
+  if (!kIsWeb && StripeConfig.publishableKey.isNotEmpty) {
+    Stripe.publishableKey = StripeConfig.publishableKey;
+    if (StripeConfig.merchantIdentifier.isNotEmpty) {
+      Stripe.merchantIdentifier = StripeConfig.merchantIdentifier;
+    }
+    await Stripe.instance.applySettings();
+  }
+
+  await FeedbackService.instance.init();
+  await HiveCache.instance.init();
+  if (!kIsWeb) initNotificationNavigation();
+}

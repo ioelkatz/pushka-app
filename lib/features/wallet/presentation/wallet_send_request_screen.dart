@@ -34,10 +34,11 @@ class _WalletSendRequestScreenState
   }
 
   String _normalizeWalletId(String raw) {
-    final value = raw.trim();
+    final value = raw.trim().replaceAll(RegExp(r'\s'), '');
     if (value.isEmpty) return '';
-    final match = RegExp(r'[A-Za-z0-9-]{4,20}').firstMatch(value);
-    return (match?.group(0) ?? value).trim();
+    // Wallet IDs are always exactly 8 numeric digits
+    if (RegExp(r'^\d{8}$').hasMatch(value)) return value;
+    return '';
   }
 
   void _showInfo(String message) {
@@ -58,8 +59,20 @@ class _WalletSendRequestScreenState
     return defaultMsg;
   }
 
+  String _currencySymbol() {
+    final profile = ref.read(userProfileProvider).valueOrNull;
+    final code = ((profile?['currencyCode'] as String?) ?? 'USD').toLowerCase();
+    const symbols = {
+      'usd': 'US\$', 'eur': '€', 'gbp': '£', 'cad': 'CA\$',
+      'mxn': 'MX\$', 'ars': 'ARS\$', 'brl': 'R\$', 'ils': '₪',
+      'clp': 'CL\$', 'cop': 'CO\$',
+    };
+    return symbols[code] ?? '\$';
+  }
+
   Future<double?> _showAmountDialog(String title) async {
     final tr = S.of(context);
+    final currencySymbol = _currencySymbol();
     return showDialog<double>(
       context: context,
       barrierDismissible: true,
@@ -88,7 +101,7 @@ class _WalletSendRequestScreenState
                 },
                 decoration: InputDecoration(
                   hintText: tr.amountHint,
-                  prefixText: '\$ ',
+                  prefixText: '$currencySymbol ',
                   errorText: error,
                   border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
                   focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: Color(0xFFE84324), width: 1.6)),
@@ -131,12 +144,14 @@ class _WalletSendRequestScreenState
     try {
       if (isSend) {
         await WalletService.instance.transfer(targetWalletId: contactId, amount: amount);
+        if (!mounted) return;
         _showInfo(tr.sent(formatMoney(amount), contactId));
       } else {
         await WalletService.instance.requestTransfer(fromWalletId: contactId, amount: amount);
+        if (!mounted) return;
         _showInfo(tr.requestSent(formatMoney(amount)));
       }
-      setState(() => _selectedContactWalletId = null);
+      if (mounted) setState(() => _selectedContactWalletId = null);
     } catch (e) {
       if (!mounted) return;
       _showInfo(_walletError(e, isSend ? S.of(context).couldNotTransfer : S.of(context).couldNotSendRequest));
@@ -176,11 +191,19 @@ class _WalletSendRequestScreenState
       _showInfo(tr.invalidWalletId);
       return;
     }
+    // Prevent adding own wallet ID as a contact.
+    final ownProfile = ref.read(userProfileProvider).valueOrNull;
+    final ownWalletId = ownProfile?['walletId'] as String?;
+    if (ownWalletId != null && ownWalletId.trim() == normalized) {
+      _showInfo(tr.cannotAddSelf);
+      return;
+    }
     if (_saving) return;
 
     setState(() => _saving = true);
     try {
       await WalletService.instance.addContact(normalized);
+      if (!mounted) return;
       _showInfo(tr.contactAdded);
     } catch (e) {
       if (!mounted) return;
@@ -201,7 +224,6 @@ class _WalletSendRequestScreenState
   Future<void> _showVerificationDialog() async {
     final tr = S.of(context);
     bool showManualEntry = false;
-    String manualValue = '';
     String? error;
 
     final manualWalletId = await showModalBottomSheet<String>(
@@ -249,11 +271,11 @@ class _WalletSendRequestScreenState
                           autofocus: true,
                           textCapitalization: TextCapitalization.characters,
                           textInputAction: TextInputAction.done,
-                          onChanged: (value) { manualValue = value; if (error != null) setSheetState(() => error = null); },
+                          onChanged: (value) { if (error != null) setSheetState(() => error = null); },
                           onSubmitted: (value) {
                             final normalized = _normalizeWalletId(value);
                             if (normalized.isEmpty) { setSheetState(() => error = S.of(ctx).enterValidId); return; }
-                            Navigator.of(ctx).pop(value);
+                            Navigator.of(ctx).pop(normalized);
                           },
                           decoration: InputDecoration(
                             hintText: S.of(ctx).writeWalletId, errorText: error,
@@ -274,7 +296,7 @@ class _WalletSendRequestScreenState
     );
 
     if (manualWalletId == null) return;
-    final normalizedManual = _normalizeWalletId(manualWalletId.isEmpty ? manualValue : manualWalletId);
+    final normalizedManual = _normalizeWalletId(manualWalletId);
     if (manualWalletId.isNotEmpty && normalizedManual.isEmpty) {
       _showInfo(tr.invalidWalletId);
       return;
@@ -517,12 +539,26 @@ class _WalletScannerScreen extends StatefulWidget {
 
 class _WalletScannerScreenState extends State<_WalletScannerScreen> {
   bool _handled = false;
-  bool _torchEnabled = false;
+  late final MobileScannerController _scanController;
+
+  @override
+  void initState() {
+    super.initState();
+    _scanController = MobileScannerController();
+  }
+
+  @override
+  void dispose() {
+    _scanController.dispose();
+    super.dispose();
+  }
 
   String _normalizeWalletId(String raw) {
+    // Extract exactly an 8-digit numeric sequence from the scanned data.
+    // This is consistent with the wallet-ID format defined in UserRepository.
     final value = raw.trim();
-    final match = RegExp(r'[A-Za-z0-9-]{4,20}').firstMatch(value);
-    return (match?.group(0) ?? value).trim();
+    final match = RegExp(r'\d{8}').firstMatch(value);
+    return match?.group(0) ?? '';
   }
 
   @override
@@ -534,11 +570,9 @@ class _WalletScannerScreenState extends State<_WalletScannerScreen> {
       body: Stack(
         children: [
           MobileScanner(
-            controller: MobileScannerController(
-              torchEnabled: _torchEnabled,
-            ),
+            controller: _scanController,
             onDetect: (capture) {
-              if (_handled) return;
+              if (_handled || !mounted) return;
               final value = capture.barcodes.isNotEmpty
                   ? capture.barcodes.first.rawValue
                   : null;
@@ -573,13 +607,16 @@ class _WalletScannerScreenState extends State<_WalletScannerScreen> {
             right: 0,
             bottom: 24,
             child: IconButton(
-              onPressed: () {
-                setState(() => _torchEnabled = !_torchEnabled);
-              },
+              onPressed: () => _scanController.toggleTorch(),
               iconSize: 28,
-              icon: Icon(
-                _torchEnabled ? Icons.flash_on_rounded : Icons.flash_off_rounded,
-                color: Colors.white,
+              icon: ValueListenableBuilder(
+                valueListenable: _scanController,
+                builder: (_, value, _) => Icon(
+                  value.torchState == TorchState.on
+                      ? Icons.flash_on_rounded
+                      : Icons.flash_off_rounded,
+                  color: Colors.white,
+                ),
               ),
             ),
           ),

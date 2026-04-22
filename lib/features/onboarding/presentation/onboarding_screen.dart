@@ -18,6 +18,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
   final _ctrl = PageController();
   int _page = 0;
   static const _total = 4;
+  bool _completing = false;
 
   @override
   void dispose() {
@@ -26,15 +27,26 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
   }
 
   Future<void> _complete() async {
+    if (_completing) return;
+    setState(() => _completing = true);
     final uid = FirebaseAuth.instance.currentUser?.uid;
     if (uid != null) {
-      try {
-        await FirebaseFirestore.instance
-            .collection('users')
-            .doc(uid)
-            .set({'onboardingCompleted': true}, SetOptions(merge: true));
-      } catch (_) {
-        // Firestore write failed — navigate anyway, will retry on next launch
+      // Attempt up to 2 times so a transient network hiccup doesn't leave the
+      // user stuck in an onboarding loop on every subsequent launch.
+      for (var attempt = 0; attempt < 2; attempt++) {
+        try {
+          await FirebaseFirestore.instance
+              .collection('users')
+              .doc(uid)
+              .set({'onboardingCompleted': true}, SetOptions(merge: true));
+          break; // success
+        } catch (_) {
+          if (attempt == 1) {
+            // Both attempts failed — navigate anyway. The router will show
+            // onboarding again next launch, which is preferable to blocking
+            // the user forever on a network error.
+          }
+        }
       }
     }
     if (!mounted) return;
@@ -66,7 +78,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
             Align(
               alignment: Alignment.topRight,
               child: TextButton(
-                onPressed: _complete,
+                onPressed: _completing ? null : _complete,
                 child: Text(
                   tr.onboardingSkip,
                   style: TextStyle(color: Colors.grey.shade500, fontSize: 14),
@@ -128,7 +140,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                     width: double.infinity,
                     height: AppTokens.buttonHeight,
                     child: ElevatedButton(
-                      onPressed: _next,
+                      onPressed: _completing ? null : _next,
                       style: ElevatedButton.styleFrom(
                         backgroundColor: AppTokens.primaryBlue,
                         foregroundColor: Colors.white,

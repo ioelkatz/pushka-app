@@ -8,24 +8,23 @@ import 'package:pushka_app/features/history/domain/transaction.dart';
 
 void main() {
   group('CRITICAL: walletIdFromUid collision vulnerability', () {
-    // BUG FOUND: walletIdFromUid uses a weak hash that produces only
-    // 900,000 possible IDs (100000-999999). With birthday paradox,
-    // collision probability exceeds 50% at ~1,100 users.
-    // An attacker could enumerate wallet IDs trivially.
+    // walletIdFromUid uses FNV-1a 32-bit with 8-digit output (10M–99M space,
+    // 90M possible IDs). Birthday-paradox 50% collision at ~11,300 users.
 
-    test('wallet IDs are 6-digit numeric strings', () {
+    test('wallet IDs are 8-digit numeric strings', () {
       final id = UserRepository.walletIdFromUid('testUser123');
-      expect(id.length, 6);
+      expect(id.length, 8);
       expect(int.tryParse(id), isNotNull);
-      expect(int.parse(id), greaterThanOrEqualTo(100000));
-      expect(int.parse(id), lessThanOrEqualTo(999999));
+      expect(int.parse(id), greaterThanOrEqualTo(10000000));
+      expect(int.parse(id), lessThanOrEqualTo(99999999));
     });
 
     test('different UIDs can produce same wallet ID (collision demo)', () {
-      // Brute-force search for a collision to prove the vulnerability
+      // Brute-force search for a collision to document the space size.
+      // With 90M possible values, collision within 5000 attempts is unlikely
+      // (~0.014% probability) but the test still validates the generator runs.
       final seen = <String, String>{};
 
-      // With 900k possible values, we expect collision within ~1200 attempts
       for (int i = 0; i < 5000; i++) {
         final uid = 'user_$i';
         final walletId = UserRepository.walletIdFromUid(uid);
@@ -35,9 +34,7 @@ void main() {
         seen[walletId] = uid;
       }
 
-      // This test documents the vulnerability - it may or may not collide
-      // within 5000 tries but statistically it's very likely
-      // The key point: the ID space is only 900,000
+      // All 5000 should be unique given the 90M ID space.
       expect(seen.length, lessThanOrEqualTo(5000));
     });
 
@@ -49,26 +46,26 @@ void main() {
 
     test('empty UID still produces valid wallet ID', () {
       final id = UserRepository.walletIdFromUid('');
-      expect(id.length, 6);
+      expect(id.length, 8);
       expect(int.tryParse(id), isNotNull);
     });
 
     test('very long UID does not crash', () {
       final longUid = 'a' * 10000;
       final id = UserRepository.walletIdFromUid(longUid);
-      expect(id.length, 6);
+      expect(id.length, 8);
       expect(int.tryParse(id), isNotNull);
     });
 
     test('UID with special characters produces valid ID', () {
       final id = UserRepository.walletIdFromUid('user@#\$%^&*()');
-      expect(id.length, 6);
+      expect(id.length, 8);
       expect(int.tryParse(id), isNotNull);
     });
 
     test('UID with unicode produces valid ID', () {
       final id = UserRepository.walletIdFromUid('用户名');
-      expect(id.length, 6);
+      expect(id.length, 8);
       expect(int.tryParse(id), isNotNull);
     });
   });

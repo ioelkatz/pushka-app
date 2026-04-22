@@ -93,7 +93,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
               const SizedBox(height: 16),
 
               Align(
-                alignment: Alignment.centerRight,
+                alignment: AlignmentDirectional.centerEnd,
                 child: TextButton(
                   onPressed: _isLoading ? null : _forgotPassword,
                   child: Text(_tr.forgotPassword),
@@ -196,7 +196,9 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
 
   Future<void> _signIn() async {
     final email = _emailController.text.trim();
-    final password = _passwordController.text.trim();
+    // Do NOT trim the password — leading/trailing spaces are part of the user's
+    // chosen password. Trimming here would silently mismatch the register validator.
+    final password = _passwordController.text;
 
     final form = _formKey.currentState;
     if (form == null || !form.validate()) {
@@ -210,9 +212,9 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
             password: password,
           );
     } on FirebaseAuthException catch (e) {
-      _showMessage(_mapAuthError(e.code));
+      if (mounted) _showMessage(_mapAuthError(e.code));
     } on Exception catch (e) {
-      _showMessage(_tr.signInError('$e'));
+      if (mounted) _showMessage(_tr.signInError('$e'));
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
@@ -224,13 +226,23 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       _showMessage(_tr.enterEmailForReset);
       return;
     }
+    if (!RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$').hasMatch(email)) {
+      _showMessage(_tr.invalidEmail);
+      return;
+    }
+    setState(() => _isLoading = true);
     try {
       await ref.read(authControllerProvider).sendPasswordResetEmail(email);
+      if (!mounted) return;
       _showMessage(_tr.resetEmailSent);
     } on FirebaseAuthException catch (e) {
+      if (!mounted) return;
       _showMessage(_mapAuthError(e.code));
     } on Exception catch (e) {
+      if (!mounted) return;
       _showMessage(_tr.genericError('$e'));
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
     }
   }
 
@@ -239,14 +251,11 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     try {
       await ref.read(authControllerProvider).signInWithGoogle();
     } on FirebaseAuthException catch (e) {
-      _showMessage(_mapGoogleAuthError(e.code));
-      _showErrorDialog('Google', e.code);
+      if (mounted) _showMessage(_mapGoogleAuthError(e.code));
     } on PlatformException catch (e) {
-      _showMessage(_mapGoogleAuthError(e.code));
-      _showErrorDialog('Google', e.code);
+      if (mounted) _showMessage(_mapGoogleAuthError(e.code));
     } on Exception catch (e) {
-      _showMessage(_tr.googleError('$e'));
-      _showErrorDialog('Google', e.toString());
+      if (mounted) _showMessage(_tr.googleError('$e'));
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
@@ -256,8 +265,10 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     setState(() => _isLoading = true);
     try {
       await ref.read(authControllerProvider).signInWithApple();
+    } on FirebaseAuthException catch (e) {
+      if (mounted) _showMessage(_mapAuthError(e.code));
     } on Exception catch (e) {
-      _showMessage(_tr.appleError('$e'));
+      if (mounted) _showMessage(_tr.appleError('$e'));
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
@@ -284,23 +295,6 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     if (text.isEmpty) return _tr.enterYourPassword;
     if (text.length < 6) return _tr.min6Chars;
     return null;
-  }
-
-  Future<void> _showErrorDialog(String title, String details) async {
-    if (!mounted) return;
-    await showDialog<void>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text('Error $title'),
-        content: Text(details),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: Text(_tr.understood),
-          ),
-        ],
-      ),
-    );
   }
 
   String _mapAuthError(String code) {

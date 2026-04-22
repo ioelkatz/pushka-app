@@ -48,28 +48,109 @@ class _WalletAutoRefillScreenState extends ConsumerState<WalletAutoRefillScreen>
     required int weekday,
     required int dayOfMonth,
   }) {
-    final now = DateTime.now();
+    // Use UTC to match the Cloud Function scheduler which runs in Etc/UTC.
+    final now = DateTime.now().toUtc();
     if (frequency == 'monthly') {
       var month = now.month;
       var year = now.year;
-      var runDate = DateTime(year, month, dayOfMonth, 8);
+      // Clamp day for the current month before creating the run date.
+      final maxDayCurrent = DateTime.utc(year, month + 1, 0).day;
+      var runDate = DateTime.utc(year, month, dayOfMonth.clamp(1, maxDayCurrent), 8);
       if (!runDate.isAfter(now)) {
         month += 1;
         if (month > 12) {
           month = 1;
           year += 1;
         }
-        final maxDay = DateTime(year, month + 1, 0).day;
-        runDate = DateTime(year, month, dayOfMonth.clamp(1, maxDay), 8);
+        final maxDay = DateTime.utc(year, month + 1, 0).day;
+        runDate = DateTime.utc(year, month, dayOfMonth.clamp(1, maxDay), 8);
       }
       return runDate;
     }
 
-    var runDate = DateTime(now.year, now.month, now.day, 8);
+    var runDate = DateTime.utc(now.year, now.month, now.day, 8);
     while (runDate.weekday != weekday || !runDate.isAfter(now)) {
       runDate = runDate.add(const Duration(days: 1));
     }
     return runDate;
+  }
+
+  Future<bool> _showConsentDialog() async {
+    final tr = S.of(context);
+    return await showDialog<bool>(
+          context: context,
+          barrierDismissible: false,
+          builder: (ctx) => AlertDialog(
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+            titlePadding: const EdgeInsets.fromLTRB(24, 24, 24, 0),
+            contentPadding: const EdgeInsets.fromLTRB(24, 16, 24, 0),
+            actionsPadding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+            title: Row(
+              children: [
+                const Icon(Icons.verified_user_rounded, color: Color(0xFFE05A4F), size: 22),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    tr.autoRefillConsentTitle,
+                    style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
+                  ),
+                ),
+              ],
+            ),
+            content: SingleChildScrollView(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(tr.autoRefillConsentBody, style: const TextStyle(fontSize: 14, height: 1.55)),
+                  const SizedBox(height: 16),
+                  Container(
+                    padding: const EdgeInsets.all(14),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFFFF7ED),
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: const Color(0xFFFED7AA), width: 1),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(tr.autoRefillConsentBullet1, style: const TextStyle(fontSize: 13, height: 1.5)),
+                        const SizedBox(height: 6),
+                        Text(tr.autoRefillConsentBullet2, style: const TextStyle(fontSize: 13, height: 1.5)),
+                        const SizedBox(height: 6),
+                        Text(tr.autoRefillConsentBullet3, style: const TextStyle(fontSize: 13, height: 1.5)),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                ],
+              ),
+            ),
+            actions: [
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton(
+                  onPressed: () => Navigator.pop(ctx, true),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFFE05A4F),
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                  ),
+                  child: Text(tr.autoRefillConsentAccept, style: const TextStyle(fontWeight: FontWeight.w700)),
+                ),
+              ),
+              const SizedBox(height: 4),
+              SizedBox(
+                width: double.infinity,
+                child: TextButton(
+                  onPressed: () => Navigator.pop(ctx, false),
+                  child: Text(tr.autoEmptyConsentCancel),
+                ),
+              ),
+            ],
+          ),
+        ) ??
+        false;
   }
 
   Future<void> _save() async {
@@ -77,12 +158,16 @@ class _WalletAutoRefillScreenState extends ConsumerState<WalletAutoRefillScreen>
     if (user == null || _saving) return;
 
     final parsedAmount = double.tryParse(_amountController.text.trim().replaceAll(',', '.'));
-    if (parsedAmount == null || parsedAmount <= 0) {
+    if (parsedAmount == null || parsedAmount < 1.0) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(S.of(context).enterValidAmount)),
       );
       return;
     }
+
+    final messenger = ScaffoldMessenger.of(context);
+    final accepted = await _showConsentDialog();
+    if (!accepted || !mounted) return;
 
     setState(() => _saving = true);
     try {
@@ -102,15 +187,11 @@ class _WalletAutoRefillScreenState extends ConsumerState<WalletAutoRefillScreen>
             walletAutoTopUpClearNextRunAt: false,
           );
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(S.of(context).autoRefillSaved)),
-      );
+      messenger.showSnackBar(SnackBar(content: Text(S.of(context).autoRefillSaved)));
       context.go('/wallet');
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(S.of(context).couldNotSaveError('$e'))),
-      );
+      messenger.showSnackBar(SnackBar(content: Text(S.of(context).couldNotSaveError('$e'))));
     } finally {
       if (mounted) setState(() => _saving = false);
     }
@@ -146,9 +227,11 @@ class _WalletAutoRefillScreenState extends ConsumerState<WalletAutoRefillScreen>
     final profile = ref.watch(userProfileProvider).valueOrNull;
 
     if (!_loaded && profile != null) {
+      _loaded = true; // set synchronously so subsequent rebuilds don't enqueue more callbacks
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
-        final amount = (profile['walletAutoTopUpAmount'] as num?)?.toDouble() ?? 25.0;
+        final rawAmount = (profile['walletAutoTopUpAmount'] as num?)?.toDouble() ?? 0.0;
+        final amount = rawAmount > 0 ? rawAmount : 25.0;
         setState(() {
           _frequency = (profile['walletAutoTopUpFrequency'] as String?) == 'monthly'
               ? 'monthly'
@@ -156,7 +239,6 @@ class _WalletAutoRefillScreenState extends ConsumerState<WalletAutoRefillScreen>
           _weekday = (profile['walletAutoTopUpWeekday'] as num?)?.toInt() ?? DateTime.monday;
           _dayOfMonth = (profile['walletAutoTopUpDayOfMonth'] as num?)?.toInt() ?? 1;
           _amountController.text = amount.toStringAsFixed(0);
-          _loaded = true;
         });
       });
     }
@@ -192,7 +274,7 @@ class _WalletAutoRefillScreenState extends ConsumerState<WalletAutoRefillScreen>
                     ),
                   ),
                   const SizedBox(height: 10),
-                  DropdownButtonFormField<int>(initialValue: _frequency == 'weekly' ? _weekday : _dayOfMonth,
+                  DropdownButtonFormField<int>(key: ValueKey(_frequency), initialValue: _frequency == 'weekly' ? _weekday : _dayOfMonth,
                     decoration: InputDecoration(
                       hintText: tr.selectHint,
                       contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),

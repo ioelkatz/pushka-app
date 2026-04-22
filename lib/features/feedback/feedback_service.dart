@@ -1,4 +1,6 @@
-﻿import 'package:audioplayers/audioplayers.dart';
+﻿import 'dart:async';
+
+import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
@@ -22,7 +24,8 @@ class FeedbackService {
       await _coinPlayer.setVolume(0.7);
       await _successPlayer.setVolume(0.6);
       _initialized = true;
-    } catch (_) {
+    } catch (e, st) {
+      debugPrint('FeedbackService init error: $e\n$st');
     }
   }
 
@@ -41,7 +44,7 @@ class FeedbackService {
     if (vibrationEnabled) {
       // Double-tap pattern: coin bounce feel
       HapticFeedback.lightImpact();
-      Future.delayed(const Duration(milliseconds: 80), HapticFeedback.lightImpact);
+      unawaited(Future.delayed(const Duration(milliseconds: 80), HapticFeedback.lightImpact));
     }
     if (!soundEnabled) return;
     try {
@@ -55,8 +58,8 @@ class FeedbackService {
     if (vibrationEnabled) {
       // Triple rising pattern: triumphant goal-reached feel
       HapticFeedback.mediumImpact();
-      Future.delayed(const Duration(milliseconds: 100), HapticFeedback.mediumImpact);
-      Future.delayed(const Duration(milliseconds: 200), HapticFeedback.heavyImpact);
+      unawaited(Future.delayed(const Duration(milliseconds: 100), HapticFeedback.mediumImpact));
+      unawaited(Future.delayed(const Duration(milliseconds: 200), HapticFeedback.heavyImpact));
     }
     try {
       await _successPlayer.stop();
@@ -65,28 +68,32 @@ class FeedbackService {
   }
 
   /// Heavy thud + light echo — used when pushka is emptied.
-  Future<void> vibratePushkaEmpty() async {
+  void vibratePushkaEmpty() {
     if (!vibrationEnabled || kIsWeb) return;
     HapticFeedback.heavyImpact();
-    Future.delayed(const Duration(milliseconds: 120), HapticFeedback.lightImpact);
+    unawaited(Future.delayed(const Duration(milliseconds: 120), HapticFeedback.lightImpact));
   }
 
-  Future<void> vibrate() async {
+  void vibrate() {
     if (!vibrationEnabled || kIsWeb) return;
     HapticFeedback.mediumImpact();
   }
 
-  Future<void> vibrateLight() async {
+  void vibrateLight() {
     if (!vibrationEnabled || kIsWeb) return;
     HapticFeedback.lightImpact();
   }
 
-  Future<void> vibrateHeavy() async {
+  void vibrateHeavy() {
     if (!vibrationEnabled || kIsWeb) return;
     HapticFeedback.heavyImpact();
   }
 
+  bool _disposed = false;
+
   void dispose() {
+    if (_disposed) return;
+    _disposed = true;
     _coinPlayer.dispose();
     _successPlayer.dispose();
   }

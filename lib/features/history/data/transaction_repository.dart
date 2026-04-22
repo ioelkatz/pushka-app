@@ -12,12 +12,25 @@ class TransactionRepository {
     return _firestore.collection('users').doc(uid).collection('transactions');
   }
 
+  /// Maximum number of transactions fetched per query. Used by the UI to
+  /// show a "showing last N" notice when this limit is reached.
+  static const int pageSize = 100;
+
   Stream<List<Transaction>> watchTransactions(String uid) {
     return _collection(uid)
         .orderBy('createdAt', descending: true)
+        .limit(pageSize)
         .snapshots()
         .map((snapshot) {
-      return snapshot.docs.map((doc) => _fromDoc(doc)).toList();
+      final result = <Transaction>[];
+      for (final doc in snapshot.docs) {
+        try {
+          result.add(_fromDoc(doc));
+        } catch (_) {
+          // Skip malformed document rather than killing the entire stream.
+        }
+      }
+      return result;
     });
   }
 
@@ -38,7 +51,7 @@ class TransactionRepository {
       'paymentMethod': paymentMethod.name,
       'status': status.name,
       'currencyCode': currencyCode.toUpperCase(),
-      'createdAt': firestore.Timestamp.now(),
+      'createdAt': firestore.FieldValue.serverTimestamp(),
     };
     if (docId != null) {
       await _collection(uid).doc(docId).set(data);
@@ -58,9 +71,15 @@ class TransactionRepository {
     );
     final amount = (data['amount'] as num?)?.toDouble() ?? 0.0;
     final timestamp = data['createdAt'];
-    final dateTime = timestamp is firestore.Timestamp
-        ? timestamp.toDate()
-        : DateTime.now();
+    final DateTime dateTime;
+    if (timestamp is firestore.Timestamp) {
+      dateTime = timestamp.toDate();
+    } else {
+      // Field is null for pending-write docs (serverTimestamp not yet resolved).
+      // Use epoch as a sentinel so the UI can detect the pending state instead
+      // of committing to a fabricated device-time that may reorder after sync.
+      dateTime = DateTime.fromMillisecondsSinceEpoch(0);
+    }
 
     final methodName = data['paymentMethod'] as String? ?? 'card';
     final method = PaymentMethod.values.firstWhere(

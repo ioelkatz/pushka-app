@@ -6,7 +6,7 @@ import '../domain/transaction.dart';
 
 final userTransactionsProvider = StreamProvider<List<Transaction>>((ref) {
   final user = ref.watch(currentUserProvider);
-  if (user == null) return const Stream.empty();
+  if (user == null) return Stream.value(<Transaction>[]);
   final repository = ref.watch(transactionRepositoryProvider);
   return repository.watchTransactions(user.uid);
 });

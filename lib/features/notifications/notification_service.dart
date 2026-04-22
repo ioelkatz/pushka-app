@@ -9,6 +9,7 @@ import 'package:timezone/data/latest.dart' as tz;
 import 'package:timezone/timezone.dart' as tz;
 
 import '../reminders/domain/reminder.dart';
+import '../../core/l10n/s.dart';
 
 class NotificationService {
   NotificationService._();
@@ -22,43 +23,95 @@ class NotificationService {
   String? _currentUid;
   bool _useUtcScheduling = false;
 
+  // Monotonically increasing ID so notifications never overwrite each other.
+  // hashCode is not unique across different objects — a counter is safe.
+  int _nextNotificationId = 1;
+
   /// Called whenever a notification tap should navigate somewhere.
   /// Set this from the router/shell once GoRouter is available.
-  void Function(String route)? onNavigate;
+  void Function(String route)? _onNavigate;
+
+  /// A pending route buffered when [onNavigate] was not yet set at the moment
+  /// the cold-start notification tap was processed. Flushed when [onNavigate]
+  /// is assigned.
+  String? _pendingRoute;
+
+  set onNavigate(void Function(String route) handler) {
+    _onNavigate = handler;
+    final pending = _pendingRoute;
+    if (pending != null) {
+      _pendingRoute = null;
+      handler(pending);
+    }
+  }
+
+  void _navigate(String route) {
+    final handler = _onNavigate;
+    if (handler != null) {
+      handler(route);
+    } else {
+      // Router not yet wired (cold-start race). Buffer so it fires once wired.
+      _pendingRoute = route;
+    }
+  }
 
   Future<void> initialize() async {
     await _configureLocalTimezone();
-    await _requestPermissions();
-    await _requestLocalNotificationPermissions();
+    try {
+      await _requestPermissions();
+    } catch (e) {
+      debugPrint('NotificationService.initialize: FCM permission request failed: $e');
+    }
+    try {
+      await _requestLocalNotificationPermissions();
+    } catch (e) {
+      debugPrint('NotificationService.initialize: local permission request failed: $e');
+    }
     await _initializeLocalNotifications();
-    FirebaseMessaging.onMessage.listen(_showLocalNotification);
+    FirebaseMessaging.onMessage.listen(
+      _showLocalNotification,
+      onError: (e) => debugPrint('NotificationService: onMessage stream error: $e'),
+    );
     _listenForNotificationTaps();
   }
 
   void _listenForNotificationTaps() {
     // Background FCM tap
-    FirebaseMessaging.onMessageOpenedApp.listen(_handleRemoteMessageTap);
+    FirebaseMessaging.onMessageOpenedApp.listen(
+      _handleRemoteMessageTap,
+      onError: (e) => debugPrint('NotificationService: onMessageOpenedApp stream error: $e'),
+    );
 
     // Terminated state FCM tap (check once on launch)
     FirebaseMessaging.instance.getInitialMessage().then((message) {
       if (message != null) _handleRemoteMessageTap(message);
+    }).catchError((e) {
+      debugPrint('NotificationService: getInitialMessage error: $e');
     });
   }
 
   void _handleRemoteMessageTap(RemoteMessage message) {
     final route = _routeFromMessage(message);
-    if (route != null) onNavigate?.call(route);
+    if (route != null) _navigate(route);
   }
+
+  // Only these routes may be opened via FCM — prevents deep-link injection.
+  static const _allowedRoutes = {
+    '/', '/wallet', '/wallet/requests', '/history', '/reminders', '/settings',
+    '/prayers', '/support', '/about',
+  };
 
   String? _routeFromMessage(RemoteMessage message) {
     final data = message.data;
     // Cloud Functions can send { "route": "/history" } etc.
+    // Always validate against the whitelist before navigating.
     final explicit = data['route'] as String?;
-    if (explicit != null && explicit.isNotEmpty) return explicit;
+    if (explicit != null && _allowedRoutes.contains(explicit)) return explicit;
 
     final type = data['type'] as String?;
     return switch (type) {
       'pushkaEmpty' => '/history',
+      'wallet_request' => '/wallet/requests',
       'walletFill' || 'walletRequest' => '/wallet',
       'reminder' => '/',
       _ => null,
@@ -75,9 +128,16 @@ class NotificationService {
     if (_currentUid == uid && _tokenRefreshSub != null) return;
     _currentUid = uid;
     _tokenRefreshSub?.cancel();
-    _tokenRefreshSub = _messaging.onTokenRefresh.listen((token) async {
-      await _saveToken(uid, token);
-    });
+    _tokenRefreshSub = _messaging.onTokenRefresh.listen(
+      (token) async {
+        try {
+          await _saveToken(uid, token);
+        } catch (e) {
+          debugPrint('NotificationService: token refresh save failed: $e');
+        }
+      },
+      onError: (e) => debugPrint('NotificationService: onTokenRefresh stream error: $e'),
+    );
   }
 
   Future<void> stopTokenRefresh() async {
@@ -152,7 +212,7 @@ class NotificationService {
       onDidReceiveNotificationResponse: (response) {
         final payload = response.payload;
         if (payload != null && payload.isNotEmpty) {
-          onNavigate?.call(payload);
+          _navigate(payload);
         }
       },
     );
@@ -177,7 +237,7 @@ class NotificationService {
     );
 
     await _localNotifications.show(
-      notification.hashCode,
+      _nextNotificationId++,
       notification.title,
       notification.body,
       details,
@@ -200,21 +260,31 @@ class NotificationService {
         .collection('fcmTokens')
         .doc(token);
 
+    final platform = Platform.isAndroid
+        ? 'android'
+        : Platform.isIOS
+            ? 'ios'
+            : Platform.operatingSystem;
     await tokensRef.set({
       'token': token,
-      'platform': Platform.operatingSystem,
+      'platform': platform,
       'createdAt': FieldValue.serverTimestamp(),
       'lastUsedAt': FieldValue.serverTimestamp(),
     }, SetOptions(merge: true));
   }
 
-  Future<void> scheduleReminder(Reminder reminder) async {
+  Future<void> scheduleReminder(Reminder reminder, {S? tr}) async {
     if (!reminder.isEnabled) {
       await cancelReminder(reminder);
       return;
     }
 
     await cancelReminder(reminder);
+
+    final body = tr != null ? reminder.subtitleFor(tr) : reminder.subtitle;
+    final bodySecondary = tr != null
+        ? reminder.subtitleSecondaryFor(tr)
+        : reminder.subtitleSecondary;
 
     var index = 0;
     for (final weekday in reminder.days) {
@@ -226,7 +296,7 @@ class NotificationService {
       await _localNotifications.zonedSchedule(
         _notificationId(reminder.id, index++),
         reminder.title,
-        reminder.subtitle,
+        body,
         scheduleTime,
         _notificationDetails(),
         androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
@@ -246,7 +316,7 @@ class NotificationService {
         await _localNotifications.zonedSchedule(
           _notificationId(reminder.id, index++),
           reminder.title,
-          reminder.subtitleSecondary ?? reminder.subtitle,
+          bodySecondary ?? body,
           scheduleTime,
           _notificationDetails(),
           androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
@@ -267,7 +337,10 @@ class NotificationService {
 
   int _notificationId(String reminderId, int index) {
     final base = reminderId.hashCode & 0x7fffffff;
-    return base + index;
+    // Mask the final value so the sum never exceeds 0x7fffffff (signed 32-bit
+    // max). Android notification IDs are Java ints; overflow causes the plugin
+    // to pass the wrong ID, breaking cancellation.
+    return (base + index) & 0x7fffffff;
   }
 
   NotificationDetails _notificationDetails() {

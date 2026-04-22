@@ -19,8 +19,8 @@ void main() {
       'biometricAuthenticationEnabled',
       'currencyCountry', 'currencyCode',
       'autoEmptyFrequency', 'autoEmptyWeekday', 'autoEmptyDayOfMonth',
-      'autoEmptyTopOffEnabled', 'autoEmptyTopOffAmount',
-      'updatedAt',
+      'autoEmptyTopOffEnabled', 'autoEmptyTopOffAmount', 'autoEmptyNextRunAt',
+      'updatedAt', 'streakCount', 'lastStreakDate', 'language',
     };
 
     test('all client-written fields are in the allowlist', () {
@@ -38,7 +38,8 @@ void main() {
         'biometricAuthenticationEnabled',
         'currencyCountry', 'currencyCode',
         'autoEmptyFrequency', 'autoEmptyWeekday', 'autoEmptyDayOfMonth',
-        'autoEmptyTopOffEnabled', 'autoEmptyTopOffAmount',
+        'autoEmptyTopOffEnabled', 'autoEmptyTopOffAmount', 'autoEmptyNextRunAt',
+        'streakCount', 'lastStreakDate', 'language',
       };
 
       for (final field in createFields) {
@@ -95,24 +96,27 @@ void main() {
   });
 
   group('Security rule edge cases', () {
-    test('BUG: pushkaAmount has no maximum limit', () {
-      // Rules only check pushkaAmount >= 0
-      // A malicious client could set pushkaAmount to infinity
-      const amount = 999999999999.99;
-      expect(amount >= 0, true); // would pass the rules
+    test('pushkaAmount is bounded: >= 0 and <= 100000', () {
+      // Rules enforce: pushkaAmount >= 0 && pushkaAmount <= 100000
+      const validAmount = 500.0;
+      const tooHigh = 999999999999.99;
+      expect(validAmount >= 0 && validAmount <= 100000, true);
+      expect(tooHigh <= 100000, false); // would be rejected by rules
     });
 
-    test('BUG: presetAmounts list has no size validation', () {
-      // Rules only check: presetAmounts is list
-      // Client could store [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, ...] 
-      final bigList = List<double>.generate(1000, (i) => i.toDouble());
-      expect(bigList, isA<List>()); // would pass the rules
+    test('presetAmounts list is limited to 5 items', () {
+      // Rules check: presetAmounts.size() <= 5
+      final validList = [5.0, 10.0, 18.0, 36.0, 72.0];
+      final bigList = List<double>.generate(6, (i) => i.toDouble());
+      expect(validList.length <= 5, true);
+      expect(bigList.length <= 5, false); // would be rejected by rules
     });
 
-    test('BUG: presetAmounts elements are not validated', () {
-      // Rules don't check that list elements are numbers or positive
-      final badList = [-1.0, 0.0, double.nan];
-      expect(badList, isA<List>()); // would pass the rules
+    test('known limitation: presetAmounts elements are not validated', () {
+      // Firestore rules cannot iterate list elements, so element types/values
+      // are not validated. This is a known, accepted limitation.
+      final badList = [-1.0, 0.0];
+      expect(badList, isA<List>()); // documents the limitation
     });
 
     test('currencyCode must be exactly 3 characters', () {

@@ -20,9 +20,11 @@ import '../features/pushka/presentation/pushka_screen.dart';
 import '../features/wallet/presentation/wallet_screen.dart';
 import '../features/wallet/presentation/wallet_send_request_screen.dart';
 import '../features/wallet/presentation/wallet_auto_refill_screen.dart';
+import '../features/wallet/presentation/wallet_requests_screen.dart';
 import '../features/reminders/presentation/reminders_screen.dart';
 import '../features/history/presentation/history_screen.dart';
 import '../features/settings/presentation/settings_screen.dart';
+import '../features/settings/presentation/saved_cards_screen.dart';
 import '../features/prayers/presentation/prayers_screen.dart';
 import '../features/support/presentation/support_screen.dart';
 import '../features/about/presentation/about_screen.dart';
@@ -78,7 +80,7 @@ Future<void> _openWalletQrDialog(BuildContext context) async {
             mainAxisSize: MainAxisSize.min,
             children: [
               Align(
-                alignment: Alignment.centerRight,
+                alignment: AlignmentDirectional.centerEnd,
                 child: IconButton(
                   onPressed: () => Navigator.of(dialogContext).pop(),
                   icon: const Icon(Icons.close_rounded, size: 22),
@@ -129,6 +131,7 @@ Future<void> _openWalletQrDialog(BuildContext context) async {
                   onTap: () async {
                     final message = tr.walletShareMessage(walletId);
                     await Clipboard.setData(ClipboardData(text: message));
+                    if (!dialogContext.mounted) return;
                     await SharePlus.instance.share(
                       ShareParams(
                         text: message,
@@ -186,11 +189,13 @@ final router = GoRouter(
     final goingToAuth = loc == '/login' || loc == '/register';
     if (!loggedIn && !goingToAuth) return '/login';
     if (loggedIn && goingToAuth) {
-      // Check if onboarding is needed
-      final snap = await _firestore
-          .collection('users')
-          .doc(_auth.currentUser!.uid)
-          .get();
+      // Capture uid before async gap — currentUser can become null if the user
+      // signs out between the loggedIn check above and this Firestore read.
+      final uid = _auth.currentUser?.uid;
+      if (uid == null) return '/login';
+      final snap = await _firestore.collection('users').doc(uid).get();
+      // Re-check: user may have signed out during the Firestore read.
+      if (_auth.currentUser?.uid != uid) return '/login';
       final done = snap.data()?['onboardingCompleted'] as bool? ?? false;
       return done ? '/' : '/onboarding';
     }
@@ -241,6 +246,10 @@ final router = GoRouter(
               path: 'auto-refill',
               pageBuilder: (context, state) => _slidePage(state, const WalletAutoRefillScreen()),
             ),
+            GoRoute(
+              path: 'requests',
+              pageBuilder: (context, state) => _slidePage(state, const WalletRequestsScreen()),
+            ),
           ],
         ),
         GoRoute(
@@ -249,7 +258,16 @@ final router = GoRouter(
         ),
         GoRoute(path: '/reminders', pageBuilder: (context, state) => _slidePage(state, const RemindersScreen())),
         GoRoute(path: '/history', pageBuilder: (context, state) => _slidePage(state, const HistoryScreen())),
-        GoRoute(path: '/settings', pageBuilder: (context, state) => _slidePage(state, const SettingsScreen())),
+        GoRoute(
+          path: '/settings',
+          pageBuilder: (context, state) => _slidePage(state, const SettingsScreen()),
+          routes: [
+            GoRoute(
+              path: 'saved-cards',
+              pageBuilder: (context, state) => _slidePage(state, const SavedCardsScreen()),
+            ),
+          ],
+        ),
         GoRoute(path: '/prayers', pageBuilder: (context, state) => _slidePage(state, const PrayersScreen())),
         GoRoute(path: '/support', pageBuilder: (context, state) => _slidePage(state, const SupportScreen())),
         GoRoute(path: '/about', pageBuilder: (context, state) => _slidePage(state, const AboutScreen())),
@@ -281,12 +299,16 @@ PreferredSizeWidget? _buildAppBar(BuildContext context, String location) {
         IconButton(
           icon: const Icon(Icons.share),
           onPressed: () async {
-            await SharePlus.instance.share(
-              ShareParams(
-                text: tr.appShareText,
-                subject: 'Pushka App',
-              ),
-            );
+            try {
+              await SharePlus.instance.share(
+                ShareParams(
+                  text: tr.appShareText,
+                  subject: 'Pushka App',
+                ),
+              );
+            } catch (e) {
+              debugPrint('[router] share failed: $e');
+            }
           },
         ),
       ],
@@ -303,12 +325,23 @@ PreferredSizeWidget? _buildAppBar(BuildContext context, String location) {
         ),
       ],
     );
+  } else if (location == '/wallet/requests') {
+    final isRtl = Directionality.of(context) == TextDirection.rtl;
+    return AppBar(
+      title: Text(tr.walletRequests),
+      centerTitle: true,
+      leading: IconButton(
+        icon: Icon(isRtl ? Icons.arrow_forward : Icons.arrow_back),
+        onPressed: () => context.go('/wallet'),
+      ),
+    );
   } else if (location == '/wallet/send-request') {
+    final isRtl = Directionality.of(context) == TextDirection.rtl;
     return AppBar(
       title: Text(tr.navSendRequest),
       centerTitle: true,
       leading: IconButton(
-        icon: const Icon(Icons.arrow_back),
+        icon: Icon(isRtl ? Icons.arrow_forward : Icons.arrow_back),
         onPressed: () => context.go('/wallet'),
       ),
       actions: [
@@ -320,11 +353,12 @@ PreferredSizeWidget? _buildAppBar(BuildContext context, String location) {
       ],
     );
   } else if (location == '/wallet/auto-refill' || location == '/wallet-auto-refill') {
+    final isRtl = Directionality.of(context) == TextDirection.rtl;
     return AppBar(
       title: Text(tr.navAutoRefill),
       centerTitle: true,
       leading: IconButton(
-        icon: const Icon(Icons.arrow_back),
+        icon: Icon(isRtl ? Icons.arrow_forward : Icons.arrow_back),
         onPressed: () => context.go('/wallet'),
       ),
     );
@@ -334,6 +368,16 @@ PreferredSizeWidget? _buildAppBar(BuildContext context, String location) {
     return AppBar(title: Text(tr.navHistory), centerTitle: true);
   } else if (location == '/settings') {
     return AppBar(title: Text(tr.navSettings), centerTitle: true);
+  } else if (location == '/settings/saved-cards') {
+    final isRtl = Directionality.of(context) == TextDirection.rtl;
+    return AppBar(
+      title: Text(tr.savedCards),
+      centerTitle: true,
+      leading: IconButton(
+        icon: Icon(isRtl ? Icons.arrow_forward : Icons.arrow_back),
+        onPressed: () => context.go('/settings'),
+      ),
+    );
   } else if (location == '/prayers') {
     return AppBar(title: Text(tr.navPrayers), centerTitle: true);
   } else if (location == '/support') {

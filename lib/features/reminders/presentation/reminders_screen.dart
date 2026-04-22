@@ -52,8 +52,8 @@ class _RemindersScreenState extends ConsumerState<RemindersScreen> {
                         key: ValueKey(reminder.id),
                         direction: DismissDirection.endToStart,
                         background: Container(
-                          alignment: Alignment.centerRight,
-                          padding: const EdgeInsets.only(right: 20),
+                          alignment: AlignmentDirectional.centerEnd,
+                          padding: const EdgeInsetsDirectional.only(end: 20),
                           color: Colors.red.shade50,
                           child: Icon(Icons.delete_outline,
                               color: Colors.red.shade400),
@@ -74,6 +74,48 @@ class _RemindersScreenState extends ConsumerState<RemindersScreen> {
                     Center(child: Text(tr.errorLoadingReminders)),
               ),
         ),
+        ref.watch(userRemindersProvider).whenData((reminders) {
+          final atLimit = reminders.length >= kMaxReminders;
+          return Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+            child: SafeArea(
+              child: SizedBox(
+                width: double.infinity,
+                height: AppTokens.buttonHeight,
+                child: Tooltip(
+                  message: atLimit ? tr.reminderLimitReached(kMaxReminders) : '',
+                  child: OutlinedButton(
+                    onPressed: atLimit ? null : _showAddReminderDialog,
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: AppTokens.primaryBlue,
+                      disabledForegroundColor: Colors.grey.shade400,
+                      side: BorderSide(
+                        color: atLimit
+                            ? Colors.grey.shade300
+                            : AppTokens.primaryBlue,
+                        width: 1.5,
+                      ),
+                      shape: RoundedRectangleBorder(
+                        borderRadius:
+                            BorderRadius.circular(AppTokens.radiusMd),
+                      ),
+                    ),
+                    child: Text(
+                      atLimit
+                          ? tr.reminderLimitReached(kMaxReminders)
+                          : tr.addReminder,
+                      style: const TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: 0.8,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          );
+        }).valueOrNull ??
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
           child: SafeArea(
@@ -251,22 +293,35 @@ class _RemindersScreenState extends ConsumerState<RemindersScreen> {
     );
 
     if (existingId == null) {
+      // Fast UI-layer guard: avoids the server round-trip in the common case.
+      final reminders = ref.read(userRemindersProvider).valueOrNull ?? [];
+      if (reminders.length >= kMaxReminders) {
+        if (mounted) _showMessage(tr.reminderLimitReached(kMaxReminders));
+        return false;
+      }
       try {
         final id = await repo.addReminder(user.uid, reminder);
         try {
           await NotificationService.instance.scheduleReminder(
             reminder.copyWith(id: id),
+            tr: tr,
           );
         } catch (e) {
           // Notification scheduling may fail if exact-alarm permission is not
           // granted on Android 12+. The reminder is still saved in Firestore.
           debugPrint('scheduleReminder failed: $e');
         }
-        await AnalyticsService.instance.logReminderCreated();
+        try { await AnalyticsService.instance.logReminderCreated(); } catch (_) {}
         return true;
       } catch (e, st) {
         debugPrint('addReminder failed: $e\n$st');
-        if (mounted) _showMessage(tr.couldNotSaveReminder);
+        if (mounted) {
+          // Surface the server-side limit error with a friendlier message.
+          final isLimitError = e.toString().contains('resource-exhausted') ||
+              e.toString().contains('límite');
+          _showMessage(
+              isLimitError ? tr.reminderLimitReached(kMaxReminders) : tr.couldNotSaveReminder);
+        }
         return false;
       }
     } else {
@@ -276,11 +331,12 @@ class _RemindersScreenState extends ConsumerState<RemindersScreen> {
         try {
           await NotificationService.instance.scheduleReminder(
             reminder.copyWith(id: existingId),
+            tr: tr,
           );
         } catch (e) {
           debugPrint('scheduleReminder failed: $e');
         }
-        await AnalyticsService.instance.logReminderUpdated();
+        try { await AnalyticsService.instance.logReminderUpdated(); } catch (_) {}
         return true;
       } catch (e, st) {
         debugPrint('updateReminder failed: $e\n$st');
@@ -306,7 +362,7 @@ class _RemindersScreenState extends ConsumerState<RemindersScreen> {
       return;
     }
     try {
-      await NotificationService.instance.scheduleReminder(updated);
+      await NotificationService.instance.scheduleReminder(updated, tr: tr);
     } catch (e) {
       debugPrint('scheduleReminder failed: $e');
     }
@@ -331,7 +387,7 @@ class _RemindersScreenState extends ConsumerState<RemindersScreen> {
     } catch (e) {
       debugPrint('cancelReminder failed: $e');
     }
-    await AnalyticsService.instance.logReminderDeleted();
+    try { await AnalyticsService.instance.logReminderDeleted(); } catch (_) {}
   }
 
   void _showMessage(String message) {
@@ -379,7 +435,7 @@ class _ReminderFormPageState extends State<_ReminderFormPage> {
 
   late bool _hasSecondTime;
   TimeOfDay? _secondTime;
-  late final Set<int> _secondDays;
+  late Set<int> _secondDays;
   late bool _secondIsHoliday;
 
   @override
@@ -459,6 +515,12 @@ class _ReminderFormPageState extends State<_ReminderFormPage> {
         case _RepeatOption.custom:
           _selectedDate = null;
       }
+      // Keep secondDays in sync with primary days when a second time is enabled.
+      if (_hasSecondTime) {
+        _secondDays
+          ..clear()
+          ..addAll(_selectedDays);
+      }
     });
   }
 
@@ -474,7 +536,7 @@ class _ReminderFormPageState extends State<_ReminderFormPage> {
         elevation: 0,
         scrolledUnderElevation: 0,
         leading: IconButton(
-          icon: const Icon(Icons.arrow_back, color: AppTokens.textPrimary),
+          icon: Icon(Directionality.of(context) == TextDirection.rtl ? Icons.arrow_forward : Icons.arrow_back, color: AppTokens.textPrimary),
           onPressed: () => Navigator.pop(context),
         ),
         title: Text(
@@ -892,7 +954,7 @@ class _ReminderFormPageState extends State<_ReminderFormPage> {
       context: context,
       initialTime: _selectedTime,
     );
-    if (time != null) setState(() => _selectedTime = time);
+    if (time != null && mounted) setState(() => _selectedTime = time);
   }
 
   Future<void> _pickDate() async {
@@ -903,7 +965,7 @@ class _ReminderFormPageState extends State<_ReminderFormPage> {
       firstDate: now,
       lastDate: now.add(const Duration(days: 365)),
     );
-    if (date != null) setState(() => _selectedDate = date);
+    if (date != null && mounted) setState(() => _selectedDate = date);
   }
 
   String _formatTime(TimeOfDay time) {
@@ -914,7 +976,7 @@ class _ReminderFormPageState extends State<_ReminderFormPage> {
   }
 
   void _validateAndSave() {
-    if (!_formKey.currentState!.validate()) return;
+    if (_formKey.currentState?.validate() != true) return;
 
     List<int> days;
     bool isHoliday = _isHoliday;
@@ -1041,10 +1103,12 @@ class _ReminderFormPageState extends State<_ReminderFormPage> {
       context: context,
       initialTime: _secondTime ?? const TimeOfDay(hour: 18, minute: 0),
     );
-    if (time != null) {
+    if (time != null && mounted) {
       setState(() {
         _secondTime = time;
-        _secondDays = Set.from(_selectedDays);
+        _secondDays
+          ..clear()
+          ..addAll(_selectedDays);
         _secondIsHoliday = _isHoliday;
       });
     }

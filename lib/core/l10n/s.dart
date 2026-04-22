@@ -31,6 +31,7 @@ class S {
   // ---------------------------------------------------------------------------
 
   String get cancel => _t('Cancelar', 'Cancel', 'Annuler', 'ביטול');
+  String get retry => _t('Reintentar', 'Retry', 'Réessayer', 'נסה שוב');
   String get save => _t('Guardar', 'Save', 'Enregistrer', 'שמור');
   String get delete => _t('Eliminar', 'Delete', 'Supprimer', 'מחק');
   String get understood => _t('Entendido', 'Understood', 'Compris', 'הבנתי');
@@ -64,6 +65,7 @@ class S {
   String get sponsorLine1 => _t('Rabino Dovid (Roberto)', 'Rabbi Dovid (Roberto)', 'Rabbin Dovid (Roberto)', 'הרב דוד (רוברטו)');
   String get sponsorLine2 => _t('y Margie Szerer', 'and Margie Szerer', 'et Margie Szerer', 'ומרגי שזרר');
   String get defaultUser => _t('Usuario', 'User', 'Utilisateur', 'משתמש');
+  String get noEmail => _t('Sin correo', 'No email', 'Sans e-mail', 'ללא דוא"ל');
 
   // ---------------------------------------------------------------------------
   // PUSHKA SCREEN
@@ -295,7 +297,7 @@ class S {
   String get sendRequestSub => _t('Empodera a familia y amigos con tzedaká', 'Empower family and friends with tzedakah', 'Responsabilisez famille et amis avec la tsédaka', 'העצם משפחה וחברים עם צדקה');
   String get manageAutoRefill => _t('Administrar recarga automática', 'Manage auto refill', 'Gérer la recharge automatique', 'נהל טעינה אוטומטית');
   String get transactionHistory => _t('Historial de transacciones', 'Transaction history', 'Historique des transactions', 'היסטוריית עסקאות');
-  String autoRefillActive(String amount, String freq) => _t('ACTIVA - $amount $freq', 'ACTIVE - $amount $freq', 'ACTIVE - $amount $freq', 'פעיל - $amount $freq');
+  String autoRefillActive(String amount, String freq) => _t('ACTIVA - $amount $freq', 'ACTIVE - $amount $freq', 'ACTIF - $amount $freq', 'פעיל - $amount $freq');
   String get autoRefillInactive => _t('RECARGA AUTOMÁTICA INACTIVA', 'AUTO REFILL INACTIVE', 'RECHARGE AUTOMATIQUE INACTIVE', 'טעינה אוטומטית לא פעילה');
   String nextRun(String date) => _t('Próxima: $date', 'Next: $date', 'Prochaine : $date', 'הבא: $date');
   String get weekly => _t('semanal', 'weekly', 'hebdomadaire', 'שבועי');
@@ -438,6 +440,12 @@ class S {
   String get signInToModify => _t('Inicia sesión para modificar recordatorios', 'Sign in to modify reminders', 'Connectez-vous pour modifier les rappels', 'התחבר כדי לשנות תזכורות');
   String get signInToDelete => _t('Inicia sesión para eliminar recordatorios', 'Sign in to delete reminders', 'Connectez-vous pour supprimer les rappels', 'התחבר כדי למחוק תזכורות');
   String get couldNotDelete => _t('No se pudo eliminar el recordatorio', 'Could not delete reminder', 'Impossible de supprimer le rappel', 'לא ניתן למחוק את התזכורת');
+  String reminderLimitReached(int max) => _t(
+        'Límite de $max recordatorios alcanzado',
+        'Limit of $max reminders reached',
+        'Limite de $max rappels atteint',
+        'הגעת למגבלה של $max תזכורות',
+      );
   String get repeatDaily => _t('Diario', 'Daily', 'Quotidien', 'יומי');
   String get repeatWeekdays => _t('Días de semana', 'Weekdays', 'Jours ouvrables', 'ימי חול');
   String get repeatFridayHoliday => _t('Viernes y festivos', 'Friday & Holidays', 'Vendredi et fêtes', 'שישי וחגים');
@@ -467,7 +475,7 @@ class S {
   String get selectDate => _t('Seleccionar fecha', 'Select date', 'Sélectionner une date', 'בחר תאריך');
   String get dayL => _t('L', 'M', 'L', 'ב');
   String get dayM => _t('M', 'T', 'M', 'ג');
-  String get dayX => _t('X', 'W', 'M', 'ד');
+  String get dayX => _t('X', 'W', 'Me', 'ד');
   String get dayJ => _t('J', 'T', 'J', 'ה');
   String get dayV => _t('V', 'F', 'V', 'ו');
   String get dayS => _t('S', 'S', 'S', 'ש');
@@ -494,6 +502,12 @@ class S {
   String get historyDescription => _t('Descripción', 'Description', 'Description', 'תיאור');
   String get historyMethod => _t('Método', 'Method', 'Méthode', 'שיטה');
   String get historyStatus => _t('Estado', 'Status', 'Statut', 'סטטוס');
+  String showingLastN(int n) => _t(
+        'Mostrando las últimas $n transacciones',
+        'Showing last $n transactions',
+        'Affichage des $n dernières transactions',
+        'מציג $n עסקאות אחרונות',
+      );
 
   // ---------------------------------------------------------------------------
   // TRANSACTION DOMAIN
@@ -601,6 +615,15 @@ class S {
     'שיטת הרישום הזו אינה מופעלת',
   );
   String createAccountErrorCode(String code) => _t('Error al crear cuenta: $code', 'Error creating account: $code', 'Erreur de création de compte : $code', 'שגיאה ביצירת חשבון: $code');
+  String verificationEmailSent(String email) => _t(
+    'Cuenta creada. Revisa $email para verificar tu correo.',
+    'Account created. Check $email to verify your email.',
+    'Compte créé. Vérifiez $email pour confirmer votre adresse.',
+    'החשבון נוצר. בדוק את $email לאישור כתובת הדוא"ל.',
+  );
+  String get passwordTooShort => _t('Mínimo 8 caracteres', 'Minimum 8 characters', 'Minimum 8 caractères', 'מינימום 8 תווים');
+  String get passwordNeedsNumber => _t('Debe incluir al menos un número', 'Must include at least one number', 'Doit contenir au moins un chiffre', 'חייב לכלול לפחות ספרה אחת');
+  String get passwordNeedsUppercase => _t('Debe incluir al menos una mayúscula', 'Must include at least one uppercase letter', 'Doit contenir au moins une majuscule', 'חייב לכלול לפחות אות גדולה אחת');
 
   // ---------------------------------------------------------------------------
   // SUPPORT SCREEN
@@ -701,6 +724,43 @@ class S {
   );
   String get settingsSaved => _t('Configuración guardada', 'Settings saved', 'Paramètres enregistrés', 'הגדרות נשמרו');
   String get saveError => _t('Error al guardar. Intenta nuevamente.', 'Error saving. Try again.', "Erreur d'enregistrement. Réessayez.", 'שגיאה בשמירה. נסה שוב.');
+  String get autoEmptyConsentTitle => _t(
+    'Autorización de Vaciado Automático',
+    'Automatic Empty Authorization',
+    'Autorisation de vidage automatique',
+    'אישור ריקון אוטומטי',
+  );
+  String get autoEmptyConsentBody => _t(
+    'Al activar el vaciado automático, Pushka vaciará tu alcancía según la frecuencia elegida y el monto acumulado será cobrado a tu tarjeta de pago registrada en ese momento.\n\nEsto constituye una autorización de cobro periódico. Puedes cancelarlo en cualquier momento desde esta misma pantalla.',
+    'By activating automatic emptying, Pushka will empty your pushka according to the chosen frequency, and the accumulated amount will be charged to your registered payment card at that time.\n\nThis constitutes authorization for periodic charges. You can cancel at any time from this screen.',
+    'En activant le vidage automatique, Pushka videra votre tirelire selon la fréquence choisie et le montant accumulé sera débité de votre carte de paiement enregistrée.\n\nCela constitue une autorisation de prélèvement périodique. Vous pouvez l\'annuler à tout moment depuis cet écran.',
+    'בהפעלת הריקון האוטומטי, Pushka תרוקן את הקופה שלך לפי התדירות שנבחרה, והסכום שנצבר יחויב בכרטיס התשלום הרשום שלך באותו רגע.\n\nזהו אישור לחיובים תקופתיים. ניתן לבטל בכל עת מהמסך הזה.',
+  );
+  String get autoEmptyConsentBullet1 => _t(
+    '• El cobro se realiza por el monto exacto acumulado en tu Pushka.',
+    '• The charge is for the exact amount accumulated in your Pushka.',
+    '• Le débit correspond au montant exact accumulé dans votre Pushka.',
+    '• החיוב הוא על הסכום המדויק שנצבר בפושקה שלך.',
+  );
+  String get autoEmptyConsentBullet2 => _t(
+    '• Si el saldo es menor a \$5, el vaciado se pospone al siguiente ciclo.',
+    '• If the balance is less than \$5, emptying is postponed to the next cycle.',
+    '• Si le solde est inférieur à 5 \$, le vidage est reporté au cycle suivant.',
+    '• אם היתרה נמוכה מ-\$5, הריקון נדחה למחזור הבא.',
+  );
+  String get autoEmptyConsentBullet3 => _t(
+    '• Puedes cancelar o modificar esta configuración en cualquier momento.',
+    '• You can cancel or modify this setting at any time.',
+    '• Vous pouvez annuler ou modifier ce paramètre à tout moment.',
+    '• ניתן לבטל או לשנות הגדרה זו בכל עת.',
+  );
+  String get autoEmptyConsentAccept => _t(
+    'Acepto y Activo',
+    'I Accept and Activate',
+    'J\'accepte et j\'active',
+    'אני מסכים ומפעיל',
+  );
+  String get autoEmptyConsentCancel => _t('Cancelar', 'Cancel', 'Annuler', 'ביטול');
   String get dayMonFull => _t('Lunes', 'Monday', 'Lundi', 'שני');
   String get dayTueFull => _t('Martes', 'Tuesday', 'Mardi', 'שלישי');
   String get dayWedFull => _t('Miércoles', 'Wednesday', 'Mercredi', 'רביעי');
@@ -748,10 +808,10 @@ class S {
   String get contactAdded => _t('Contacto agregado', 'Contact added', 'Contact ajouté', 'קשר נוסף');
   String get verification => _t('Verificación', 'Verification', 'Vérification', 'אימות');
   String get verificationBody => _t(
-    'Para enviar o solicitar tzedaká, primero verifica el contacto:\n• Escanea su ID de billetera (arriba a la derecha en esta pantalla), o\n• Escribe el código de 6 dígitos que te comparta.',
-    'To send or request tzedakah, first verify the contact:\n• Scan their wallet ID (top right on this screen), or\n• Enter the 6-digit code they share with you.',
-    "Pour envoyer ou demander de la tsédaka, vérifiez d'abord le contact :\n• Scannez leur ID de portefeuille (en haut à droite de cet écran), ou\n• Entrez le code à 6 chiffres qu'ils vous partagent.",
-    'כדי לשלוח או לבקש צדקה, אמת קודם את הקשר:\n• סרוק את מזהה הארנק שלו (למעלה מימין במסך זה), או\n• הכנס את הקוד בן 6 הספרות שהוא שיתף איתך.',
+    'Para enviar o solicitar tzedaká, primero verifica el contacto:\n• Escanea su ID de billetera (arriba a la derecha en esta pantalla), o\n• Escribe el código de 8 dígitos que te comparta.',
+    'To send or request tzedakah, first verify the contact:\n• Scan their wallet ID (top right on this screen), or\n• Enter the 8-digit code they share with you.',
+    "Pour envoyer ou demander de la tsédaka, vérifiez d'abord le contact :\n• Scannez leur ID de portefeuille (en haut à droite de cet écran), ou\n• Entrez le code à 8 chiffres qu'ils vous partagent.",
+    'כדי לשלוח או לבקש צדקה, אמת קודם את הקשר:\n• סרוק את מזהה הארנק שלו (למעלה מימין במסך זה), או\n• הכנס את הקוד בן 8 הספרות שהוא שיתף איתך.',
   );
   String get scanWalletId => _t('Escanear ID de billetera', 'Scan wallet ID', "Scanner l'ID du portefeuille", 'סרוק מזהה ארנק');
   String get enterWalletId => _t('Ingresar ID de billetera', 'Enter wallet ID', "Entrer l'ID du portefeuille", 'הכנס מזהה ארנק');
@@ -765,15 +825,44 @@ class S {
   String idPrefix(String id) => _t('ID: $id', 'ID: $id', 'ID : $id', 'מזהה: $id');
   String get send => _t('ENVIAR', 'SEND', 'ENVOYER', 'שלח');
   String get request => _t('SOLICITAR', 'REQUEST', 'DEMANDER', 'בקש');
-  String sent(String amount, String id) => _t('Enviado \$$amount a $id', 'Sent \$$amount to $id', 'Envoyé $amount à $id', 'נשלח \$$amount ל-$id');
-  String requestSent(String amount) => _t('Solicitud de \$$amount enviada', 'Request for \$$amount sent', 'Demande de $amount envoyée', 'בקשה של \$$amount נשלחה');
+  String sent(String amount, String id) => _t('Enviado $amount a $id', 'Sent $amount to $id', 'Envoyé $amount à $id', 'נשלח $amount ל-$id');
+  String requestSent(String amount) => _t('Solicitud de $amount enviada', 'Request for $amount sent', 'Demande de $amount envoyée', 'בקשה של $amount נשלחה');
   String get walletNotFound => _t('Billetera no encontrada', 'Wallet not found', 'Portefeuille introuvable', 'ארנק לא נמצא');
   String get walletUserNotFound => _t('No existe ningún usuario con ese código', 'No user found with that code', 'Aucun utilisateur trouvé avec ce code', 'לא נמצא משתמש עם הקוד הזה');
   String get insufficientFunds => _t('Fondos insuficientes', 'Insufficient funds', 'Fonds insuffisants', 'יתרה לא מספיקה');
   String get couldNotTransfer => _t('No se pudo completar la transferencia', 'Could not complete the transfer', 'Impossible de compléter le transfert', 'לא ניתן להשלים את ההעברה');
   String get couldNotSendRequest => _t('No se pudo enviar la solicitud', 'Could not send the request', 'Impossible d\'envoyer la demande', 'לא ניתן לשלוח את הבקשה');
   String get couldNotAddContact => _t('No se pudo agregar el contacto', 'Could not add the contact', 'Impossible d\'ajouter le contact', 'לא ניתן להוסיף את הקשר');
+  String get cannotAddSelf => _t('No puedes agregar tu propia billetera como contacto', 'You cannot add your own wallet as a contact', 'Vous ne pouvez pas ajouter votre propre portefeuille comme contact', 'אינך יכול להוסיף את הארנק שלך עצמך כקשר');
   String get couldNotConfirmTopUp => _t('No se pudo confirmar la recarga', 'Could not confirm the top-up', 'Impossible de confirmer la recharge', 'לא ניתן לאשר את הטעינה');
+
+  // ---------------------------------------------------------------------------
+  // WALLET REQUESTS
+  // ---------------------------------------------------------------------------
+
+  String get walletRequests => _t('Solicitudes', 'Requests', 'Demandes', 'בקשות');
+  String get pendingRequests => _t('Solicitudes pendientes', 'Pending requests', 'Demandes en attente', 'בקשות ממתינות');
+  String get noPendingRequests => _t('No tienes solicitudes pendientes', 'No pending requests', 'Aucune demande en attente', 'אין בקשות ממתינות');
+  String requestFrom(String walletId) => _t('Solicitud de $walletId', 'Request from $walletId', 'Demande de $walletId', 'בקשה מ-$walletId');
+  String requestAmount(String amount) => _t('Monto: $amount', 'Amount: $amount', 'Montant : $amount', 'סכום: $amount');
+  String get acceptRequest => _t('Aceptar', 'Accept', 'Accepter', 'אשר');
+  String get rejectRequest => _t('Rechazar', 'Reject', 'Rejeter', 'דחה');
+  String get requestAccepted => _t('Solicitud aceptada. Fondos enviados.', 'Request accepted. Funds sent.', 'Demande acceptée. Fonds envoyés.', 'הבקשה אושרה. הכספים נשלחו.');
+  String get requestRejected => _t('Solicitud rechazada', 'Request rejected', 'Demande rejetée', 'הבקשה נדחתה');
+  String get confirmAcceptRequest => _t('Confirmar envío', 'Confirm send', 'Confirmer l\'envoi', 'אשר שליחה');
+  String confirmAcceptBody(String amount, String walletId) => _t(
+    '¿Enviás $amount de tu billetera a $walletId?',
+    'Send $amount from your wallet to $walletId?',
+    'Envoyer $amount de votre portefeuille à $walletId ?',
+    'שלח $amount מהארנק שלך ל-$walletId?',
+  );
+  String confirmRejectBody(String amount, String walletId) => _t(
+    '¿Rechazás la solicitud de $amount de $walletId?',
+    'Reject the request for $amount from $walletId?',
+    'Rejeter la demande de $amount de $walletId ?',
+    'לדחות את הבקשה של $amount מ-$walletId?',
+  );
+  String get pendingRequestsBadge => _t('solicitudes', 'requests', 'demandes', 'בקשות');
 
   // ---------------------------------------------------------------------------
   // PRAYERS SCREEN
@@ -862,7 +951,7 @@ class S {
   String get signInToSeeQr => _t('Inicia sesión para ver tu código QR', 'Sign in to see your QR code', 'Connectez-vous pour voir votre code QR', 'התחבר כדי לראות את קוד ה-QR שלך');
   String get closeTooltip => _t('Cerrar', 'Close', 'Fermer', 'סגור');
   String get yourWalletDialog => _t('Tu billetera', 'Your wallet', 'Votre portefeuille', 'הארנק שלך');
-  String get yourSixDigitCode => _t('Tu código de 6 dígitos', 'Your 6-digit code', 'Votre code à 6 chiffres', 'הקוד בן 6 הספרות שלך');
+  String get yourSixDigitCode => _t('Tu código de 8 dígitos', 'Your 8-digit code', 'Votre code à 8 chiffres', 'הקוד בן 8 הספרות שלך');
   String get walletCodeCopied => _t('Código copiado y listo para compartir', 'Code copied and ready to share', 'Code copié et prêt à partager', 'הקוד הועתק ומוכן לשיתוף');
   String get walletShareSubject => _t('Mi código de billetera Pushka', 'My Pushka wallet code', 'Mon code portefeuille Pushka', 'קוד ארנק הפושקה שלי');
   String walletShareMessage(String id) => _t(
@@ -942,6 +1031,78 @@ class S {
   String get uploadingPhoto => _t('Subiendo foto...', 'Uploading photo...', 'Envoi de la photo...', 'מעלה תמונה...');
   String get photoUpdated => _t('Foto actualizada', 'Photo updated', 'Photo mise à jour', 'התמונה עודכנה');
   String get couldNotUploadPhoto => _t('No se pudo subir la foto', 'Could not upload photo', "Impossible de télécharger la photo", 'לא ניתן להעלות את התמונה');
+
+  // ---------------------------------------------------------------------------
+  // SAVED CARDS
+  // ---------------------------------------------------------------------------
+
+  String get savedCards => _t('Tarjeta guardada', 'Saved card', 'Carte enregistrée', 'כרטיס שמור');
+  String get noSavedCards => _t(
+    'No tienes ninguna tarjeta guardada.\nAgrega una para habilitar el vaciado y la recarga automáticos.',
+    'No saved card yet.\nAdd one to enable automatic emptying and refills.',
+    "Aucune carte enregistrée.\nAjoutez-en une pour activer le vidage et la recharge automatiques.",
+    'אין כרטיס שמור עדיין.\nהוסף אחד כדי להפעיל ריקון וטעינה אוטומטיים.',
+  );
+  String get addCard => _t('Agregar tarjeta', 'Add card', 'Ajouter une carte', 'הוסף כרטיס');
+  String get cardDefault => _t('Predeterminada', 'Default', 'Par défaut', 'ברירת מחדל');
+  String get setAsDefault => _t('Usar como predeterminada', 'Set as default', 'Définir par défaut', 'הגדר כברירת מחדל');
+  String get deleteCard => _t('Eliminar tarjeta', 'Delete card', 'Supprimer la carte', 'מחק כרטיס');
+  String cardEndingIn(String last4) => _t('Terminada en $last4', 'Ending in $last4', 'Se terminant par $last4', 'מסתיים ב-$last4');
+  String cardExpiry(String month, String year) => _t('Vence $month/$year', 'Expires $month/$year', 'Expire $month/$year', 'פג תוקף $month/$year');
+  String get cardAdded => _t('Tarjeta agregada correctamente', 'Card added successfully', 'Carte ajoutée avec succès', 'הכרטיס נוסף בהצלחה');
+  String get cardDeleted => _t('Tarjeta eliminada', 'Card deleted', 'Carte supprimée', 'הכרטיס נמחק');
+  String get cardSetAsDefault => _t('Tarjeta predeterminada actualizada', 'Default card updated', 'Carte par défaut mise à jour', 'כרטיס ברירת המחדל עודכן');
+  String get confirmDeleteCard => _t('Eliminar tarjeta', 'Delete card', 'Supprimer la carte', 'מחק כרטיס');
+  String get confirmDeleteCardBody => _t(
+    '¿Seguro que quieres eliminar esta tarjeta? El auto-vaciado y la recarga automática dejarán de funcionar hasta que agregues una nueva.',
+    'Are you sure you want to delete this card? Auto-empty and auto-refill will stop working until you add a new one.',
+    'Voulez-vous vraiment supprimer cette carte ? Le vidage automatique et la recharge automatique cesseront de fonctionner jusqu\'à ce que vous en ajoutiez une nouvelle.',
+    'האם אתה בטוח שברצונך למחוק כרטיס זה? ריקון אוטומטי וטעינה אוטומטית יפסיקו לפעול עד שתוסיף כרטיס חדש.',
+  );
+  String get deleteConfirm => _t('Eliminar', 'Delete', 'Supprimer', 'מחק');
+  String get loadingCards => _t('Cargando tarjetas...', 'Loading cards...', 'Chargement des cartes...', 'טוען כרטיסים...');
+  String get errorLoadingCards => _t('Error al cargar las tarjetas', 'Error loading cards', 'Erreur lors du chargement des cartes', 'שגיאה בטעינת כרטיסים');
+
+  // ---------------------------------------------------------------------------
+  // AUTO REFILL CONSENT
+  // ---------------------------------------------------------------------------
+
+  String get autoRefillConsentTitle => _t(
+    'Autorización de Recarga Automática',
+    'Automatic Refill Authorization',
+    'Autorisation de recharge automatique',
+    'אישור טעינה אוטומטית',
+  );
+  String get autoRefillConsentBody => _t(
+    'Al activar la recarga automática, Pushka cargará tu tarjeta guardada según la frecuencia elegida para agregar fondos a tu billetera.\n\nEsto constituye una autorización de cobro periódico. Puedes cancelarlo en cualquier momento desde esta misma pantalla.',
+    'By activating automatic refill, Pushka will charge your saved card according to the chosen frequency to add funds to your wallet.\n\nThis constitutes authorization for periodic charges. You can cancel at any time from this screen.',
+    'En activant la recharge automatique, Pushka débitera votre carte enregistrée selon la fréquence choisie pour ajouter des fonds à votre portefeuille.\n\nCela constitue une autorisation de prélèvement périodique. Vous pouvez l\'annuler à tout moment depuis cet écran.',
+    'בהפעלת הטעינה האוטומטית, Pushka תחייב את הכרטיס השמור שלך לפי התדירות שנבחרה כדי להוסיף כספים לארנק שלך.\n\nזהו אישור לחיובים תקופתיים. ניתן לבטל בכל עת מהמסך הזה.',
+  );
+  String get autoRefillConsentBullet1 => _t(
+    '• El cobro se realiza por el monto exacto que configuraste.',
+    '• The charge is for the exact amount you configured.',
+    '• Le débit correspond au montant exact que vous avez configuré.',
+    '• החיוב הוא על הסכום המדויק שהגדרת.',
+  );
+  String get autoRefillConsentBullet2 => _t(
+    '• Los fondos se acreditan de inmediato en tu billetera.',
+    '• Funds are credited immediately to your wallet.',
+    '• Les fonds sont crédités immédiatement sur votre portefeuille.',
+    '• הכספים מוזכים מיידית לארנק שלך.',
+  );
+  String get autoRefillConsentBullet3 => _t(
+    '• Puedes cancelar o modificar esta configuración en cualquier momento.',
+    '• You can cancel or modify this setting at any time.',
+    '• Vous pouvez annuler ou modifier ce paramètre à tout moment.',
+    '• ניתן לבטל או לשנות הגדרה זו בכל עת.',
+  );
+  String get autoRefillConsentAccept => _t(
+    'Acepto y Activo',
+    'I Accept and Activate',
+    'J\'accepte et j\'active',
+    'אני מסכים ומפעיל',
+  );
 
   String get appShareText => _t(
     'He estado usando esta increíble app Pushka de Tzedaká. ¡Funciona igual que una pushka real! Con solo un toque puedes "poner una moneda" y cuando estés listo, "vaciarla" para hacer una donación.\n\nToda la Tzedaká va directamente a Colel Chabad, que hace una labor increíble ayudando a los pobres en Israel.\n\nMírala aquí: https://pushkapp.cc/share',

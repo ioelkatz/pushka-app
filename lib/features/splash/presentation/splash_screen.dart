@@ -1,4 +1,5 @@
-import 'dart:math';
+import 'dart:async';
+import 'dart:math' as math;
 import 'dart:ui' as ui;
 
 import 'package:audioplayers/audioplayers.dart';
@@ -6,62 +7,23 @@ import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:go_router/go_router.dart';
 
-// ─────────────────────────────────────────────────────────────────────────────
-// 3-D MATH  (Vec3 + perspective camera — all pure Dart, zero dependencies)
-// ─────────────────────────────────────────────────────────────────────────────
-
-class _V3 {
-  final double x, y, z;
-  const _V3(this.x, this.y, this.z);
-
-  _V3 operator +(_V3 v) => _V3(x + v.x, y + v.y, z + v.z);
-  _V3 operator -(_V3 v) => _V3(x - v.x, y - v.y, z - v.z);
-  _V3 operator *(double s) => _V3(x * s, y * s, z * s);
-  double dot(_V3 v) => x * v.x + y * v.y + z * v.z;
-  _V3 cross(_V3 v) =>
-      _V3(y * v.z - z * v.y, z * v.x - x * v.z, x * v.y - y * v.x);
-  double get len => sqrt(x * x + y * y + z * z);
-  _V3 get n => this * (1.0 / len);
-}
-
-/// Perspective camera — call [project] to turn a world-space point into pixels.
-class _Cam {
-  final _V3 pos;
-  final _V3 _fwd, _right, _up;
-  final double _f; // focal length in pixels
-
-  factory _Cam({
-    required _V3 pos,
-    required _V3 target,
-    double fovYDeg = 42,
-    required double canvasH,
-  }) {
-    final fwd   = (target - pos).n;
-    final right = fwd.cross(const _V3(0, 1, 0)).n;
-    final up    = right.cross(fwd);
-    final f     = (canvasH / 2) / tan(fovYDeg * pi / 360);
-    return _Cam._(pos, fwd, right, up, f);
-  }
-
-  const _Cam._(this.pos, this._fwd, this._right, this._up, this._f);
-
-  Offset? project(_V3 world, Size sz) {
-    final d = world - pos;
-    final z = d.dot(_fwd);
-    if (z < 0.01) return null;
-    final x = d.dot(_right);
-    final y = d.dot(_up);
-    return Offset(sz.width / 2 + x * _f / z, sz.height / 2 - y * _f / z);
-  }
-}
+import '../../../app/app_initializer.dart';
+import '../../pushka/presentation/pushka_3d_painter.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
-// SPLASH SCREEN WIDGET
+//  CINEMATIC SPLASH  — 6.5 second timeline
+//
+//  0.0 – 1.0 s   Pushka visible; subtle entrance zoom 0.96 → 1.0
+//  1.0 – 3.6 s   Coin falls from screen top (2600 ms) — grows, wobbles
+//  3.6 s         IMPACT — sound, shake, flash, sparkles
+//  3.6 – 4.4 s   Pause (800 ms)
+//  4.4 – 5.9 s   Golden glow expands inside pushka (1500 ms)
+//  5.9 – 6.4 s   Warm-gold screen flood (500 ms)
+//  6.4 s         Navigate to app
 // ─────────────────────────────────────────────────────────────────────────────
 
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});
-
   @override
   State<SplashScreen> createState() => _SplashScreenState();
 }
@@ -69,68 +31,103 @@ class SplashScreen extends StatefulWidget {
 class _SplashScreenState extends State<SplashScreen>
     with TickerProviderStateMixin {
 
-  // ── controllers ─────────────────────────────────────────────────────────
-  late final AnimationController _enterCtrl;    // 800 ms  box entrance
-  late final AnimationController _coinCtrl;     // 650 ms  coin fall
-  late final AnimationController _impactCtrl;   // 450 ms  bounce + flash
-  late final AnimationController _innerGlowCtrl;// 700 ms  internal glow fade-in
-  late final AnimationController _glowCtrl;     // 2400 ms repeat — ambient pulse
-  late final AnimationController _shimCtrl;     // 1800 ms repeat — coin shimmer
+  // ── animation controllers ────────────────────────────────────────────────
+  late final AnimationController _zoomCtrl;    // 1000 ms  pushka entrance
+  late final AnimationController _coinCtrl;    // 2600 ms  coin fall
+  late final AnimationController _shakeCtrl;   //  400 ms  impact shake
+  late final AnimationController _flashCtrl;   //  600 ms  impact screen flash
+  late final AnimationController _glowCtrl;    // 1500 ms  golden interior glow
+  late final AnimationController _floodCtrl;   //  500 ms  warm-gold screen flood
+  late final AnimationController _ambientCtrl; // 3000 ms  ambient halo (repeat)
+  late final AnimationController _shimCtrl;    // 2500 ms  coin shimmer (repeat)
 
-  // ── phase flags ──────────────────────────────────────────────────────────
+  // ── state flags ──────────────────────────────────────────────────────────
   bool _showCoin  = false;
-  bool _coinInBox = false;
+  bool _impacted  = false;
+
+  // ── audio players (owned here so they can be disposed) ───────────────────
+  final AudioPlayer _coinAudio    = AudioPlayer();
+  final AudioPlayer _successAudio = AudioPlayer();
+
+  // ── gravity drop curve helper ────────────────────────────────────────────
+  static double _dropCurve(double t) {
+    // Accelerates under gravity for 72% of fall, then gently decelerates
+    // as the coin aligns with the slot
+    if (t <= 0.72) {
+      final p = t / 0.72;
+      return p * p * 0.82;
+    } else {
+      final p = (t - 0.72) / 0.28;
+      return 0.82 + (1.0 - math.pow(1.0 - p, 2.0)) * 0.18;
+    }
+  }
 
   @override
   void initState() {
     super.initState();
-    _enterCtrl     = AnimationController(vsync: this, duration: 800.ms);
-    _coinCtrl      = AnimationController(vsync: this, duration: 650.ms);
-    _impactCtrl    = AnimationController(vsync: this, duration: 450.ms);
-    _innerGlowCtrl = AnimationController(vsync: this, duration: 700.ms);
-    _glowCtrl      = AnimationController(vsync: this, duration: 2400.ms)
+
+    _zoomCtrl    = AnimationController(vsync: this, duration: 1000.ms);
+    _coinCtrl    = AnimationController(vsync: this, duration: 2600.ms);
+    _shakeCtrl   = AnimationController(vsync: this, duration:  400.ms);
+    _flashCtrl   = AnimationController(vsync: this, duration:  600.ms);
+    _glowCtrl    = AnimationController(vsync: this, duration: 1500.ms);
+    _floodCtrl   = AnimationController(vsync: this, duration:  500.ms);
+    _ambientCtrl = AnimationController(vsync: this, duration: 3000.ms)
       ..repeat(reverse: true);
-    _shimCtrl      = AnimationController(vsync: this, duration: 1800.ms)
+    _shimCtrl    = AnimationController(vsync: this, duration: 2500.ms)
       ..repeat();
+
+    _zoomCtrl.forward(); // pushka zooms in immediately
     _runSequence();
   }
 
   @override
   void dispose() {
-    _enterCtrl.dispose();
+    _zoomCtrl.dispose();
     _coinCtrl.dispose();
-    _impactCtrl.dispose();
-    _innerGlowCtrl.dispose();
+    _shakeCtrl.dispose();
+    _flashCtrl.dispose();
     _glowCtrl.dispose();
+    _floodCtrl.dispose();
+    _ambientCtrl.dispose();
     _shimCtrl.dispose();
+    _coinAudio.dispose();
+    _successAudio.dispose();
     super.dispose();
   }
 
   Future<void> _runSequence() async {
-    // 1 — box slides in
-    await Future.delayed(250.ms);
-    if (!mounted) return;
-    _enterCtrl.forward();
-
-    // 2 — coin appears and falls
-    await Future.delayed(1050.ms);
+    // 1.0 s — coin appears and starts falling
+    await Future.delayed(1000.ms);
     if (!mounted) return;
     setState(() => _showCoin = true);
     _coinCtrl.forward();
 
-    // 3 — impact
-    await Future.delayed(650.ms);
+    // 3.6 s — IMPACT
+    await Future.delayed(2600.ms);
     if (!mounted) return;
-    setState(() { _showCoin = false; _coinInBox = true; });
-    _impactCtrl.forward();
-    _innerGlowCtrl.forward();
-    try {
-      final p = AudioPlayer();
-      await p.play(AssetSource('sounds/coin.wav'));
-    } catch (_) {}
+    setState(() { _showCoin = false; _impacted = true; });
+    _shakeCtrl.forward();
+    _flashCtrl.forward();
+    unawaited(_coinAudio.play(AssetSource('sounds/coin.wav')).catchError((_) {}));
 
-    // 4 — settle then go
-    await Future.delayed(2400.ms);
+    // 4.4 s — glow starts
+    await Future.delayed(800.ms);
+    if (!mounted) return;
+    _glowCtrl.forward();
+    unawaited(_successAudio.play(AssetSource('sounds/success.wav')).catchError((_) {}));
+
+    // 5.9 s — screen flood
+    await Future.delayed(1500.ms);
+    if (!mounted) return;
+    _floodCtrl.forward();
+
+    // 6.4 s — navigate (timeout after 8 s so a hung init never traps the user)
+    await Future.delayed(400.ms);
+    await appDeferredInit.timeout(
+      const Duration(seconds: 8),
+      onTimeout: () {},
+    );
     if (!mounted) return;
     context.go('/');
   }
@@ -138,668 +135,824 @@ class _SplashScreenState extends State<SplashScreen>
   // ── build ────────────────────────────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: const Color(0xFF3A7FD8),
-      body: Stack(
-        fit: StackFit.expand,
-        children: [
+    final screenH = MediaQuery.of(context).size.height;
 
-          // ── Background gradient ──────────────────────────────────────────
-          const DecoratedBox(
-            decoration: BoxDecoration(
-              gradient: RadialGradient(
-                center: Alignment(0, -0.22),
-                radius: 1.18,
-                colors: [
-                  Color(0xFF5BA8EE),
-                  Color(0xFF3A7FD8),
-                  Color(0xFF1A4FA8),
-                  Color(0xFF0C2250),
-                  Color(0xFF060E22),
-                ],
-                stops: [0.0, 0.22, 0.46, 0.72, 1.0],
-              ),
-            ),
-          ),
+    return AnimatedBuilder(
+      animation: Listenable.merge([
+        _zoomCtrl, _coinCtrl, _shakeCtrl, _flashCtrl,
+        _glowCtrl, _floodCtrl, _ambientCtrl, _shimCtrl,
+      ]),
+      builder: (_, _) => Scaffold(
+        backgroundColor: const Color(0xFF040A14),
+        body: Stack(
+          fit: StackFit.expand,
+          children: [
+            // Dark premium radial background
+            _buildBackground(),
 
-          // ── Gold particles drifting upward ───────────────────────────────
-          const _GoldParticles(),
+            // Floating gold dust particles
+            const _GoldParticles(),
 
-          // ── Gold flash on coin impact ────────────────────────────────────
-          AnimatedBuilder(
-            animation: _impactCtrl,
-            builder: (_, _) {
-              final v = _impactCtrl.value;
-              final a = (v < 0.3 ? v / 0.3 : (1 - v) / 0.7).clamp(0.0, 1.0);
-              return DecoratedBox(
-                decoration: BoxDecoration(
-                  gradient: RadialGradient(
-                    center: const Alignment(0.08, -0.20),
-                    radius: 0.52,
-                    colors: [
-                      const Color(0xFFD4AF37).withValues(alpha: 0.32 * a),
-                      Colors.transparent,
-                    ],
-                  ),
-                ),
-              );
-            },
-          ),
+            // Pushka + coin + effects — centered
+            Center(child: _buildPushkaScene(screenH)),
 
-          // ── Scene + text ─────────────────────────────────────────────────
-          Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
+            // Impact screen flash (radial warm burst)
+            if (_impacted) _buildImpactFlash(),
 
-              // 3-D pushka scene
-              AnimatedBuilder(
-                animation: Listenable.merge([
-                  _enterCtrl, _coinCtrl, _impactCtrl,
-                  _innerGlowCtrl, _glowCtrl, _shimCtrl,
-                ]),
-                builder: (_, _) {
-                  final entrance = CurvedAnimation(
-                      parent: _enterCtrl, curve: Curves.easeOutBack).value;
-                  final coinProg = _showCoin
-                      ? CurvedAnimation(
-                          parent: _coinCtrl, curve: Curves.easeIn).value
-                      : null;
-                  return CustomPaint(
-                    painter: _PushkaPainter(
-                      entrance:     entrance,
-                      coinProgress: coinProg,
-                      coinInBox:    _coinInBox,
-                      impactT:      _impactCtrl.value,
-                      innerGlow:    CurvedAnimation(
-                          parent: _innerGlowCtrl,
-                          curve: Curves.easeOut).value,
-                      ambientGlow:  CurvedAnimation(
-                          parent: _glowCtrl,
-                          curve: Curves.easeInOut).value,
-                      shimmer: _shimCtrl.value,
-                    ),
-                    size: const Size(300, 300),
-                  );
-                },
-              ),
-
-              const SizedBox(height: 32),
-
-              // PUSHKA — gold shimmer text
-              ShaderMask(
-                shaderCallback: (b) => const LinearGradient(
-                  colors: [
-                    Color(0xFFD4AF37), Colors.white,
-                    Color(0xFFF5E6A0), Colors.white,
-                    Color(0xFFD4AF37),
-                  ],
-                  stops: [0.0, 0.25, 0.50, 0.75, 1.0],
-                ).createShader(b),
-                child: const Text(
-                  'PUSHKA',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 36,
-                    fontWeight: FontWeight.w800,
-                    letterSpacing: 13,
-                  ),
-                ),
-              )
-                  .animate()
-                  .fadeIn(duration: 700.ms, delay: 200.ms)
-                  .slideY(begin: 0.4, end: 0.0,
-                      duration: 700.ms, delay: 200.ms,
-                      curve: Curves.easeOutCubic),
-
-              const SizedBox(height: 14),
-
-              // Gold divider
-              Container(
-                width: 80, height: 1,
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(colors: [
-                    Colors.transparent,
-                    const Color(0xFFD4AF37).withValues(alpha: 0.88),
-                    Colors.transparent,
-                  ]),
-                ),
-              ).animate().fadeIn(duration: 900.ms, delay: 360.ms),
-
-              const SizedBox(height: 14),
-
-              // Hebrew tagline
-              Text(
-                'צדקת רבי מאיר בעל הנס',
-                textDirection: TextDirection.rtl,
-                style: TextStyle(
-                  color: Colors.white.withValues(alpha: 0.70),
-                  fontSize: 14, letterSpacing: 1.1, height: 1.4,
-                ),
-              )
-                  .animate()
-                  .fadeIn(duration: 900.ms, delay: 420.ms)
-                  .slideY(begin: 0.3, end: 0.0,
-                      duration: 700.ms, delay: 420.ms,
-                      curve: Curves.easeOutCubic),
-
-              const SizedBox(height: 46),
-
-              // COLEL CHABAD
-              Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  _goldLine(),
-                  const SizedBox(width: 12),
-                  Text(
-                    'COLEL CHABAD',
-                    style: TextStyle(
-                      color: const Color(0xFFD4AF37).withValues(alpha: 0.65),
-                      fontSize: 11, letterSpacing: 5,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  _goldLine(),
-                ],
-              ).animate().fadeIn(duration: 1100.ms, delay: 560.ms),
-            ],
-          ),
-        ],
+            // Final warm-gold screen flood before navigation
+            if (_floodCtrl.value > 0) _buildScreenFlood(),
+          ],
+        ),
       ),
     );
   }
 
-  Widget _goldLine() => Container(
-    width: 26, height: 1,
-    color: const Color(0xFFD4AF37).withValues(alpha: 0.38),
+  // ── background gradient ──────────────────────────────────────────────────
+  Widget _buildBackground() => const DecoratedBox(
+    decoration: BoxDecoration(
+      gradient: RadialGradient(
+        center: Alignment(0.0, -0.08),
+        radius: 1.25,
+        colors: [
+          Color(0xFF183568), // warm blue center
+          Color(0xFF0F2347), // mid blue
+          Color(0xFF070F24), // near-black
+          Color(0xFF040A14), // black edges
+        ],
+        stops: [0.0, 0.35, 0.65, 1.0],
+      ),
+    ),
   );
+
+  // ── pushka scene (with shake + zoom) ────────────────────────────────────
+  Widget _buildPushkaScene(double screenH) {
+    const sceneW = 320.0;
+    const sceneH = 420.0;
+
+    // Entrance zoom: 0.96 → 1.0
+    final zoom = 0.96 + Curves.easeOut.transform(_zoomCtrl.value) * 0.04;
+
+    // Impact shake: exponentially decaying sine wave
+    double sx = 0, sy = 0;
+    final st = _shakeCtrl.value;
+    if (st > 0 && st < 1.0) {
+      final decay = math.pow(1.0 - st, 1.6).toDouble();
+      sx = math.sin(st * math.pi * 11) * 4.5 * decay;
+      sy = math.cos(st * math.pi *  8) * 2.2 * decay;
+    }
+
+    return Transform.scale(
+      scale: zoom,
+      child: Transform.translate(
+        offset: Offset(sx, sy),
+        child: SizedBox(
+          width: sceneW,
+          height: sceneH,
+          child: Stack(
+            clipBehavior: Clip.none,
+            children: [
+
+              // Soft ambient halo behind pushka
+              Positioned.fill(
+                child: CustomPaint(
+                  painter: _AmbientHaloPainter(
+                    pulse:  _ambientCtrl.value,
+                    glowT: _impacted ? Curves.easeOut.transform(_glowCtrl.value) : 0,
+                  ),
+                ),
+              ),
+
+              // The pushka body
+              CustomPaint(
+                painter: Pushka3DPainter(fillFraction: 0, wavePhase: 0),
+                size: const Size(sceneW, sceneH),
+                isComplex: true,
+              ),
+
+              // Interior golden glow post-impact
+              if (_impacted)
+                CustomPaint(
+                  painter: _GoldenGlowPainter(
+                    glowT:  Curves.easeOut.transform(_glowCtrl.value),
+                    sceneW: sceneW,
+                    sceneH: sceneH,
+                  ),
+                  size: const Size(sceneW, sceneH),
+                ),
+
+              // Coin falling from above
+              if (_showCoin) ..._buildCoin(sceneW, sceneH, screenH),
+
+              // Impact sparkles
+              if (_impacted && _flashCtrl.value < 0.90)
+                ..._buildSparkles(sceneW, sceneH),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ── impact flash ─────────────────────────────────────────────────────────
+  Widget _buildImpactFlash() {
+    final v = _flashCtrl.value;
+    final a = (v < 0.22 ? v / 0.22 : (1 - v) / 0.78).clamp(0.0, 1.0);
+    if (a < 0.01) return const SizedBox.shrink();
+    return IgnorePointer(
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          gradient: RadialGradient(
+            center: const Alignment(0.0, -0.18),
+            radius: 0.75,
+            colors: [
+              Color(0xFFFFE066).withValues(alpha: 0.55 * a),
+              Color(0xFFFFD700).withValues(alpha: 0.20 * a),
+              Colors.transparent,
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ── screen flood — warm gold fills viewport before navigation ─────────────
+  Widget _buildScreenFlood() {
+    final a = Curves.easeInOut.transform(_floodCtrl.value);
+    return IgnorePointer(
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          gradient: RadialGradient(
+            center: Alignment.center,
+            radius: 1.5,
+            colors: [
+              Color(0xFFFFF0A0).withValues(alpha: 0.95 * a),
+              Color(0xFFFFD700).withValues(alpha: 0.92 * a),
+              Color(0xFFE08800).withValues(alpha: 0.97 * a),
+            ],
+            stops: const [0.0, 0.45, 1.0],
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ── coin — falls from screen top, grows in perspective ───────────────────
+  List<Widget> _buildCoin(double cW, double cH, double screenH) {
+    final rawT  = _coinCtrl.value;           // 0→1 linear time
+    final dropT = _dropCurve(rawT);          // position on 0→1 path
+
+    // Mirror Pushka3DPainter geometry to hit slot exactly
+    final pCylW   = cW * 0.42;
+    final pEh     = pCylW * 0.22;
+    final pCylTop = cH * 0.14;
+    final slotCX  = cW / 2;
+    final slotCY  = pCylTop - pEh * 0.18; // coin slot center Y
+
+    // Perspective: coin starts 70% of final size, grows to 100% as it nears
+    final finalDiam  = pCylW * 0.42;
+    final perspScale = 0.70 + dropT * 0.30;
+    final coinDiam   = finalDiam * perspScale;
+
+    // Widget canvas size (includes the visible rim below the face)
+    final widgetW         = coinDiam;
+    final widgetH         = coinDiam * 1.40;
+    final faceCXInWidget  = coinDiam * 0.50;
+    final faceCYInWidget  = coinDiam * 0.34;
+
+    // Vertical position: starts completely off-screen top, lands at slot
+    final sceneTopOnScreen = (screenH - cH) / 2;
+    final coinStartY = -(sceneTopOnScreen + coinDiam + 12);
+    final coinEndY   = slotCY;
+    double coinCenterY = coinStartY + (coinEndY - coinStartY) * dropT;
+
+    // Lateral wobble: damped oscillation (coin rocks as it falls)
+    final wobble = math.sin(rawT * math.pi * 3.8) * (1.0 - rawT * 0.9);
+
+    // Entry phase: last 18% — coin sinks into slot and disappears
+    double coinScaleY  = 1.0;
+    double coinOpacity = 1.0;
+    double entryP      = 0.0;
+
+    if (rawT > 0.82) {
+      entryP = ((rawT - 0.82) / 0.18).clamp(0.0, 1.0);
+      coinCenterY += Curves.easeIn.transform(entryP) * coinDiam * 1.15;
+      coinScaleY   = 1.0 - Curves.easeIn.transform(entryP);
+      coinOpacity  = 1.0 - entryP * entryP;
+    }
+
+    if (coinOpacity < 0.01) return [];
+
+    final wobbleX = wobble * 4.0;
+    final widgets = <Widget>[];
+
+    // Soft outer glow around coin
+    final glowR = coinDiam * 0.65;
+    widgets.add(Positioned(
+      left: slotCX + wobbleX - glowR,
+      top:  coinCenterY - glowR,
+      child: Opacity(
+        opacity: (coinOpacity * 0.42 * (1.0 - entryP)).clamp(0.0, 1.0),
+        child: Container(
+          width:  glowR * 2,
+          height: glowR * 2,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            gradient: RadialGradient(colors: [
+              const Color(0xFFFFCE45).withValues(alpha: 0.28),
+              const Color(0xFFFFD700).withValues(alpha: 0.07),
+              Colors.transparent,
+            ], stops: const [0.0, 0.50, 1.0]),
+          ),
+        ),
+      ),
+    ));
+
+    // Contact shadow on pushka lid (grows as coin approaches)
+    if (rawT > 0.52) {
+      final sp = ((rawT - 0.52) / 0.48).clamp(0.0, 1.0);
+      final sW = finalDiam * 0.78 * sp;
+      final sH = pEh * 0.20 * sp;
+      widgets.add(Positioned(
+        left: slotCX - sW / 2,
+        top:  slotCY - sH * 0.5,
+        child: Opacity(
+          opacity: (sp * 0.32 * coinOpacity).clamp(0.0, 1.0),
+          child: Container(
+            width: sW, height: sH,
+            decoration: BoxDecoration(
+              color: const Color(0xFF040A14),
+              borderRadius: BorderRadius.circular(sH / 2),
+            ),
+          ),
+        ),
+      ));
+    }
+
+    // The coin itself
+    widgets.add(Positioned(
+      left: slotCX + wobbleX - faceCXInWidget,
+      top:  coinCenterY - faceCYInWidget,
+      child: Opacity(
+        opacity: coinOpacity.clamp(0.0, 1.0),
+        child: Transform(
+          alignment: Alignment.topCenter,
+          transform: Matrix4.diagonal3Values(
+            1.0, coinScaleY.clamp(0.0, 1.0), 1.0,
+          ),
+          child: CustomPaint(
+            size: Size(widgetW, widgetH),
+            painter: _ShekelCoinPainter(
+              shimmerPhase: _shimCtrl.value,
+              wobble:       wobble,
+            ),
+          ),
+        ),
+      ),
+    ));
+
+    return widgets;
+  }
+
+  // ── impact sparkles ──────────────────────────────────────────────────────
+  List<Widget> _buildSparkles(double cW, double cH) {
+    final pCylW   = cW * 0.42;
+    final pEh     = pCylW * 0.22;
+    final pCylTop = cH * 0.14;
+    final slotCX  = cW / 2;
+    final slotCY  = pCylTop - pEh * 0.18;
+    final sp  = _flashCtrl.value;
+    final opa = (1.0 - sp * 1.05).clamp(0.0, 1.0);
+    final widgets = <Widget>[];
+
+    // Outer gold sparks
+    for (int i = 0; i < 11; i++) {
+      final angle = (i / 11) * math.pi * 2 + 0.22;
+      final dist  = sp * 38;
+      final sx = slotCX + math.cos(angle) * dist;
+      final sy = slotCY + math.sin(angle) * dist;
+      final sz = 5.0 * (1.0 - sp * 0.45);
+      widgets.add(Positioned(
+        left: sx - sz / 2, top: sy - sz / 2,
+        child: Opacity(
+          opacity: opa,
+          child: Container(
+            width: sz, height: sz,
+            decoration: BoxDecoration(
+              color: const Color(0xFFFFD700),
+              shape: BoxShape.circle,
+              boxShadow: [BoxShadow(
+                color: const Color(0xFFFFD700).withValues(alpha: 0.65),
+                blurRadius: 7,
+              )],
+            ),
+          ),
+        ),
+      ));
+    }
+
+    // Inner white-hot sparks
+    for (int i = 0; i < 7; i++) {
+      final angle = ((i + 0.45) / 7) * math.pi * 2 + 0.55;
+      final dist  = sp * 20;
+      final sx = slotCX + math.cos(angle) * dist;
+      final sy = slotCY + math.sin(angle) * dist;
+      final sz = 2.8 * (1.0 - sp);
+      widgets.add(Positioned(
+        left: sx - sz / 2, top: sy - sz / 2,
+        child: Opacity(
+          opacity: (opa * 0.85).clamp(0.0, 1.0),
+          child: Container(
+            width: sz, height: sz,
+            decoration: const BoxDecoration(
+              color: Colors.white, shape: BoxShape.circle,
+            ),
+          ),
+        ),
+      ));
+    }
+
+    return widgets;
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// PUSHKA PAINTER  — fully custom 3-D glassmorphism box + coin
+//  SHEKEL COIN PAINTER
+//
+//  Ancient bronze-gold coin viewed at ~50° tilt.
+//  Key design principles:
+//    - Diagonal metallic gradient (upper-left lit, lower-right shadow)
+//    - Thick visible rim showing coin depth
+//    - ₪ symbol CARVED in: shadow stack + highlight rim + dark floor
+//    - Clip everything to face ellipse (no bleeding)
+//    - Subtle wobble varies tilt during fall
 // ─────────────────────────────────────────────────────────────────────────────
 
-class _PushkaPainter extends CustomPainter {
-  final double  entrance;     // 0→1 box scale-in
-  final double? coinProgress; // null=hidden; 0→1 fall
-  final bool    coinInBox;    // true once coin is inside
-  final double  impactT;      // 0→1 bounce curve
-  final double  innerGlow;    // 0→1 internal light
-  final double  ambientGlow;  // 0→1 idle pulse
-  final double  shimmer;      // 0→1 repeating
+class _ShekelCoinPainter extends CustomPainter {
+  final double shimmerPhase; // 0→1, looping
+  final double wobble;       // -1→1, lateral rocking during fall
 
-  const _PushkaPainter({
-    required this.entrance,
-    required this.coinProgress,
-    required this.coinInBox,
-    required this.impactT,
-    required this.innerGlow,
-    required this.ambientGlow,
-    required this.shimmer,
+  const _ShekelCoinPainter({
+    required this.shimmerPhase,
+    this.wobble = 0.0,
   });
 
-  // ── scene config ──────────────────────────────────────────────────────────
-  // Camera positioned to show front, right and top faces cleanly.
-  static const _hs   = 0.54;  // box half-size (world units)
-  static const _camP = _V3(0.85, 0.95, 2.20);
-  static const _camT = _V3(0.0,  0.0,  0.0);
+  // Antique bronze-gold palette — warm, earthy, NOT modern shiny
+  static const _cBright  = Color(0xFFFAE28C); // brightest catch-light
+  static const _cLight   = Color(0xFFD4A830); // lit upper area
+  static const _cMid     = Color(0xFFAA8220); // mid-tone metal
+  static const _cBase    = Color(0xFF886018); // base bronze
+  static const _cShadow  = Color(0xFF583C0A); // shadow metal
+  static const _cDark    = Color(0xFF2C1800); // deep shadow / near black-brown
 
-  // Key light direction (normalised by caller)
-  static final _kLight = const _V3(1.0, 2.4, 1.3).n;
-  // Rim light (back-top-left)
-  static final _rLight = const _V3(-0.9, 0.6, -0.4).n;
-
-  // ── palette ───────────────────────────────────────────────────────────────
-  static const _faceColors = <String, List<Color>>{
-    'top':   [Color(0xFF7BC5FF), Color(0xFF4A98EC)],
-    'front': [Color(0xFF4A90E8), Color(0xFF1C5CB0)],
-    'right': [Color(0xFF2268C8), Color(0xFF0D3A88)],
-  };
-  static const _edgeColor    = Color(0xFFAAD8FF);
-  static const _slotDark     = Color(0xFF04101E);
-  static const _glassOpacity = 0.74;
-
-  // ─────────────────────────────────────────────────────────────────────────
   @override
   void paint(Canvas canvas, Size size) {
-    // Set up camera
-    final cam = _Cam(
-      pos: _camP, target: _camT,
-      fovYDeg: 42, canvasH: size.height,
+    final d = size.width;
+
+    // ── Geometry ───────────────────────────────────────────────────────────
+    // faceRy/faceRx ≈ 0.62 → clearly viewing coin at ~52° tilt
+    // wobble subtly varies the tilt angle (coin rocks as it falls)
+    final faceRx = d * 0.460;
+    final tiltRatio = (0.62 + wobble * 0.035).clamp(0.52, 0.74);
+    final faceRy = faceRx * tiltRatio;
+    final faceCX = d * 0.500 + wobble * d * 0.014;
+    final faceCY = d * 0.340;
+    final faceRect = Rect.fromCenter(
+      center: Offset(faceCX, faceCY),
+      width:  faceRx * 2,
+      height: faceRy * 2,
     );
-    Offset? p(_V3 w) => cam.project(w, size);
 
-    // Entrance + bounce scale (pivot = visual centre of box)
-    final pivot = p(const _V3(0, 0, 0)) ?? Offset(size.width/2, size.height/2);
-    final sc = entrance * _bounceScale(impactT);
+    // Rim: the visible cylindrical edge below the face
+    final rimH    = d * 0.25;
+    final rimTopY = faceCY + faceRy - 1.0;
 
-    canvas.save();
-    canvas.translate(pivot.dx, pivot.dy);
-    canvas.scale(sc);
-    canvas.translate(-pivot.dx, -pivot.dy);
+    // ════════════════════════════════════════════════════════════════════
+    //  DRAW ORDER: ground shadow → rim → face → engraving → highlights
+    // ════════════════════════════════════════════════════════════════════
 
-    // ── 8 projected box vertices ─────────────────────────────────────────
-    //  Index layout (standard cube):
-    //  0(-,-,-) 1(+,-,-) 2(+,+,-) 3(-,+,-)
-    //  4(-,-,+) 5(+,-,+) 6(+,+,+) 7(-,+,+)
-    final pts = [
-      p(const _V3(-_hs,-_hs,-_hs)),  // 0
-      p(const _V3( _hs,-_hs,-_hs)),  // 1
-      p(const _V3( _hs, _hs,-_hs)),  // 2
-      p(const _V3(-_hs, _hs,-_hs)),  // 3
-      p(const _V3(-_hs,-_hs, _hs)),  // 4
-      p(const _V3( _hs,-_hs, _hs)),  // 5
-      p(const _V3( _hs, _hs, _hs)),  // 6
-      p(const _V3(-_hs, _hs, _hs)),  // 7
-    ];
-
-    // Abort if any vertex failed to project
-    if (pts.any((o) => o == null)) {
-      canvas.restore();
-      return;
-    }
-    final v = pts.map((o) => o!).toList();
-
-    // ── Soft shadow under box ─────────────────────────────────────────────
-    _drawShadow(canvas, size, sc);
-
-    // ── Ambient blue halo behind box ──────────────────────────────────────
-    final haloCentre = _avgOffset([v[4], v[5], v[6], v[7], v[2], v[3]]);
-    canvas.drawCircle(
-      haloCentre,
-      90 + ambientGlow * 22,
+    // ── 1. Ground shadow beneath the coin ─────────────────────────────
+    canvas.drawOval(
+      Rect.fromCenter(
+        center: Offset(faceCX + 4, rimTopY + rimH + d * 0.09),
+        width: faceRx * 3.2, height: faceRy * 0.48,
+      ),
       Paint()
-        ..shader = ui.Gradient.radial(
-          haloCentre,
-          90 + ambientGlow * 22,
-          [
-            const Color(0xFF4A98EC).withValues(
-                alpha: 0.22 + ambientGlow * 0.12),
-            Colors.transparent,
-          ],
+        ..color = _cDark.withValues(alpha: 0.36)
+        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 18),
+    );
+
+    // ── 2. Rim — thick cylindrical edge showing coin depth ────────────
+    {
+      canvas.save();
+      canvas.clipRect(Rect.fromLTRB(
+        faceCX - faceRx - 1, rimTopY - 1,
+        faceCX + faceRx + 1, rimTopY + rimH + faceRy * 0.34 + 1,
+      ));
+
+      // Rim side — horizontal gradient simulating curved cylindrical surface
+      // Lit at center-left (where cylinder curves toward viewer), dark at edges
+      canvas.drawRect(
+        Rect.fromLTRB(faceCX - faceRx, rimTopY, faceCX + faceRx, rimTopY + rimH),
+        Paint()
+          ..shader = ui.Gradient.linear(
+            Offset(faceCX - faceRx, 0), Offset(faceCX + faceRx, 0),
+            [_cDark, _cShadow, _cBase, _cLight, _cBright, _cMid, _cShadow, _cDark],
+            const [0.0, 0.08, 0.24, 0.44, 0.55, 0.72, 0.90, 1.0],
+          ),
+      );
+
+      // Bottom arc of rim
+      canvas.drawOval(
+        Rect.fromCenter(
+          center: Offset(faceCX, rimTopY + rimH),
+          width: faceRx * 2, height: faceRy * 0.46,
         ),
-    );
-
-    // ── Back faces (very transparent — gives glass depth) ─────────────────
-    // Back face (z–): v0,v1,v2,v3  — only bottom strip visible for depth
-    _drawFaceRaw(canvas, [v[0], v[1], v[2], v[3]],
-        const Color(0xFF6AABFF).withValues(alpha: 0.10));
-    // Left face (x–): v4,v0,v3,v7
-    _drawFaceRaw(canvas, [v[4], v[0], v[3], v[7]],
-        const Color(0xFF5590E0).withValues(alpha: 0.10));
-
-    // ── Right face ────────────────────────────────────────────────────────
-    _drawGlassFace(
-      canvas,
-      verts:   [v[5], v[1], v[2], v[6]],
-      topColor: _faceColors['right']![0],
-      botColor: _faceColors['right']![1],
-      normal:  const _V3(1, 0, 0),
-      opacity: _glassOpacity - 0.08,
-      glossRatio: 0.30,
-      innerGlow:  innerGlow,
-    );
-
-    // ── Front face ────────────────────────────────────────────────────────
-    _drawGlassFace(
-      canvas,
-      verts:    [v[4], v[5], v[6], v[7]],
-      topColor: _faceColors['front']![0],
-      botColor: _faceColors['front']![1],
-      normal:   const _V3(0, 0, 1),
-      opacity:  _glassOpacity,
-      glossRatio: 0.40,
-      innerGlow:  innerGlow,
-    );
-
-    // Star of David on front face
-    final frontCentre = _avgOffset([v[4], v[5], v[6], v[7]]);
-    // Estimate star radius from face width
-    final faceW = (v[5] - v[4]).distance;
-    _drawStarOfDavid(canvas, frontCentre + Offset(0, faceW * 0.06), faceW * 0.18);
-
-    // ── Top face ──────────────────────────────────────────────────────────
-    _drawGlassFace(
-      canvas,
-      verts:    [v[7], v[6], v[2], v[3]],
-      topColor: _faceColors['top']![0],
-      botColor: _faceColors['top']![1],
-      normal:   const _V3(0, 1, 0),
-      opacity:  _glassOpacity + 0.04,
-      glossRatio: 0.55,
-      innerGlow:  innerGlow,
-    );
-
-    // ── Edge highlights (lit edges — simulate glass thickness) ────────────
-    _drawEdges(canvas, v);
-
-    // ── Coin slot ─────────────────────────────────────────────────────────
-    final slotPts = [
-      p(const _V3(-0.15, _hs + 0.003, -0.13)),
-      p(const _V3( 0.15, _hs + 0.003, -0.13)),
-      p(const _V3( 0.15, _hs + 0.003,  0.01)),
-      p(const _V3(-0.15, _hs + 0.003,  0.01)),
-    ];
-    if (slotPts.every((o) => o != null)) {
-      final sp = slotPts.map((o) => o!).toList();
-      final slotPath = _polyPath(sp);
-      canvas.drawPath(slotPath, Paint()..color = _slotDark);
-      // Slot edge highlight
-      canvas.drawPath(
-        slotPath,
         Paint()
-          ..color = Colors.white.withValues(alpha: 0.22)
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = 1.0,
+          ..shader = ui.Gradient.linear(
+            Offset(faceCX - faceRx, 0), Offset(faceCX + faceRx, 0),
+            [_cDark, _cShadow, _cBase, _cShadow, _cDark],
+            const [0.0, 0.18, 0.50, 0.82, 1.0],
+          ),
       );
-    }
 
-    canvas.restore(); // ← end of box transform
+      canvas.restore();
 
-    // ── Coin (drawn after restore — independent of box transform) ─────────
-    if (coinProgress != null) {
-      // World position along fall path
-      const startY = _hs + 1.30;
-      const endY   = _hs + 0.05;
-      final worldY = startY + (endY - startY) * coinProgress!;
-      final coinWorld = _V3(0.0, worldY, -0.06);
-      _drawCoin(canvas, cam, coinWorld, size,
-          rotation: sin(coinProgress! * pi * 1.4) * 0.14,
-          shimmer: 0.0);
-    } else if (coinInBox && innerGlow < 0.3) {
-      // Brief "coin just entered" flash on slot
-    }
-  }
-
-  // ── Glassmorphism face ───────────────────────────────────────────────────
-
-  void _drawGlassFace(
-    Canvas canvas, {
-    required List<Offset> verts,
-    required Color topColor,
-    required Color botColor,
-    required _V3 normal,
-    required double opacity,
-    required double glossRatio,
-    required double innerGlow,
-  }) {
-    // Phong diffuse from key light
-    final diffuse = max(0.0, normal.dot(_kLight));
-    // Rim light
-    final rim     = max(0.0, normal.dot(_rLight)) * 0.18;
-    final light   = (0.38 + 0.62 * diffuse + rim).clamp(0.0, 1.0);
-
-    final path   = _polyPath(verts);
-    final bounds = path.getBounds();
-    final top    = Offset(bounds.left  + bounds.width  * 0.5, bounds.top);
-    final bot    = Offset(bounds.right - bounds.width  * 0.5, bounds.bottom);
-
-    // Base glass fill
-    canvas.drawPath(
-      path,
-      Paint()
-        ..shader = ui.Gradient.linear(top, bot, [
-          topColor.withValues(alpha: opacity * light),
-          botColor.withValues(alpha: opacity * light * 0.72),
-        ]),
-    );
-
-    // Gloss highlight (top portion of face)
-    if (glossRatio > 0) {
-      final glossBot = Offset(
-        bounds.left  + bounds.width  * 0.5,
-        bounds.top   + bounds.height * glossRatio,
-      );
-      final glossPath = Path()
-        ..moveTo(verts[0].dx, verts[0].dy)
-        ..lineTo(verts[1].dx, verts[1].dy)
-        ..lineTo(
-          verts[1].dx * (1 - glossRatio) + verts[2].dx * glossRatio,
-          verts[1].dy * (1 - glossRatio) + verts[2].dy * glossRatio,
-        )
-        ..lineTo(
-          verts[0].dx * (1 - glossRatio) + verts[3].dx * glossRatio,
-          verts[0].dy * (1 - glossRatio) + verts[3].dy * glossRatio,
-        )
-        ..close();
-      canvas.drawPath(
-        glossPath,
+      // Catch-light at top of rim (narrow bright ellipse at rim-face junction)
+      // This single detail makes the rim look 3D immediately
+      canvas.drawOval(
+        Rect.fromCenter(
+          center: Offset(faceCX, rimTopY + 0.5),
+          width:  faceRx * 1.82,
+          height: faceRy * 0.26,
+        ),
         Paint()
-          ..shader = ui.Gradient.linear(top, glossBot, [
-            Colors.white.withValues(alpha: 0.22 * light),
-            Colors.white.withValues(alpha: 0.0),
-          ]),
+          ..shader = ui.Gradient.linear(
+            Offset(faceCX - faceRx, 0), Offset(faceCX + faceRx, 0),
+            [
+              Colors.transparent,
+              _cLight.withValues(alpha: 0.55),
+              _cBright.withValues(alpha: 0.92),
+              _cLight.withValues(alpha: 0.55),
+              Colors.transparent,
+            ],
+            const [0.0, 0.18, 0.50, 0.82, 1.0],
+          ),
       );
     }
 
-    // Internal glow — warm cyan pulse after coin enters
-    if (innerGlow > 0.01) {
-      final centre = Offset(
-        (verts[0].dx + verts[1].dx + verts[2].dx + verts[3].dx) / 4,
-        (verts[0].dy + verts[1].dy + verts[2].dy + verts[3].dy) / 4,
-      );
-      final r = bounds.width * 0.6;
-      canvas.drawCircle(
-        centre, r,
-        Paint()
-          ..shader = ui.Gradient.radial(centre, r, [
-            const Color(0xFF80DDFF).withValues(alpha: 0.28 * innerGlow),
-            Colors.transparent,
-          ]),
-      );
-    }
-
-    // Face rim (thin border — glass edge)
-    canvas.drawPath(
-      path,
-      Paint()
-        ..color = Colors.white.withValues(alpha: 0.14)
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 1.0,
-    );
-  }
-
-  // ── Back-face raw fill (transparency depth) ──────────────────────────────
-  void _drawFaceRaw(Canvas canvas, List<Offset> verts, Color color) {
-    canvas.drawPath(_polyPath(verts), Paint()..color = color);
-  }
-
-  // ── Lit edges ────────────────────────────────────────────────────────────
-  void _drawEdges(Canvas canvas, List<Offset> v) {
-    void e(Offset a, Offset b, double alpha, double w) {
-      canvas.drawLine(
-        a, b,
-        Paint()
-          ..color = _edgeColor.withValues(alpha: alpha)
-          ..strokeWidth = w
-          ..strokeCap = StrokeCap.round,
-      );
-    }
-    // Top edges — brightest (lit from above)
-    e(v[7], v[6], 0.65, 2.2); // top-front
-    e(v[3], v[7], 0.50, 1.8); // top-left
-    e(v[6], v[2], 0.40, 1.6); // top-right
-    e(v[2], v[3], 0.28, 1.4); // top-back
-    // Vertical front edges
-    e(v[4], v[7], 0.35, 1.6); // front-left
-    e(v[5], v[6], 0.25, 1.4); // front-right
-    // Bottom edges (subtle)
-    e(v[4], v[5], 0.18, 1.2); // bottom-front
-    // Right-face bottom
-    e(v[1], v[5], 0.14, 1.2);
-    e(v[2], v[1], 0.12, 1.0);
-  }
-
-  // ── Star of David ────────────────────────────────────────────────────────
-  void _drawStarOfDavid(Canvas canvas, Offset centre, double r) {
-    final paint = Paint()
-      ..color = Colors.white.withValues(alpha: 0.82)
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 2.0
-      ..strokeJoin = StrokeJoin.round
-      ..strokeCap  = StrokeCap.round;
-
-    for (int t = 0; t < 2; t++) {
-      final rot = t * pi;
-      final path = Path();
-      for (int i = 0; i < 3; i++) {
-        final a = rot + i * (2 * pi / 3) - pi / 2;
-        final pt = Offset(centre.dx + r * cos(a), centre.dy + r * sin(a));
-        i == 0 ? path.moveTo(pt.dx, pt.dy) : path.lineTo(pt.dx, pt.dy);
-      }
-      path.close();
-      canvas.drawPath(path, paint);
-    }
-  }
-
-  // ── Drop shadow ──────────────────────────────────────────────────────────
-  void _drawShadow(Canvas canvas, Size size, double sc) {
-    final c = Offset(size.width / 2 + 9, size.height * 0.71);
-    final r = Rect.fromCenter(center: c, width: 168 * sc, height: 34 * sc);
-    canvas.drawOval(
-      r,
-      Paint()
-        ..shader = ui.Gradient.radial(c, 84 * sc, [
-          Colors.black.withValues(alpha: 0.38),
-          Colors.transparent,
-        ])
-        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 10),
-    );
-  }
-
-  // ── 3-D Coin ─────────────────────────────────────────────────────────────
-  void _drawCoin(
-    Canvas canvas, _Cam cam, _V3 worldPos, Size size, {
-    required double rotation,
-    required double shimmer,
-  }) {
-    const r = 0.132; // coin radius in world units
-
-    final centre = cam.project(worldPos, size);
-    if (centre == null) return;
-
-    // Project disc cardinal points to find screen ellipse axes
-    final rPt  = cam.project(worldPos + const _V3(r, 0, 0), size);
-    final fwPt = cam.project(worldPos + const _V3(0, 0, r), size);
-    if (rPt == null || fwPt == null) return;
-
-    final rx = (rPt - centre).distance;
-    // Depth-axis compression (disc horizontal, viewed from above-ish)
-    final ry = (fwPt - centre).distance * 0.52;
-
+    // ── 3. Coin face ───────────────────────────────────────────────────
+    // Clip all face layers to the face ellipse
+    final facePath = Path()..addOval(faceRect);
     canvas.save();
-    canvas.translate(centre.dx, centre.dy);
-    canvas.rotate(rotation);
+    canvas.clipPath(facePath);
 
-    // Outer glow
-    final glowR = rx * 2.2;
-    canvas.drawCircle(
-      Offset.zero, glowR,
-      Paint()
-        ..shader = ui.Gradient.radial(Offset.zero, glowR, [
-          const Color(0xFFFFD700).withValues(alpha: 0.60),
-          const Color(0xFFFFD700).withValues(alpha: 0.0),
-        ]),
-    );
-
-    // Coin body (ellipse)
-    final coinRect = Rect.fromCenter(
-        center: Offset.zero, width: rx * 2, height: ry * 2);
-    canvas.drawOval(
-      coinRect,
+    // Layer A: Primary diagonal metallic gradient
+    // Upper-left is near-white warm, lower-right is near-black brown
+    // This is the FOUNDATION of the metallic look
+    canvas.drawRect(
+      faceRect.inflate(2),
       Paint()
         ..shader = ui.Gradient.linear(
-          Offset(-rx * 0.4, -ry * 0.5),
-          Offset( rx * 0.5,  ry * 0.5),
-          const [
-            Color(0xFFFFF8B0),
-            Color(0xFFFFD700),
-            Color(0xFFD4AF37),
-            Color(0xFF9A7020),
+          Offset(faceCX - faceRx * 0.92, faceCY - faceRy * 1.05),
+          Offset(faceCX + faceRx * 0.92, faceCY + faceRy * 1.05),
+          [
+            const Color(0xFFFFF4C8), // near-white warm highlight
+            _cBright,
+            _cLight,
+            _cMid,
+            _cBase,
+            _cShadow,
+            _cDark,
           ],
-          const [0.0, 0.28, 0.65, 1.0],
+          const [0.0, 0.07, 0.22, 0.42, 0.62, 0.82, 1.0],
         ),
     );
 
-    // Rim
-    canvas.drawOval(
-      Rect.fromCenter(center: Offset.zero, width: rx*2-2, height: ry*2-1.5),
+    // Layer B: Radial curvature vignette — edges are darker (spherical look)
+    canvas.drawRect(
+      faceRect.inflate(2),
       Paint()
-        ..color = const Color(0xFFA07820)
+        ..shader = ui.Gradient.radial(
+          Offset(faceCX - faceRx * 0.08, faceCY - faceRy * 0.06),
+          faceRx * 1.22,
+          [
+            Colors.transparent,
+            Colors.transparent,
+            _cDark.withValues(alpha: 0.44),
+          ],
+          const [0.0, 0.52, 1.0],
+        ),
+    );
+
+    // Layer C: Worn patina — ancient coins have surface texture variation
+    canvas.drawOval(
+      Rect.fromCenter(
+        center: Offset(faceCX + faceRx * 0.30, faceCY + faceRy * 0.26),
+        width: faceRx * 0.78, height: faceRy * 0.78,
+      ),
+      Paint()
+        ..shader = ui.Gradient.radial(
+          Offset(faceCX + faceRx * 0.30, faceCY + faceRy * 0.26),
+          faceRx * 0.39,
+          [_cDark.withValues(alpha: 0.18), Colors.transparent],
+        ),
+    );
+    canvas.drawOval(
+      Rect.fromCenter(
+        center: Offset(faceCX - faceRx * 0.17, faceCY + faceRy * 0.06),
+        width: faceRx * 0.48, height: faceRy * 0.48,
+      ),
+      Paint()
+        ..shader = ui.Gradient.radial(
+          Offset(faceCX - faceRx * 0.17, faceCY + faceRy * 0.06),
+          faceRx * 0.24,
+          [_cDark.withValues(alpha: 0.14), Colors.transparent],
+        ),
+    );
+
+    canvas.restore(); // end face clip
+
+    // ── 4. Edge details ────────────────────────────────────────────────
+    // Dark outer border (the milled edge of an ancient coin)
+    canvas.drawOval(
+      faceRect.deflate(0.5),
+      Paint()
+        ..color = _cDark.withValues(alpha: 0.82)
         ..style = PaintingStyle.stroke
         ..strokeWidth = 1.6,
     );
-
-    // Specular
-    final hiOff = Offset(-rx * 0.26, -ry * 0.32);
+    // Inner raised border ring (seen on real ancient coins between edge and design)
     canvas.drawOval(
-      Rect.fromCenter(center: hiOff, width: rx * 0.9, height: ry * 0.65),
+      faceRect.deflate(5.5),
       Paint()
-        ..shader = ui.Gradient.radial(hiOff, rx * 0.45, [
-          Colors.white.withValues(alpha: 0.72),
-          Colors.transparent,
-        ]),
+        ..color = _cShadow.withValues(alpha: 0.48)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.1,
     );
 
-    // Shimmer sweep
-    if (shimmer > 0.01) {
-      final sx = -rx + shimmer * rx * 2.6;
-      final so = Offset(sx, -ry * 0.12);
-      canvas.drawOval(
-        Rect.fromCenter(center: so, width: rx * 0.72, height: ry * 0.52),
-        Paint()
-          ..shader = ui.Gradient.radial(so, rx * 0.36, [
-            Colors.white.withValues(alpha: 0.50 * sin(shimmer * pi)),
-            Colors.transparent,
-          ]),
-      );
+    // ── 5. ₪ Carved engraving ──────────────────────────────────────────
+    //
+    // The symbol is STAMPED into the coin — a recess in the metal.
+    // Light source: upper-left.
+    // Rendering model:
+    //   • Shadow pass 1 (far offset, darkest) — the deep floor of the pit
+    //   • Shadow pass 2 (medium offset)       — shadow transition
+    //   • Shadow pass 3 (small offset)        — soft penumbra
+    //   • Highlight pass (opposite offset)    — light catching the cut edge
+    //   • Main pass (no offset)               — the actual recessed surface
+    //
+    // The canvas is scaled so that drawing in a unit-circle space
+    // maps to the tilted face ellipse (correct perspective foreshortening).
+    canvas.save();
+    canvas.translate(faceCX, faceCY);
+    canvas.scale(faceRx / (d * 0.5), faceRy / (d * 0.5));
+
+    // Clip to face (in scaled space a circle = ellipse in screen space)
+    canvas.clipPath(
+      Path()..addOval(
+        Rect.fromCenter(center: Offset.zero, width: d * 0.98, height: d * 0.98),
+      ),
+    );
+
+    final symSize = d * 0.46;
+
+    void stamp(Offset off, Color col, double a) {
+      final tp = TextPainter(
+        text: TextSpan(
+          text: '₪',
+          style: TextStyle(
+            fontSize: symSize,
+            fontWeight: FontWeight.w900,
+            color: col.withValues(alpha: a),
+            height: 1.0,
+          ),
+        ),
+        textDirection: TextDirection.ltr,
+      )..layout();
+      tp.paint(canvas, off + Offset(-tp.width / 2, -tp.height / 2));
     }
+
+    // Shadow layers — offset toward lower-right (away from light)
+    stamp(const Offset( 3.2,  4.2), _cDark,   1.00); // deepest pit floor shadow
+    stamp(const Offset( 2.0,  2.8), _cDark,   0.88);
+    stamp(const Offset( 1.0,  1.5), _cShadow, 0.72);
+    // Highlight layer — offset toward upper-left (light catching cut edge)
+    stamp(const Offset(-1.4, -1.8), _cBright, 0.35);
+    // Main body — the recessed metal surface (must be DARKER than the face)
+    stamp(Offset.zero,               const Color(0xFF3A1E00), 1.00);
 
     canvas.restore();
-  }
 
-  // ── Bounce/squish curve ───────────────────────────────────────────────────
-  double _bounceScale(double t) {
-    if (t == 0.0) return 1.0;
-    if (t < 0.22) return 1.0 + t / 0.22 * 0.065;
-    if (t < 0.52) return 1.065 - (t - 0.22) / 0.30 * 0.105;
-    if (t < 0.78) return 0.960 + (t - 0.52) / 0.26 * 0.050;
-    return 1.010 - (t - 0.78) / 0.22 * 0.010;
-  }
+    // ── 6. Specular highlight ──────────────────────────────────────────
+    // Warm, soft — ancient metal doesn't mirror-reflect
+    final spX = faceCX - faceRx * 0.28;
+    final spY = faceCY - faceRy * 0.30;
+    canvas.drawOval(
+      Rect.fromCenter(
+        center: Offset(spX, spY),
+        width:  faceRx * 0.54,
+        height: faceRy * 0.48,
+      ),
+      Paint()
+        ..shader = ui.Gradient.radial(
+          Offset(spX, spY), faceRx * 0.27,
+          [
+            const Color(0xFFFFF8DC).withValues(alpha: 0.65),
+            const Color(0xFFD4A830).withValues(alpha: 0.18),
+            Colors.transparent,
+          ],
+          const [0.0, 0.55, 1.0],
+        ),
+    );
 
-  // ── Helpers ───────────────────────────────────────────────────────────────
-  static Path _polyPath(List<Offset> pts) {
-    final path = Path()..moveTo(pts[0].dx, pts[0].dy);
-    for (int i = 1; i < pts.length; i++) {
-      path.lineTo(pts[i].dx, pts[i].dy);
-    }
-    return path..close();
-  }
+    // Gloss band along top edge (ancient polish)
+    canvas.drawOval(
+      Rect.fromCenter(
+        center: Offset(faceCX - faceRx * 0.04, faceCY - faceRy * 0.60),
+        width:  faceRx * 1.48,
+        height: faceRy * 0.28,
+      ),
+      Paint()
+        ..shader = ui.Gradient.linear(
+          Offset(faceCX, faceCY - faceRy),
+          Offset(faceCX, faceCY - faceRy * 0.34),
+          [
+            const Color(0xFFFFF8DC).withValues(alpha: 0.26),
+            Colors.transparent,
+          ],
+        ),
+    );
 
-  static Offset _avgOffset(List<Offset> pts) {
-    double sx = 0, sy = 0;
-    for (final p in pts) { sx += p.dx; sy += p.dy; }
-    return Offset(sx / pts.length, sy / pts.length);
+    // ── 7. Animated shimmer ────────────────────────────────────────────
+    // Slow warm shimmer orbiting the face like light catching worn metal
+    final shimAngle = shimmerPhase * math.pi * 2 + math.pi * 0.60;
+    final shimX = faceCX + math.cos(shimAngle) * faceRx * 0.36;
+    final shimY = faceCY + math.sin(shimAngle) * faceRy * 0.34;
+    canvas.drawOval(
+      Rect.fromCenter(
+        center: Offset(shimX, shimY),
+        width:  faceRx * 0.30,
+        height: faceRy * 0.26,
+      ),
+      Paint()
+        ..shader = ui.Gradient.radial(
+          Offset(shimX, shimY), faceRx * 0.15,
+          [_cLight.withValues(alpha: 0.38), Colors.transparent],
+        ),
+    );
   }
 
   @override
-  bool shouldRepaint(_PushkaPainter o) =>
-      o.entrance     != entrance     ||
-      o.coinProgress != coinProgress ||
-      o.coinInBox    != coinInBox    ||
-      o.impactT      != impactT      ||
-      o.innerGlow    != innerGlow    ||
-      o.ambientGlow  != ambientGlow  ||
-      o.shimmer      != shimmer;
+  bool shouldRepaint(_ShekelCoinPainter old) =>
+      old.shimmerPhase != shimmerPhase || old.wobble != wobble;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// GOLD PARTICLES
+//  GOLDEN GLOW  — small point at coin slot → expands to fill cylinder body
+//  Late stage: bleeds outside cylinder as warm external bloom
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _GoldenGlowPainter extends CustomPainter {
+  final double glowT;   // 0→1, already eased
+  final double sceneW;
+  final double sceneH;
+
+  const _GoldenGlowPainter({
+    required this.glowT,
+    required this.sceneW,
+    required this.sceneH,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (glowT <= 0) return;
+
+    final cylW   = sceneW * 0.42;
+    final cylH   = sceneH * 0.765;
+    final cx     = sceneW / 2;
+    final cylTop = sceneH * 0.14;
+    final cylBot = cylTop + cylH;
+    final cylL   = cx - cylW / 2;
+    final cylR   = cx + cylW / 2;
+
+    // Ramp up opacity in the first 10%
+    final fadeIn = glowT < 0.10 ? glowT / 0.10 : 1.0;
+    final alpha  = fadeIn.clamp(0.0, 1.0);
+
+    // ── Interior glow (clipped to cylinder) ───────────────────────────
+    canvas.save();
+    canvas.clipRect(Rect.fromLTRB(cylL, cylTop, cylR, cylBot));
+
+    // Glow origin: just inside the coin slot
+    final origin = Offset(cx, cylTop + cylH * 0.11);
+
+    // Radius: starts at 5px, expands to fill the entire cylinder diagonally
+    final maxR    = math.sqrt(cylW * cylW + cylH * cylH) * 0.98;
+    final currentR = 5.0 + glowT * (maxR - 5.0);
+
+    canvas.drawCircle(
+      origin, currentR,
+      Paint()
+        ..shader = ui.Gradient.radial(
+          origin, currentR,
+          [
+            Colors.white.withValues(alpha:              0.96 * alpha),
+            const Color(0xFFFFF8C8).withValues(alpha:   0.86 * alpha),
+            const Color(0xFFFFD700).withValues(alpha:   0.72 * alpha),
+            const Color(0xFFE8A800).withValues(alpha:   0.42 * alpha),
+            const Color(0xFFAA6600).withValues(alpha:   0.16 * alpha),
+            Colors.transparent,
+          ],
+          const [0.0, 0.07, 0.26, 0.54, 0.78, 1.0],
+        ),
+    );
+
+    canvas.restore();
+
+    // ── External bloom — glow bleeds out of glass walls after 65% ─────
+    if (glowT > 0.65) {
+      final bloomT = (glowT - 0.65) / 0.35;
+      final bloomR = cylW * 0.70 + bloomT * cylW * 1.30;
+      final bloomCY = cylTop + cylH * 0.50;
+
+      canvas.drawCircle(
+        Offset(cx, bloomCY), bloomR,
+        Paint()
+          ..shader = ui.Gradient.radial(
+            Offset(cx, bloomCY), bloomR,
+            [
+              const Color(0xFFFFD700).withValues(alpha: 0.22 * bloomT * alpha),
+              const Color(0xFFFF9000).withValues(alpha: 0.08 * bloomT * alpha),
+              Colors.transparent,
+            ],
+            const [0.0, 0.55, 1.0],
+          ),
+      );
+    }
+  }
+
+  @override
+  bool shouldRepaint(_GoldenGlowPainter o) => o.glowT != glowT;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  AMBIENT HALO  — soft blue halo that breathes behind the pushka.
+//  Warms to gold after impact.
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _AmbientHaloPainter extends CustomPainter {
+  final double pulse; // 0→1 repeat reverse
+  final double glowT; // 0→1 post-impact warmth
+
+  const _AmbientHaloPainter({required this.pulse, required this.glowT});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final cx = size.width  / 2;
+    final cy = size.height * 0.44;
+    final r  = size.width  * 0.48 + pulse * 22;
+
+    // Blue ambient halo
+    canvas.drawCircle(
+      Offset(cx, cy), r,
+      Paint()
+        ..shader = ui.Gradient.radial(
+          Offset(cx, cy), r,
+          [
+            const Color(0xFF2E6CC8).withValues(alpha: 0.10 + pulse * 0.05),
+            Colors.transparent,
+          ],
+        ),
+    );
+
+    // Post-impact: halo warms to golden as glow expands
+    if (glowT > 0.01) {
+      final warm = (glowT < 0.35 ? glowT / 0.35 : 1.0) * 0.24;
+      canvas.drawCircle(
+        Offset(cx, cy), r * 1.15,
+        Paint()
+          ..shader = ui.Gradient.radial(
+            Offset(cx, cy), r * 1.15,
+            [
+              const Color(0xFFFFD700).withValues(alpha: warm),
+              Colors.transparent,
+            ],
+          ),
+      );
+    }
+  }
+
+  @override
+  bool shouldRepaint(_AmbientHaloPainter o) =>
+      o.pulse != pulse || o.glowT != glowT;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  GOLD PARTICLES  — subtle floating dust particles
 // ─────────────────────────────────────────────────────────────────────────────
 
 class _GoldParticles extends StatefulWidget {
   const _GoldParticles();
-
   @override
   State<_GoldParticles> createState() => _GoldParticlesState();
 }
@@ -812,19 +965,18 @@ class _GoldParticlesState extends State<_GoldParticles>
   @override
   void initState() {
     super.initState();
-    final rng = Random(17);
-    for (int i = 0; i < 32; i++) {
+    final rng = math.Random(17);
+    for (int i = 0; i < 30; i++) {
       _ps.add(_P(
         x:       rng.nextDouble(),
         phase:   rng.nextDouble(),
-        speed:   0.09 + rng.nextDouble() * 0.11,
-        radius:  1.5  + rng.nextDouble() * 2.8,
-        opacity: 0.26 + rng.nextDouble() * 0.46,
-        drift:   (rng.nextDouble() - 0.5) * 0.06,
+        speed:   0.08 + rng.nextDouble() * 0.10,
+        radius:  1.4  + rng.nextDouble() * 2.6,
+        opacity: 0.22 + rng.nextDouble() * 0.42,
+        drift:   (rng.nextDouble() - 0.5) * 0.055,
       ));
     }
-    _ctrl = AnimationController(
-        vsync: this, duration: const Duration(seconds: 8))
+    _ctrl = AnimationController(vsync: this, duration: const Duration(seconds: 9))
       ..repeat();
   }
 
@@ -833,18 +985,18 @@ class _GoldParticlesState extends State<_GoldParticles>
 
   @override
   Widget build(BuildContext context) => AnimatedBuilder(
-        animation: _ctrl,
-        builder: (_, _) => CustomPaint(
-          painter: _PPainter(_ps, _ctrl.value),
-          size: Size.infinite,
-        ),
-      );
+    animation: _ctrl,
+    builder: (_, _) => CustomPaint(
+      painter: _PPainter(_ps, _ctrl.value),
+      size: Size.infinite,
+    ),
+  );
 }
 
 class _P {
   final double x, phase, speed, radius, opacity, drift;
   const _P({
-    required this.x, required this.phase, required this.speed,
+    required this.x,     required this.phase, required this.speed,
     required this.radius, required this.opacity, required this.drift,
   });
 }
@@ -861,12 +1013,13 @@ class _PPainter extends CustomPainter {
       final a  = ft < 0.10 ? ft / 0.10 : ft > 0.75 ? (1 - ft) / 0.25 : 1.0;
       canvas.drawCircle(
         Offset(
-          (p.x + sin(ft * pi * 2) * p.drift) * sz.width,
+          (p.x + math.sin(ft * math.pi * 2) * p.drift) * sz.width,
           sz.height * (1.0 - ft),
         ),
         p.radius,
         Paint()
-          ..color = const Color(0xFFD4AF37).withValues(alpha: p.opacity * a),
+          ..color = const Color(0xFFD4AF37)
+              .withValues(alpha: p.opacity * a * 0.65),
       );
     }
   }

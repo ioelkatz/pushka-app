@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Prohibit all cleartext (HTTP) traffic.
+  All app communication goes to Firebase, Stripe, and Google APIs — all HTTPS.
+  This config enforces TLS for every connection on all Android versions.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>

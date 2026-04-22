@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(flutter analyze *)",
+      "Bash(node --check functions/index.js)",
+      "WebFetch(domain:pub.dev)",
+      "WebSearch",
+      "WebFetch(domain:github.com)",
+      "Bash(start \"\" \"c:\\\\dev\\\\pushka_app\\\\docs\\\\770_wireframe.html\")",
+      "Bash(node -e ' *)",
+      "Bash(start c:/dev/pushka_app/docs/770_wireframe.html)"
+    ]
+  }
+}

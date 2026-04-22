@@ -1,4 +1,5 @@
 import 'package:firebase_analytics/firebase_analytics.dart';
+import 'package:flutter/foundation.dart';
 
 class AnalyticsService {
   AnalyticsService._();
@@ -8,57 +9,97 @@ class AnalyticsService {
   final FirebaseAnalytics _analytics = FirebaseAnalytics.instance;
 
   Future<void> setUserId(String? uid) async {
-    await _analytics.setUserId(id: uid);
+    try {
+      await _analytics.setUserId(id: uid);
+    } catch (e) {
+      debugPrint('Analytics.setUserId error: $e');
+    }
   }
 
   Future<void> logLogin(String method) async {
-    await _analytics.logLogin(loginMethod: method);
+    try {
+      await _analytics.logLogin(loginMethod: method);
+    } catch (e) {
+      debugPrint('Analytics.logLogin error: $e');
+    }
   }
 
   Future<void> logSignUp(String method) async {
-    await _analytics.logSignUp(signUpMethod: method);
+    try {
+      await _analytics.logSignUp(signUpMethod: method);
+    } catch (e) {
+      debugPrint('Analytics.logSignUp error: $e');
+    }
   }
 
   Future<void> logDonation(double amount, String currency) async {
-    await _analytics.logEvent(
-      name: 'donation',
-      parameters: {
-        'amount': amount,
-        'currency': currency,
-      },
-    );
+    try {
+      await _analytics.logEvent(
+        name: 'donation',
+        parameters: {
+          'amount': amount,
+          'currency': currency,
+        },
+      );
+    } catch (e) {
+      debugPrint('Analytics.logDonation error: $e');
+    }
   }
 
   Future<void> logPushkaEmpty(double amount) async {
-    await _analytics.logEvent(
-      name: 'pushka_empty',
-      parameters: {'amount': amount},
-    );
+    try {
+      await _analytics.logEvent(
+        name: 'pushka_empty',
+        parameters: {'amount': amount},
+      );
+    } catch (e) {
+      debugPrint('Analytics.logPushkaEmpty error: $e');
+    }
   }
 
   Future<void> logWalletFill(double amount) async {
-    await _analytics.logEvent(
-      name: 'wallet_fill',
-      parameters: {'amount': amount},
-    );
+    try {
+      await _analytics.logEvent(
+        name: 'wallet_fill',
+        parameters: {'amount': amount},
+      );
+    } catch (e) {
+      debugPrint('Analytics.logWalletFill error: $e');
+    }
   }
 
   Future<void> logWalletTransfer(double amount) async {
-    await _analytics.logEvent(
-      name: 'wallet_transfer',
-      parameters: {'amount': amount},
-    );
+    try {
+      await _analytics.logEvent(
+        name: 'wallet_transfer',
+        parameters: {'amount': amount},
+      );
+    } catch (e) {
+      debugPrint('Analytics.logWalletTransfer error: $e');
+    }
   }
 
   Future<void> logReminderCreated() async {
-    await _analytics.logEvent(name: 'reminder_created');
+    try {
+      await _analytics.logEvent(name: 'reminder_created');
+    } catch (e) {
+      debugPrint('Analytics.logReminderCreated error: $e');
+    }
   }
 
   Future<void> logReminderUpdated() async {
-    await _analytics.logEvent(name: 'reminder_updated');
+    try {
+      await _analytics.logEvent(name: 'reminder_updated');
+    } catch (e) {
+      debugPrint('Analytics.logReminderUpdated error: $e');
+    }
   }
 
   Future<void> logReminderDeleted() async {
-    await _analytics.logEvent(name: 'reminder_deleted');
+    try {
+      await _analytics.logEvent(name: 'reminder_deleted');
+    } catch (e) {
+      debugPrint('Analytics.logReminderDeleted error: $e');
+    }
   }
 }

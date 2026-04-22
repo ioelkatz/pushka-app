@@ -1,34 +1,46 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../hive_cache.dart';
+
+const _supportedCodes = ['es', 'en', 'fr', 'he'];
 
 final localeProvider = StateNotifierProvider<LocaleNotifier, Locale>((ref) {
-  return LocaleNotifier();
+  final saved = HiveCache.instance.loadLanguage();
+  final initial = (saved != null && _supportedCodes.contains(saved))
+      ? Locale(saved)
+      : const Locale('es');
+  return LocaleNotifier(initial);
 });
 
 class LocaleNotifier extends StateNotifier<Locale> {
-  LocaleNotifier() : super(const Locale('es'));
-
-  DateTime? _lastManualChange;
+  LocaleNotifier(super.initial);
 
   void setLocale(Locale locale) {
-    if (['es', 'en', 'fr', 'he'].contains(locale.languageCode)) {
-      _lastManualChange = DateTime.now();
+    if (_supportedCodes.contains(locale.languageCode)) {
       state = locale;
+      // Persist immediately so the choice survives app restarts
+      HiveCache.instance.saveLanguage(locale.languageCode);
     }
   }
 
   void setLanguageCode(String code) => setLocale(Locale(code));
 
-  /// Called from Firestore profile sync. Ignores stale values that arrive
-  /// shortly after the user manually switched languages.
+  /// Called when Firestore profile data loads. Applies the remote language only
+  /// if the device has no locally-saved preference (i.e. first install / new device).
+  /// Once the user sets a language manually it is saved in Hive and takes priority.
   void syncFromRemote(String code) {
-    if (_lastManualChange != null &&
-        DateTime.now().difference(_lastManualChange!).inSeconds < 5) {
+    final saved = HiveCache.instance.loadLanguage();
+    if (saved != null) {
+      // Device already has a preference — make sure the notifier reflects it
+      if (_supportedCodes.contains(saved) && state.languageCode != saved) {
+        state = Locale(saved);
+      }
       return;
     }
-    if (['es', 'en', 'fr', 'he'].contains(code) &&
-        state.languageCode != code) {
+    // No local preference yet (fresh install) — trust Firestore
+    if (_supportedCodes.contains(code) && state.languageCode != code) {
       state = Locale(code);
+      HiveCache.instance.saveLanguage(code);
     }
   }
 }

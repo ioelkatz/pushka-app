@@ -24,7 +24,13 @@ class _DonationChartState extends State<DonationChart> {
     final months = <_MonthBucket>[];
 
     for (int i = 5; i >= 0; i--) {
-      final dt = DateTime(now.year, now.month - i, 1);
+      int month = now.month - i;
+      int year = now.year;
+      while (month <= 0) {
+        month += 12;
+        year -= 1;
+      }
+      final dt = DateTime(year, month, 1);
       final label = _monthLabel(dt.month, tr);
       months.add(_MonthBucket(month: dt.month, year: dt.year, label: label));
     }
@@ -57,7 +63,7 @@ class _DonationChartState extends State<DonationChart> {
     final tr = S.of(context);
     final buckets = _buildBuckets(tr);
     final maxVal = buckets.fold<double>(
-      1,
+      1, // minimum of 1 avoids division-by-zero in grid interval
       (prev, b) => b.total > prev ? b.total : prev,
     );
     final hasData = buckets.any((b) => b.total > 0);
@@ -97,6 +103,7 @@ class _DonationChartState extends State<DonationChart> {
                     touchTooltipData: BarTouchTooltipData(
                       getTooltipColor: (_) => AppTokens.primaryBlue,
                       getTooltipItem: (group, groupIndex, rod, rodIndex) {
+                        if (group.x < 0 || group.x >= buckets.length) return null;
                         final b = buckets[group.x];
                         return BarTooltipItem(
                           '${b.label}\n${formatMoney(b.total)}',
@@ -153,7 +160,7 @@ class _DonationChartState extends State<DonationChart> {
                   gridData: FlGridData(
                     show: true,
                     drawVerticalLine: false,
-                    horizontalInterval: maxVal / 4,
+                    horizontalInterval: maxVal > 0 ? maxVal / 4 : 1,
                     getDrawingHorizontalLine: (_) => FlLine(
                       color: Colors.grey.shade200,
                       strokeWidth: 1,

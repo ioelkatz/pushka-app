@@ -147,8 +147,10 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
 
   Future<void> _signUp() async {
     final name = _nameController.text.trim();
-    final email = _emailController.text.trim();
-    final password = _passwordController.text.trim();
+    final email = _emailController.text.trim().toLowerCase();
+    // Do NOT trim the password — leading/trailing spaces are part of the user's
+    // chosen password and trimming would silently mismatch the login validator.
+    final password = _passwordController.text;
 
     final form = _formKey.currentState;
     if (form == null || !form.validate()) {
@@ -162,11 +164,16 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
             email: email,
             password: password,
           );
-      if (mounted) Navigator.pop(context);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(_tr.verificationEmailSent(email))),
+        );
+        Navigator.pop(context);
+      }
     } on FirebaseAuthException catch (e) {
-      _showMessage(_mapAuthError(e.code));
+      if (mounted) _showMessage(_mapAuthError(e.code));
     } on Exception catch (e) {
-      _showMessage(_tr.createAccountError('$e'));
+      if (mounted) _showMessage(_tr.createAccountError('$e'));
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
@@ -198,7 +205,9 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
   String? _validatePassword(String? value) {
     final text = value ?? '';
     if (text.isEmpty) return _tr.enterYourPassword;
-    if (text.length < 6) return _tr.min6Chars;
+    if (text.length < 8) return _tr.passwordTooShort;
+    if (!RegExp(r'[0-9]').hasMatch(text)) return _tr.passwordNeedsNumber;
+    if (!RegExp(r'[A-Z]').hasMatch(text)) return _tr.passwordNeedsUppercase;
     return null;
   }
 

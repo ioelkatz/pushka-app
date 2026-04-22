@@ -60,7 +60,7 @@ class Reminder {
       'timeMinute': time.minute,
       'days': days,
       'isHoliday': isHoliday,
-      if (minutesBefore != null) 'minutesBefore': minutesBefore,
+      'minutesBefore': minutesBefore, // always write; null clears stale value on merge
       'isEnabled': isEnabled,
       if (secondTime != null) 'secondTimeHour': secondTime!.hour,
       if (secondTime != null) 'secondTimeMinute': secondTime!.minute,
@@ -124,7 +124,7 @@ class Reminder {
       return 'Días de Semana';
     }
     const names = ['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom'];
-    return dayNumbers.map((d) => names[d - 1]).join(', ');
+    return dayNumbers.where((d) => d >= 1 && d <= 7).map((d) => names[d - 1]).join(', ');
   }
 
   String subtitleFor(S tr) {
@@ -183,6 +183,6 @@ class Reminder {
       tr.dayMonShort, tr.dayTueShort, tr.dayWedShort, tr.dayThuShort,
       tr.dayFriShort, tr.daySatShort, tr.daySunShort,
     ];
-    return dayNumbers.map((d) => names[d - 1]).join(', ');
+    return dayNumbers.where((d) => d >= 1 && d <= 7).map((d) => names[d - 1]).join(', ');
   }
 }

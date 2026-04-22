@@ -40,11 +40,14 @@ class AppDrawer extends ConsumerWidget {
                   children: [
                     ClipRRect(
                       borderRadius: BorderRadius.circular(12),
-                      child: Image.asset(
-                        'assets/images/splash_icon.png',
-                        width: 48,
-                        height: 48,
-                        fit: BoxFit.cover,
+                      child: Semantics(
+                        label: 'Pushka',
+                        child: Image.asset(
+                          'assets/images/splash_icon.png',
+                          width: 48,
+                          height: 48,
+                          fit: BoxFit.cover,
+                        ),
                       ),
                     ),
                     const SizedBox(width: 14),
@@ -181,9 +184,8 @@ class AppDrawer extends ConsumerWidget {
         ),
         onTap: () {
           Navigator.pop(context);
-          if (GoRouterState.of(context).uri.toString() != route) {
-            context.go(route);
-          }
+          // 'selected' is already true when current route == route, so only navigate when not selected.
+          if (!selected) context.go(route);
         },
         contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
       ),

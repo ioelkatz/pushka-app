@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../../app/theme/app_tokens.dart';
@@ -70,7 +71,7 @@ class SupportScreen extends StatelessWidget {
                     textBlock,
                     const SizedBox(height: 16),
                     Align(
-                      alignment: Alignment.centerRight,
+                      alignment: AlignmentDirectional.centerEnd,
                       child: _buildPushkaIllustration(),
                     ),
                   ],
@@ -126,7 +127,7 @@ class SupportScreen extends StatelessWidget {
 
           // Email
           InkWell(
-            onTap: () => _launchEmail(),
+            onTap: () => _launchEmail(context),
             child: Text(
               'app@colelchabad.org',
               style: const TextStyle(
@@ -143,7 +144,7 @@ class SupportScreen extends StatelessWidget {
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
               InkWell(
-                onTap: () => _launchPhone(),
+                onTap: () => _launchPhone(context),
                 child: Text(
                   '+1 (718) 774-5446',
                   style: const TextStyle(
@@ -159,7 +160,7 @@ class SupportScreen extends StatelessWidget {
 
           // WhatsApp Icon
           InkWell(
-            onTap: () => _launchWhatsApp(),
+            onTap: () => _launchWhatsApp(context),
             child: Container(
               width: 40,
               height: 40,
@@ -179,7 +180,7 @@ class SupportScreen extends StatelessWidget {
 
           // Learn More Link
           InkWell(
-            onTap: () => _launchLearnMore(),
+            onTap: () => _launchLearnMore(context),
             child: Text(
               tr.learnMoreColel,
               textAlign: TextAlign.center,
@@ -337,31 +338,38 @@ class SupportScreen extends StatelessWidget {
     );
   }
 
-  Future<void> _launchEmail() async {
-    final uri = Uri.parse('mailto:app@colelchabad.org');
-    if (await canLaunchUrl(uri)) {
-      await launchUrl(uri);
+  Future<void> _launchSafe(BuildContext context, Uri uri,
+      {LaunchMode mode = LaunchMode.platformDefault}) async {
+    try {
+      final ok = await launchUrl(uri, mode: mode);
+      if (!ok && context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Could not open the link.')),
+        );
+      }
+    } on PlatformException catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('Error: ${e.message}')));
+      }
     }
   }
 
-  Future<void> _launchPhone() async {
-    final uri = Uri.parse('tel:+17187745446');
-    if (await canLaunchUrl(uri)) {
-      await launchUrl(uri);
-    }
+  Future<void> _launchEmail(BuildContext context) async {
+    await _launchSafe(context, Uri.parse('mailto:app@colelchabad.org'));
   }
 
-  Future<void> _launchWhatsApp() async {
-    final uri = Uri.parse('https://wa.me/17187745446');
-    if (await canLaunchUrl(uri)) {
-      await launchUrl(uri, mode: LaunchMode.externalApplication);
-    }
+  Future<void> _launchPhone(BuildContext context) async {
+    await _launchSafe(context, Uri.parse('tel:+17187745446'));
   }
 
-  Future<void> _launchLearnMore() async {
-    final uri = Uri.parse('https://www.colelchabad.org');
-    if (await canLaunchUrl(uri)) {
-      await launchUrl(uri, mode: LaunchMode.externalApplication);
-    }
+  Future<void> _launchWhatsApp(BuildContext context) async {
+    await _launchSafe(context, Uri.parse('https://wa.me/17187745446'),
+        mode: LaunchMode.externalApplication);
+  }
+
+  Future<void> _launchLearnMore(BuildContext context) async {
+    await _launchSafe(context, Uri.parse('https://www.colelchabad.org'),
+        mode: LaunchMode.externalApplication);
   }
 }

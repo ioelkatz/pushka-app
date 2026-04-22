@@ -19,9 +19,9 @@ void main() {
   });
 
   group('UserRepository.walletIdFromUid', () {
-    test('returns a 6-digit numeric string', () {
+    test('returns an 8-digit numeric string', () {
       final id = UserRepository.walletIdFromUid('some_uid');
-      expect(id.length, 6);
+      expect(id.length, 8);
       expect(int.tryParse(id), isNotNull);
     });
 
@@ -39,10 +39,10 @@ void main() {
       expect(ids.length, greaterThan(1));
     });
 
-    test('result is always in [100000, 999999] range', () {
+    test('result is always in [10000000, 99999999] range', () {
       for (final uid in ['a', 'abc123', 'very_long_uid_string_here_1234567890']) {
         final code = int.parse(UserRepository.walletIdFromUid(uid));
-        expect(code, inInclusiveRange(100000, 999999));
+        expect(code, inInclusiveRange(10000000, 99999999));
       }
     });
   });
@@ -98,7 +98,7 @@ void main() {
       final data = (await fakeFirestore.collection('users').doc(mockUser.uid).get()).data()!;
       expect(data['walletBalance'], 0.0);
       expect(data['pushkaAmount'], 0.0);
-      expect(data['pushkaGoal'], 3600.00);
+      expect(data['pushkaGoal'], 180.0); // defaultGoalForCurrency('USD')
       expect(data['presetAmount'], 1.00);
       expect(data['streakCount'], 0);
     });
@@ -394,7 +394,7 @@ void main() {
       await repo.updateSettings(uid: mockUser.uid); // all null
 
       final data = (await fakeFirestore.collection('users').doc(mockUser.uid).get()).data()!;
-      expect(data['pushkaGoal'], 3600.00);
+      expect(data['pushkaGoal'], 180.0); // defaultGoalForCurrency('USD')
       expect(data['soundEnabled'], true);
     });
 
