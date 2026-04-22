@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html>
+<body style="background:#ddd;display:flex;justify-content:center;align-items:center;height:100vh;margin:0">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 420 500" width="420" height="500" style="background:#f0f0f0">
+
+  <!--
+    Building: x=25–395, center x=210
+    Left bay CX=97  |  Center bay CX=210  |  Right bay CX=323
+    Gable base: y=170   Base: y=430   Interior height: 260px
+
+    Floor frames (equal gap=26px between them, top margin=18px):
+      3rd floor frame: y=188, h=60  (bottom y=248)
+      gap = 26px
+      2nd floor frame: y=274, h=62  (bottom y=336)
+      gap = 26px
+      1st floor frame: y=362, h=58  (bottom y=420)
+      bottom margin: 10px to y=430
+
+    Everything right bay = perfect mirror of left bay at x=210
+  -->
+
+  <!-- ══ CUERPO POSTERIOR: línea horizontal detrás de los gables ══ -->
+  <line x1="34"  y1="102" x2="386" y2="102" stroke="#222" stroke-width="2.5"/>
+  <line x1="35"  y1="102" x2="25"  y2="170.5" stroke="#222" stroke-width="2.5"/>
+  <line x1="385" y1="102" x2="395" y2="170.5" stroke="#222" stroke-width="2.5"/>
+
+  <!-- Máscaras: relleno de fondo para ocultar línea posterior dentro de cada gable L/R -->
+  <polygon points="25,170 97,68 170,170" fill="#f0f0f0" stroke="none"/>
+  <polygon points="250,170 323,68 395,170" fill="#f0f0f0" stroke="none"/>
+
+  <!-- ══ GABLES (polyline = sin línea base) ══ -->
+  <polyline points="25,170  97,68  170,170" fill="none" stroke="#222" stroke-width="2.5"/>
+  <polyline points="170,170 210,102 250,170" fill="none" stroke="#222" stroke-width="2.5"/>
+  <polyline points="250,170 323,68  395,170" fill="none" stroke="#222" stroke-width="2.5"/>
+  <circle cx="97"  cy="61" r="5" fill="none" stroke="#222" stroke-width="2"/>
+  <circle cx="210" cy="96" r="4" fill="none" stroke="#222" stroke-width="2"/>
+  <circle cx="323" cy="61" r="5" fill="none" stroke="#222" stroke-width="2"/>
+
+  <!-- ══ ESTRUCTURA ══ -->
+  <line x1="25"  y1="170" x2="25"  y2="430" stroke="#222" stroke-width="2.5"/>
+  <line x1="170" y1="170" x2="170" y2="430" stroke="#222" stroke-width="2.5"/>
+  <line x1="250" y1="170" x2="250" y2="430" stroke="#222" stroke-width="2.5"/>
+  <line x1="395" y1="170" x2="395" y2="430" stroke="#222" stroke-width="2.5"/>
+  <line x1="25"  y1="430" x2="395" y2="430" stroke="#222" stroke-width="2"/>
+
+  <!-- ══ COPING: líneas diagonales interiores, terminan en vértice común (sin cruzarse) ══ -->
+  <!-- Gable izquierdo — vértice interior (97,77) -->
+  <line x1="29"  y1="173" x2="97"  y2="77"  stroke="#555" stroke-width="0.8"/>
+  <line x1="97"  y1="77"  x2="166" y2="173" stroke="#555" stroke-width="0.8"/>
+  <!-- Gable central — vértice interior (210,112) -->
+  <line x1="174" y1="173" x2="210" y2="112" stroke="#555" stroke-width="0.8"/>
+  <line x1="210" y1="112" x2="246" y2="173" stroke="#555" stroke-width="0.8"/>
+  <!-- Gable derecho — vértice interior (323,77) -->
+  <line x1="254" y1="173" x2="323" y2="77"  stroke="#555" stroke-width="0.8"/>
+  <line x1="323" y1="77"  x2="391" y2="173" stroke="#555" stroke-width="0.8"/>
+
+  <!-- ══ MEDALLONES ══ -->
+  <rect x="84.5" y="116.5" width="25" height="25" fill="none" stroke="#555" stroke-width="1.5"/>
+  <rect x="203"  y="139"   width="14" height="14" fill="none" stroke="#555" stroke-width="1.5"/>
+  <rect x="310.5" y="116.5" width="25" height="25" fill="none" stroke="#555" stroke-width="1.5"/>
+
+  <!-- 3er piso: w=14 h=40, marco w=66 h=52, CX=97
+       windows x=70,90,110 | frame x=64 w=66
+       Right mirror: windows x=296,316,336 | frame x=290 w=66 -->
+  <!-- 3er piso subido 10px: y=186 -->
+  <rect x="64"  y="186" width="66" height="52" fill="none" stroke="#444" stroke-width="1.4"/>
+  <rect x="70"  y="192" width="14" height="40" fill="none" stroke="#444" stroke-width="1"/>
+  <rect x="90"  y="192" width="14" height="40" fill="none" stroke="#444" stroke-width="1"/>
+  <rect x="110" y="192" width="14" height="40" fill="none" stroke="#444" stroke-width="1"/>
+
+  <!-- Center top: sin cambio -->
+  <rect x="187" y="207" width="46" height="54" fill="none" stroke="#444" stroke-width="1.4"/>
+  <rect x="191" y="212" width="10" height="44" fill="none" stroke="#444" stroke-width="0.9"/>
+  <rect x="205" y="212" width="10" height="44" fill="none" stroke="#444" stroke-width="0.9"/>
+  <rect x="219" y="212" width="10" height="44" fill="none" stroke="#444" stroke-width="0.9"/>
+
+  <rect x="290" y="186" width="66" height="52" fill="none" stroke="#444" stroke-width="1.4"/>
+  <rect x="296" y="192" width="14" height="40" fill="none" stroke="#444" stroke-width="1"/>
+  <rect x="316" y="192" width="14" height="40" fill="none" stroke="#444" stroke-width="1"/>
+  <rect x="336" y="192" width="14" height="40" fill="none" stroke="#444" stroke-width="1"/>
+  <!-- Antepecho: línea fina bajo los marcos del 3er piso, ancho de cada bahía lateral -->
+  <line x1="25"  y1="238" x2="170" y2="238" stroke="#555" stroke-width="0.8"/>
+  <line x1="250" y1="238" x2="395" y2="238" stroke="#555" stroke-width="0.8"/>
+
+  <!-- ══════════════════════════════════════
+       2DO PISO  y=274, h=62
+       3 ventanas w=18 gap=6 total=66 → x=64,88,112  frame x=58 w=78
+       Right mirror: frame x=284 w=78   windows x=290,314,338
+  ══════════════════════════════════════ -->
+  <!-- 2do piso: w=14, marco w=66, centrado CX=97
+       windows x=70,90,110 | frame x=64 w=66
+       Right mirror: windows x=296,316,336 | frame x=290 w=66 -->
+  <!-- 2do piso subido 10px: y=269 -->
+  <rect x="64"  y="269" width="66" height="62" fill="none" stroke="#444" stroke-width="1.4"/>
+  <rect x="70"  y="275" width="14" height="50" fill="none" stroke="#444" stroke-width="1"/>
+  <rect x="90"  y="275" width="14" height="50" fill="none" stroke="#444" stroke-width="1"/>
+  <rect x="110" y="275" width="14" height="50" fill="none" stroke="#444" stroke-width="1"/>
+
+  <!-- Center: bay window (sin cambio) -->
+  <polygon points="187,261  233,261  245,287  233,335  187,335  175,287"
+           fill="none" stroke="#444" stroke-width="1.6"/>
+
+  <rect x="290" y="269" width="66" height="62" fill="none" stroke="#444" stroke-width="1.4"/>
+  <rect x="296" y="275" width="14" height="50" fill="none" stroke="#444" stroke-width="1"/>
+  <rect x="316" y="275" width="14" height="50" fill="none" stroke="#444" stroke-width="1"/>
+  <rect x="336" y="275" width="14" height="50" fill="none" stroke="#444" stroke-width="1"/>
+
+  <!-- ══════════════════════════════════════
+       1ER PISO  y=362, h=58
+       4 paneles w=14 gap=5 total=71 → x=62,81,100,119  frame x=56 w=83
+       Each panel: square (h=14) + rect (h=30)  interior starts y=368
+       Right mirror: frame x=281 w=83  panels x=287,306,325,344
+  ══════════════════════════════════════ -->
+  <!-- 1er piso: w=12, gap=4px, marco ajustado w=75 centrado en CX=97
+       panels x=66,83,100,117 | frame x=60 w=75
+       Right mirror: panels x=291,308,325,342 | frame x=285 w=75 -->
+  <!-- 1er piso subido 5px: y=367 -->
+  <rect x="60"  y="362" width="75" height="58" fill="none" stroke="#444" stroke-width="1.4"/>
+  <rect x="66"  y="368" width="12" height="13" fill="none" stroke="#444" stroke-width="1"/>
+  <rect x="66"  y="385" width="12" height="28" fill="none" stroke="#444" stroke-width="1"/>
+  <rect x="83"  y="368" width="12" height="13" fill="none" stroke="#444" stroke-width="1"/>
+  <rect x="83"  y="385" width="12" height="28" fill="none" stroke="#444" stroke-width="1"/>
+  <rect x="100" y="368" width="12" height="13" fill="none" stroke="#444" stroke-width="1"/>
+  <rect x="100" y="385" width="12" height="28" fill="none" stroke="#444" stroke-width="1"/>
+  <rect x="117" y="368" width="12" height="13" fill="none" stroke="#444" stroke-width="1"/>
+  <rect x="117" y="385" width="12" height="28" fill="none" stroke="#444" stroke-width="1"/>
+
+  <!-- Marco arqueado de la puerta CX=210 -->
+  <path d="M 184,430 L 184,380 A 26,25 0 0 1 236,380 L 236,430"
+        fill="none" stroke="#444" stroke-width="1.4"/>
+  <!-- Puerta central CX=210: 3 lados, llega a la base -->
+  <polyline points="197,430 197,372 223,372 223,430" fill="none" stroke="#444" stroke-width="1.6"/>
+
+  <rect x="285" y="362" width="75" height="58" fill="none" stroke="#444" stroke-width="1.4"/>
+  <rect x="291" y="368" width="12" height="13" fill="none" stroke="#444" stroke-width="1"/>
+  <rect x="291" y="385" width="12" height="28" fill="none" stroke="#444" stroke-width="1"/>
+  <rect x="308" y="368" width="12" height="13" fill="none" stroke="#444" stroke-width="1"/>
+  <rect x="308" y="385" width="12" height="28" fill="none" stroke="#444" stroke-width="1"/>
+  <rect x="325" y="368" width="12" height="13" fill="none" stroke="#444" stroke-width="1"/>
+  <rect x="325" y="385" width="12" height="28" fill="none" stroke="#444" stroke-width="1"/>
+  <rect x="342" y="368" width="12" height="13" fill="none" stroke="#444" stroke-width="1"/>
+  <rect x="342" y="385" width="12" height="28" fill="none" stroke="#444" stroke-width="1"/>
+
+</svg>
+</body>
+</html>
