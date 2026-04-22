@@ -7,12 +7,13 @@ import '../../../core/format_utils.dart';
 import '../../../app/theme/app_tokens.dart';
 import '../../../core/keyboard_safe_sheet.dart';
 import 'pushka_3d_widget.dart';
+import 'building_770_widget.dart';
+import '../../../core/pushka_style_provider.dart';
 import '../../../core/l10n/s.dart';
 
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
-import 'package:flutter_stripe/flutter_stripe.dart' hide PaymentMethod;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../analytics/analytics_service.dart';
@@ -39,7 +40,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
   late final AnimationController _lottieController;
   bool _showGoalLottie = false;
   double pushkaAmount = 0;
-  double pushkaGoal = 3600.00; // Meta de la pushka
+  double pushkaGoal = UserRepository.defaultGoalForCurrency('USD');
   List<double> _presetAmounts = [];
   bool _loadedRemote = false;
   bool _isProcessing = false;
@@ -107,7 +108,9 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
       }
 
       if (lastDay == prevWeekday || lastDay.isAfter(prevWeekday)) {
-        _streakCount = (_streakCount > 0 ? _streakCount : 1) + 1;
+        // Use the profile value as the authoritative count when local is stale (0).
+        final authoritative = (profile['streakCount'] as num?)?.toInt() ?? _streakCount;
+        _streakCount = (authoritative > 0 ? authoritative : 1) + 1;
       } else {
         _streakCount = 1;
       }
@@ -124,13 +127,25 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
     } catch (_) {}
   }
   Future<void> addAmount(double amount) async {
+    // Prevent adding to a full pushka (already reached goal).
+    if (pushkaGoal > 0 && pushkaAmount >= pushkaGoal) return;
+    // Clamp so we never exceed the goal.
+    final headroom = pushkaGoal > 0 ? (pushkaGoal - pushkaAmount) : double.infinity;
+    final clamped = pushkaGoal > 0 ? amount.clamp(0.0, headroom) : amount;
+    if (clamped <= 0) return;
+
     final wasFull = pushkaGoal > 0 && pushkaAmount >= pushkaGoal;
-    setState(() => pushkaAmount += amount);
+    setState(() => pushkaAmount += clamped);
     final nowFull = pushkaGoal > 0 && pushkaAmount >= pushkaGoal;
     if (!wasFull && nowFull) _triggerCelebration();
     _pushkaKey.currentState?.triggerCoinDrop();
     FeedbackService.instance.playCoinDrop();
-    await _persistPushkaAmount();
+    try {
+      await _persistPushkaAmount();
+    } catch (_) {
+      // Persistence failure is non-critical: the local state is updated and
+      // Hive will be retried next time. Swallow to avoid unhandled exceptions.
+    }
     _updateStreak();
   }
   
@@ -149,7 +164,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
       }
 
       final currency = _currencyCodeFromProfile();
-      final amountCents = ((amountToEmpty * 100) + 0.001).round();
+      final amountCents = ((amountToEmpty * 100) ).round();
       final minCents = _minAmountCentsForCurrency(currency);
 
       if (amountCents < minCents) {
@@ -177,7 +192,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
         throw Exception(tr.stripeNotConfigured);
       }
 
-      final paymentIntentId = await StripeService.instance.pay(
+      await StripeService.instance.pay(
         amountCents: amountCents,
         currency: currency,
         customerEmail: ref.read(currentUserProvider)?.email,
@@ -185,20 +200,9 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
       );
 
       await AnalyticsService.instance.logPushkaEmpty(amountToEmpty);
-
-      final user = ref.read(currentUserProvider);
-      if (user != null) {
-        await ref.read(transactionRepositoryProvider).addTransaction(
-          uid: user.uid,
-          type: TransactionType.pushkaEmpty,
-          amount: amountToEmpty,
-          description: tr.pushkaEmptyCardDesc,
-          paymentMethod: PaymentMethod.card,
-          status: PaymentStatus.completed,
-          docId: paymentIntentId,
-          currencyCode: currency,
-        );
-      }
+      // Transaction is written server-side by the Stripe webhook (payment_intent.succeeded).
+      // Writing here too with the same docId causes a race condition when the webhook fires
+      // first — the client's set() would be an update, denied by Firestore rules.
 
       final remaining = (pushkaAmount - amountToEmpty).clamp(0.0, double.infinity);
       if (!mounted) return;
@@ -293,7 +297,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
       }
 
       final currency = _currencyCodeFromProfile();
-      final amountCents = ((donationAmount * 100) + 0.001).round();
+      final amountCents = ((donationAmount * 100) ).round();
       final minCents = _minAmountCentsForCurrency(currency);
       if (amountCents < minCents) {
         if (!mounted) return;
@@ -301,7 +305,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
         return;
       }
 
-      final paymentIntentId = await StripeService.instance.pay(
+      await StripeService.instance.pay(
         amountCents: amountCents,
         currency: currency,
         customerEmail: ref.read(currentUserProvider)?.email,
@@ -309,22 +313,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
       );
 
       await AnalyticsService.instance.logDonation(donationAmount, currency);
-
-      final user = ref.read(currentUserProvider);
-      if (user != null) {
-        await ref.read(transactionRepositoryProvider).addTransaction(
-          uid: user.uid,
-          type: TransactionType.tzedaka,
-          amount: donationAmount,
-          description: result['message']?.toString().isNotEmpty == true
-              ? result['message'] as String
-              : tr.instantDonation,
-          paymentMethod: PaymentMethod.card,
-          status: PaymentStatus.completed,
-          docId: paymentIntentId,
-          currencyCode: currency,
-        );
-      }
+      // Transaction is written server-side by the Stripe webhook (payment_intent.succeeded).
 
       FeedbackService.instance.playSuccess();
       if (mounted) {
@@ -349,7 +338,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
         throw Exception(tr.stripeNotConfigured);
       }
 
-      final amountCents = ((donationAmount * 100) + 0.001).round();
+      final amountCents = ((donationAmount * 100) ).round();
       final currency = _currencyCodeFromProfile();
       final minCents = _minAmountCentsForCurrency(currency);
       if (amountCents < minCents) {
@@ -357,7 +346,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
         _showMinAmountDialog(currency, minCents, donationAmount);
         return;
       }
-      final paymentIntentId = await StripeService.instance.pay(
+      await StripeService.instance.pay(
         amountCents: amountCents,
         currency: currency,
         customerEmail: ref.read(currentUserProvider)?.email,
@@ -365,38 +354,24 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
       );
 
       await AnalyticsService.instance.logDonation(donationAmount, currency);
+      // Transaction is written server-side by the Stripe webhook (payment_intent.succeeded).
       final remaining = (pushkaAmount - donationAmount).clamp(0.0, double.infinity);
       if (mounted) {
         setState(() => pushkaAmount = remaining);
       }
       await _persistPushkaAmount(resetToZero: remaining <= 0);
-
-      final user = ref.read(currentUserProvider);
-      if (user != null) {
-        await ref.read(transactionRepositoryProvider).addTransaction(
-          uid: user.uid,
-          type: TransactionType.tzedaka,
-          amount: donationAmount,
-          description: tr.donationWithCard,
-          paymentMethod: PaymentMethod.card,
-          status: PaymentStatus.completed,
-          docId: paymentIntentId,
-          currencyCode: currency,
-        );
-      }
+      if (!mounted) return;
 
       FeedbackService.instance.playSuccess();
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              remaining > 0
-                  ? tr.paymentProcessedRemaining(formatMoney(remaining))
-                  : tr.paymentProcessedHistory,
-            ),
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            remaining > 0
+                ? tr.paymentProcessedRemaining(formatMoney(remaining))
+                : tr.paymentProcessedHistory,
           ),
-        );
-      }
+        ),
+      );
     } catch (error) {
       if (!mounted) return;
       _showError(_donationErrorMessage(error, tr));
@@ -416,6 +391,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
       final remaining = (pushkaAmount - amount).clamp(0.0, double.infinity);
       if (mounted) setState(() => pushkaAmount = remaining);
       await _persistPushkaAmount(resetToZero: remaining <= 0);
+      if (!mounted) return;
 
       final currency = _currencyCodeFromProfile();
       final user = ref.read(currentUserProvider);
@@ -491,6 +467,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
     final tr = S.of(context);
 
     final userProfile = ref.watch(userProfileProvider).valueOrNull;
+    final pushkaStyle = ref.watch(pushkaStyleProvider);
     final remoteGoal = userProfile?['pushkaGoal'];
     final remoteAmount = userProfile?['pushkaAmount'];
     final remotePresets = userProfile?['presetAmounts'];
@@ -575,13 +552,15 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
               RepaintBoundary(
                 child: SizedBox(
                   height: imageHeight,
-                  child: Pushka3DWidget(
-                    key: _pushkaKey,
-                    fillPercentage: fillPercentage,
-                    goal: pushkaGoal,
-                    amount: pushkaAmount,
-                    currencySymbol: _currencySymbol(_currencyCodeFromProfile()),
-                  ),
+                  child: pushkaStyle == PushkaStyle.building770
+                      ? Building770Widget(fillFraction: fillPercentage)
+                      : Pushka3DWidget(
+                          key: _pushkaKey,
+                          fillPercentage: fillPercentage,
+                          goal: pushkaGoal,
+                          amount: pushkaAmount,
+                          currencySymbol: _currencySymbol(_currencyCodeFromProfile()),
+                        ),
                 ),
               ),
 
@@ -622,13 +601,15 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
               RepaintBoundary(
                 child: SizedBox(
                   height: imageHeight,
-                  child: Pushka3DWidget(
-                    key: _pushkaKey,
-                    fillPercentage: fillPercentage,
-                    goal: pushkaGoal,
-                    amount: pushkaAmount,
-                    currencySymbol: _currencySymbol(_currencyCodeFromProfile()),
-                  ),
+                  child: pushkaStyle == PushkaStyle.building770
+                      ? Building770Widget(fillFraction: fillPercentage)
+                      : Pushka3DWidget(
+                          key: _pushkaKey,
+                          fillPercentage: fillPercentage,
+                          goal: pushkaGoal,
+                          amount: pushkaAmount,
+                          currencySymbol: _currencySymbol(_currencyCodeFromProfile()),
+                        ),
                 ),
               ),
 
@@ -740,13 +721,13 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
         clipBehavior: Clip.none,
         children: [
           Container(
-            margin: const EdgeInsets.only(left: 18),
-            padding: const EdgeInsets.fromLTRB(28, 8, 16, 8),
+            margin: const EdgeInsetsDirectional.only(start: 18),
+            padding: const EdgeInsetsDirectional.fromSTEB(28, 8, 16, 8),
             decoration: BoxDecoration(
               gradient: LinearGradient(
                 colors: [colors.$1, colors.$2],
-                begin: Alignment.centerLeft,
-                end: Alignment.centerRight,
+                begin: AlignmentDirectional.centerStart,
+                end: AlignmentDirectional.centerEnd,
               ),
               borderRadius: const BorderRadius.only(
                 topRight: Radius.circular(20),
@@ -786,8 +767,8 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
               ],
             ),
           ),
-          Positioned(
-            left: 0,
+          PositionedDirectional(
+            start: 0,
             top: -2,
             child: _HexBadge(count: _streakCount, color1: colors.$1, color2: colors.$2),
           ),
@@ -901,7 +882,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                         ),
                         const SizedBox(height: 18),
                         Align(
-                          alignment: Alignment.centerLeft,
+                          alignment: AlignmentDirectional.centerStart,
                           child: Text(S.of(context).chooseAmount, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 16)),
                         ),
                         const SizedBox(height: 12),
@@ -1251,16 +1232,8 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
         _ => error.message ?? tr.couldNotStartPayment,
       };
     }
-    if (error is StripeException) {
-      if (error.error.code == FailureCode.Canceled) {
-        return tr.paymentCanceled;
-      }
-      final msg = error.error.localizedMessage ?? error.error.message;
-      if (msg != null && msg.trim().isNotEmpty) {
-        return tr.paymentFailed(msg);
-      }
-    }
     if (error is StripeServiceException) {
+      if (error.code == 'canceled') return tr.paymentCanceled;
       return tr.couldNotStartPayment;
     }
     if (error is Exception) {
@@ -1708,7 +1681,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                       final ctrl = entry.value;
                       return Expanded(
                         child: Padding(
-                          padding: EdgeInsets.only(right: idx < 2 ? 8 : 0),
+                          padding: EdgeInsetsDirectional.only(end: idx < 2 ? 8 : 0),
                           child: TextField(
                             controller: ctrl,
                             keyboardType: const TextInputType.numberWithOptions(decimal: true),

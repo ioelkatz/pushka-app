@@ -1,3 +1,4 @@
+import 'dart:typed_data';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -14,8 +15,11 @@ import '../../users/presentation/user_profile_provider.dart';
 import '../../wallet/data/wallet_service.dart';
 import '../../../core/format_utils.dart';
 import '../../../core/l10n/locale_provider.dart';
+import 'package:go_router/go_router.dart';
+
 import 'auto_empty_screen.dart';
 import '../../../core/l10n/s.dart';
+import '../../../core/pushka_style_provider.dart';
 
 class SettingsScreen extends ConsumerStatefulWidget {
   const SettingsScreen({super.key});
@@ -50,10 +54,11 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   }
 
   String _normalizeWalletId(String raw) {
-    final value = raw.trim();
+    final value = raw.trim().replaceAll(RegExp(r'\s'), '');
     if (value.isEmpty) return '';
-    final match = RegExp(r'[A-Za-z0-9-]{4,20}').firstMatch(value);
-    return (match?.group(0) ?? value).trim();
+    // Wallet IDs are always exactly 8 numeric digits
+    if (RegExp(r'^\d{8}$').hasMatch(value)) return value;
+    return '';
   }
 
   String _currencySymbol(String code) {
@@ -106,7 +111,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
   Future<void> _showAddPushkaDialog() async {
     bool showManualEntry = false;
-    String manualValue = '';
     String? error;
 
     final manualWalletId = await showModalBottomSheet<String>(
@@ -146,7 +150,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                         TextField(
                           autofocus: true,
                           textInputAction: TextInputAction.done,
-                          onChanged: (value) { manualValue = value; if (error != null) setSheetState(() => error = null); },
+                          onChanged: (value) { if (error != null) setSheetState(() => error = null); },
                           onSubmitted: (value) {
                             if (_normalizeWalletId(value).isEmpty) { setSheetState(() => error = S.of(context).enterValidId); return; }
                             Navigator.of(ctx).pop(value);
@@ -174,7 +178,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       await _openPushkaScanFlow();
       return;
     }
-    await _addPushkaByWalletId(manualWalletId.isEmpty ? manualValue : manualWalletId);
+    await _addPushkaByWalletId(manualWalletId);
   }
 
   @override
@@ -245,7 +249,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         (user?.displayName?.trim().isNotEmpty == true
             ? user!.displayName!
             : tr.defaultUser);
-    final userEmail = user?.email ?? 'sin-correo';
+    final userEmail = user?.email ?? tr.noEmail;
     final billingEmail = getProfileString('billingEmail') ?? '-';
     final phoneNumber = getProfileString('phoneNumber') ?? '-';
     final mailingAddress = getProfileString('mailingAddress') ?? '-';
@@ -307,6 +311,15 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           ),
           const SizedBox(height: 18),
 
+          // SAVED CARD
+          _buildLabel(tr.savedCards),
+          const SizedBox(height: 6),
+          _buildActionButton(
+            _savedCardLabel(userProfile, tr),
+            onTap: () => context.go('/settings/saved-cards'),
+          ),
+          const SizedBox(height: 18),
+
           // CURRENCY
           _buildLabel(tr.currency),
           const SizedBox(height: 6),
@@ -330,7 +343,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             orange,
             onChanged: (value) {
               setState(() => soundEnabled = value);
-              _updateSettings(user, soundEnabled: value);
+              _updateSettingsSilent(user, soundEnabled: value);
             },
           ),
           const SizedBox(height: 18),
@@ -342,7 +355,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             orange,
             onChanged: (value) {
               setState(() => coinJingleEnabled = value);
-              _updateSettings(user, coinJingleEnabled: value);
+              _updateSettingsSilent(user, coinJingleEnabled: value);
             },
           ),
           const SizedBox(height: 18),
@@ -354,7 +367,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             orange,
             onChanged: (value) {
               setState(() => vibrationEnabled = value);
-              _updateSettings(user, vibrationEnabled: value);
+              _updateSettingsSilent(user, vibrationEnabled: value);
             },
           ),
           const SizedBox(height: 18),
@@ -366,7 +379,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             orange,
             onChanged: (value) {
               setState(() => partialPaymentsEnabled = value);
-              _updateSettings(user, partialPaymentsEnabled: value);
+              _updateSettingsSilent(user, partialPaymentsEnabled: value);
             },
           ),
           const SizedBox(height: 18),
@@ -380,7 +393,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             labelFontSize: 14,
             onChanged: (value) {
               setState(() => additionalPaymentOptionsEnabled = value);
-              _updateSettings(user, additionalPaymentOptionsEnabled: value);
+              _updateSettingsSilent(user, additionalPaymentOptionsEnabled: value);
             },
           ),
           const SizedBox(height: 18),
@@ -396,7 +409,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 if (!success || !mounted) return;
               }
               setState(() => biometricAuthenticationEnabled = value);
-              _updateSettings(user, biometricAuthenticationEnabled: value);
+              _updateSettingsSilent(user, biometricAuthenticationEnabled: value);
               if (value) {
                 if (!mounted) return;
                 messenger.showSnackBar(
@@ -407,7 +420,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           ),
           if (biometricAuthenticationEnabled)
             Padding(
-              padding: const EdgeInsets.only(top: 8, left: 4),
+              padding: const EdgeInsetsDirectional.only(top: 8, start: 4),
               child: FutureBuilder<List<BiometricType>>(
                 future: LocalAuthentication().getAvailableBiometrics(),
                 builder: (context, snapshot) {
@@ -424,6 +437,12 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 },
               ),
             ),
+          const SizedBox(height: 18),
+
+          // PUSHKA STYLE
+          _buildLabel('Estilo de pantalla principal'),
+          const SizedBox(height: 8),
+          _buildPushkaStyleSelector(ref),
           const SizedBox(height: 18),
           Container(
             height: 10,
@@ -647,8 +666,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               ),
             )
           else
-            Positioned(
-              right: 0,
+            PositionedDirectional(
+              end: 0,
               bottom: 0,
               child: Container(
                 width: 18,
@@ -707,15 +726,36 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   }
 
   Future<void> _pickAndUploadPhoto(String uid, S tr) async {
-    final picker = ImagePicker();
-    final picked = await picker.pickImage(
-      source: ImageSource.gallery,
-      maxWidth: 512,
-      maxHeight: 512,
-      imageQuality: 85,
-    );
+    XFile? picked;
+    try {
+      picked = await ImagePicker().pickImage(
+        source: ImageSource.gallery,
+        maxWidth: 512,
+        maxHeight: 512,
+        imageQuality: 85,
+      );
+    } catch (e) {
+      debugPrint('pickImage error: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(tr.couldNotUploadPhoto)),
+        );
+      }
+      return;
+    }
     if (picked == null || !mounted) return;
-    final bytes = await picked.readAsBytes();
+    Uint8List bytes;
+    try {
+      bytes = await picked.readAsBytes();
+    } catch (e) {
+      debugPrint('readAsBytes error: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(tr.couldNotUploadPhoto)),
+        );
+      }
+      return;
+    }
     if (!mounted) return;
     setState(() => _uploadingPhoto = true);
     try {
@@ -825,7 +865,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                             ScaffoldMessenger.of(context).showSnackBar(
                               SnackBar(content: Text(tr.profileUpdated)),
                             );
-                          } catch (_) {
+                          } catch (e) {
+                            debugPrint('updateProfile displayName error: $e');
                             if (!mounted || !ctx.mounted) return;
                             setSS(() => error = tr.saveError);
                           }
@@ -843,6 +884,35 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           },
         );
       },
+    );
+  }
+
+  String _savedCardLabel(Map<String, dynamic>? profile, S tr) {
+    final brand = profile?['stripeDefaultPaymentMethodBrand'] as String?;
+    final last4 = profile?['stripeDefaultPaymentMethodLast4'] as String?;
+    if (brand != null && brand.isNotEmpty && last4 != null && last4.isNotEmpty) {
+      final brandLabel = brand[0].toUpperCase() + brand.substring(1);
+      return '$brandLabel •••• $last4';
+    }
+    return tr.noSavedCards.split('\n').first;
+  }
+
+  Widget _buildPushkaStyleSelector(WidgetRef ref) {
+    final style = ref.watch(pushkaStyleProvider);
+    return SegmentedButton<PushkaStyle>(
+      segments: const [
+        ButtonSegment(value: PushkaStyle.classic, label: Text('Pushka')),
+        ButtonSegment(value: PushkaStyle.building770, label: Text('Edificio 770')),
+      ],
+      selected: {style},
+      onSelectionChanged: (selection) {
+        ref.read(pushkaStyleProvider.notifier).setStyle(selection.first);
+      },
+      style: SegmentedButton.styleFrom(
+        selectedBackgroundColor: const Color(0xFF2F60C5),
+        selectedForegroundColor: Colors.white,
+        foregroundColor: const Color(0xFF2F60C5),
+      ),
     );
   }
 
@@ -926,7 +996,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         final label = '$sym${amt == amt.roundToDouble() ? amt.toInt() : amt.toStringAsFixed(2)}';
         return Expanded(
           child: Padding(
-            padding: EdgeInsets.only(right: idx < 2 ? 10 : 0),
+            padding: EdgeInsetsDirectional.only(end: idx < 2 ? 10 : 0),
             child: GestureDetector(
               onTap: onTap,
               child: Container(
@@ -1069,13 +1139,14 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             .toList(),
         onChanged: (value) {
           if (value == null) return;
+          // Save to Hive immediately (persists across restarts) then sync Firestore
           ref.read(localeProvider.notifier).setLanguageCode(value);
           final uid = ref.read(currentUserProvider)?.uid;
           if (uid != null) {
             ref.read(userRepositoryProvider).updateSettings(
               uid: uid,
               language: value,
-            );
+            ).catchError((Object e) => debugPrint('language updateSettings error: $e'));
           }
         },
       ),
@@ -1302,7 +1373,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
       return await auth.authenticate(
         localizedReason: tr.biometricReasonEnable,
-        biometricOnly: false,
       );
     } catch (e) {
       final msg = e.toString();
@@ -1336,7 +1406,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     );
   }
 
-  Future<void> _showEditDialog(String title, String currentValue, Function(String) onSave, {String fieldKey = ''}) async {
+  Future<void> _showEditDialog(String title, String currentValue, Future<void> Function(String) onSave, {String fieldKey = ''}) async {
     final isPhone = fieldKey == 'phone';
 
     final result = await showDialog<String>(
@@ -1423,7 +1493,21 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     );
 
     if (result != null) {
-      onSave(result);
+      try {
+        await onSave(result);
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(S.of(context).settingsSaved)),
+          );
+        }
+      } catch (e) {
+        debugPrint('_showEditDialog onSave error: $e');
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(S.of(context).saveError)),
+          );
+        }
+      }
     }
   }
 
@@ -1435,12 +1519,17 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   }) async {
     if (user == null) return;
 
-    await ref.read(userRepositoryProvider).updateProfile(
-          uid: user.uid,
-          billingEmail: billingEmail,
-          phoneNumber: phoneNumber,
-          mailingAddress: mailingAddress,
-        );
+    try {
+      await ref.read(userRepositoryProvider).updateProfile(
+            uid: user.uid,
+            billingEmail: billingEmail,
+            phoneNumber: phoneNumber,
+            mailingAddress: mailingAddress,
+          );
+    } catch (e) {
+      debugPrint('_updateProfileField error: $e');
+      rethrow;
+    }
   }
 
   Future<void> _updateSettings(
@@ -1459,19 +1548,39 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   }) async {
     if (user == null) return;
     await ref.read(userRepositoryProvider).updateSettings(
-          uid: user.uid,
-          pushkaGoal: pushkaGoal,
-          presetAmount: presetAmount,
-          presetAmounts: presetAmounts,
-          soundEnabled: soundEnabled,
-          coinJingleEnabled: coinJingleEnabled,
-          vibrationEnabled: vibrationEnabled,
-          partialPaymentsEnabled: partialPaymentsEnabled,
-          additionalPaymentOptionsEnabled: additionalPaymentOptionsEnabled,
-          biometricAuthenticationEnabled: biometricAuthenticationEnabled,
-          currencyCountry: currencyCountry,
-          currencyCode: currencyCode,
-        );
+      uid: user.uid,
+      pushkaGoal: pushkaGoal,
+      presetAmount: presetAmount,
+      presetAmounts: presetAmounts,
+      soundEnabled: soundEnabled,
+      coinJingleEnabled: coinJingleEnabled,
+      vibrationEnabled: vibrationEnabled,
+      partialPaymentsEnabled: partialPaymentsEnabled,
+      additionalPaymentOptionsEnabled: additionalPaymentOptionsEnabled,
+      biometricAuthenticationEnabled: biometricAuthenticationEnabled,
+      currencyCountry: currencyCountry,
+      currencyCode: currencyCode,
+    );
+  }
+
+  /// Fire-and-forget wrapper for toggle switches. Logs errors silently.
+  void _updateSettingsSilent(User? user, {
+    bool? soundEnabled,
+    bool? coinJingleEnabled,
+    bool? vibrationEnabled,
+    bool? partialPaymentsEnabled,
+    bool? additionalPaymentOptionsEnabled,
+    bool? biometricAuthenticationEnabled,
+  }) {
+    _updateSettings(
+      user,
+      soundEnabled: soundEnabled,
+      coinJingleEnabled: coinJingleEnabled,
+      vibrationEnabled: vibrationEnabled,
+      partialPaymentsEnabled: partialPaymentsEnabled,
+      additionalPaymentOptionsEnabled: additionalPaymentOptionsEnabled,
+      biometricAuthenticationEnabled: biometricAuthenticationEnabled,
+    ).catchError((Object e) => debugPrint('toggle updateSettings error: $e'));
   }
 
   Future<void> _showEditPresetsDialog(
@@ -1518,7 +1627,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 children: [c1, c2, c3].asMap().entries.map((e) {
                   return Expanded(
                     child: Padding(
-                      padding: EdgeInsets.only(right: e.key < 2 ? 8 : 0),
+                      padding: EdgeInsetsDirectional.only(end: e.key < 2 ? 8 : 0),
                       child: TextField(
                         controller: e.value,
                         keyboardType: const TextInputType.numberWithOptions(decimal: true),
@@ -1558,9 +1667,15 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     setSS(() => err = tr.allAmountsMustBePositive);
                     return;
                   }
-                  await _updateSettings(user, presetAmounts: [p1, p2, p3]);
-                  if (!mounted || !ctx.mounted) return;
-                  Navigator.pop(ctx);
+                  try {
+                    await _updateSettings(user, presetAmounts: [p1, p2, p3]);
+                    if (!mounted || !ctx.mounted) return;
+                    Navigator.pop(ctx);
+                  } catch (e) {
+                    debugPrint('presetAmounts save error: $e');
+                    if (!mounted || !ctx.mounted) return;
+                    setSS(() => err = tr.saveError);
+                  }
                 },
                 child: Text(tr.save, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
               ),
@@ -1640,11 +1755,19 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     );
 
     if (result == true) {
-      await ref.read(authControllerProvider).signOut();
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(S.of(context).sessionClosed)),
-      );
+      try {
+        await ref.read(authControllerProvider).signOut();
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(S.of(context).sessionClosed)),
+        );
+      } catch (e) {
+        debugPrint('signOut error: $e');
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(S.of(context).saveError)),
+        );
+      }
     }
   }
 
@@ -1705,7 +1828,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
     if (result != null && mounted) {
       setState(() => pushkaGoal = result);
-      _updateSettings(ref.read(currentUserProvider), pushkaGoal: result);
+      _updateSettings(ref.read(currentUserProvider), pushkaGoal: result)
+          .catchError((Object e) => debugPrint('pushkaGoal updateSettings error: $e'));
     }
   }
 
@@ -1801,24 +1925,22 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       ),
     );
 
-    if (result != null) {
+    if (result != null && mounted) {
+      final newCurrency = result['currency']!;
+      final newGoal = UserRepository.defaultGoalForCurrency(newCurrency);
       setState(() {
         selectedCountry = result['country']!;
-        selectedCurrency = result['currency']!;
+        selectedCurrency = newCurrency;
         selectedFlag = result['flag'] ?? _flagForCountry(selectedCountry);
+        pushkaGoal = newGoal;
       });
       _updateSettings(
         ref.read(currentUserProvider),
         currencyCountry: result['country']!,
-        currencyCode: result['currency']!,
-      );
-      final user = ref.read(currentUserProvider);
-      if (user != null) {
-        ref.read(userRepositoryProvider).updateSettings(
-              uid: user.uid,
-              presetAmounts: <double>[],
-            );
-      }
+        currencyCode: newCurrency,
+        pushkaGoal: newGoal,
+        presetAmounts: <double>[],
+      ).catchError((Object e) => debugPrint('currency updateSettings error: $e'));
     }
   }
 
@@ -1881,12 +2003,26 @@ class _SettingsQrScannerScreen extends StatefulWidget {
 
 class _SettingsQrScannerScreenState extends State<_SettingsQrScannerScreen> {
   bool _handled = false;
-  bool _torchEnabled = false;
+  bool _torchOn = false;
+  late final MobileScannerController _controller;
 
+  @override
+  void initState() {
+    super.initState();
+    _controller = MobileScannerController();
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  // Use the same strict 8-digit rule as the manual-entry normalizer elsewhere.
   String _normalizeWalletId(String raw) {
-    final value = raw.trim();
-    final match = RegExp(r'[A-Za-z0-9-]{4,20}').firstMatch(value);
-    return (match?.group(0) ?? value).trim();
+    final value = raw.trim().replaceAll(RegExp(r'\s'), '');
+    final match = RegExp(r'\b(\d{8})\b').firstMatch(value);
+    return match?.group(1) ?? '';
   }
 
   @override
@@ -1898,7 +2034,7 @@ class _SettingsQrScannerScreenState extends State<_SettingsQrScannerScreen> {
       body: Stack(
         children: [
           MobileScanner(
-            controller: MobileScannerController(torchEnabled: _torchEnabled),
+            controller: _controller,
             onDetect: (capture) {
               if (_handled) return;
               final raw = capture.barcodes.isNotEmpty ? capture.barcodes.first.rawValue : null;
@@ -1933,10 +2069,13 @@ class _SettingsQrScannerScreenState extends State<_SettingsQrScannerScreen> {
             right: 0,
             bottom: 24,
             child: IconButton(
-              onPressed: () => setState(() => _torchEnabled = !_torchEnabled),
+              onPressed: () {
+                _controller.toggleTorch();
+                setState(() => _torchOn = !_torchOn);
+              },
               iconSize: 28,
               icon: Icon(
-                _torchEnabled ? Icons.flash_on_rounded : Icons.flash_off_rounded,
+                _torchOn ? Icons.flash_on_rounded : Icons.flash_off_rounded,
                 color: Colors.white,
               ),
             ),
