@@ -6,7 +6,6 @@ import 'package:flutter_stripe/flutter_stripe.dart';
 import '../features/notifications/notification_service.dart';
 import '../config/stripe_config.dart';
 import '../features/feedback/feedback_service.dart';
-import '../core/hive_cache.dart';
 import 'router.dart' show initNotificationNavigation;
 
 /// Deferred initialization future — started in main(), awaited in splash.
@@ -50,6 +49,5 @@ Future<void> _performDeferredInit() async {
   }
 
   await FeedbackService.instance.init();
-  await HiveCache.instance.init();
   if (!kIsWeb) initNotificationNavigation();
 }

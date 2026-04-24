@@ -8,6 +8,7 @@ import 'package:firebase_crashlytics/firebase_crashlytics.dart';
 import 'firebase_options.dart';
 import 'app/app.dart';
 import 'app/app_initializer.dart';
+import 'core/hive_cache.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -32,6 +33,9 @@ Future<void> main() async {
       return true;
     };
   }
+
+  // Hive must be ready before runApp so providers can read saved prefs on init
+  await HiveCache.instance.init();
 
   // Start heavy init in background — splash screen awaits before navigating
   scheduleDeferredInit();
