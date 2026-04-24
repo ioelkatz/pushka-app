@@ -70,10 +70,10 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
             children: [
               Text(
                 tr.autoEmptyLabel,
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 14,
                   fontWeight: FontWeight.w600,
-                  color: Colors.black87,
+                  color: Theme.of(context).colorScheme.onSurface,
                 ),
               ),
               const SizedBox(height: 8),
@@ -113,12 +113,12 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
               Container(
                 padding: const EdgeInsets.all(14),
                 decoration: BoxDecoration(
-                  color: const Color(0xFFF4F7FB),
+                  color: Theme.of(context).colorScheme.surfaceContainer,
                   borderRadius: BorderRadius.circular(12),
                 ),
                 child: Text(
                   '${tr.autoEmptyInfo}\n\n${tr.minBalanceInfo}',
-                  style: const TextStyle(color: Colors.black87),
+                  style: TextStyle(color: Theme.of(context).colorScheme.onSurface),
                 ),
               ),
               const SizedBox(height: 20),

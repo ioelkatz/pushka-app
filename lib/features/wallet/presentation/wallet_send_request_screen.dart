@@ -311,8 +311,8 @@ class _WalletSendRequestScreenState
   @override
   Widget build(BuildContext context) {
     final tr = S.of(context);
+    final cs = Theme.of(context).colorScheme;
     const red = Color(0xFFE84324);
-    const navy = Color(0xFF1F233A);
     final uid = ref.watch(currentUserProvider)?.uid;
 
     return Column(
@@ -348,11 +348,11 @@ class _WalletSendRequestScreenState
                 const SizedBox(height: 18),
                 Text(
                   tr.yourContacts,
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 18,
                     fontWeight: FontWeight.w500,
                     letterSpacing: 0.6,
-                    color: Color(0xFF2D2D2D),
+                    color: cs.onSurface,
                   ),
                 ),
                 const SizedBox(height: 12),
@@ -407,7 +407,7 @@ class _WalletSendRequestScreenState
                                         vertical: 12,
                                       ),
                                       decoration: BoxDecoration(
-                                        color: const Color(0xFFF4F4F4),
+                                        color: cs.surfaceContainer,
                                         borderRadius: BorderRadius.circular(14),
                                         border: isSelected
                                             ? Border.all(color: red, width: 1.8)
@@ -444,7 +444,7 @@ class _WalletSendRequestScreenState
                                                   tr.idPrefix(walletId),
                                                   style: TextStyle(
                                                     fontSize: 13,
-                                                    color: Colors.black.withValues(alpha: 0.55),
+                                                    color: cs.onSurfaceVariant,
                                                   ),
                                                 ),
                                               ],
@@ -499,8 +499,8 @@ class _WalletSendRequestScreenState
                 Expanded(
                   child: ElevatedButton(
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: navy,
-                      foregroundColor: Colors.white,
+                      backgroundColor: cs.onSurface,
+                      foregroundColor: cs.surface,
                       minimumSize: const Size(0, 52),
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(14),

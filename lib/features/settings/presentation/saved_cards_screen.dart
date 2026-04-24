@@ -188,7 +188,7 @@ class _SavedCardsScreenState extends ConsumerState<SavedCardsScreen> {
   Widget build(BuildContext context) {
     final tr = S.of(context);
     const red = Color(0xFFE05A4F);
-    const blue = Color(0xFF2F60C5);
+    final blue = Theme.of(context).colorScheme.primary;
 
     return Scaffold(
       body: SafeArea(
@@ -309,7 +309,7 @@ class _SavedCardsScreenState extends ConsumerState<SavedCardsScreen> {
                                                     ),
                                                     child: Text(
                                                       tr.cardDefault,
-                                                      style: const TextStyle(
+                                                      style: TextStyle(
                                                         fontSize: 11,
                                                         fontWeight: FontWeight.w600,
                                                         color: blue,

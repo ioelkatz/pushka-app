@@ -75,11 +75,11 @@ class _DonationChartState extends State<DonationChart> {
           padding: const EdgeInsets.fromLTRB(18, 14, 18, 8),
           child: Text(
             tr.chartTitle,
-            style: const TextStyle(
+            style: TextStyle(
               fontSize: 11,
               fontWeight: FontWeight.w600,
               letterSpacing: 1.1,
-              color: AppTokens.textPrimary,
+              color: Theme.of(context).colorScheme.onSurface,
             ),
           ),
         ),

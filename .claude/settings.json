@@ -17,7 +17,9 @@
       "Bash(py -c ' *)",
       "Bash(dart analyze *)",
       "Bash(git -C \"c:/dev/pushka_app\" add -A)",
-      "Bash(git -C c:/dev/pushka_app commit -m ' *)"
+      "Bash(git -C c:/dev/pushka_app commit -m ' *)",
+      "Bash(git -C \"c:/dev/pushka_app\" add lib/features/settings/presentation/settings_screen.dart)",
+      "Bash(git -C \"c:/dev/pushka_app\" add lib/app/theme/app_theme.dart lib/features/wallet/presentation/wallet_screen.dart lib/features/reminders/presentation/reminders_screen.dart)"
     ],
     "additionalDirectories": [
       "C:\\Users\\Ioel\\Downloads"

@@ -1565,11 +1565,13 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
     bool? saved;
     saved = await showKeyboardSafeSheet<bool>(
       context: context,
-      builder: (ctx, setDialogState) => Column(
+      builder: (ctx, setDialogState) {
+        final cs = Theme.of(ctx).colorScheme;
+        return Column(
                       mainAxisSize: MainAxisSize.min,
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Center(child: Container(width: 36, height: 4, margin: const EdgeInsets.only(bottom: 12), decoration: BoxDecoration(color: Colors.grey.shade300, borderRadius: BorderRadius.circular(2)))),
+                        Center(child: Container(width: 36, height: 4, margin: const EdgeInsets.only(bottom: 12), decoration: BoxDecoration(color: cs.outlineVariant, borderRadius: BorderRadius.circular(2)))),
                   Center(
                     child: Text(
                       S.of(context).tzedakahSettings,
@@ -1587,7 +1589,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                     style: TextStyle(
                       fontSize: 13,
                       fontWeight: FontWeight.w700,
-                      color: Colors.grey.shade700,
+                      color: cs.onSurfaceVariant,
                       letterSpacing: 0.8,
                     ),
                   ),
@@ -1597,7 +1599,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                     icon: const Icon(Icons.keyboard_arrow_down_rounded),
                     isExpanded: true,
                     menuMaxHeight: 620,
-                    dropdownColor: Colors.white,
+                    dropdownColor: cs.surface,
                     borderRadius: BorderRadius.circular(16),
                     itemHeight: 52,
                     decoration: InputDecoration(
@@ -1652,14 +1654,14 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                     style: TextStyle(
                       fontSize: 13,
                       fontWeight: FontWeight.w700,
-                      color: Colors.grey.shade700,
+                      color: cs.onSurfaceVariant,
                       letterSpacing: 0.8,
                     ),
                   ),
                   const SizedBox(height: 4),
                   Text(
                     S.of(context).editQuickAmountHint,
-                    style: TextStyle(fontSize: 12, color: Colors.grey.shade500),
+                    style: TextStyle(fontSize: 12, color: cs.onSurfaceVariant),
                   ),
                   const SizedBox(height: 10),
                   Row(
@@ -1673,30 +1675,30 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                             controller: ctrl,
                             keyboardType: const TextInputType.numberWithOptions(decimal: true),
                             textAlign: TextAlign.center,
-                            style: const TextStyle(
+                            style: TextStyle(
                               fontSize: 16,
-                              color: Color(0xFF2F60C5),
+                              color: cs.primary,
                               fontWeight: FontWeight.w600,
                             ),
                             decoration: InputDecoration(
                               prefixText: symbol,
                               prefixStyle: TextStyle(
                                 fontSize: 15,
-                                color: Colors.grey.shade600,
+                                color: cs.onSurfaceVariant,
                                 fontWeight: FontWeight.w600,
                               ),
                               contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 14),
                               border: OutlineInputBorder(
                                 borderRadius: BorderRadius.circular(14),
-                                borderSide: BorderSide(color: Colors.grey.shade300, width: 1.2),
+                                borderSide: BorderSide(color: cs.outline, width: 1.2),
                               ),
                               enabledBorder: OutlineInputBorder(
                                 borderRadius: BorderRadius.circular(14),
-                                borderSide: BorderSide(color: Colors.grey.shade300, width: 1.2),
+                                borderSide: BorderSide(color: cs.outline, width: 1.2),
                               ),
                               focusedBorder: OutlineInputBorder(
                                 borderRadius: BorderRadius.circular(14),
-                                borderSide: const BorderSide(color: Color(0xFF2F60C5), width: 2),
+                                borderSide: BorderSide(color: cs.primary, width: 2),
                               ),
                             ),
                           ),
@@ -1779,7 +1781,8 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                     ),
                   ),
                       ],
-                    ),
+                    );
+      },
     );
 
     if (saved == true && mounted) {

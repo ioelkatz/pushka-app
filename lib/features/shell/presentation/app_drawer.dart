@@ -16,7 +16,7 @@ class AppDrawer extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final tr = S.of(context);
-    const blue = Color(0xFF2F60C5);
+    final blue = Theme.of(context).colorScheme.primary;
     final user = ref.watch(currentUserProvider);
     final profile = ref.watch(userProfileProvider).valueOrNull;
     final displayName =
@@ -31,7 +31,7 @@ class AppDrawer extends ConsumerWidget {
         children: [
           // Header azul
           Container(
-            decoration: const BoxDecoration(color: blue),
+            decoration: BoxDecoration(color: blue),
             child: SafeArea(
               bottom: false,
               child: Padding(

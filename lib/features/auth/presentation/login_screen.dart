@@ -53,7 +53,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
               const SizedBox(height: 6),
               Text(
                 _tr.signInSubtitle,
-                style: const TextStyle(fontSize: 16, color: Colors.black54),
+                style: TextStyle(fontSize: 16, color: Theme.of(context).colorScheme.onSurfaceVariant),
               ),
               const SizedBox(height: 24),
 

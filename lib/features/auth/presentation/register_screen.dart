@@ -52,7 +52,7 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
               const SizedBox(height: 8),
               Text(
                 _tr.completeData,
-                style: const TextStyle(fontSize: 16, color: Colors.black54),
+                style: TextStyle(fontSize: 16, color: Theme.of(context).colorScheme.onSurfaceVariant),
               ),
               const SizedBox(height: 24),
 

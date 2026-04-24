@@ -200,10 +200,10 @@ class _OnboardingPage extends StatelessWidget {
           Text(
             title,
             textAlign: TextAlign.center,
-            style: const TextStyle(
+            style: TextStyle(
               fontSize: 26,
               fontWeight: FontWeight.w800,
-              color: AppTokens.textPrimary,
+              color: Theme.of(context).colorScheme.onSurface,
               height: 1.2,
             ),
           ),

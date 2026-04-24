@@ -51,7 +51,7 @@ class S {
   // APP DRAWER
   // ---------------------------------------------------------------------------
 
-  String hello(String name) => _t('HOLA $name', 'HELLO $name', 'BONJOUR $name', 'שלום $name');
+  String hello(String name) => _t('Hola $name', 'Hello $name', 'Bonjour $name', 'שלום $name');
   String get myPushka => _t('Mi Pushka', 'My Pushka', 'Ma Pushka', 'הפושקה שלי');
   String get wallet => _t('Billetera', 'Wallet', 'Portefeuille', 'ארנק');
   String get reminders => _t('Recordatorios', 'Reminders', 'Rappels', 'תזכורות');
@@ -774,7 +774,7 @@ class S {
   String get monthApr => _t('Abr', 'Apr', 'Avr', 'אפר');
   String get monthMay => _t('May', 'May', 'Mai', 'מאי');
   String get monthJun => _t('Jun', 'Jun', 'Jun', 'יונ');
-  String get monthJul => _t('Jul', 'Jul', 'Jui', 'יול');
+  String get monthJul => _t('Jul', 'Jul', 'Juil', 'יול');
   String get monthAug => _t('Ago', 'Aug', 'Aoû', 'אוג');
   String get monthSep => _t('Sep', 'Sep', 'Sep', 'ספט');
   String get monthOct => _t('Oct', 'Oct', 'Oct', 'אוק');
@@ -936,7 +936,7 @@ class S {
   String get navPushka => _t('Mi Pushka', 'My Pushka', 'Ma Pushka', 'הפושקה שלי');
   String get navWallet => _t('Billetera', 'Wallet', 'Portefeuille', 'ארנק');
   String get navSendRequest => _t('Enviar/Solicitar', 'Send/Request', 'Envoyer/Demander', 'שלח/בקש');
-  String get navAutoRefill => _t('RECARGA AUTOMÁTICA', 'AUTO REFILL', 'RECHARGE AUTOMATIQUE', 'טעינה אוטומטית');
+  String get navAutoRefill => _t('Recarga automática', 'Auto refill', 'Recharge automatique', 'טעינה אוטומטית');
   String get navReminders => _t('Recordatorios', 'Reminders', 'Rappels', 'תזכורות');
   String get navHistory => _t('Historial', 'History', 'Historique', 'היסטוריה');
   String get navSettings => _t('Configuración', 'Settings', 'Paramètres', 'הגדרות');

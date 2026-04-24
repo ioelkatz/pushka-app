@@ -187,7 +187,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     final tr = S.of(context);
     const orange = Color(0xFFFF9500);
     const red = Color(0xFFE05A4F);
-    const blue = Color(0xFF2F60C5);
+    final blue = Theme.of(context).colorScheme.primary;
 
     final user = ref.watch(currentUserProvider);
     final userProfile = ref.watch(userProfileProvider).valueOrNull;
@@ -639,7 +639,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   }
 
   Widget _buildProfileNameRow(String name, String? uid, S tr, String? photoURL) {
-    const blue = Color(0xFF2F60C5);
+    final blue = Theme.of(context).colorScheme.primary;
     final avatar = GestureDetector(
       onTap: uid == null ? null : () => _pickAndUploadPhoto(uid, tr),
       child: Stack(
@@ -653,7 +653,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             child: (photoURL == null || photoURL.isEmpty)
                 ? Text(
                     name.isNotEmpty ? name[0].toUpperCase() : '?',
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 22,
                       fontWeight: FontWeight.w700,
                       color: blue,
@@ -797,12 +797,13 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       builder: (ctx) {
         return StatefulBuilder(
           builder: (ctx, setSS) {
+            final cs = Theme.of(ctx).colorScheme;
             return Padding(
               padding: EdgeInsets.only(bottom: MediaQuery.of(ctx).viewInsets.bottom),
               child: Container(
-                decoration: const BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+                decoration: BoxDecoration(
+                  color: cs.surface,
+                  borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
                 ),
                 padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
                 child: Column(
@@ -815,7 +816,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                         height: 4,
                         margin: const EdgeInsets.only(bottom: 16),
                         decoration: BoxDecoration(
-                          color: Colors.grey.shade300,
+                          color: cs.outlineVariant,
                           borderRadius: BorderRadius.circular(2),
                         ),
                       ),
@@ -840,7 +841,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                         border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
                         focusedBorder: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(12),
-                          borderSide: const BorderSide(color: Color(0xFF2F60C5), width: 1.6),
+                          borderSide: BorderSide(color: cs.primary, width: 1.6),
                         ),
                       ),
                       onChanged: (_) {
@@ -852,7 +853,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                       height: 48,
                       child: ElevatedButton(
                         style: ElevatedButton.styleFrom(
-                          backgroundColor: const Color(0xFF2F60C5),
+                          backgroundColor: cs.primary,
                           foregroundColor: Colors.white,
                           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                         ),
@@ -1663,7 +1664,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                           border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
                           focusedBorder: OutlineInputBorder(
                             borderRadius: BorderRadius.circular(12),
-                            borderSide: const BorderSide(color: Color(0xFF2F60C5), width: 1.8),
+                            borderSide: BorderSide(color: Theme.of(ctx).colorScheme.primary, width: 1.8),
                           ),
                         ),
                         onChanged: (_) { if (err != null) setSS(() => err = null); },
@@ -1680,7 +1681,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               height: 48,
               child: ElevatedButton(
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF2F60C5),
+                  backgroundColor: Theme.of(ctx).colorScheme.primary,
                   foregroundColor: Colors.white,
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                 ),

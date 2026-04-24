@@ -14,7 +14,7 @@ class WalletRequestsScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final tr = S.of(context);
     final uid = ref.watch(currentUserProvider)?.uid;
-    const blue = Color(0xFF2F60C5);
+    final blue = Theme.of(context).colorScheme.primary;
     const red = Color(0xFFE05A4F);
 
     if (uid == null) {
@@ -148,7 +148,7 @@ class _RequestCardState extends State<_RequestCard> {
           ElevatedButton(
             onPressed: () => Navigator.pop(ctx, true),
             style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFF2F60C5),
+              backgroundColor: Theme.of(context).colorScheme.primary,
               foregroundColor: Colors.white,
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
             ),
@@ -237,19 +237,13 @@ class _RequestCardState extends State<_RequestCard> {
   @override
   Widget build(BuildContext context) {
     final tr = S.of(context);
+    final cs = Theme.of(context).colorScheme;
 
     return Container(
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: cs.surfaceContainer,
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: Colors.grey.shade200),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.04),
-            blurRadius: 8,
-            offset: const Offset(0, 2),
-          ),
-        ],
+        border: Border.all(color: cs.outline),
       ),
       padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
       child: Column(

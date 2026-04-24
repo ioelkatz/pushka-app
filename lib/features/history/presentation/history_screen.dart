@@ -428,7 +428,7 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
                       _buildBadge(
                         _methodLabel(transaction.paymentMethod),
                         _iconForMethod(transaction.paymentMethod),
-                        const Color(0xFF2F60C5),
+                        cs.primary,
                       ),
                     if (showMethodBadge && showStatusBadge) const SizedBox(width: 6),
                     if (showStatusBadge)

@@ -202,6 +202,7 @@ class _WalletAutoRefillScreenState extends ConsumerState<WalletAutoRefillScreen>
     required String label,
   }) {
     final selected = _frequency == value;
+    final cs = Theme.of(context).colorScheme;
     return InkWell(
       onTap: () => setState(() => _frequency = value),
       child: Padding(
@@ -210,7 +211,7 @@ class _WalletAutoRefillScreenState extends ConsumerState<WalletAutoRefillScreen>
           children: [
             Icon(
               selected ? Icons.radio_button_checked : Icons.radio_button_off,
-              color: selected ? const Color(0xFF2F60C5) : Colors.black,
+              color: selected ? cs.primary : cs.onSurface,
               size: 30,
             ),
             const SizedBox(width: 14),
@@ -346,7 +347,6 @@ class _WalletAutoRefillScreenState extends ConsumerState<WalletAutoRefillScreen>
                           child: Text(
                             tr.cancelBtn,
                             style: const TextStyle(
-                              color: Colors.black,
                               fontWeight: FontWeight.w700,
                               letterSpacing: 0.2,
                             ),
