@@ -56,7 +56,7 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
             content: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
               Text(tr.addFunds, textAlign: TextAlign.center, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
               const SizedBox(height: 20),
-              Text(tr.enterAmount, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: Color(0xFF5A5A5A))),
+              Text(tr.enterAmount, style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: Theme.of(ctx).colorScheme.onSurfaceVariant)),
               const SizedBox(height: 10),
               TextField(
                 controller: controller,
@@ -74,7 +74,6 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
                 decoration: InputDecoration(
                   hintText: hintText, prefixText: '$currencySymbol ', errorText: error,
                   border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                  focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: Color(0xFFE05A4F), width: 1.6)),
                 ),
               ),
             ]),
@@ -90,7 +89,7 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
               )),
               SizedBox(width: double.infinity, height: 44, child: TextButton(
                 onPressed: () => Navigator.pop(ctx),
-                child: Text(tr.cancel, style: TextStyle(color: Colors.grey.shade600, fontWeight: FontWeight.w500)),
+                child: Text(tr.cancel, style: const TextStyle(fontWeight: FontWeight.w500)),
               )),
             ],
           ),
@@ -204,7 +203,7 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
   Widget build(BuildContext context) {
     final tr = S.of(context);
     const red = Color(0xFFE05A4F);
-    const blue = Color(0xFF2F60C5);
+    final cs = Theme.of(context).colorScheme;
     final profile = ref.watch(userProfileProvider).valueOrNull;
     final uid = ref.watch(currentUserProvider)?.uid;
     final pendingRequests = ref.watch(pendingWalletRequestsProvider).valueOrNull ?? 0;
@@ -245,7 +244,7 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
             tr.setFundsSubtitle,
             textAlign: TextAlign.center,
             style: TextStyle(
-              color: Colors.black.withValues(alpha: 0.62),
+              color: cs.onSurfaceVariant,
               fontSize: compact ? 13 : 14,
             ),
           ),
@@ -270,11 +269,9 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
             child: Text(
               tr.learnMore,
               textAlign: TextAlign.center,
-              style: const TextStyle(
-                color: blue,
+              style: TextStyle(
+                color: cs.primary,
                 fontWeight: FontWeight.w600,
-                decoration: TextDecoration.underline,
-                decorationThickness: 1.2,
               ),
             ),
           ),
@@ -293,7 +290,7 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
                   horizontal: 18,
                 ),
                 decoration: BoxDecoration(
-                  color: const Color(0xFFF0F0F0),
+                  color: cs.surfaceContainer,
                   borderRadius: BorderRadius.circular(18),
                 ),
                 child: Column(
@@ -306,7 +303,7 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
                     Text(
                       walletId,
                       style: TextStyle(
-                        color: blue,
+                        color: cs.primary,
                         fontSize: walletIdSize,
                         letterSpacing: 2,
                         fontWeight: FontWeight.w800,
@@ -331,7 +328,7 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
             formatMoney(walletBalance, symbol: _currencySymbol(currencyCode)),
             textAlign: TextAlign.center,
             style: TextStyle(
-              color: blue,
+              color: cs.primary,
               fontSize: balanceSize,
               fontWeight: FontWeight.w800,
             ),
@@ -363,7 +360,7 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
           if (pendingRequests > 0) ...[
             _WalletCard(
               icon: Icons.mark_email_unread_outlined,
-              iconBg: blue,
+              iconBg: cs.primary,
               title: tr.pendingRequests,
               subtitle: '$pendingRequests ${tr.pendingRequestsBadge}',
               onTap: () => context.go('/wallet/requests'),
@@ -457,7 +454,7 @@ class _WalletCard extends StatelessWidget {
         child: Container(
           padding: EdgeInsets.all(compact ? 11 : 14),
           decoration: BoxDecoration(
-            color: const Color(0xFFF3F3F3),
+            color: Theme.of(context).colorScheme.surfaceContainer,
             borderRadius: BorderRadius.circular(18),
           ),
           child: Row(
@@ -515,7 +512,7 @@ class _WalletCard extends StatelessWidget {
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
-                          color: Colors.black.withValues(alpha: 0.55),
+                          color: Theme.of(context).colorScheme.onSurfaceVariant,
                           fontSize: compact ? 13 : 14,
                         ),
                       ),

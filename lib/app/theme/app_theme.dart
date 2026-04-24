@@ -153,6 +153,16 @@ class AppTheme {
       drawerTheme: const DrawerThemeData(
         backgroundColor: cardDark,
       ),
+      switchTheme: SwitchThemeData(
+        thumbColor: WidgetStateProperty.resolveWith((states) {
+          if (states.contains(WidgetState.selected)) return AppTokens.skyBlue;
+          return null;
+        }),
+        trackColor: WidgetStateProperty.resolveWith((states) {
+          if (states.contains(WidgetState.selected)) return AppTokens.skyBlue.withValues(alpha: 0.45);
+          return null;
+        }),
+      ),
     );
   }
 
@@ -275,6 +285,16 @@ class AppTheme {
       ),
       drawerTheme: const DrawerThemeData(
         backgroundColor: Colors.white,
+      ),
+      switchTheme: SwitchThemeData(
+        thumbColor: WidgetStateProperty.resolveWith((states) {
+          if (states.contains(WidgetState.selected)) return const Color(0xFFFF9500);
+          return null;
+        }),
+        trackColor: WidgetStateProperty.resolveWith((states) {
+          if (states.contains(WidgetState.selected)) return const Color(0xFFFF9500).withValues(alpha: 0.45);
+          return null;
+        }),
       ),
     );
   }
