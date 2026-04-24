@@ -452,7 +452,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           _buildPushkaStyleSelector(ref),
           const SizedBox(height: 18),
           Container(
-            height: 10,
+            height: 5,
             width: double.infinity,
             color: Theme.of(context).colorScheme.surfaceContainerHighest,
           ),
@@ -529,7 +529,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             ),
           const SizedBox(height: 18),
           Container(
-            height: 10,
+            height: 5,
             width: double.infinity,
             color: Theme.of(context).colorScheme.surfaceContainerHighest,
           ),
@@ -582,7 +582,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           ),
           const SizedBox(height: 16),
           Container(
-            height: 10,
+            height: 5,
             width: double.infinity,
             color: Theme.of(context).colorScheme.surfaceContainerHighest,
           ),
@@ -1017,18 +1017,19 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             child: GestureDetector(
               onTap: onTap,
               child: Container(
-                height: 46,
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
                 decoration: BoxDecoration(
-                  border: Border.all(color: Theme.of(context).colorScheme.onSurface, width: 1.5),
-                  borderRadius: BorderRadius.circular(12),
+                  color: Theme.of(context).colorScheme.surface,
+                  border: Border.all(color: Theme.of(context).colorScheme.outline),
+                  borderRadius: BorderRadius.circular(8),
                 ),
                 alignment: Alignment.center,
                 child: Text(
                   label,
                   style: TextStyle(
-                    fontWeight: FontWeight.w700,
+                    fontWeight: FontWeight.w500,
                     color: Theme.of(context).colorScheme.onSurface,
-                    fontSize: 15,
+                    fontSize: 16,
                   ),
                 ),
               ),
@@ -1146,6 +1147,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           border: InputBorder.none,
           enabledBorder: InputBorder.none,
           focusedBorder: InputBorder.none,
+          filled: false,
           isDense: true,
           contentPadding: EdgeInsets.symmetric(vertical: 12),
         ),
