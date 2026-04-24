@@ -11,9 +11,9 @@ class SupportScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final tr = S.of(context);
+    final cs = Theme.of(context).colorScheme;
     const red = Color(0xFFE05A4F);
     const green = Color(0xFF25D366);
-    const blue = Color(0xFF2F60C5);
 
     return SingleChildScrollView(
       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
@@ -44,10 +44,10 @@ class SupportScreen extends StatelessWidget {
                   // Colel Jabad
                   Text(
                     tr.colelJabad,
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 30,
                       fontWeight: FontWeight.w700,
-                      color: Colors.black87,
+                      color: cs.onSurface,
                       letterSpacing: 0.5,
                     ),
                   ),
@@ -57,7 +57,7 @@ class SupportScreen extends StatelessWidget {
                     tr.tagline1788,
                     style: TextStyle(
                       fontSize: 14,
-                      color: Colors.grey.shade600,
+                      color: cs.onSurfaceVariant,
                       fontWeight: FontWeight.w400,
                     ),
                   ),
@@ -94,20 +94,20 @@ class SupportScreen extends StatelessWidget {
           // App Version
           Text(
             tr.appVersionSection,
-            style: const TextStyle(
+            style: TextStyle(
               fontSize: 11,
               fontWeight: FontWeight.w600,
               letterSpacing: 1.2,
-              color: Colors.black87,
+              color: cs.onSurface,
             ),
           ),
           const SizedBox(height: 8),
-          const Text(
+          Text(
             AppTokens.appVersion,
             style: TextStyle(
               fontSize: 18,
               fontWeight: FontWeight.w600,
-              color: Colors.black87,
+              color: cs.onSurface,
             ),
           ),
 
@@ -116,11 +116,11 @@ class SupportScreen extends StatelessWidget {
           // Support Section
           Text(
             tr.supportSection,
-            style: const TextStyle(
+            style: TextStyle(
               fontSize: 11,
               fontWeight: FontWeight.w600,
               letterSpacing: 1.2,
-              color: Colors.black87,
+              color: cs.onSurface,
             ),
           ),
           const SizedBox(height: 16),
@@ -184,9 +184,9 @@ class SupportScreen extends StatelessWidget {
             child: Text(
               tr.learnMoreColel,
               textAlign: TextAlign.center,
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: 14,
-                color: blue,
+                color: cs.primary,
                 decoration: TextDecoration.underline,
               ),
             ),
@@ -197,11 +197,11 @@ class SupportScreen extends StatelessWidget {
           // Developer Section
           Text(
             tr.developedBy,
-            style: const TextStyle(
+            style: TextStyle(
               fontSize: 11,
               fontWeight: FontWeight.w600,
               letterSpacing: 1.2,
-              color: Colors.black87,
+              color: cs.onSurface,
             ),
           ),
           const SizedBox(height: 16),
@@ -230,12 +230,12 @@ class SupportScreen extends StatelessWidget {
                 ),
               ),
               const SizedBox(width: 8),
-              const Text(
+              Text(
                 'GorinSystems',
                 style: TextStyle(
                   fontSize: 18,
                   fontWeight: FontWeight.w600,
-                  color: Colors.black87,
+                  color: cs.onSurface,
                 ),
               ),
             ],

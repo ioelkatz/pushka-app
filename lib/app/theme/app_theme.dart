@@ -25,7 +25,26 @@ class AppTheme {
     );
 
     return base.copyWith(
+      colorScheme: base.colorScheme.copyWith(
+        surface: cardDark,
+        surfaceContainerLowest: surfaceDark,
+        surfaceContainerLow: surfaceDark,
+        surfaceContainer: cardDark,
+        surfaceContainerHigh: cardDark,
+        surfaceContainerHighest: borderDark,
+        onSurface: textDark,
+        onSurfaceVariant: mutedDark,
+        outline: borderDark,
+        outlineVariant: borderDark,
+      ),
       scaffoldBackgroundColor: surfaceDark,
+      bottomSheetTheme: const BottomSheetThemeData(
+        backgroundColor: cardDark,
+        surfaceTintColor: Colors.transparent,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+        ),
+      ),
       appBarTheme: AppBarTheme(
         elevation: 0,
         scrolledUnderElevation: 0,

@@ -9,6 +9,7 @@ class AboutScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final tr = S.of(context);
+    final cs = Theme.of(context).colorScheme;
     return SingleChildScrollView(
       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
       child: Column(
@@ -21,7 +22,7 @@ class AboutScreen extends StatelessWidget {
             tr.aboutBreadcrumb,
             style: TextStyle(
               fontSize: 13,
-              color: Colors.grey.shade600,
+              color: cs.onSurfaceVariant,
               fontWeight: FontWeight.w400,
             ),
           ),
@@ -31,10 +32,10 @@ class AboutScreen extends StatelessWidget {
           // Título principal
           Text(
             tr.aboutTitle,
-            style: const TextStyle(
+            style: TextStyle(
               fontSize: 30,
               fontWeight: FontWeight.w700,
-              color: Colors.black87,
+              color: cs.onSurface,
               letterSpacing: 0.5,
             ),
           ),
@@ -44,10 +45,10 @@ class AboutScreen extends StatelessWidget {
           // Sección "Acerca de"
           Text(
             tr.aboutSection,
-            style: const TextStyle(
+            style: TextStyle(
               fontSize: 22,
               fontWeight: FontWeight.w700,
-              color: Colors.black87,
+              color: cs.onSurface,
             ),
           ),
 
@@ -56,10 +57,10 @@ class AboutScreen extends StatelessWidget {
           // Párrafo 1
           Text(
             tr.aboutP1,
-            style: const TextStyle(
+            style: TextStyle(
               fontSize: 16,
               height: 1.6,
-              color: Colors.black87,
+              color: cs.onSurface,
               fontWeight: FontWeight.w400,
             ),
           ),
@@ -69,10 +70,10 @@ class AboutScreen extends StatelessWidget {
           // Párrafo 2
           Text(
             tr.aboutP2,
-            style: const TextStyle(
+            style: TextStyle(
               fontSize: 16,
               height: 1.6,
-              color: Colors.black87,
+              color: cs.onSurface,
               fontWeight: FontWeight.w400,
             ),
           ),
@@ -82,10 +83,10 @@ class AboutScreen extends StatelessWidget {
           // Párrafo 3
           Text(
             tr.aboutP3,
-            style: const TextStyle(
+            style: TextStyle(
               fontSize: 16,
               height: 1.6,
-              color: Colors.black87,
+              color: cs.onSurface,
               fontWeight: FontWeight.w400,
             ),
           ),
@@ -112,7 +113,7 @@ class AboutScreen extends StatelessWidget {
               tr.copyright,
               style: TextStyle(
                 fontSize: 14,
-                color: Colors.grey.shade600,
+                color: cs.onSurfaceVariant,
                 fontWeight: FontWeight.w400,
               ),
             ),
@@ -147,23 +148,23 @@ class _LegalLink extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: Colors.grey.shade200),
+          border: Border.all(color: Theme.of(context).colorScheme.outline),
         ),
         child: Row(
           children: [
-            Icon(icon, size: 20, color: const Color(0xFF2563EB)),
+            Icon(icon, size: 20, color: Theme.of(context).colorScheme.primary),
             const SizedBox(width: 12),
             Expanded(
               child: Text(
                 label,
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 15,
                   fontWeight: FontWeight.w500,
-                  color: Color(0xFF1A1A1A),
+                  color: Theme.of(context).colorScheme.onSurface,
                 ),
               ),
             ),
-            Icon(Icons.chevron_right, color: Colors.grey.shade400, size: 20),
+            Icon(Icons.chevron_right, color: Theme.of(context).colorScheme.onSurfaceVariant, size: 20),
           ],
         ),
       ),

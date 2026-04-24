@@ -53,7 +53,7 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
       ((profile?['currencyCode'] as String?) ?? 'USD').toLowerCase(),
     );
 
-    const blue = Color(0xFF2F60C5);
+    final cs = Theme.of(context).colorScheme;
 
     return Column(
       children: [
@@ -61,9 +61,9 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
         Container(
           margin: const EdgeInsets.fromLTRB(18, 14, 18, 10),
           decoration: BoxDecoration(
-            color: Colors.white,
+            color: cs.surface,
             borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: Colors.grey.shade300),
+            border: Border.all(color: cs.outline),
           ),
           child: PopupMenuButton<_HistoryFilter>(
             offset: const Offset(0, 50),
@@ -77,13 +77,13 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
                   Text(
                     _getFilterLabel(),
                     style: TextStyle(
-                      color: blue,
+                      color: cs.onSurface,
                       fontSize: 16,
                       fontWeight: FontWeight.w500,
                     ),
                   ),
                   const Spacer(),
-                  const Icon(Icons.keyboard_arrow_down, color: Colors.grey),
+                  Icon(Icons.keyboard_arrow_down, color: cs.onSurfaceVariant),
                 ],
               ),
             ),
@@ -140,19 +140,19 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
                       margin: const EdgeInsets.fromLTRB(18, 0, 18, 8),
                       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
                       decoration: BoxDecoration(
-                        color: Colors.white,
+                        color: cs.surface,
                         borderRadius: BorderRadius.circular(12),
-                        border: Border.all(color: Colors.grey.shade300),
+                        border: Border.all(color: cs.outline),
                       ),
                       child: Row(
                         children: [
-                          const Icon(Icons.bar_chart_rounded, size: 20, color: Color(0xFF2F60C5)),
+                          Icon(Icons.bar_chart_rounded, size: 20, color: cs.onSurface),
                           const SizedBox(width: 10),
                           Expanded(
                             child: Text(
                               _chartExpanded ? _tr.chartHideGraph : _tr.chartShowGraph,
-                              style: const TextStyle(
-                                color: Color(0xFF2F60C5),
+                              style: TextStyle(
+                                color: cs.onSurface,
                                 fontSize: 16,
                                 fontWeight: FontWeight.w500,
                               ),
@@ -161,7 +161,7 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
                           AnimatedRotation(
                             turns: _chartExpanded ? 0.5 : 0,
                             duration: const Duration(milliseconds: 250),
-                            child: const Icon(Icons.keyboard_arrow_down, color: Colors.grey),
+                            child: Icon(Icons.keyboard_arrow_down, color: cs.onSurfaceVariant),
                           ),
                         ],
                       ),
@@ -213,7 +213,7 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
                                   textAlign: TextAlign.center,
                                   style: TextStyle(
                                     fontSize: 12,
-                                    color: Colors.grey.shade500,
+                                    color: cs.onSurfaceVariant,
                                   ),
                                 ),
                               );
@@ -221,7 +221,7 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
                             return GestureDetector(
                               onTap: () => _showTransactionDetail(
                                   context, filtered[index], currencySymbol),
-                              child: _buildTransactionItem(filtered[index], blue, currencySymbol),
+                              child: _buildTransactionItem(filtered[index], cs.primary, currencySymbol),
                             );
                           },
                         ),
@@ -234,7 +234,7 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
             error: (error, _) => Center(
               child: Text(
                 _tr.errorLoadingHistory,
-                style: TextStyle(color: Colors.grey.shade600),
+                style: TextStyle(color: cs.onSurfaceVariant),
               ),
             ),
           ),
@@ -244,13 +244,13 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
   }
 
   void _showTransactionDetail(BuildContext context, Transaction t, String currencySymbol) {
-    final blue = const Color(0xFF2F60C5);
+    final cs = Theme.of(context).colorScheme;
     final amount = t.amount;
     final isNeg = amount < 0;
     final amountLabel = isNeg
         ? '-${formatMoney(amount.abs(), symbol: currencySymbol)}'
         : formatMoney(amount, symbol: currencySymbol);
-    final amountColor = isNeg ? const Color(0xFFE05A4F) : blue;
+    final amountColor = isNeg ? const Color(0xFFE05A4F) : cs.primary;
 
     final (typeIcon, typeColor) = switch (t.type) {
       TransactionType.tzedaka     => (Icons.volunteer_activism_rounded, const Color(0xFF2563EB)),
@@ -266,10 +266,11 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
       useSafeArea: true,
       backgroundColor: Colors.transparent,
       builder: (ctx) {
+        final sheetCs = Theme.of(ctx).colorScheme;
         return Container(
-          decoration: const BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+          decoration: BoxDecoration(
+            color: sheetCs.surface,
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
           ),
           padding: const EdgeInsets.fromLTRB(24, 12, 24, 32),
           child: Column(
@@ -279,7 +280,7 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
               Container(
                 width: 40, height: 4,
                 decoration: BoxDecoration(
-                  color: Colors.grey.shade300,
+                  color: sheetCs.outlineVariant,
                   borderRadius: BorderRadius.circular(2),
                 ),
               ),
@@ -306,7 +307,7 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
               const SizedBox(height: 4),
               Text(
                 _typeLabel(t.type),
-                style: TextStyle(fontSize: 16, color: Colors.grey.shade600),
+                style: TextStyle(fontSize: 16, color: sheetCs.onSurfaceVariant),
               ),
               const SizedBox(height: 24),
               const Divider(),
@@ -329,19 +330,18 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
   }
 
   Widget _detailRow(String label, String value) {
+    final cs = Theme.of(context).colorScheme;
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 8),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Text(label,
-              style: TextStyle(fontSize: 14, color: Colors.grey.shade600)),
+          Text(label, style: TextStyle(fontSize: 14, color: cs.onSurfaceVariant)),
           Flexible(
             child: Text(
               value,
               textAlign: TextAlign.end,
-              style: const TextStyle(
-                  fontSize: 14, fontWeight: FontWeight.w600, color: Colors.black87),
+              style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: cs.onSurface),
             ),
           ),
         ],
@@ -362,12 +362,13 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
     }
   }
 
-  Widget _buildTransactionItem(Transaction transaction, Color blue, String currencySymbol) {
+  Widget _buildTransactionItem(Transaction transaction, Color primaryColor, String currencySymbol) {
+    final cs = Theme.of(context).colorScheme;
     final amount = transaction.amount;
     final amountLabel = amount < 0
         ? '-${formatMoney(amount.abs(), symbol: currencySymbol)}'
         : formatMoney(amount, symbol: currencySymbol);
-    final amountColor = amount < 0 ? const Color(0xFFE05A4F) : blue;
+    final amountColor = amount < 0 ? const Color(0xFFE05A4F) : primaryColor;
 
     final showMethodBadge = transaction.paymentMethod != PaymentMethod.card &&
         transaction.paymentMethod != PaymentMethod.auto;
@@ -385,10 +386,10 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
       margin: const EdgeInsets.only(bottom: 10),
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: cs.surface,
         borderRadius: BorderRadius.circular(12),
         border: Border.all(
-          color: transaction.isPending ? Colors.orange.shade200 : Colors.grey.shade200,
+          color: transaction.isPending ? Colors.orange.shade200 : cs.outline,
         ),
       ),
       child: Row(
@@ -409,16 +410,16 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
               children: [
                 Text(
                   _typeLabel(transaction.type),
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 14,
                     fontWeight: FontWeight.w600,
-                    color: Colors.black87,
+                    color: cs.onSurface,
                   ),
                 ),
                 const SizedBox(height: 2),
                 Text(
                   _formatDate(transaction.dateTime),
-                  style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+                  style: TextStyle(fontSize: 12, color: cs.onSurfaceVariant),
                 ),
                 if (showMethodBadge || showStatusBadge) ...[
                   const SizedBox(height: 5),

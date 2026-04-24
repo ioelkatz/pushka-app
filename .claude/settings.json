@@ -8,7 +8,19 @@
       "WebFetch(domain:github.com)",
       "Bash(start \"\" \"c:\\\\dev\\\\pushka_app\\\\docs\\\\770_wireframe.html\")",
       "Bash(node -e ' *)",
-      "Bash(start c:/dev/pushka_app/docs/770_wireframe.html)"
+      "Bash(start c:/dev/pushka_app/docs/770_wireframe.html)",
+      "Read(//c/Users/Ioel/Downloads/**)",
+      "Bash(python -c \"print\\('ok'\\)\")",
+      "Bash(py -c \"print\\('ok'\\)\")",
+      "Bash(where python *)",
+      "Bash(where py *)",
+      "Bash(py -c ' *)",
+      "Bash(dart analyze *)",
+      "Bash(git -C \"c:/dev/pushka_app\" add -A)",
+      "Bash(git -C c:/dev/pushka_app commit -m ' *)"
+    ],
+    "additionalDirectories": [
+      "C:\\Users\\Ioel\\Downloads"
     ]
   }
 }

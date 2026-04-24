@@ -41,11 +41,7 @@ class _RemindersScreenState extends ConsumerState<RemindersScreen> {
                     padding: const EdgeInsets.symmetric(
                         horizontal: 18, vertical: 12),
                     itemCount: reminders.length,
-                    separatorBuilder: (context, i) => Divider(
-                      height: 1,
-                      thickness: 1,
-                      color: Colors.grey.shade200,
-                    ),
+                    separatorBuilder: (context, i) => const Divider(height: 1, thickness: 1),
                     itemBuilder: (context, index) {
                       final reminder = reminders[index];
                       return Dismissible(
@@ -87,14 +83,6 @@ class _RemindersScreenState extends ConsumerState<RemindersScreen> {
                   child: OutlinedButton(
                     onPressed: atLimit ? null : _showAddReminderDialog,
                     style: OutlinedButton.styleFrom(
-                      foregroundColor: AppTokens.primaryBlue,
-                      disabledForegroundColor: Colors.grey.shade400,
-                      side: BorderSide(
-                        color: atLimit
-                            ? Colors.grey.shade300
-                            : AppTokens.primaryBlue,
-                        width: 1.5,
-                      ),
                       shape: RoundedRectangleBorder(
                         borderRadius:
                             BorderRadius.circular(AppTokens.radiusMd),
@@ -125,9 +113,6 @@ class _RemindersScreenState extends ConsumerState<RemindersScreen> {
               child: OutlinedButton(
                 onPressed: _showAddReminderDialog,
                 style: OutlinedButton.styleFrom(
-                  foregroundColor: AppTokens.primaryBlue,
-                  side: const BorderSide(
-                      color: AppTokens.primaryBlue, width: 1.5),
                   shape: RoundedRectangleBorder(
                     borderRadius:
                         BorderRadius.circular(AppTokens.radiusMd),
@@ -203,11 +188,6 @@ class _RemindersScreenState extends ConsumerState<RemindersScreen> {
             Switch(
               value: reminder.isEnabled,
               onChanged: onToggle,
-              activeThumbColor: AppTokens.primaryBlue,
-              activeTrackColor:
-                  AppTokens.primaryBlue.withValues(alpha: 0.35),
-              inactiveThumbColor: Colors.white,
-              inactiveTrackColor: Colors.grey.shade300,
             ),
           ],
         ),
@@ -530,22 +510,16 @@ class _ReminderFormPageState extends State<_ReminderFormPage> {
     final isEditing = widget.reminder != null;
 
     return Scaffold(
-      backgroundColor: Colors.white,
       appBar: AppBar(
-        backgroundColor: Colors.white,
         elevation: 0,
         scrolledUnderElevation: 0,
         leading: IconButton(
-          icon: Icon(Directionality.of(context) == TextDirection.rtl ? Icons.arrow_forward : Icons.arrow_back, color: AppTokens.textPrimary),
+          icon: Icon(Directionality.of(context) == TextDirection.rtl ? Icons.arrow_forward : Icons.arrow_back),
           onPressed: () => Navigator.pop(context),
         ),
         title: Text(
           isEditing ? tr.editReminder : tr.newReminder,
-          style: const TextStyle(
-            color: AppTokens.textPrimary,
-            fontSize: 18,
-            fontWeight: FontWeight.w700,
-          ),
+          style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
         ),
         centerTitle: false,
       ),
@@ -591,7 +565,7 @@ class _ReminderFormPageState extends State<_ReminderFormPage> {
                       _buildHolidayToggle(),
                     ],
                     const SizedBox(height: 24),
-                    Divider(height: 1, color: Colors.grey.shade200),
+                    const Divider(height: 1),
                     const SizedBox(height: 20),
                     _sectionLabel(tr.secondTimeSection),
                     const SizedBox(height: 8),
@@ -604,7 +578,7 @@ class _ReminderFormPageState extends State<_ReminderFormPage> {
                     ],
                     if (_isHoliday || _repeatOption == _RepeatOption.fridayHoliday) ...[
                       const SizedBox(height: 24),
-                      Divider(height: 1, color: Colors.grey.shade200),
+                      const Divider(height: 1),
                       const SizedBox(height: 20),
                       _sectionLabel(tr.advanceNoticeSection),
                       const SizedBox(height: 8),
@@ -636,54 +610,28 @@ class _ReminderFormPageState extends State<_ReminderFormPage> {
   InputDecoration _inputDecoration(String hint) {
     return InputDecoration(
       hintText: hint,
-      hintStyle: TextStyle(color: Colors.grey.shade400, fontSize: 15),
       contentPadding:
           const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
-      border: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(AppTokens.radiusMd),
-        borderSide: BorderSide(color: Colors.grey.shade300),
-      ),
-      enabledBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(AppTokens.radiusMd),
-        borderSide: BorderSide(color: Colors.grey.shade300),
-      ),
-      focusedBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(AppTokens.radiusMd),
-        borderSide:
-            const BorderSide(color: AppTokens.primaryBlue, width: 1.6),
-      ),
-      errorBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(AppTokens.radiusMd),
-        borderSide: const BorderSide(color: Colors.red),
-      ),
-      focusedErrorBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(AppTokens.radiusMd),
-        borderSide: const BorderSide(color: Colors.red, width: 1.6),
-      ),
     );
   }
 
   Widget _buildTimePicker() {
+    final cs = Theme.of(context).colorScheme;
     return InkWell(
       borderRadius: BorderRadius.circular(AppTokens.radiusMd),
       onTap: _pickTime,
       child: Container(
-        padding:
-            const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
         decoration: BoxDecoration(
-          border: Border.all(color: Colors.grey.shade300),
+          border: Border.all(color: cs.outline),
           borderRadius: BorderRadius.circular(AppTokens.radiusMd),
         ),
         child: Row(
           children: [
             Expanded(
-              child: Text(
-                _formatTime(_selectedTime),
-                style: const TextStyle(
-                    fontSize: 15, color: AppTokens.textPrimary),
-              ),
+              child: Text(_formatTime(_selectedTime), style: const TextStyle(fontSize: 15)),
             ),
-            Icon(Icons.arrow_drop_down, color: Colors.grey.shade600),
+            Icon(Icons.arrow_drop_down, color: cs.onSurfaceVariant),
           ],
         ),
       ),
@@ -692,6 +640,7 @@ class _ReminderFormPageState extends State<_ReminderFormPage> {
 
   Widget _buildMinutesBeforeDropdown() {
     final tr = S.of(context);
+    final cs = Theme.of(context).colorScheme;
     final options = <int?, String>{
       null: tr.atExactTime,
       30: tr.minutesBefore30,
@@ -701,23 +650,11 @@ class _ReminderFormPageState extends State<_ReminderFormPage> {
     };
     return DropdownButtonFormField<int?>(
       initialValue: _minutesBefore,
-      decoration: InputDecoration(
-        contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
-        border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(AppTokens.radiusMd),
-          borderSide: BorderSide(color: Colors.grey.shade300),
-        ),
-        enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(AppTokens.radiusMd),
-          borderSide: BorderSide(color: Colors.grey.shade300),
-        ),
-        focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(AppTokens.radiusMd),
-          borderSide: const BorderSide(color: AppTokens.primaryBlue, width: 1.6),
-        ),
+      decoration: const InputDecoration(
+        contentPadding: EdgeInsets.symmetric(horizontal: 14, vertical: 14),
       ),
-      icon: Icon(Icons.arrow_drop_down, color: Colors.grey.shade600),
-      dropdownColor: Colors.white,
+      icon: Icon(Icons.arrow_drop_down, color: cs.onSurfaceVariant),
+      dropdownColor: cs.surface,
       items: options.entries.map((e) {
         return DropdownMenuItem<int?>(
           value: e.key,
@@ -730,27 +667,14 @@ class _ReminderFormPageState extends State<_ReminderFormPage> {
 
   Widget _buildRepeatDropdown() {
     final tr = S.of(context);
+    final cs = Theme.of(context).colorScheme;
     return DropdownButtonFormField<_RepeatOption>(
       initialValue: _repeatOption,
-      decoration: InputDecoration(
-        contentPadding:
-            const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
-        border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(AppTokens.radiusMd),
-          borderSide: BorderSide(color: Colors.grey.shade300),
-        ),
-        enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(AppTokens.radiusMd),
-          borderSide: BorderSide(color: Colors.grey.shade300),
-        ),
-        focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(AppTokens.radiusMd),
-          borderSide: const BorderSide(
-              color: AppTokens.primaryBlue, width: 1.6),
-        ),
+      decoration: const InputDecoration(
+        contentPadding: EdgeInsets.symmetric(horizontal: 14, vertical: 14),
       ),
-      icon: Icon(Icons.arrow_drop_down, color: Colors.grey.shade600),
-      dropdownColor: Colors.white,
+      icon: Icon(Icons.arrow_drop_down, color: cs.onSurfaceVariant),
+      dropdownColor: cs.surface,
       items: _RepeatOption.values.map((o) {
         final label = switch (o) {
           _RepeatOption.daily => tr.repeatDaily,
@@ -774,29 +698,24 @@ class _ReminderFormPageState extends State<_ReminderFormPage> {
             '${_selectedDate!.year}'
         : S.of(context).selectDate;
 
+    final cs = Theme.of(context).colorScheme;
     return InkWell(
       borderRadius: BorderRadius.circular(AppTokens.radiusMd),
       onTap: _pickDate,
       child: Container(
-        padding:
-            const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
         decoration: BoxDecoration(
-          border: Border.all(color: Colors.grey.shade300),
+          border: Border.all(color: cs.outline),
           borderRadius: BorderRadius.circular(AppTokens.radiusMd),
         ),
         child: Row(
           children: [
-            Icon(Icons.calendar_today_outlined,
-                size: 20, color: Colors.grey.shade600),
+            Icon(Icons.calendar_today_outlined, size: 20, color: cs.onSurfaceVariant),
             const SizedBox(width: 12),
             Expanded(
-              child: Text(
-                dateText,
-                style: const TextStyle(
-                    fontSize: 15, color: AppTokens.textPrimary),
-              ),
+              child: Text(dateText, style: const TextStyle(fontSize: 15)),
             ),
-            Icon(Icons.arrow_drop_down, color: Colors.grey.shade600),
+            Icon(Icons.arrow_drop_down, color: cs.onSurfaceVariant),
           ],
         ),
       ),
@@ -822,6 +741,7 @@ class _ReminderFormPageState extends State<_ReminderFormPage> {
       children: List.generate(7, (i) {
         final day = dayValues[i];
         final selected = _selectedDays.contains(day);
+        final cs = Theme.of(context).colorScheme;
         return GestureDetector(
           onTap: () {
             setState(() {
@@ -838,11 +758,9 @@ class _ReminderFormPageState extends State<_ReminderFormPage> {
             height: 42,
             alignment: Alignment.center,
             decoration: BoxDecoration(
-              color: selected ? AppTokens.primaryBlue : Colors.white,
+              color: selected ? cs.primary : cs.surface,
               border: Border.all(
-                color: selected
-                    ? AppTokens.primaryBlue
-                    : Colors.grey.shade300,
+                color: selected ? cs.primary : cs.outline,
               ),
               borderRadius: BorderRadius.circular(AppTokens.radiusSm),
             ),
@@ -851,7 +769,7 @@ class _ReminderFormPageState extends State<_ReminderFormPage> {
               style: TextStyle(
                 fontSize: 14,
                 fontWeight: FontWeight.w600,
-                color: selected ? Colors.white : AppTokens.mutedText,
+                color: selected ? cs.onPrimary : cs.onSurfaceVariant,
               ),
             ),
           ),
@@ -870,7 +788,6 @@ class _ReminderFormPageState extends State<_ReminderFormPage> {
             height: 24,
             child: Checkbox(
               value: _isHoliday,
-              activeColor: AppTokens.primaryBlue,
               shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(4)),
               onChanged: (v) =>
@@ -880,7 +797,7 @@ class _ReminderFormPageState extends State<_ReminderFormPage> {
           const SizedBox(width: 10),
           Text(
             S.of(context).includeHolidays,
-            style: const TextStyle(fontSize: 15, color: AppTokens.textPrimary),
+            style: const TextStyle(fontSize: 15),
           ),
         ],
       ),
@@ -901,8 +818,6 @@ class _ReminderFormPageState extends State<_ReminderFormPage> {
                 child: OutlinedButton(
                   onPressed: () => Navigator.pop(context),
                   style: OutlinedButton.styleFrom(
-                    foregroundColor: AppTokens.mutedText,
-                    side: BorderSide(color: Colors.grey.shade300),
                     shape: RoundedRectangleBorder(
                       borderRadius:
                           BorderRadius.circular(AppTokens.radiusMd),
@@ -925,9 +840,6 @@ class _ReminderFormPageState extends State<_ReminderFormPage> {
                 child: OutlinedButton(
                   onPressed: _validateAndSave,
                   style: OutlinedButton.styleFrom(
-                    foregroundColor: AppTokens.primaryBlue,
-                    side: const BorderSide(
-                        color: AppTokens.primaryBlue, width: 1.5),
                     shape: RoundedRectangleBorder(
                       borderRadius:
                           BorderRadius.circular(AppTokens.radiusMd),
@@ -1047,7 +959,6 @@ class _ReminderFormPageState extends State<_ReminderFormPage> {
             height: 24,
             child: Checkbox(
               value: _hasSecondTime,
-              activeColor: AppTokens.primaryBlue,
               shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(4)),
               onChanged: (v) {
@@ -1065,7 +976,7 @@ class _ReminderFormPageState extends State<_ReminderFormPage> {
           const SizedBox(width: 10),
           Text(
             tr.addSecondTime,
-            style: const TextStyle(fontSize: 15, color: AppTokens.textPrimary),
+            style: const TextStyle(fontSize: 15),
           ),
         ],
       ),
@@ -1073,13 +984,14 @@ class _ReminderFormPageState extends State<_ReminderFormPage> {
   }
 
   Widget _buildSecondTimePicker() {
+    final cs = Theme.of(context).colorScheme;
     return InkWell(
       borderRadius: BorderRadius.circular(AppTokens.radiusMd),
       onTap: _pickSecondTime,
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
         decoration: BoxDecoration(
-          border: Border.all(color: Colors.grey.shade300),
+          border: Border.all(color: cs.outline),
           borderRadius: BorderRadius.circular(AppTokens.radiusMd),
         ),
         child: Row(
@@ -1087,11 +999,10 @@ class _ReminderFormPageState extends State<_ReminderFormPage> {
             Expanded(
               child: Text(
                 _formatTime(_secondTime ?? const TimeOfDay(hour: 18, minute: 0)),
-                style: const TextStyle(
-                    fontSize: 15, color: AppTokens.textPrimary),
+                style: const TextStyle(fontSize: 15),
               ),
             ),
-            Icon(Icons.arrow_drop_down, color: Colors.grey.shade600),
+            Icon(Icons.arrow_drop_down, color: cs.onSurfaceVariant),
           ],
         ),
       ),
