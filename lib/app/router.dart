@@ -287,9 +287,6 @@ PreferredSizeWidget? _buildAppBar(BuildContext context, String location) {
   final tr = S.of(context);
   if (location == '/') {
     return AppBar(
-      elevation: 0,
-      backgroundColor: Colors.white,
-      foregroundColor: AppTokens.textPrimary,
       title: Text(
         tr.navPushka,
         style: const TextStyle(fontWeight: FontWeight.w600),

@@ -454,7 +454,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           Container(
             height: 10,
             width: double.infinity,
-            color: const Color(0xFFF1F1F1),
+            color: Theme.of(context).colorScheme.surfaceContainerHighest,
           ),
           const SizedBox(height: 22),
 
@@ -468,7 +468,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   fontSize: 40 / 2,
                   fontWeight: FontWeight.w700,
                   letterSpacing: 0.5,
-                  color: Color(0xFF101010),
+                  color: Theme.of(context).colorScheme.onSurface,
                 ),
               ),
               const SizedBox(width: 10),
@@ -531,7 +531,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           Container(
             height: 10,
             width: double.infinity,
-            color: const Color(0xFFF1F1F1),
+            color: Theme.of(context).colorScheme.surfaceContainerHighest,
           ),
           const SizedBox(height: 22),
 
@@ -584,7 +584,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           Container(
             height: 10,
             width: double.infinity,
-            color: const Color(0xFFF1F1F1),
+            color: Theme.of(context).colorScheme.surfaceContainerHighest,
           ),
           const SizedBox(height: 22),
 
@@ -694,9 +694,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: Theme.of(context).colorScheme.surface,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.grey.shade200),
+        border: Border.all(color: Theme.of(context).colorScheme.outlineVariant),
       ),
       child: Row(
         children: [
@@ -708,15 +708,15 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               children: [
                 Text(
                   name,
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 16,
                     fontWeight: FontWeight.w600,
-                    color: Color(0xFF1E293B),
+                    color: Theme.of(context).colorScheme.onSurface,
                   ),
                 ),
                 Text(
                   tr.displayNameLabel,
-                  style: TextStyle(fontSize: 12, color: Colors.grey.shade500),
+                  style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.onSurfaceVariant),
                 ),
               ],
             ),
@@ -946,11 +946,11 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   Widget _buildSectionTitle(String title) {
     return Text(
       title,
-      style: const TextStyle(
+      style: TextStyle(
         fontSize: 40 / 2,
         fontWeight: FontWeight.w700,
         letterSpacing: 0.5,
-        color: Color(0xFF101010),
+        color: Theme.of(context).colorScheme.onSurface,
       ),
     );
   }
@@ -958,11 +958,11 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   Widget _buildLabel(String label) {
     return Text(
       label,
-      style: const TextStyle(
+      style: TextStyle(
         fontSize: 11,
         fontWeight: FontWeight.w600,
         letterSpacing: 0.5,
-        color: Colors.black54,
+        color: Theme.of(context).colorScheme.onSurfaceVariant,
       ),
     );
   }
@@ -977,8 +977,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
         decoration: BoxDecoration(
-          color: Colors.white,
-          border: Border.all(color: Colors.grey.shade300),
+          color: Theme.of(context).colorScheme.surface,
+          border: Border.all(color: Theme.of(context).colorScheme.outline),
           borderRadius: BorderRadius.circular(8),
         ),
         child: Row(
@@ -1055,8 +1055,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
         decoration: BoxDecoration(
-          color: Colors.white,
-          border: Border.all(color: Colors.grey.shade300),
+          color: Theme.of(context).colorScheme.surface,
+          border: Border.all(color: Theme.of(context).colorScheme.outline),
           borderRadius: BorderRadius.circular(8),
         ),
         child: Row(
@@ -1064,13 +1064,14 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             Expanded(
               child: Text(
                 label,
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 16,
                   fontWeight: FontWeight.w500,
+                  color: Theme.of(context).colorScheme.onSurface,
                 ),
               ),
             ),
-            const Icon(Icons.chevron_right, color: Colors.grey),
+            Icon(Icons.chevron_right, color: Theme.of(context).colorScheme.onSurfaceVariant),
           ],
         ),
       ),
@@ -1087,8 +1088,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
         decoration: BoxDecoration(
-          color: Colors.white,
-          border: Border.all(color: Colors.grey.shade300),
+          color: Theme.of(context).colorScheme.surface,
+          border: Border.all(color: Theme.of(context).colorScheme.outline),
           borderRadius: BorderRadius.circular(8),
         ),
         child: Row(
@@ -1110,13 +1111,13 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     currency,
                     style: TextStyle(
                       fontSize: 12,
-                      color: Colors.grey.shade600,
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
                     ),
                   ),
                 ],
               ),
             ),
-            const Icon(Icons.keyboard_arrow_down, color: Colors.grey),
+            Icon(Icons.keyboard_arrow_down, color: Theme.of(context).colorScheme.onSurfaceVariant),
           ],
         ),
       ),
@@ -1136,13 +1137,14 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16),
       decoration: BoxDecoration(
-        color: Colors.white,
-        border: Border.all(color: Colors.grey.shade300),
+        color: Theme.of(context).colorScheme.surface,
+        border: Border.all(color: Theme.of(context).colorScheme.outline),
         borderRadius: BorderRadius.circular(8),
       ),
       child: DropdownButtonFormField<String>(
         initialValue: currentLocale.languageCode,
         focusColor: Colors.transparent,
+        dropdownColor: Theme.of(context).colorScheme.surface,
         decoration: const InputDecoration(
           border: InputBorder.none,
           enabledBorder: InputBorder.none,
@@ -1150,7 +1152,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           isDense: true,
           contentPadding: EdgeInsets.symmetric(vertical: 12),
         ),
-        icon: const Icon(Icons.keyboard_arrow_down, color: Colors.grey),
+        icon: Icon(Icons.keyboard_arrow_down, color: Theme.of(context).colorScheme.onSurfaceVariant),
         isExpanded: true,
         items: languages
             .map((lang) => DropdownMenuItem<String>(
@@ -1203,8 +1205,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           onChanged: onChanged,
           activeThumbColor: activeColor,
           activeTrackColor: activeColor.withValues(alpha: 0.45),
-          inactiveThumbColor: Colors.white,
-          inactiveTrackColor: Colors.grey.shade300,
         ),
       ],
     );
@@ -1240,7 +1240,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 subtitle,
                 style: TextStyle(
                   fontSize: 12,
-                  color: Colors.grey.shade600,
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
                 ),
               ),
             ],
@@ -1251,8 +1251,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           onChanged: onChanged,
           activeThumbColor: activeColor,
           activeTrackColor: activeColor.withValues(alpha: 0.45),
-          inactiveThumbColor: Colors.white,
-          inactiveTrackColor: Colors.grey.shade300,
         ),
       ],
     );
@@ -1268,7 +1266,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             width: 52,
             height: 52,
             decoration: BoxDecoration(
-              color: const Color(0xFFF0F0F0),
+              color: Theme.of(context).colorScheme.surfaceContainer,
               borderRadius: BorderRadius.circular(12),
             ),
             child: Center(
@@ -1276,9 +1274,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 width: 32,
                 height: 32,
                 decoration: BoxDecoration(
-                  color: const Color(0xFFE8E8E8),
+                  color: Theme.of(context).colorScheme.surfaceContainerHigh,
                   borderRadius: BorderRadius.circular(4),
-                  border: Border.all(color: Colors.grey.shade400, width: 1.5),
+                  border: Border.all(color: Theme.of(context).colorScheme.outline, width: 1.5),
                 ),
                 child: Stack(
                   children: [
@@ -1289,7 +1287,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                       child: Container(
                         height: 2,
                         decoration: BoxDecoration(
-                          color: Colors.grey.shade600,
+                          color: Theme.of(context).colorScheme.onSurfaceVariant,
                           borderRadius: BorderRadius.circular(1),
                         ),
                       ),
@@ -1327,7 +1325,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   'ID: ${pushka['id']!}',
                   style: TextStyle(
                     fontSize: 14,
-                    color: Colors.grey.shade600,
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
                   ),
                 ),
               ],
@@ -1344,9 +1342,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(label, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500, letterSpacing: 0.6, color: Color(0xFF888888))),
+          Text(label, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w500, letterSpacing: 0.6, color: Theme.of(context).colorScheme.onSurfaceVariant)),
           const SizedBox(height: 4),
-          Text(value, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w500, color: Color(0xFF111111))),
+          Text(value, style: TextStyle(fontSize: 16, fontWeight: FontWeight.w500, color: Theme.of(context).colorScheme.onSurface)),
         ],
       ),
     );
@@ -1363,12 +1361,12 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             Expanded(child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(label, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500, letterSpacing: 0.6, color: Color(0xFF888888))),
+                Text(label, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w500, letterSpacing: 0.6, color: Theme.of(context).colorScheme.onSurfaceVariant)),
                 const SizedBox(height: 4),
-                Text(value, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w500, color: Color(0xFF111111))),
+                Text(value, style: TextStyle(fontSize: 16, fontWeight: FontWeight.w500, color: Theme.of(context).colorScheme.onSurface)),
               ],
             )),
-            Icon(Icons.edit_outlined, size: 18, color: Colors.grey.shade500),
+            Icon(Icons.edit_outlined, size: 18, color: Theme.of(context).colorScheme.onSurfaceVariant),
           ],
         ),
       ),

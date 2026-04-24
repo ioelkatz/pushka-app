@@ -105,7 +105,7 @@ class AppDrawer extends ConsumerWidget {
           Container(
             padding: const EdgeInsets.all(20),
             decoration: BoxDecoration(
-              border: Border(top: BorderSide(color: Colors.grey.shade200)),
+              border: Border(top: BorderSide(color: Theme.of(context).colorScheme.outlineVariant)),
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -114,7 +114,7 @@ class AppDrawer extends ConsumerWidget {
                   tr.version(AppTokens.appVersion),
                   style: TextStyle(
                     fontSize: 12,
-                    color: Colors.grey.shade600,
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
                     fontWeight: FontWeight.w400,
                   ),
                 ),
@@ -123,7 +123,7 @@ class AppDrawer extends ConsumerWidget {
                   tr.sponsoredBy,
                   style: TextStyle(
                     fontSize: 12,
-                    color: Colors.grey.shade600,
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
                     fontWeight: FontWeight.w400,
                   ),
                 ),
@@ -132,7 +132,7 @@ class AppDrawer extends ConsumerWidget {
                   tr.sponsorLine1,
                   style: TextStyle(
                     fontSize: 12,
-                    color: Colors.grey.shade700,
+                    color: Theme.of(context).colorScheme.onSurface,
                     fontWeight: FontWeight.w500,
                   ),
                 ),
@@ -140,7 +140,7 @@ class AppDrawer extends ConsumerWidget {
                   tr.sponsorLine2,
                   style: TextStyle(
                     fontSize: 12,
-                    color: Colors.grey.shade700,
+                    color: Theme.of(context).colorScheme.onSurface,
                     fontWeight: FontWeight.w500,
                   ),
                 ),
@@ -171,13 +171,13 @@ class AppDrawer extends ConsumerWidget {
       child: ListTile(
         leading: Icon(
           icon,
-          color: selected ? Colors.white : Colors.grey.shade700,
+          color: selected ? Colors.white : Theme.of(context).colorScheme.onSurface,
           size: 24,
         ),
         title: Text(
           title,
           style: TextStyle(
-            color: selected ? Colors.white : Colors.black87,
+            color: selected ? Colors.white : Theme.of(context).colorScheme.onSurface,
             fontSize: 16,
             fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
           ),
