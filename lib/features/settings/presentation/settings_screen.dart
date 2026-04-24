@@ -463,11 +463,11 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               Text(
-                tr.myPushkaSection,
+                tr.myPushkaSection.toUpperCase(),
                 style: TextStyle(
-                  fontSize: 40 / 2,
+                  fontSize: 13,
                   fontWeight: FontWeight.w700,
-                  letterSpacing: 0.5,
+                  letterSpacing: 1.2,
                   color: Theme.of(context).colorScheme.onSurface,
                 ),
               ),
@@ -906,6 +906,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
   Widget _buildThemeSelector() {
     final mode = ref.watch(themeModeProvider);
+    final cs = Theme.of(context).colorScheme;
     return SegmentedButton<ThemeMode>(
       segments: const [
         ButtonSegment(value: ThemeMode.system, label: Text('Sistema'), icon: Icon(Icons.brightness_auto_outlined, size: 16)),
@@ -917,15 +918,16 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         ref.read(themeModeProvider.notifier).setMode(selection.first);
       },
       style: SegmentedButton.styleFrom(
-        selectedBackgroundColor: const Color(0xFF2F60C5),
-        selectedForegroundColor: Colors.white,
-        foregroundColor: const Color(0xFF2F60C5),
+        selectedBackgroundColor: cs.primary,
+        selectedForegroundColor: cs.onPrimary,
+        foregroundColor: cs.onSurface,
       ),
     );
   }
 
   Widget _buildPushkaStyleSelector(WidgetRef ref) {
     final style = ref.watch(pushkaStyleProvider);
+    final cs = Theme.of(context).colorScheme;
     return SegmentedButton<PushkaStyle>(
       segments: const [
         ButtonSegment(value: PushkaStyle.classic, label: Text('Pushka')),
@@ -936,20 +938,20 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         ref.read(pushkaStyleProvider.notifier).setStyle(selection.first);
       },
       style: SegmentedButton.styleFrom(
-        selectedBackgroundColor: const Color(0xFF2F60C5),
-        selectedForegroundColor: Colors.white,
-        foregroundColor: const Color(0xFF2F60C5),
+        selectedBackgroundColor: cs.primary,
+        selectedForegroundColor: cs.onPrimary,
+        foregroundColor: cs.onSurface,
       ),
     );
   }
 
   Widget _buildSectionTitle(String title) {
     return Text(
-      title,
+      title.toUpperCase(),
       style: TextStyle(
-        fontSize: 40 / 2,
+        fontSize: 13,
         fontWeight: FontWeight.w700,
-        letterSpacing: 0.5,
+        letterSpacing: 1.2,
         color: Theme.of(context).colorScheme.onSurface,
       ),
     );
@@ -957,11 +959,11 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
   Widget _buildLabel(String label) {
     return Text(
-      label,
+      label.toUpperCase(),
       style: TextStyle(
-        fontSize: 11,
-        fontWeight: FontWeight.w600,
-        letterSpacing: 0.5,
+        fontSize: 10,
+        fontWeight: FontWeight.w700,
+        letterSpacing: 0.8,
         color: Theme.of(context).colorScheme.onSurfaceVariant,
       ),
     );
@@ -981,26 +983,13 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           border: Border.all(color: Theme.of(context).colorScheme.outline),
           borderRadius: BorderRadius.circular(8),
         ),
-        child: Row(
-          children: [
-            Text(
-              '\$ ',
-              style: TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.w500,
-                color: blue,
-              ),
-            ),
-            Expanded(
-              child: Text(
-                value.replaceFirst('\$ ', ''),
-                style: const TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.w500,
-                ),
-              ),
-            ),
-          ],
+        child: Text(
+          value,
+          style: TextStyle(
+            fontSize: 16,
+            fontWeight: FontWeight.w500,
+            color: Theme.of(context).colorScheme.onSurface,
+          ),
         ),
       ),
     );
@@ -1029,7 +1018,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               child: Container(
                 height: 46,
                 decoration: BoxDecoration(
-                  border: Border.all(color: blue, width: 1.5),
+                  border: Border.all(color: Theme.of(context).colorScheme.onSurface, width: 1.5),
                   borderRadius: BorderRadius.circular(12),
                 ),
                 alignment: Alignment.center,
@@ -1037,7 +1026,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   label,
                   style: TextStyle(
                     fontWeight: FontWeight.w700,
-                    color: blue,
+                    color: Theme.of(context).colorScheme.onSurface,
                     fontSize: 15,
                   ),
                 ),
@@ -1134,7 +1123,14 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       {'label': tr.langHebrew, 'code': 'he'},
     ];
 
-    return Container(
+    return Theme(
+      data: Theme.of(context).copyWith(
+        focusColor: Colors.transparent,
+        hoverColor: Colors.transparent,
+        highlightColor: Colors.transparent,
+        splashColor: Colors.transparent,
+      ),
+      child: Container(
       padding: const EdgeInsets.symmetric(horizontal: 16),
       decoration: BoxDecoration(
         color: Theme.of(context).colorScheme.surface,
@@ -1178,6 +1174,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             ).catchError((Object e) => debugPrint('language updateSettings error: $e'));
           }
         },
+      ),
       ),
     );
   }

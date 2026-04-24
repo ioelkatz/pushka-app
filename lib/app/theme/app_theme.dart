@@ -81,18 +81,18 @@ class AppTheme {
       ),
       outlinedButtonTheme: OutlinedButtonThemeData(
         style: OutlinedButton.styleFrom(
-          foregroundColor: AppTokens.skyBlue,
+          foregroundColor: textDark,
           minimumSize: const Size(0, AppTokens.buttonHeight),
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(AppTokens.radiusMd),
           ),
-          side: const BorderSide(color: borderDark),
+          side: const BorderSide(color: textDark, width: 1),
           textStyle: const TextStyle(fontWeight: FontWeight.w600, fontSize: 15),
         ),
       ),
       textButtonTheme: TextButtonThemeData(
         style: TextButton.styleFrom(
-          foregroundColor: AppTokens.skyBlue,
+          foregroundColor: textDark,
           textStyle: const TextStyle(fontWeight: FontWeight.w600),
         ),
       ),

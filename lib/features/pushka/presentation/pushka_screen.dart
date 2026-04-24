@@ -537,7 +537,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                 style: TextStyle(
                   fontSize: titleSize,
                   fontWeight: FontWeight.w700,
-                  color: AppTokens.primaryBlue,
+                  color: Theme.of(context).colorScheme.onSurface,
                 ),
                 textAlign: TextAlign.center,
               ),
@@ -584,7 +584,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                 onPressed: _showTzedakahSettingsDialog,
                 child: Text(
                   tr.changePushkaGoal,
-                  style: TextStyle(color: AppTokens.primaryBlue, fontWeight: FontWeight.w700, fontSize: 15),
+                  style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15),
                 ),
               ),
             ] else ...[
@@ -593,7 +593,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                 style: TextStyle(
                   fontSize: titleSize,
                   fontWeight: FontWeight.w700,
-                  color: AppTokens.primaryBlue,
+                  color: Theme.of(context).colorScheme.onSurface,
                 ),
               ),
               SizedBox(height: titleBottomGap),
@@ -648,18 +648,18 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                     onPressed: _donateNow,
                     child: Text(
                       tr.donateNowBtn,
-                      style: const TextStyle(color: AppTokens.primaryBlue, fontWeight: FontWeight.w700),
+                      style: const TextStyle(fontWeight: FontWeight.w700),
                     ),
                   ),
                   TextButton(
                     onPressed: emptyPushka,
                     child: Text(
                       tr.emptyPushkaBtn,
-                      style: const TextStyle(color: AppTokens.primaryBlue, fontWeight: FontWeight.w700),
+                      style: const TextStyle(fontWeight: FontWeight.w700),
                     ),
                   ),
                   IconButton(
-                    icon: const Icon(Icons.settings, color: Colors.grey),
+                    icon: Icon(Icons.settings, color: Theme.of(context).colorScheme.onSurfaceVariant),
                     onPressed: _showTzedakahSettingsDialog,
                   ),
                 ],
