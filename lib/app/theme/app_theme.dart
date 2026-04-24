@@ -6,6 +6,137 @@ import 'app_tokens.dart';
 class AppTheme {
   const AppTheme._();
 
+  static ThemeData dark() {
+    final textTheme = GoogleFonts.plusJakartaSansTextTheme(
+      ThemeData(brightness: Brightness.dark).textTheme,
+    );
+
+    const surfaceDark  = Color(0xFF0F172A);
+    const cardDark     = Color(0xFF1E293B);
+    const borderDark   = Color(0xFF334155);
+    const textDark     = Color(0xFFF1F5F9);
+    const mutedDark    = Color(0xFF94A3B8);
+
+    final base = ThemeData(
+      useMaterial3: true,
+      colorSchemeSeed: AppTokens.primaryBlue,
+      brightness: Brightness.dark,
+      textTheme: textTheme,
+    );
+
+    return base.copyWith(
+      scaffoldBackgroundColor: surfaceDark,
+      appBarTheme: AppBarTheme(
+        elevation: 0,
+        scrolledUnderElevation: 0,
+        centerTitle: true,
+        backgroundColor: surfaceDark,
+        foregroundColor: textDark,
+        titleTextStyle: textTheme.titleLarge?.copyWith(
+          fontSize: 20,
+          fontWeight: FontWeight.w700,
+          color: textDark,
+        ),
+      ),
+      cardTheme: CardThemeData(
+        color: cardDark,
+        elevation: 0,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(AppTokens.radiusMd),
+          side: const BorderSide(color: borderDark, width: 1),
+        ),
+      ),
+      inputDecorationTheme: InputDecorationTheme(
+        filled: true,
+        fillColor: cardDark,
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(AppTokens.radiusMd),
+          borderSide: const BorderSide(color: borderDark),
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(AppTokens.radiusMd),
+          borderSide: const BorderSide(color: borderDark),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(AppTokens.radiusMd),
+          borderSide: const BorderSide(color: AppTokens.primaryBlue, width: 1.5),
+        ),
+        contentPadding: const EdgeInsets.symmetric(
+          horizontal: AppTokens.spaceLg,
+          vertical: AppTokens.spaceMd,
+        ),
+        hintStyle: const TextStyle(color: mutedDark),
+      ),
+      elevatedButtonTheme: ElevatedButtonThemeData(
+        style: ElevatedButton.styleFrom(
+          backgroundColor: AppTokens.primaryBlue,
+          foregroundColor: Colors.white,
+          minimumSize: const Size(0, AppTokens.buttonHeight),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(AppTokens.radiusMd),
+          ),
+          elevation: 0,
+          textStyle: const TextStyle(fontWeight: FontWeight.w600, fontSize: 15),
+        ),
+      ),
+      outlinedButtonTheme: OutlinedButtonThemeData(
+        style: OutlinedButton.styleFrom(
+          foregroundColor: AppTokens.skyBlue,
+          minimumSize: const Size(0, AppTokens.buttonHeight),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(AppTokens.radiusMd),
+          ),
+          side: const BorderSide(color: borderDark),
+          textStyle: const TextStyle(fontWeight: FontWeight.w600, fontSize: 15),
+        ),
+      ),
+      textButtonTheme: TextButtonThemeData(
+        style: TextButton.styleFrom(
+          foregroundColor: AppTokens.skyBlue,
+          textStyle: const TextStyle(fontWeight: FontWeight.w600),
+        ),
+      ),
+      snackBarTheme: SnackBarThemeData(
+        behavior: SnackBarBehavior.floating,
+        backgroundColor: cardDark,
+        contentTextStyle: const TextStyle(
+          color: textDark,
+          fontSize: 14,
+          fontWeight: FontWeight.w500,
+        ),
+        insetPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(AppTokens.radiusSm),
+        ),
+      ),
+      dialogTheme: DialogThemeData(
+        backgroundColor: cardDark,
+        surfaceTintColor: cardDark,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(AppTokens.radiusLg),
+        ),
+      ),
+      dividerTheme: const DividerThemeData(
+        color: borderDark,
+        thickness: 1,
+        space: 1,
+      ),
+      listTileTheme: const ListTileThemeData(
+        contentPadding: EdgeInsets.symmetric(horizontal: AppTokens.spaceLg),
+      ),
+      bottomNavigationBarTheme: BottomNavigationBarThemeData(
+        backgroundColor: cardDark,
+        selectedItemColor: AppTokens.skyBlue,
+        unselectedItemColor: mutedDark,
+        type: BottomNavigationBarType.fixed,
+        elevation: 0,
+      ),
+      drawerTheme: const DrawerThemeData(
+        backgroundColor: cardDark,
+      ),
+    );
+  }
+
   static ThemeData light() {
     final textTheme = GoogleFonts.plusJakartaSansTextTheme();
 

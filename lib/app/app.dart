@@ -3,6 +3,7 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../core/l10n/s.dart';
 import '../core/l10n/locale_provider.dart';
+import '../core/theme_provider.dart';
 import '../features/users/presentation/user_profile_provider.dart';
 import 'router.dart';
 import 'theme/app_theme.dart';
@@ -13,6 +14,7 @@ class PushkaApp extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final locale = ref.watch(localeProvider);
+    final themeMode = ref.watch(themeModeProvider);
 
     // Sync language from Firestore profile whenever it changes
     ref.listen(userProfileProvider, (_, next) {
@@ -27,6 +29,8 @@ class PushkaApp extends ConsumerWidget {
       debugShowCheckedModeBanner: false,
       routerConfig: router,
       theme: AppTheme.light(),
+      darkTheme: AppTheme.dark(),
+      themeMode: themeMode,
       locale: locale,
       supportedLocales: S.supportedLocales,
       localizationsDelegates: const [

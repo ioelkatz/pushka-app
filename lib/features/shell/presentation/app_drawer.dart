@@ -43,7 +43,7 @@ class AppDrawer extends ConsumerWidget {
                       child: Semantics(
                         label: 'Pushka',
                         child: Image.asset(
-                          'assets/images/splash_icon.png',
+                          'assets/images/logo.png',
                           width: 48,
                           height: 48,
                           fit: BoxFit.cover,

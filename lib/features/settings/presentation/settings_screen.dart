@@ -20,6 +20,7 @@ import 'package:go_router/go_router.dart';
 import 'auto_empty_screen.dart';
 import '../../../core/l10n/s.dart';
 import '../../../core/pushka_style_provider.dart';
+import '../../../core/theme_provider.dart';
 
 class SettingsScreen extends ConsumerStatefulWidget {
   const SettingsScreen({super.key});
@@ -334,6 +335,12 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           _buildLabel(tr.language),
           const SizedBox(height: 6),
           _buildLanguageSelector(),
+          const SizedBox(height: 18),
+
+          // APPEARANCE
+          _buildLabel('Apariencia'),
+          const SizedBox(height: 8),
+          _buildThemeSelector(),
           const SizedBox(height: 32),
 
           // SOUND
@@ -895,6 +902,26 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       return '$brandLabel •••• $last4';
     }
     return tr.noSavedCards.split('\n').first;
+  }
+
+  Widget _buildThemeSelector() {
+    final mode = ref.watch(themeModeProvider);
+    return SegmentedButton<ThemeMode>(
+      segments: const [
+        ButtonSegment(value: ThemeMode.system, label: Text('Sistema'), icon: Icon(Icons.brightness_auto_outlined, size: 16)),
+        ButtonSegment(value: ThemeMode.light, label: Text('Claro'), icon: Icon(Icons.light_mode_outlined, size: 16)),
+        ButtonSegment(value: ThemeMode.dark, label: Text('Oscuro'), icon: Icon(Icons.dark_mode_outlined, size: 16)),
+      ],
+      selected: {mode},
+      onSelectionChanged: (selection) {
+        ref.read(themeModeProvider.notifier).setMode(selection.first);
+      },
+      style: SegmentedButton.styleFrom(
+        selectedBackgroundColor: const Color(0xFF2F60C5),
+        selectedForegroundColor: Colors.white,
+        foregroundColor: const Color(0xFF2F60C5),
+      ),
+    );
   }
 
   Widget _buildPushkaStyleSelector(WidgetRef ref) {

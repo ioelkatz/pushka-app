@@ -92,4 +92,22 @@ class HiveCache {
     if (v is String) return v;
     return null;
   }
+
+  // ---------------------------------------------------------------------------
+  // Theme mode (device-level preference, no uid prefix)
+  // ---------------------------------------------------------------------------
+
+  static const _keyThemeMode = 'theme_mode';
+
+  Future<void> saveThemeMode(String mode) async {
+    if (!_initialized) return;
+    await _box!.put(_keyThemeMode, mode);
+  }
+
+  String? loadThemeMode() {
+    if (!_initialized) return null;
+    final v = _box!.get(_keyThemeMode);
+    if (v is String) return v;
+    return null;
+  }
 }
