@@ -185,7 +185,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   @override
   Widget build(BuildContext context) {
     final tr = S.of(context);
-    const orange = Color(0xFFFF9500);
     const red = Color(0xFFE05A4F);
     final blue = Theme.of(context).colorScheme.primary;
 
@@ -347,7 +346,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           _buildToggleRow(
             tr.sound,
             soundEnabled,
-            orange,
             onChanged: (value) {
               setState(() => soundEnabled = value);
               _updateSettingsSilent(user, soundEnabled: value);
@@ -359,7 +357,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           _buildToggleRow(
             tr.coinJingle,
             coinJingleEnabled,
-            orange,
             onChanged: (value) {
               setState(() => coinJingleEnabled = value);
               _updateSettingsSilent(user, coinJingleEnabled: value);
@@ -371,7 +368,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           _buildToggleRow(
             tr.vibration,
             vibrationEnabled,
-            orange,
             onChanged: (value) {
               setState(() => vibrationEnabled = value);
               _updateSettingsSilent(user, vibrationEnabled: value);
@@ -383,7 +379,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           _buildToggleRow(
             tr.partialPayments,
             partialPaymentsEnabled,
-            orange,
             onChanged: (value) {
               setState(() => partialPaymentsEnabled = value);
               _updateSettingsSilent(user, partialPaymentsEnabled: value);
@@ -396,7 +391,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             tr.additionalPaymentOptions,
             tr.additionalPaymentOptionsSub,
             additionalPaymentOptionsEnabled,
-            orange,
             labelFontSize: 14,
             onChanged: (value) {
               setState(() => additionalPaymentOptionsEnabled = value);
@@ -408,7 +402,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           _buildToggleRow(
             tr.biometricAuth,
             biometricAuthenticationEnabled,
-            orange,
             onChanged: (value) async {
               final messenger = ScaffoldMessenger.of(context);
               if (value) {
@@ -1185,8 +1178,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
   Widget _buildToggleRow(
     String label,
-    bool value,
-    Color activeColor, {
+    bool value, {
     required ValueChanged<bool> onChanged,
   }) {
     return Row(
@@ -1204,8 +1196,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         Switch(
           value: value,
           onChanged: onChanged,
-          activeThumbColor: activeColor,
-          activeTrackColor: activeColor.withValues(alpha: 0.45),
         ),
       ],
     );
@@ -1214,8 +1204,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   Widget _buildToggleRowWithSubtitle(
     String label,
     String subtitle,
-    bool value,
-    Color activeColor, {
+    bool value, {
     double labelFontSize = 16,
     required ValueChanged<bool> onChanged,
   }) {
@@ -1250,8 +1239,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         Switch(
           value: value,
           onChanged: onChanged,
-          activeThumbColor: activeColor,
-          activeTrackColor: activeColor.withValues(alpha: 0.45),
         ),
       ],
     );

@@ -146,7 +146,9 @@ class Pushka3DWidgetState extends State<Pushka3DWidget>
                 left: 0,
                 child: _buildLabel(
                   '${widget.currencySymbol}${formatAmount(widget.goal)}',
-                  AppTokens.mutedText,
+                  Theme.of(context).brightness == Brightness.dark
+                      ? Colors.white
+                      : AppTokens.mutedText,
                 ),
               ),
               Positioned(
@@ -154,7 +156,7 @@ class Pushka3DWidgetState extends State<Pushka3DWidget>
                 right: 0,
                 child: _buildLabel(
                   '${widget.currencySymbol}${formatAmount(widget.amount)}',
-                  AppTokens.primaryBlue,
+                  Theme.of(context).colorScheme.primary,
                 ),
               ),
             ];

@@ -26,6 +26,8 @@ class AppTheme {
 
     return base.copyWith(
       colorScheme: base.colorScheme.copyWith(
+        primary: AppTokens.skyBlue,
+        onPrimary: Colors.white,
         surface: cardDark,
         surfaceContainerLowest: surfaceDark,
         surfaceContainerLow: surfaceDark,
