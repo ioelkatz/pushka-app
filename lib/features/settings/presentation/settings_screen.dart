@@ -907,13 +907,14 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   Widget _buildThemeSelector() {
     final mode = ref.watch(themeModeProvider);
     final cs = Theme.of(context).colorScheme;
+    // Normalize legacy 'system' value to 'light'
+    final effectiveMode = mode == ThemeMode.system ? ThemeMode.light : mode;
     return SegmentedButton<ThemeMode>(
       segments: const [
-        ButtonSegment(value: ThemeMode.system, label: Text('Sistema'), icon: Icon(Icons.brightness_auto_outlined, size: 16)),
         ButtonSegment(value: ThemeMode.light, label: Text('Claro'), icon: Icon(Icons.light_mode_outlined, size: 16)),
         ButtonSegment(value: ThemeMode.dark, label: Text('Oscuro'), icon: Icon(Icons.dark_mode_outlined, size: 16)),
       ],
-      selected: {mode},
+      selected: {effectiveMode},
       onSelectionChanged: (selection) {
         ref.read(themeModeProvider.notifier).setMode(selection.first);
       },
