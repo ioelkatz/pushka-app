@@ -1405,16 +1405,17 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   }
 
   Widget _biometricChip(IconData icon, String label) {
+    final cs = Theme.of(context).colorScheme;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
       decoration: BoxDecoration(
-        color: const Color(0xFFFF9500).withValues(alpha: 0.1),
+        color: cs.primary.withValues(alpha: 0.1),
         borderRadius: BorderRadius.circular(8),
       ),
       child: Row(mainAxisSize: MainAxisSize.min, children: [
-        Icon(icon, size: 16, color: const Color(0xFFFF9500)),
+        Icon(icon, size: 16, color: cs.primary),
         const SizedBox(width: 5),
-        Text(label, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500, color: Color(0xFFFF9500))),
+        Text(label, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w500, color: cs.primary)),
       ]),
     );
   }
@@ -1862,10 +1863,10 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               Container(
                 width: 56, height: 56,
                 decoration: BoxDecoration(
-                  color: const Color(0xFFFFF3E0),
+                  color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.12),
                   borderRadius: BorderRadius.circular(16),
                 ),
-                child: const Icon(Icons.savings_outlined, color: Color(0xFFFF9500), size: 30),
+                child: Icon(Icons.savings_outlined, color: Theme.of(context).colorScheme.primary, size: 30),
               ),
               const SizedBox(height: 16),
               Text(

@@ -172,10 +172,6 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
                           });
                         }
                       },
-                      activeThumbColor: const Color(0xFFFF9500),
-                      activeTrackColor: const Color(0xFFFF9500).withValues(alpha: 0.45),
-                      inactiveThumbColor: Colors.white,
-                      inactiveTrackColor: Colors.grey.shade300,
                     ),
                   ],
                 ),
