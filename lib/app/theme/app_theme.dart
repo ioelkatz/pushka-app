@@ -158,11 +158,11 @@ class AppTheme {
       switchTheme: SwitchThemeData(
         thumbColor: WidgetStateProperty.resolveWith((states) {
           if (states.contains(WidgetState.selected)) return AppTokens.skyBlue;
-          return null;
+          return const Color(0xFF94A3B8); // mutedDark — visible circle when OFF
         }),
         trackColor: WidgetStateProperty.resolveWith((states) {
           if (states.contains(WidgetState.selected)) return AppTokens.skyBlue.withValues(alpha: 0.45);
-          return null;
+          return const Color(0xFF334155); // borderDark — muted track when OFF
         }),
       ),
     );
@@ -291,11 +291,11 @@ class AppTheme {
       switchTheme: SwitchThemeData(
         thumbColor: WidgetStateProperty.resolveWith((states) {
           if (states.contains(WidgetState.selected)) return const Color(0xFFFF9500);
-          return null;
+          return const Color(0xFF94A3B8); // muted grey — visible circle when OFF
         }),
         trackColor: WidgetStateProperty.resolveWith((states) {
           if (states.contains(WidgetState.selected)) return const Color(0xFFFF9500).withValues(alpha: 0.45);
-          return null;
+          return const Color(0xFFE2E8F0); // border light — muted track when OFF
         }),
       ),
     );
