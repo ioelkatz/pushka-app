@@ -104,13 +104,13 @@ class _WalletSendRequestScreenState
                   prefixText: '$currencySymbol ',
                   errorText: error,
                   border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                  focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: Color(0xFFE84324), width: 1.6)),
+                  focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide(color: Theme.of(ctx).brightness == Brightness.dark ? Theme.of(ctx).colorScheme.primary : Theme.of(ctx).brightness == Brightness.dark ? Theme.of(ctx).colorScheme.primary : const Color(0xFFE84324), width: 1.6)),
                 ),
               ),
             ]),
             actions: [
               SizedBox(width: double.infinity, height: 48, child: ElevatedButton(
-                style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFE84324), foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
+                style: ElevatedButton.styleFrom(backgroundColor: Theme.of(ctx).brightness == Brightness.dark ? Theme.of(ctx).colorScheme.primary : const Color(0xFFE84324), foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
                 onPressed: () {
                   final value = double.tryParse(controller.text.trim().replaceAll(',', '.'));
                   if (value == null || value <= 0) { setDialogState(() => error = tr.enterValidAmount); return; }
@@ -262,7 +262,7 @@ class _WalletSendRequestScreenState
                       const SizedBox(height: 6),
                       if (!showManualEntry)
                         SizedBox(height: 52, child: OutlinedButton(
-                          style: OutlinedButton.styleFrom(foregroundColor: Theme.of(ctx).brightness == Brightness.dark ? Theme.of(ctx).colorScheme.primary : const Color(0xFFE05A4F), side: const BorderSide(color: Color(0xFFE05A4F), width: 2), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
+                          style: OutlinedButton.styleFrom(foregroundColor: Theme.of(ctx).brightness == Brightness.dark ? Theme.of(ctx).colorScheme.primary : const Color(0xFFE05A4F), side: BorderSide(color: Theme.of(ctx).brightness == Brightness.dark ? Theme.of(ctx).colorScheme.primary : const Color(0xFFE05A4F), width: 2), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
                           onPressed: () { setSheetState(() { showManualEntry = true; error = null; }); },
                           child: Text(S.of(ctx).enterWalletId, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
                         )),
@@ -281,7 +281,7 @@ class _WalletSendRequestScreenState
                             hintText: S.of(ctx).writeWalletId, errorText: error,
                             contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
                             border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                            focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: Color(0xFFE05A4F), width: 1.6)),
+                            focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide(color: Theme.of(ctx).brightness == Brightness.dark ? Theme.of(ctx).colorScheme.primary : const Color(0xFFE05A4F), width: 1.6)),
                           ),
                         ),
                       ],
@@ -312,7 +312,7 @@ class _WalletSendRequestScreenState
   Widget build(BuildContext context) {
     final tr = S.of(context);
     final cs = Theme.of(context).colorScheme;
-    const red = Color(0xFFE84324);
+    final red = Theme.of(context).brightness == Brightness.dark ? cs.primary : const Color(0xFFE84324);
     final uid = ref.watch(currentUserProvider)?.uid;
 
     return Column(
@@ -422,7 +422,7 @@ class _WalletSendRequestScreenState
                                               color: red.withValues(alpha: 0.14),
                                               borderRadius: BorderRadius.circular(10),
                                             ),
-                                            child: const Icon(
+                                            child: Icon(
                                               Icons.person_outline_rounded,
                                               color: red,
                                             ),
@@ -598,7 +598,7 @@ class _WalletScannerScreenState extends State<_WalletScannerScreen> {
               child: Container(
                 width: 260,
                 height: 2,
-                color: const Color(0xFFE84324),
+                color: Theme.of(context).brightness == Brightness.dark ? Theme.of(context).colorScheme.primary : const Color(0xFFE84324),
               ),
             ),
           ),
