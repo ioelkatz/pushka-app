@@ -143,54 +143,56 @@ class _RemindersScreenState extends ConsumerState<RemindersScreen> {
     final subtitle = reminder.subtitleFor(tr);
     final subtitle2 = reminder.subtitleSecondaryFor(tr);
 
-    return InkWell(
-      onTap: onEdit,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 4),
-        child: Row(
-          children: [
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    reminder.title,
-                    style: TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w700,
-                      color: Theme.of(context).colorScheme.onSurface,
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    subtitle,
-                    style: TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w400,
-                      color: Theme.of(context).colorScheme.onSurfaceVariant,
-                    ),
-                  ),
-                  if (subtitle2 != null) ...[
-                    const SizedBox(height: 2),
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 4),
+      child: Row(
+        children: [
+          Expanded(
+            child: InkWell(
+              onTap: onEdit,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
                     Text(
-                      subtitle2,
+                      reminder.title,
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w700,
+                        color: Theme.of(context).colorScheme.onSurface,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      subtitle,
                       style: TextStyle(
                         fontSize: 14,
                         fontWeight: FontWeight.w400,
                         color: Theme.of(context).colorScheme.onSurfaceVariant,
                       ),
                     ),
+                    if (subtitle2 != null) ...[
+                      const SizedBox(height: 2),
+                      Text(
+                        subtitle2,
+                        style: TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w400,
+                          color: Theme.of(context).colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ],
                   ],
-                ],
+                ),
               ),
             ),
-            const SizedBox(width: 12),
-            Switch(
-              value: reminder.isEnabled,
-              onChanged: onToggle,
-            ),
-          ],
-        ),
+          ),
+          Switch(
+            value: reminder.isEnabled,
+            onChanged: onToggle,
+          ),
+        ],
       ),
     );
   }
@@ -598,10 +600,10 @@ class _ReminderFormPageState extends State<_ReminderFormPage> {
   Widget _sectionLabel(String text) {
     return Text(
       text,
-      style: const TextStyle(
+      style: TextStyle(
         fontSize: 11,
         fontWeight: FontWeight.w600,
-        color: AppTokens.mutedText,
+        color: Theme.of(context).colorScheme.onSurfaceVariant,
         letterSpacing: 1.2,
       ),
     );

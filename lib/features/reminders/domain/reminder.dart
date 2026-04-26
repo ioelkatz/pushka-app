@@ -62,8 +62,8 @@ class Reminder {
       'isHoliday': isHoliday,
       'minutesBefore': minutesBefore, // always write; null clears stale value on merge
       'isEnabled': isEnabled,
-      if (secondTime != null) 'secondTimeHour': secondTime!.hour,
-      if (secondTime != null) 'secondTimeMinute': secondTime!.minute,
+      'secondTimeHour': secondTime?.hour,   // null clears stale value on merge
+      'secondTimeMinute': secondTime?.minute, // null clears stale value on merge
       'secondDays': secondDays,
       'secondIsHoliday': secondIsHoliday,
     };
