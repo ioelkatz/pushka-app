@@ -31,7 +31,6 @@ import '../features/about/presentation/about_screen.dart';
 import '../features/users/data/user_repository.dart';
 import '../features/notifications/notification_service.dart';
 import '../core/l10n/s.dart';
-import 'theme/app_tokens.dart';
 
 final _auth = FirebaseAuth.instance;
 final _firestore = FirebaseFirestore.instance;
@@ -71,99 +70,111 @@ Future<void> _openWalletQrDialog(BuildContext context) async {
     barrierDismissible: true,
     builder: (dialogContext) {
       final tr = S.of(dialogContext);
+      final cs = Theme.of(dialogContext).colorScheme;
+      final isDark = Theme.of(dialogContext).brightness == Brightness.dark;
       return Dialog(
+        backgroundColor: isDark ? const Color(0xFF1A3558) : null,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
         insetPadding: const EdgeInsets.symmetric(horizontal: 32, vertical: 24),
         child: SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(20, 8, 20, 20),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
+          padding: EdgeInsets.zero,
+          child: Stack(
+            clipBehavior: Clip.none,
             children: [
-              Align(
-                alignment: AlignmentDirectional.centerEnd,
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 28, 20, 28),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+                    Text(
+                      tr.yourWalletDialog,
+                      style: TextStyle(
+                        fontSize: 22,
+                        fontWeight: FontWeight.w700,
+                        color: cs.onSurface,
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    QrImageView(
+                      data: walletId,
+                      version: QrVersions.auto,
+                      size: 190,
+                      backgroundColor: Colors.white,
+                      eyeStyle: const QrEyeStyle(
+                        eyeShape: QrEyeShape.square,
+                        color: Colors.black,
+                      ),
+                      dataModuleStyle: const QrDataModuleStyle(
+                        dataModuleShape: QrDataModuleShape.square,
+                        color: Colors.black,
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    Text(
+                      tr.yourSixDigitCode,
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w500,
+                        color: cs.onSurfaceVariant,
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    Material(
+                      color: cs.surfaceContainerHighest,
+                      borderRadius: BorderRadius.circular(10),
+                      child: InkWell(
+                        borderRadius: BorderRadius.circular(10),
+                        onTap: () async {
+                          final message = tr.walletShareMessage(walletId);
+                          await Clipboard.setData(ClipboardData(text: message));
+                          if (!dialogContext.mounted) return;
+                          await SharePlus.instance.share(
+                            ShareParams(
+                              text: message,
+                              subject: tr.walletShareSubject,
+                            ),
+                          );
+                          if (!dialogContext.mounted) return;
+                          ScaffoldMessenger.of(dialogContext).showSnackBar(
+                            SnackBar(content: Text(tr.walletCodeCopied)),
+                          );
+                        },
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(
+                                walletId,
+                                style: TextStyle(
+                                  fontSize: 26,
+                                  fontWeight: FontWeight.w800,
+                                  letterSpacing: 1.0,
+                                  color: cs.onSurface,
+                                  height: 1,
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Icon(Icons.share_rounded, size: 20, color: cs.onSurfaceVariant),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Positioned(
+                top: 6,
+                right: 6,
                 child: IconButton(
                   onPressed: () => Navigator.of(dialogContext).pop(),
-                  icon: const Icon(Icons.close_rounded, size: 22),
-                  color: AppTokens.textPrimary,
+                  icon: Icon(Icons.close_rounded, size: 22, color: cs.onSurface),
                   padding: EdgeInsets.zero,
                   constraints: const BoxConstraints(),
                   tooltip: tr.closeTooltip,
-                ),
-              ),
-              const SizedBox(height: 4),
-              Text(
-                tr.yourWalletDialog,
-                style: const TextStyle(
-                  fontSize: 22,
-                  fontWeight: FontWeight.w700,
-                  color: AppTokens.textPrimary,
-                ),
-              ),
-              const SizedBox(height: 14),
-              QrImageView(
-                data: walletId,
-                version: QrVersions.auto,
-                size: 180,
-                backgroundColor: Colors.white,
-                eyeStyle: const QrEyeStyle(
-                  eyeShape: QrEyeShape.square,
-                  color: Colors.black,
-                ),
-                dataModuleStyle: const QrDataModuleStyle(
-                  dataModuleShape: QrDataModuleShape.square,
-                  color: Colors.black,
-                ),
-              ),
-              const SizedBox(height: 14),
-              Text(
-                tr.yourSixDigitCode,
-                style: const TextStyle(
-                  fontSize: 14,
-                  color: AppTokens.mutedText,
-                ),
-              ),
-              const SizedBox(height: 8),
-              Material(
-                color: AppTokens.cardSilver,
-                borderRadius: BorderRadius.circular(10),
-                child: InkWell(
-                  borderRadius: BorderRadius.circular(10),
-                  onTap: () async {
-                    final message = tr.walletShareMessage(walletId);
-                    await Clipboard.setData(ClipboardData(text: message));
-                    if (!dialogContext.mounted) return;
-                    await SharePlus.instance.share(
-                      ShareParams(
-                        text: message,
-                        subject: tr.walletShareSubject,
-                      ),
-                    );
-                    if (!dialogContext.mounted) return;
-                    ScaffoldMessenger.of(dialogContext).showSnackBar(
-                      SnackBar(content: Text(tr.walletCodeCopied)),
-                    );
-                  },
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text(
-                          walletId,
-                          style: const TextStyle(
-                            fontSize: 26,
-                            fontWeight: FontWeight.w800,
-                            letterSpacing: 1.0,
-                            color: AppTokens.textPrimary,
-                            height: 1,
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        const Icon(Icons.share_rounded, size: 20, color: AppTokens.mutedText),
-                      ],
-                    ),
-                  ),
                 ),
               ),
             ],
