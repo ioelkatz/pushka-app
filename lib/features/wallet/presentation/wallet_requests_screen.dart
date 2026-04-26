@@ -15,7 +15,7 @@ class WalletRequestsScreen extends ConsumerWidget {
     final tr = S.of(context);
     final uid = ref.watch(currentUserProvider)?.uid;
     final blue = Theme.of(context).colorScheme.primary;
-    const red = Color(0xFFE05A4F);
+    final red = Theme.of(context).brightness == Brightness.dark ? blue : const Color(0xFFE05A4F);
 
     if (uid == null) {
       return Scaffold(

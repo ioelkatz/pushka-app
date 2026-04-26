@@ -253,7 +253,7 @@ class _WalletSendRequestScreenState
                       ),
                       const SizedBox(height: 18),
                       SizedBox(height: 52, child: ElevatedButton(
-                        style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFE05A4F), foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
+                        style: ElevatedButton.styleFrom(backgroundColor: Theme.of(ctx).brightness == Brightness.dark ? Theme.of(ctx).colorScheme.primary : const Color(0xFFE05A4F), foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
                         onPressed: () => Navigator.of(ctx).pop(''),
                         child: Text(S.of(ctx).scanWalletId, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
                       )),
@@ -262,7 +262,7 @@ class _WalletSendRequestScreenState
                       const SizedBox(height: 6),
                       if (!showManualEntry)
                         SizedBox(height: 52, child: OutlinedButton(
-                          style: OutlinedButton.styleFrom(foregroundColor: const Color(0xFFE05A4F), side: const BorderSide(color: Color(0xFFE05A4F), width: 2), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
+                          style: OutlinedButton.styleFrom(foregroundColor: Theme.of(ctx).brightness == Brightness.dark ? Theme.of(ctx).colorScheme.primary : const Color(0xFFE05A4F), side: const BorderSide(color: Color(0xFFE05A4F), width: 2), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
                           onPressed: () { setSheetState(() { showManualEntry = true; error = null; }); },
                           child: Text(S.of(ctx).enterWalletId, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
                         )),

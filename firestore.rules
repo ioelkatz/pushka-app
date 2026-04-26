@@ -262,6 +262,7 @@ service cloud.firestore {
           request.resource.data.days.size() <= 7 &&
           request.resource.data.isHoliday is bool &&
           (!('minutesBefore' in request.resource.data) ||
+              request.resource.data.minutesBefore == null ||
               (request.resource.data.minutesBefore is int &&
                   request.resource.data.minutesBefore >= 0 &&
                   request.resource.data.minutesBefore <= 1440)) &&
@@ -271,8 +272,8 @@ service cloud.firestore {
           request.resource.data.secondIsHoliday is bool &&
           (
             (
-              !('secondTimeHour' in request.resource.data) &&
-              !('secondTimeMinute' in request.resource.data)
+              (!('secondTimeHour' in request.resource.data) || request.resource.data.secondTimeHour == null) &&
+              (!('secondTimeMinute' in request.resource.data) || request.resource.data.secondTimeMinute == null)
             ) ||
             (
               request.resource.data.secondTimeHour is int &&

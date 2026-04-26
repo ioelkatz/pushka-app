@@ -87,7 +87,7 @@ class _WalletAutoRefillScreenState extends ConsumerState<WalletAutoRefillScreen>
             actionsPadding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
             title: Row(
               children: [
-                const Icon(Icons.verified_user_rounded, color: Color(0xFFE05A4F), size: 22),
+                Icon(Icons.verified_user_rounded, color: Theme.of(ctx).brightness == Brightness.dark ? Theme.of(ctx).colorScheme.primary : const Color(0xFFE05A4F), size: 22),
                 const SizedBox(width: 10),
                 Expanded(
                   child: Text(
@@ -131,7 +131,7 @@ class _WalletAutoRefillScreenState extends ConsumerState<WalletAutoRefillScreen>
                 child: ElevatedButton(
                   onPressed: () => Navigator.pop(ctx, true),
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFFE05A4F),
+                    backgroundColor: Theme.of(ctx).brightness == Brightness.dark ? Theme.of(ctx).colorScheme.primary : const Color(0xFFE05A4F),
                     foregroundColor: Colors.white,
                     padding: const EdgeInsets.symmetric(vertical: 14),
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
@@ -359,7 +359,7 @@ class _WalletAutoRefillScreenState extends ConsumerState<WalletAutoRefillScreen>
                           onPressed: _saving ? null : _save,
                           style: OutlinedButton.styleFrom(
                             minimumSize: const Size(0, 52),
-                            side: const BorderSide(color: Color(0xFFE05A4F), width: 2),
+                            side: BorderSide(color: Theme.of(context).brightness == Brightness.dark ? Theme.of(context).colorScheme.primary : const Color(0xFFE05A4F), width: 2),
                             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
                           ),
                           child: _saving
@@ -370,8 +370,8 @@ class _WalletAutoRefillScreenState extends ConsumerState<WalletAutoRefillScreen>
                                 )
                               : Text(
                                   tr.saveBtn,
-                                  style: const TextStyle(
-                                    color: Color(0xFFE05A4F),
+                                  style: TextStyle(
+                                    color: Theme.of(context).brightness == Brightness.dark ? Theme.of(context).colorScheme.primary : const Color(0xFFE05A4F),
                                     fontWeight: FontWeight.w700,
                                     letterSpacing: 0.2,
                                   ),

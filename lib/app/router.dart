@@ -80,6 +80,7 @@ Future<void> _openWalletQrDialog(BuildContext context) async {
           padding: EdgeInsets.zero,
           child: Stack(
             clipBehavior: Clip.none,
+            alignment: Alignment.topCenter,
             children: [
               Padding(
                 padding: const EdgeInsets.fromLTRB(20, 28, 20, 28),

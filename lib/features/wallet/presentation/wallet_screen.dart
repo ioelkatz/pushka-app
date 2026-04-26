@@ -79,7 +79,7 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
             ]),
             actions: [
               SizedBox(width: double.infinity, height: 48, child: ElevatedButton(
-                style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFE05A4F), foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
+                style: ElevatedButton.styleFrom(backgroundColor: Theme.of(ctx).brightness == Brightness.dark ? Theme.of(ctx).colorScheme.primary : const Color(0xFFE05A4F), foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
                 onPressed: () {
                   final value = double.tryParse(controller.text.trim().replaceAll(',', '.'));
                   if (value == null || value <= 0) { setDialogState(() => error = tr.enterValidAmount); return; }
@@ -202,8 +202,8 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
   @override
   Widget build(BuildContext context) {
     final tr = S.of(context);
-    const red = Color(0xFFE05A4F);
     final cs = Theme.of(context).colorScheme;
+    final red = Theme.of(context).brightness == Brightness.dark ? cs.primary : const Color(0xFFE05A4F);
     final profile = ref.watch(userProfileProvider).valueOrNull;
     final uid = ref.watch(currentUserProvider)?.uid;
     final pendingRequests = ref.watch(pendingWalletRequestsProvider).valueOrNull ?? 0;
@@ -340,7 +340,7 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
           OutlinedButton(
             onPressed: _processing ? null : _addFunds,
             style: OutlinedButton.styleFrom(
-              side: const BorderSide(color: red, width: 2),
+              side: BorderSide(color: red, width: 2),
               minimumSize: Size(0, compact ? 48 : AppTokens.buttonHeight),
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(14),
@@ -477,9 +477,9 @@ class _WalletCard extends StatelessWidget {
                       top: -4,
                       child: Container(
                         padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
-                        decoration: const BoxDecoration(
-                          color: Color(0xFFE05A4F),
-                          borderRadius: BorderRadius.all(Radius.circular(10)),
+                        decoration: BoxDecoration(
+                          color: Theme.of(context).brightness == Brightness.dark ? Theme.of(context).colorScheme.primary : const Color(0xFFE05A4F),
+                          borderRadius: const BorderRadius.all(Radius.circular(10)),
                         ),
                         child: Text(
                           '$badgeCount',
