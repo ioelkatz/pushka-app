@@ -302,8 +302,8 @@ class _SplashScreenState extends State<SplashScreen>
         ]),
         child: Image.asset(
           'assets/images/moon.png',
-          width:  50,
-          height: 50,
+          width:  150,
+          height: 150,
           fit: BoxFit.contain,
         ),
       ),
