@@ -64,6 +64,9 @@ class FeedbackService {
       unawaited(Future.delayed(const Duration(milliseconds: 100), HapticFeedback.mediumImpact));
       unawaited(Future.delayed(const Duration(milliseconds: 200), HapticFeedback.heavyImpact));
     }
+    // Stop other players so they don't hold audio focus on Android
+    try { await _coinPlayer.stop(); } catch (_) {}
+    try { await _billPlayer.stop(); } catch (_) {}
     try {
       await _successPlayer.stop();
       await _successPlayer.setVolume(1.0);
