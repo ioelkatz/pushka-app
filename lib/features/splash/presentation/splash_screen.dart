@@ -299,8 +299,8 @@ class _SplashScreenState extends State<SplashScreen>
     // Map pulse to a brightness boost: 1.0 (base) → 1.35 (peak) → 1.0
     final boost = 1.0 + pulse * 0.35;
     return Positioned(
-      top:   8.0,
-      right: 8.0,
+      top:   15.0,
+      right: 15.0,
       child: ColorFiltered(
         colorFilter: ColorFilter.matrix(<double>[
           boost, 0, 0, 0, 0,
@@ -310,8 +310,8 @@ class _SplashScreenState extends State<SplashScreen>
         ]),
         child: Image.asset(
           'assets/images/moon.png',
-          width:  165,
-          height: 165,
+          width:  100,
+          height: 100,
           fit: BoxFit.contain,
         ),
       ),
