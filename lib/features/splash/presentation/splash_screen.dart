@@ -131,7 +131,7 @@ class _SplashScreenState extends State<SplashScreen>
     if (!mounted) return;
     setState(() => _showBill = true);
     _billCtrl.forward();
-    Future.delayed(400.ms, () {
+    Future.delayed(700.ms, () {
       if (mounted) {
         unawaited(
           _billAudio.play(AssetSource('sounds/bill_flutter.wav')).catchError((_) {}),
