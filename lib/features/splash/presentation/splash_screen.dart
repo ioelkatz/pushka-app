@@ -43,7 +43,8 @@ class _SplashScreenState extends State<SplashScreen>
   bool _showShooter = false;
 
   // ── audio ────────────────────────────────────────────────────────────────
-  final AudioPlayer _billAudio = AudioPlayer();
+  final AudioPlayer _billAudio  = AudioPlayer();
+  final AudioPlayer _shootAudio = AudioPlayer();
 
   // ── star field — fixed seed so layout is deterministic ──────────────────
   static final _stars = _buildStars();
@@ -119,6 +120,7 @@ class _SplashScreenState extends State<SplashScreen>
     _floodCtrl.dispose();
     _moonGlowCtrl.dispose();
     _billAudio.dispose();
+    _shootAudio.dispose();
     super.dispose();
   }
 
@@ -138,6 +140,9 @@ class _SplashScreenState extends State<SplashScreen>
     if (!mounted) return;
     setState(() => _showShooter = true);
     _shootCtrl.forward();
+    unawaited(
+      _shootAudio.play(AssetSource('sounds/shooting_star.mp3')).catchError((_) {}),
+    );
 
     // 7.3 s — golden flood
     await Future.delayed(1000.ms);
