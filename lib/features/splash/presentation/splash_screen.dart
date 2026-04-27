@@ -284,17 +284,28 @@ class _SplashScreenState extends State<SplashScreen>
 
   // ── moon — top-right corner ──────────────────────────────────────────────
   Widget _buildMoon(double statusBarH) {
-    // Equal margin from top (below status bar) and right edge
     final pad = math.max(20.0, statusBarH + 8.0);
-    // Pulse: triangle wave 0→1→0 over the controller's single run
-    final v = _moonGlowCtrl.value;
+    // Pulse: triangle wave 0→1→0 — adds a subtle brightness flare
+    final v     = _moonGlowCtrl.value;
     final pulse = v < 0.5 ? v * 2.0 : (1.0 - v) * 2.0;
+    // Map pulse to a brightness boost: 1.0 (base) → 1.35 (peak) → 1.0
+    final boost = 1.0 + pulse * 0.35;
     return Positioned(
       top:   pad,
       right: pad,
-      child: CustomPaint(
-        painter: _MoonPainter(pulse: pulse),
-        size: const Size(50, 50),
+      child: ColorFiltered(
+        colorFilter: ColorFilter.matrix(<double>[
+          boost, 0, 0, 0, 0,
+          0, boost, 0, 0, 0,
+          0, 0, boost, 0, 0,
+          0, 0, 0, 1, 0,
+        ]),
+        child: Image.asset(
+          'assets/images/moon.png',
+          width:  50,
+          height: 50,
+          fit: BoxFit.contain,
+        ),
       ),
     );
   }
@@ -319,119 +330,6 @@ class _SplashScreenState extends State<SplashScreen>
       ),
     );
   }
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-//  MOON PAINTER  — realistic full moon, 50 px diameter
-//  Light source: upper-left. Maria drawn as bluish-gray oval blobs.
-//  `pulse` 0→1→0 adds a single brightness flare mid-presentation.
-// ─────────────────────────────────────────────────────────────────────────────
-
-class _MoonPainter extends CustomPainter {
-  final double pulse; // 0→1→0
-  const _MoonPainter({required this.pulse});
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final r  = size.width / 2;
-    final cx = r;
-    final cy = r;
-    final c  = Offset(cx, cy);
-
-    // ── 1. Outer glow halo (brighter during pulse) ────────────────────────
-    canvas.drawCircle(
-      c, r * 2.0,
-      Paint()
-        ..color = const Color(0xFF9EC4F0).withValues(alpha: 0.10 + pulse * 0.22)
-        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 12),
-    );
-
-    // ── 2. Moon disc — clip everything to the circle ──────────────────────
-    canvas.save();
-    canvas.clipPath(Path()..addOval(Rect.fromCircle(center: c, radius: r)));
-
-    // Base: lit from upper-left → darker lower-right
-    canvas.drawCircle(
-      c, r,
-      Paint()
-        ..shader = ui.Gradient.radial(
-          Offset(cx - r * 0.22, cy - r * 0.28),
-          r * 1.15,
-          const [
-            Color(0xFFF0F6FF), // bright white-blue lit face
-            Color(0xFFCDD9EE), // mid blue-gray
-            Color(0xFFADBDD8), // darker hemisphere
-            Color(0xFF8DA2C0), // shadow edge
-          ],
-          [0.0, 0.28, 0.62, 1.0],
-        ),
-    );
-
-    // Spherical shading — shadow from opposite side of light
-    canvas.drawCircle(
-      c, r,
-      Paint()
-        ..shader = ui.Gradient.radial(
-          Offset(cx + r * 0.38, cy + r * 0.38),
-          r * 1.25,
-          [
-            Colors.transparent,
-            Colors.transparent,
-            const Color(0xFF344E72).withValues(alpha: 0.32),
-          ],
-          [0.0, 0.42, 1.0],
-        ),
-    );
-
-    // ── 3. Maria (dark lunar seas) ────────────────────────────────────────
-    final mp = Paint()..style = PaintingStyle.fill;
-
-    void maria(double dx, double dy, double w, double h, double a) {
-      mp.color = const Color(0xFF607090).withValues(alpha: a);
-      canvas.drawOval(
-        Rect.fromCenter(center: Offset(cx + dx * r, cy + dy * r), width: w * r, height: h * r),
-        mp,
-      );
-    }
-
-    maria(-0.22, -0.22, 0.55, 0.46, 0.28); // Mare Imbrium — upper-left
-    maria( 0.18, -0.12, 0.34, 0.30, 0.22); // Mare Serenitatis — upper-right
-    maria(-0.30,  0.10, 0.46, 0.58, 0.24); // Oceanus Procellarum — left
-    maria( 0.12,  0.08, 0.30, 0.26, 0.20); // Mare Tranquillitatis — center
-    maria( 0.42, -0.24, 0.17, 0.13, 0.30); // Mare Crisium — far right
-    maria(-0.06,  0.40, 0.28, 0.20, 0.18); // Mare Nubium — lower-center
-
-    // ── 4. Bright limb highlight (pulse adds extra gleam) ─────────────────
-    canvas.drawOval(
-      Rect.fromCenter(
-        center: Offset(cx - r * 0.24, cy - r * 0.30),
-        width: r * 0.78, height: r * 0.62,
-      ),
-      Paint()
-        ..shader = ui.Gradient.radial(
-          Offset(cx - r * 0.24, cy - r * 0.30),
-          r * 0.38,
-          [
-            Colors.white.withValues(alpha: 0.28 + pulse * 0.22),
-            Colors.transparent,
-          ],
-        ),
-    );
-
-    canvas.restore(); // end disc clip
-
-    // ── 5. Thin rim border ────────────────────────────────────────────────
-    canvas.drawCircle(
-      c, r - 0.5,
-      Paint()
-        ..color = const Color(0xFF6888B0).withValues(alpha: 0.55)
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 1.0,
-    );
-  }
-
-  @override
-  bool shouldRepaint(_MoonPainter old) => old.pulse != pulse;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
