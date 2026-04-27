@@ -98,6 +98,17 @@ class FeedbackService {
     }
     _ambientVolume = target;
     try { await _ambientPlayer.setVolume(_ambientVolume); } catch (_) {}
+
+    // If restoring to normal, ensure the ambient is actually playing —
+    // Android audio focus may have paused it while the effect played.
+    if (target >= _ambientNormal) {
+      try {
+        await _ambientPlayer.resume();
+      } catch (_) {
+        // resume() failed (e.g. player was stopped entirely) — restart from scratch
+        await startAmbient();
+      }
+    }
   }
 
   Future<void> stopAmbient() async {
@@ -131,17 +142,16 @@ class FeedbackService {
     try { await _coinPlayer.stop(); } catch (_) {}
     try { await _billPlayer.stop(); } catch (_) {}
     unawaited(_fadeAmbientTo(_ambientDuck));
-    late StreamSubscription<void> sub;
-    sub = _successPlayer.onPlayerComplete.listen((_) {
-      sub.cancel();
-      unawaited(_fadeAmbientTo(_ambientNormal));
-    });
     try {
       await _successPlayer.stop();
+      late StreamSubscription<void> sub;
+      sub = _successPlayer.onPlayerComplete.listen((_) {
+        sub.cancel();
+        unawaited(_fadeAmbientTo(_ambientNormal));
+      });
       await _successPlayer.play(AssetSource('sounds/success.wav'), volume: 1.0);
     } catch (e) {
       debugPrint('[FeedbackService] playSuccess error: $e');
-      sub.cancel();
       unawaited(_fadeAmbientTo(_ambientNormal));
     }
   }
