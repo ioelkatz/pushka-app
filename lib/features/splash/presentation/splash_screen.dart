@@ -318,7 +318,7 @@ class _SplashScreenState extends State<SplashScreen>
 
   // ── warm-gold screen flood ───────────────────────────────────────────────
   Widget _buildFlood() {
-    final a = const Cubic(0.42, 0, 0.95, 1).transform(_floodCtrl.value);
+    final a = Curves.easeIn.transform(_floodCtrl.value);
     return IgnorePointer(
       child: DecoratedBox(
         decoration: BoxDecoration(
