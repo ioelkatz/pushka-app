@@ -19,6 +19,10 @@ class FeedbackService {
   bool vibrationEnabled = true;
   bool ambientEnabled = false;
 
+  double _ambientVolume = 0.85;
+  static const _ambientDuck   = 0.12;
+  static const _ambientNormal = 0.85;
+
   static const _ambientUrl =
       'https://storage.googleapis.com/pushka-app-ioel.firebasestorage.app/ambient/nigunim.mp3';
 
@@ -72,13 +76,28 @@ class FeedbackService {
   Future<void> startAmbient() async {
     if (kIsWeb) return;
     ambientEnabled = true;
+    _ambientVolume = _ambientNormal;
     try {
-      await _ambientPlayer.setVolume(0.85);
+      await _ambientPlayer.setVolume(_ambientVolume);
       await _ambientPlayer.setReleaseMode(ReleaseMode.loop);
       await _ambientPlayer.play(UrlSource(_ambientUrl));
     } catch (e) {
       debugPrint('[FeedbackService] startAmbient error: $e');
     }
+  }
+
+  Future<void> _fadeAmbientTo(double target, {int durationMs = 300}) async {
+    if (!ambientEnabled || kIsWeb) return;
+    const steps = 8;
+    final stepMs = durationMs ~/ steps;
+    final delta  = (target - _ambientVolume) / steps;
+    for (int i = 0; i < steps; i++) {
+      await Future<void>.delayed(Duration(milliseconds: stepMs));
+      _ambientVolume = (_ambientVolume + delta).clamp(0.0, 1.0);
+      try { await _ambientPlayer.setVolume(_ambientVolume); } catch (_) {}
+    }
+    _ambientVolume = target;
+    try { await _ambientPlayer.setVolume(_ambientVolume); } catch (_) {}
   }
 
   Future<void> stopAmbient() async {
@@ -105,28 +124,32 @@ class FeedbackService {
   Future<void> playSuccess() async {
     if (!soundEnabled || kIsWeb) return;
     if (vibrationEnabled) {
-      // Triple rising pattern: triumphant goal-reached feel
       HapticFeedback.mediumImpact();
       unawaited(Future.delayed(const Duration(milliseconds: 100), HapticFeedback.mediumImpact));
       unawaited(Future.delayed(const Duration(milliseconds: 200), HapticFeedback.heavyImpact));
     }
-    // Stop other players so they don't hold audio focus on Android
     try { await _coinPlayer.stop(); } catch (_) {}
     try { await _billPlayer.stop(); } catch (_) {}
+    unawaited(_fadeAmbientTo(_ambientDuck));
+    late StreamSubscription<void> sub;
+    sub = _successPlayer.onPlayerComplete.listen((_) {
+      sub.cancel();
+      unawaited(_fadeAmbientTo(_ambientNormal));
+    });
     try {
-      debugPrint('[FeedbackService] playSuccess: stopping previous...');
       await _successPlayer.stop();
-      debugPrint('[FeedbackService] playSuccess: calling play...');
       await _successPlayer.play(AssetSource('sounds/success.wav'), volume: 1.0);
-      debugPrint('[FeedbackService] playSuccess: play() returned OK');
     } catch (e) {
       debugPrint('[FeedbackService] playSuccess error: $e');
+      sub.cancel();
+      unawaited(_fadeAmbientTo(_ambientNormal));
     }
   }
 
   /// Soft flutter at start of bill fall, then a thud at 2.5 s when it enters.
   Future<void> playBillFall() async {
     if (!soundEnabled || kIsWeb) return;
+    unawaited(_fadeAmbientTo(_ambientDuck));
     try {
       await _billPlayer.stop();
       await _billPlayer.setVolume(0.8);
@@ -139,8 +162,11 @@ class FeedbackService {
           try { await _billPlayer.setVolume(step); } catch (_) {}
         }
         try { await _billPlayer.stop(); } catch (_) {}
+        unawaited(_fadeAmbientTo(_ambientNormal));
       }));
-    } catch (_) {}
+    } catch (_) {
+      unawaited(_fadeAmbientTo(_ambientNormal));
+    }
   }
 
   /// Heavy thud + light echo — used when pushka is emptied.
