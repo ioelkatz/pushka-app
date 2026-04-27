@@ -14,7 +14,7 @@ import '../../pushka/presentation/building_770_widget.dart';
 //  CINEMATIC SPLASH  — ~9 s timeline
 //
 //  0.0 s  Dark sky + stars appear; Building 770 fades in (0.8 s)
-//  0.5 s  Dollar bill starts slow fall from very top + bill sound
+//  0.2 s  Dollar bill starts slow fall from very top + bill sound
 //  5.5 s  Bill fully faded out
 //  5.8 s  Shooting star crosses right → left (~0.8 s)
 //  6.8 s  Warm-gold radial flood fills screen (1.8 s)
@@ -126,8 +126,8 @@ class _SplashScreenState extends State<SplashScreen>
 
   // ── main sequence ────────────────────────────────────────────────────────
   Future<void> _runSequence() async {
-    // 0.5 s — bill starts
-    await Future.delayed(500.ms);
+    // 0.2 s — bill starts
+    await Future.delayed(200.ms);
     if (!mounted) return;
     setState(() => _showBill = true);
     _billCtrl.forward();
