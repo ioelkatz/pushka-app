@@ -81,13 +81,15 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
 
   void _triggerCelebration() {
     _confettiController.play();
-    setState(() => _showGoalLottie = true);
-    _lottieController
-      ..reset()
-      ..forward().then((_) {
-        if (mounted) setState(() => _showGoalLottie = false);
-      });
     FeedbackService.instance.playSuccess();
+    if (_lottieController.duration != null) {
+      setState(() => _showGoalLottie = true);
+      _lottieController
+        ..reset()
+        ..forward().then((_) {
+          if (mounted) setState(() => _showGoalLottie = false);
+        });
+    }
   }
 
   Future<void> _updateStreak() async {
@@ -569,7 +571,12 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
               const SizedBox(height: 6),
               Text(
                 tr.donationGoalReached,
-                style: TextStyle(color: AppTokens.mutedText, fontSize: subtitleSize),
+                style: TextStyle(
+                  color: Theme.of(context).brightness == Brightness.dark
+                      ? Theme.of(context).colorScheme.onSurfaceVariant
+                      : AppTokens.mutedText,
+                  fontSize: subtitleSize,
+                ),
                 textAlign: TextAlign.center,
               ),
               SizedBox(height: titleBottomGap),
@@ -737,9 +744,10 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                       ),
                     ),
                   ),
-                if (_showGoalLottie)
-                  Positioned.fill(
-                    child: IgnorePointer(
+                Positioned.fill(
+                  child: IgnorePointer(
+                    child: Offstage(
+                      offstage: !_showGoalLottie,
                       child: Center(
                         child: Lottie.asset(
                           'assets/animations/goal_reached.json',
@@ -753,6 +761,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                       ),
                     ),
                   ),
+                ),
               ],
             );
           },
