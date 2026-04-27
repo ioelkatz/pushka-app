@@ -19,6 +19,7 @@ import 'package:go_router/go_router.dart';
 
 import 'auto_empty_screen.dart';
 import '../../../core/l10n/s.dart';
+import '../../feedback/feedback_service.dart';
 import '../../../core/pushka_style_provider.dart';
 import '../../../core/theme_provider.dart';
 
@@ -36,6 +37,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   bool soundEnabled = true;
   bool coinJingleEnabled = true;
   bool vibrationEnabled = true;
+  bool ambientEnabled = false;
   bool partialPaymentsEnabled = false;
   bool additionalPaymentOptionsEnabled = false;
   bool biometricAuthenticationEnabled = false;
@@ -228,6 +230,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               getProfileBool('coinJingleEnabled') ?? coinJingleEnabled;
           vibrationEnabled =
               getProfileBool('vibrationEnabled') ?? vibrationEnabled;
+          ambientEnabled =
+              getProfileBool('ambientEnabled') ?? ambientEnabled;
           partialPaymentsEnabled =
               getProfileBool('partialPaymentsEnabled') ??
                   partialPaymentsEnabled;
@@ -373,6 +377,19 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             onChanged: (value) {
               setState(() => vibrationEnabled = value);
               _updateSettingsSilent(user, vibrationEnabled: value);
+            },
+          ),
+          const SizedBox(height: 18),
+
+          // AMBIENT MUSIC
+          _buildToggleRowWithSubtitle(
+            tr.ambientMusic,
+            tr.ambientMusicSub,
+            ambientEnabled,
+            onChanged: (value) {
+              setState(() => ambientEnabled = value);
+              FeedbackService.instance.updatePreferences(ambient: value);
+              _updateSettingsSilent(user, ambientEnabled: value);
             },
           ),
           const SizedBox(height: 18),
@@ -1556,6 +1573,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     bool? soundEnabled,
     bool? coinJingleEnabled,
     bool? vibrationEnabled,
+    bool? ambientEnabled,
     bool? partialPaymentsEnabled,
     bool? additionalPaymentOptionsEnabled,
     bool? biometricAuthenticationEnabled,
@@ -1571,6 +1589,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       soundEnabled: soundEnabled,
       coinJingleEnabled: coinJingleEnabled,
       vibrationEnabled: vibrationEnabled,
+      ambientEnabled: ambientEnabled,
       partialPaymentsEnabled: partialPaymentsEnabled,
       additionalPaymentOptionsEnabled: additionalPaymentOptionsEnabled,
       biometricAuthenticationEnabled: biometricAuthenticationEnabled,
@@ -1584,6 +1603,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     bool? soundEnabled,
     bool? coinJingleEnabled,
     bool? vibrationEnabled,
+    bool? ambientEnabled,
     bool? partialPaymentsEnabled,
     bool? additionalPaymentOptionsEnabled,
     bool? biometricAuthenticationEnabled,
@@ -1593,6 +1613,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       soundEnabled: soundEnabled,
       coinJingleEnabled: coinJingleEnabled,
       vibrationEnabled: vibrationEnabled,
+      ambientEnabled: ambientEnabled,
       partialPaymentsEnabled: partialPaymentsEnabled,
       additionalPaymentOptionsEnabled: additionalPaymentOptionsEnabled,
       biometricAuthenticationEnabled: biometricAuthenticationEnabled,

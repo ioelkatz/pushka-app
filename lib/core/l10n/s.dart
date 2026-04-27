@@ -334,6 +334,8 @@ class S {
   String get coinJingle => _t('SONIDO DE BILLETE', 'BILL SOUND', 'SON DE BILLET', 'צליל שטר');
   String get confettiSound => _t('SONIDO DE CONFETI', 'CONFETTI SOUND', 'SON DE CONFETTIS', 'צליל קונפטי');
   String get vibration => _t('VIBRACIÓN', 'VIBRATION', 'VIBRATION', 'רטט');
+  String get ambientMusic => _t('MÚSICA AMBIENTAL', 'AMBIENT MUSIC', 'MUSIQUE AMBIANTE', 'מוזיקת רקע');
+  String get ambientMusicSub => _t('Nigunim jasídicos de fondo', 'Hasidic nigunim in the background', 'Nigunim hassidiques en fond', 'ניגונים חסידיים ברקע');
   String get partialPayments => _t('PAGOS PARCIALES', 'PARTIAL PAYMENTS', 'PAIEMENTS PARTIELS', 'תשלומים חלקיים');
   String get additionalPaymentOptions => _t('OPCIONES DE PAGO ADICIONALES', 'ADDITIONAL PAYMENT OPTIONS', 'OPTIONS DE PAIEMENT SUPPLÉMENTAIRES', 'אפשרויות תשלום נוספות');
   String get additionalPaymentOptionsSub => _t('Incluyendo cheque, transferencia, DAF', 'Including check, transfer, DAF', 'Y compris chèque, virement, DAF', "כולל צ'ק, העברה, DAF");

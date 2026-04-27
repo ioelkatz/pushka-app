@@ -197,6 +197,7 @@ class UserRepository {
     bool? soundEnabled,
     bool? coinJingleEnabled,
     bool? vibrationEnabled,
+    bool? ambientEnabled,
     bool? partialPaymentsEnabled,
     bool? additionalPaymentOptionsEnabled,
     bool? biometricAuthenticationEnabled,
@@ -229,6 +230,7 @@ class UserRepository {
     if (soundEnabled != null) data['soundEnabled'] = soundEnabled;
     if (coinJingleEnabled != null) data['coinJingleEnabled'] = coinJingleEnabled;
     if (vibrationEnabled != null) data['vibrationEnabled'] = vibrationEnabled;
+    if (ambientEnabled != null) data['ambientEnabled'] = ambientEnabled;
     if (partialPaymentsEnabled != null) {
       data['partialPaymentsEnabled'] = partialPaymentsEnabled;
     }

@@ -11,11 +11,16 @@ class FeedbackService {
   final AudioPlayer _coinPlayer = AudioPlayer();
   final AudioPlayer _successPlayer = AudioPlayer();
   final AudioPlayer _billPlayer = AudioPlayer();
+  final AudioPlayer _ambientPlayer = AudioPlayer();
   bool _initialized = false;
 
   bool soundEnabled = true;
   bool coinJingleEnabled = true;
   bool vibrationEnabled = true;
+  bool ambientEnabled = false;
+
+  static const _ambientUrl =
+      'https://storage.googleapis.com/pushka-app-ioel.firebasestorage.app/ambient/nigunim.mp3';
 
   Future<void> init() async {
     if (_initialized || kIsWeb) return;
@@ -49,10 +54,38 @@ class FeedbackService {
     bool? sound,
     bool? coinJingle,
     bool? vibration,
+    bool? ambient,
   }) {
     if (sound != null) soundEnabled = sound;
     if (coinJingle != null) coinJingleEnabled = coinJingle;
     if (vibration != null) vibrationEnabled = vibration;
+    if (ambient != null && ambient != ambientEnabled) {
+      ambientEnabled = ambient;
+      if (ambient) {
+        startAmbient();
+      } else {
+        stopAmbient();
+      }
+    }
+  }
+
+  Future<void> startAmbient() async {
+    if (kIsWeb) return;
+    ambientEnabled = true;
+    try {
+      await _ambientPlayer.setVolume(0.28);
+      await _ambientPlayer.setReleaseMode(ReleaseMode.loop);
+      await _ambientPlayer.play(UrlSource(_ambientUrl));
+    } catch (e) {
+      debugPrint('[FeedbackService] startAmbient error: $e');
+    }
+  }
+
+  Future<void> stopAmbient() async {
+    ambientEnabled = false;
+    try {
+      await _ambientPlayer.stop();
+    } catch (_) {}
   }
 
   Future<void> playCoinDrop() async {
@@ -140,5 +173,6 @@ class FeedbackService {
     _coinPlayer.dispose();
     _successPlayer.dispose();
     _billPlayer.dispose();
+    _ambientPlayer.dispose();
   }
 }
