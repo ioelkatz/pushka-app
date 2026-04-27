@@ -9,7 +9,6 @@ class FeedbackService {
   static final FeedbackService instance = FeedbackService._();
 
   final AudioPlayer _coinPlayer = AudioPlayer();
-  final AudioPlayer _successPlayer = AudioPlayer();
   final AudioPlayer _billPlayer = AudioPlayer();
   bool _initialized = false;
 
@@ -34,10 +33,8 @@ class FeedbackService {
         ),
       ));
       await _coinPlayer.setSource(AssetSource('sounds/coin.wav'));
-      await _successPlayer.setSource(AssetSource('sounds/success.wav'));
       await _billPlayer.setSource(AssetSource('sounds/bill_flutter.wav'));
       await _coinPlayer.setVolume(0.7);
-      await _successPlayer.setVolume(1.0);
       await _billPlayer.setVolume(0.8);
       _initialized = true;
     } catch (e, st) {
@@ -80,12 +77,15 @@ class FeedbackService {
     // Stop other players so they don't hold audio focus on Android
     try { await _coinPlayer.stop(); } catch (_) {}
     try { await _billPlayer.stop(); } catch (_) {}
+    // Use a fresh player each call to avoid stale-state issues on Android
+    final player = AudioPlayer();
     try {
-      await _successPlayer.stop();
-      await _successPlayer.setVolume(1.0);
-      await _successPlayer.play(AssetSource('sounds/success.wav'));
+      await player.setVolume(1.0);
+      await player.play(AssetSource('sounds/success.wav'));
+      unawaited(player.onPlayerComplete.first.then((_) => player.dispose()));
     } catch (e) {
       debugPrint('[FeedbackService] playSuccess error: $e');
+      unawaited(player.dispose());
     }
   }
 
@@ -136,7 +136,6 @@ class FeedbackService {
     if (_disposed) return;
     _disposed = true;
     _coinPlayer.dispose();
-    _successPlayer.dispose();
     _billPlayer.dispose();
   }
 }

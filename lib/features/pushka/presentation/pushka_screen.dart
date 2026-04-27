@@ -490,39 +490,41 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
     final remoteAmount = userProfile?['pushkaAmount'];
     final remotePresets = userProfile?['presetAmounts'];
 
-    if (!_loadedRemote && userProfile != null) {
+    if (userProfile != null) {
       final uid = ref.read(currentUserProvider)?.uid;
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
         setState(() {
-          if (remoteGoal is num) {
-            pushkaGoal = remoteGoal.toDouble();
-            if (uid != null) HiveCache.instance.savePushkaGoal(uid, pushkaGoal);
-          }
+          // Always apply max(local, remote) for the amount so a stale first
+          // snapshot never locks out the correct final value.
           if (remoteAmount is num) {
             final remote = remoteAmount.toDouble();
-            // Use the higher value: local Hive may be more recent than the
-            // Firestore snapshot if the listener hasn't propagated the last write yet.
             if (remote > pushkaAmount) {
               pushkaAmount = remote;
               if (uid != null) HiveCache.instance.savePushkaAmount(uid, pushkaAmount);
             }
           }
-          if (remotePresets is List && remotePresets.length == 3) {
-            try {
-              _presetAmounts = remotePresets.whereType<num>().map((e) => e.toDouble()).toList();
-              if (_presetAmounts.length != 3) _presetAmounts = [];
-            } catch (_) {
-              _presetAmounts = [];
+          if (!_loadedRemote) {
+            if (remoteGoal is num) {
+              pushkaGoal = remoteGoal.toDouble();
+              if (uid != null) HiveCache.instance.savePushkaGoal(uid, pushkaGoal);
             }
+            if (remotePresets is List && remotePresets.length == 3) {
+              try {
+                _presetAmounts = remotePresets.whereType<num>().map((e) => e.toDouble()).toList();
+                if (_presetAmounts.length != 3) _presetAmounts = [];
+              } catch (_) {
+                _presetAmounts = [];
+              }
+            }
+            _loadedRemote = true;
+            _streakCount = (userProfile['streakCount'] as num?)?.toInt() ?? 0;
+            FeedbackService.instance.updatePreferences(
+              sound: (userProfile['soundEnabled'] as bool?) ?? true,
+              coinJingle: (userProfile['coinJingleEnabled'] as bool?) ?? true,
+              vibration: (userProfile['vibrationEnabled'] as bool?) ?? true,
+            );
           }
-          _loadedRemote = true;
-          _streakCount = (userProfile['streakCount'] as num?)?.toInt() ?? 0;
-          FeedbackService.instance.updatePreferences(
-            sound: (userProfile['soundEnabled'] as bool?) ?? true,
-            coinJingle: (userProfile['coinJingleEnabled'] as bool?) ?? true,
-            vibration: (userProfile['vibrationEnabled'] as bool?) ?? true,
-          );
         });
       });
     }
@@ -638,7 +640,11 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                     value: fillPercentage,
                     minHeight: 4,
                     backgroundColor: Theme.of(context).colorScheme.surfaceContainerHighest,
-                    valueColor: AlwaysStoppedAnimation<Color>(Theme.of(context).colorScheme.primary),
+                    valueColor: AlwaysStoppedAnimation<Color>(
+                      Theme.of(context).brightness == Brightness.dark
+                          ? Theme.of(context).colorScheme.primary
+                          : AppTokens.primaryBlue,
+                    ),
                   ),
                 ),
               ),
