@@ -500,8 +500,13 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
             if (uid != null) HiveCache.instance.savePushkaGoal(uid, pushkaGoal);
           }
           if (remoteAmount is num) {
-            pushkaAmount = remoteAmount.toDouble();
-            if (uid != null) HiveCache.instance.savePushkaAmount(uid, pushkaAmount);
+            final remote = remoteAmount.toDouble();
+            // Use the higher value: local Hive may be more recent than the
+            // Firestore snapshot if the listener hasn't propagated the last write yet.
+            if (remote > pushkaAmount) {
+              pushkaAmount = remote;
+              if (uid != null) HiveCache.instance.savePushkaAmount(uid, pushkaAmount);
+            }
           }
           if (remotePresets is List && remotePresets.length == 3) {
             try {

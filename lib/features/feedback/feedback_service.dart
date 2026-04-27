@@ -20,6 +20,19 @@ class FeedbackService {
   Future<void> init() async {
     if (_initialized || kIsWeb) return;
     try {
+      // Set persistent audio focus so sounds aren't blocked by each other on Android.
+      await AudioPlayer.global.setAudioContext(AudioContext(
+        android: AudioContextAndroid(
+          contentType: AndroidContentType.music,
+          usageType: AndroidUsageType.media,
+          audioFocus: AndroidAudioFocus.gain,
+          isSpeakerphoneOn: false,
+          stayAwake: false,
+        ),
+        iOS: AudioContextIOS(
+          category: AVAudioSessionCategory.playback,
+        ),
+      ));
       await _coinPlayer.setSource(AssetSource('sounds/coin.wav'));
       await _successPlayer.setSource(AssetSource('sounds/success.wav'));
       await _billPlayer.setSource(AssetSource('sounds/bill_flutter.wav'));
