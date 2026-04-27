@@ -299,7 +299,7 @@ class _SplashScreenState extends State<SplashScreen>
     // Map pulse to a brightness boost: 1.0 (base) → 1.35 (peak) → 1.0
     final boost = 1.0 + pulse * 0.35;
     return Positioned(
-      top:   40.0,
+      top:   50.0,
       right: 25.0,
       child: ColorFiltered(
         colorFilter: ColorFilter.matrix(<double>[
