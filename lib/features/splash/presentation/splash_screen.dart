@@ -297,7 +297,7 @@ class _SplashScreenState extends State<SplashScreen>
     final boost = 1.0 + pulse * 0.35;
     return Positioned(
       top:   pad,
-      right: math.max(0.0, pad - 65.0),
+      right: math.max(0.0, pad - 75.0),
       child: ColorFiltered(
         colorFilter: ColorFilter.matrix(<double>[
           boost, 0, 0, 0, 0,
