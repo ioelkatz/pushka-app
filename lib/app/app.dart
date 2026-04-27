@@ -9,15 +9,56 @@ import '../features/feedback/feedback_service.dart';
 import 'router.dart';
 import 'theme/app_theme.dart';
 
-class PushkaApp extends ConsumerWidget {
+class PushkaApp extends ConsumerStatefulWidget {
   const PushkaApp({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<PushkaApp> createState() => _PushkaAppState();
+}
+
+class _PushkaAppState extends ConsumerState<PushkaApp> with WidgetsBindingObserver {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _applyProfilePreferences();
+    }
+  }
+
+  void _applyProfilePreferences() {
+    final profile = ref.read(userProfileProvider).valueOrNull;
+    if (profile == null) return;
+
+    final lang = profile['language'] as String?;
+    if (lang != null && lang.isNotEmpty) {
+      ref.read(localeProvider.notifier).syncFromRemote(lang);
+    }
+
+    FeedbackService.instance.updatePreferences(
+      sound: (profile['soundEnabled'] as bool?) ?? true,
+      coinJingle: (profile['coinJingleEnabled'] as bool?) ?? true,
+      vibration: (profile['vibrationEnabled'] as bool?) ?? true,
+      ambient: (profile['ambientEnabled'] as bool?) ?? false,
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final locale = ref.watch(localeProvider);
     final themeMode = ref.watch(themeModeProvider);
 
-    // Sync language + FeedbackService preferences from Firestore profile whenever it changes
+    // Sync language + FeedbackService preferences whenever Firestore profile changes.
     ref.listen(userProfileProvider, (_, next) {
       final profile = next.valueOrNull;
       if (profile == null) return;
