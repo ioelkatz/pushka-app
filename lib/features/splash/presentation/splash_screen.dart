@@ -47,19 +47,30 @@ class _SplashScreenState extends State<SplashScreen>
   // ── star field — fixed seed so layout is deterministic ──────────────────
   static final _stars = _buildStars();
 
+  // Warm gold palette for stars
+  static const _starColors = [
+    Color(0xFFFFD54F), // bright gold
+    Color(0xFFFFE082), // pale gold
+    Color(0xFFFFF8DC), // cream white
+    Color(0xFFFFCC02), // vivid yellow
+    Color(0xFFFFF0A0), // warm ivory
+  ];
+
   static List<_Star> _buildStars() {
     final rng = math.Random(42);
     final list = <_Star>[];
-    // 50 small background stars
+    // 50 small pointed stars
     for (int i = 0; i < 50; i++) {
       list.add(_Star(
         x:     rng.nextDouble(),
         y:     rng.nextDouble() * 0.88,
-        r:     0.8 + rng.nextDouble() * 1.8,
+        r:     2.2 + rng.nextDouble() * 3.0,
         phase: rng.nextDouble() * math.pi * 2,
         speed: 0.4 + rng.nextDouble() * 0.9,
-        base:  0.25 + rng.nextDouble() * 0.45,
+        base:  0.22 + rng.nextDouble() * 0.40,
         big:   false,
+        shape: rng.nextInt(2), // 0 = 4-pt, 1 = 8-pt
+        color: _starColors[rng.nextInt(_starColors.length)],
       ));
     }
     // 7 larger bright stars
@@ -67,11 +78,13 @@ class _SplashScreenState extends State<SplashScreen>
       list.add(_Star(
         x:     rng.nextDouble(),
         y:     rng.nextDouble() * 0.75,
-        r:     3.2 + rng.nextDouble() * 2.4,
+        r:     5.0 + rng.nextDouble() * 4.0,
         phase: rng.nextDouble() * math.pi * 2,
         speed: 0.18 + rng.nextDouble() * 0.45,
         base:  0.55 + rng.nextDouble() * 0.35,
         big:   true,
+        shape: rng.nextInt(2),
+        color: _starColors[rng.nextInt(_starColors.length)],
       ));
     }
     return list;
@@ -85,7 +98,7 @@ class _SplashScreenState extends State<SplashScreen>
     _buildingCtrl = AnimationController(vsync: this, duration: 800.ms);
     _starCtrl     = AnimationController(vsync: this, duration: 5000.ms)
       ..repeat();
-    _billCtrl     = AnimationController(vsync: this, duration: 5000.ms);
+    _billCtrl     = AnimationController(vsync: this, duration: 7000.ms);
     _shootCtrl    = AnimationController(vsync: this, duration: 800.ms);
     _floodCtrl    = AnimationController(vsync: this, duration: 1800.ms);
 
@@ -115,8 +128,8 @@ class _SplashScreenState extends State<SplashScreen>
       _billAudio.play(AssetSource('sounds/bill_flutter.wav')).catchError((_) {}),
     );
 
-    // 6.3 s — shooting star  (500 + 5000 + 800 = 6300 ms from start)
-    await Future.delayed(5800.ms);
+    // 7.0 s — shooting star  (500 + 6300 + 800 = 7600 ms from start)
+    await Future.delayed(6300.ms);
     if (!mounted) return;
     setState(() => _showShooter = true);
     _shootCtrl.forward();
@@ -233,9 +246,9 @@ class _SplashScreenState extends State<SplashScreen>
     // Rotation — phase-shifted from flutter
     final rotation = math.sin(t * math.pi * 2.5 + 0.6) * 0.12;
 
-    // Opacity: visible until 62%, then fades to nothing by 85%
-    final opacity = t > 0.62
-        ? (1.0 - (t - 0.62) / 0.26).clamp(0.0, 1.0)
+    // Opacity: visible until 70%, then fades to nothing by 92%
+    final opacity = t > 0.70
+        ? (1.0 - (t - 0.70) / 0.22).clamp(0.0, 1.0)
         : 1.0;
 
     if (opacity < 0.01) return const SizedBox.shrink();
@@ -290,10 +303,12 @@ class _SplashScreenState extends State<SplashScreen>
 class _Star {
   final double x, y, r, phase, speed, base;
   final bool big;
+  final int shape;   // 0 = 4-pointed, 1 = 8-pointed
+  final Color color;
   const _Star({
     required this.x,     required this.y,     required this.r,
     required this.phase, required this.speed, required this.base,
-    required this.big,
+    required this.big,   required this.shape, required this.color,
   });
 }
 
@@ -303,37 +318,68 @@ class _StarFieldPainter extends CustomPainter {
 
   const _StarFieldPainter(this.stars, this.t);
 
+  // Draw a 4-pointed star (elongated diamond cross)
+  static void _draw4pt(Canvas canvas, double cx, double cy, double r, Paint p) {
+    const inner = 0.10; // very narrow waist → sharp spikes
+    final path = Path();
+    for (int i = 0; i < 4; i++) {
+      final out  = i * math.pi / 2 - math.pi / 2;
+      final in1  = out + math.pi / 4;
+      final in2  = out - math.pi / 4;
+      if (i == 0) {
+        path.moveTo(cx + math.cos(in2) * r * inner,
+                    cy + math.sin(in2) * r * inner);
+      }
+      path.lineTo(cx + math.cos(out) * r, cy + math.sin(out) * r);
+      path.lineTo(cx + math.cos(in1) * r * inner,
+                  cy + math.sin(in1) * r * inner);
+    }
+    path.close();
+    canvas.drawPath(path, p);
+  }
+
+  // Draw an 8-pointed star (compass rose)
+  static void _draw8pt(Canvas canvas, double cx, double cy, double r, Paint p) {
+    const inner = 0.38; // inner radius ratio
+    final path = Path();
+    for (int i = 0; i < 8; i++) {
+      final out  = i * math.pi / 4 - math.pi / 2;
+      final mid  = out + math.pi / 8;
+      final ox = cx + math.cos(out) * r;
+      final oy = cy + math.sin(out) * r;
+      final mx = cx + math.cos(mid) * r * inner;
+      final my = cy + math.sin(mid) * r * inner;
+      if (i == 0) { path.moveTo(ox, oy); } else { path.lineTo(ox, oy); }
+      path.lineTo(mx, my);
+    }
+    path.close();
+    canvas.drawPath(path, p);
+  }
+
   @override
   void paint(Canvas canvas, Size size) {
     for (final s in stars) {
-      // Smooth sinusoidal twinkle: squared so dips to near-zero between pulses
       final sine    = math.sin(t * math.pi * 2 * s.speed + s.phase);
-      final opacity = s.base * (0.30 + 0.70 * (sine * sine));
+      final opacity = s.base * (0.28 + 0.72 * (sine * sine));
 
       final cx = s.x * size.width;
       final cy = s.y * size.height;
+      final paint = Paint()..color = s.color.withValues(alpha: opacity);
 
       if (s.big) {
-        // Soft outer glow
+        // Soft glow halo
         canvas.drawCircle(
-          Offset(cx, cy),
-          s.r * 3.0,
+          Offset(cx, cy), s.r * 2.8,
           Paint()
-            ..color = const Color(0xFFD8EEFF).withValues(alpha: opacity * 0.16)
-            ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 6),
+            ..color = s.color.withValues(alpha: opacity * 0.14)
+            ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 7),
         );
-        // Bright core
-        canvas.drawCircle(
-          Offset(cx, cy),
-          s.r,
-          Paint()..color = Colors.white.withValues(alpha: opacity),
-        );
+      }
+
+      if (s.shape == 0) {
+        _draw4pt(canvas, cx, cy, s.r, paint);
       } else {
-        canvas.drawCircle(
-          Offset(cx, cy),
-          s.r,
-          Paint()..color = const Color(0xFFEAF4FF).withValues(alpha: opacity),
-        );
+        _draw8pt(canvas, cx, cy, s.r, paint);
       }
     }
   }
