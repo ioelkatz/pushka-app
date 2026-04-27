@@ -5,6 +5,7 @@ import '../core/l10n/s.dart';
 import '../core/l10n/locale_provider.dart';
 import '../core/theme_provider.dart';
 import '../features/users/presentation/user_profile_provider.dart';
+import '../features/feedback/feedback_service.dart';
 import 'router.dart';
 import 'theme/app_theme.dart';
 
@@ -16,12 +17,22 @@ class PushkaApp extends ConsumerWidget {
     final locale = ref.watch(localeProvider);
     final themeMode = ref.watch(themeModeProvider);
 
-    // Sync language from Firestore profile whenever it changes
+    // Sync language + FeedbackService preferences from Firestore profile whenever it changes
     ref.listen(userProfileProvider, (_, next) {
-      final lang = next.valueOrNull?['language'] as String?;
+      final profile = next.valueOrNull;
+      if (profile == null) return;
+
+      final lang = profile['language'] as String?;
       if (lang != null && lang.isNotEmpty) {
         ref.read(localeProvider.notifier).syncFromRemote(lang);
       }
+
+      FeedbackService.instance.updatePreferences(
+        sound: (profile['soundEnabled'] as bool?) ?? true,
+        coinJingle: (profile['coinJingleEnabled'] as bool?) ?? true,
+        vibration: (profile['vibrationEnabled'] as bool?) ?? true,
+        ambient: (profile['ambientEnabled'] as bool?) ?? false,
+      );
     });
 
     return MaterialApp.router(
