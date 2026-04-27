@@ -128,8 +128,8 @@ class _SplashScreenState extends State<SplashScreen>
       _billAudio.play(AssetSource('sounds/bill_flutter.wav')).catchError((_) {}),
     );
 
-    // 7.0 s — shooting star  (500 + 6300 + 800 = 7600 ms from start)
-    await Future.delayed(6300.ms);
+    // 5.8 s — shooting star  (500 + 5300 = 5800 ms from start)
+    await Future.delayed(5300.ms);
     if (!mounted) return;
     setState(() => _showShooter = true);
     _shootCtrl.forward();
