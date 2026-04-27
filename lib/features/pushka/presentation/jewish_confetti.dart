@@ -45,7 +45,14 @@ class _JewishConfettiState extends State<JewishConfetti>
     Color(0xFF5B8DD9), // sky blue
     Color(0xFFE8C547), // warm gold
     Color(0xFF002FA7), // deep blue
-    Color(0xFFF0E68C), // cream gold
+    Color(0xFFFF6B35), // orange
+    Color(0xFFFF3366), // hot pink
+    Color(0xFF10B981), // emerald green
+    Color(0xFFFFD700), // bright yellow
+    Color(0xFFA855F7), // purple
+    Color(0xFF06B6D4), // cyan
+    Color(0xFFFF9500), // amber
+    Color(0xFFEC4899), // pink
   ];
 
   @override
@@ -54,7 +61,7 @@ class _JewishConfettiState extends State<JewishConfetti>
     widget.controller._play = _doPlay;
     _anim = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 4200),
+      duration: const Duration(milliseconds: 2800),
     )
       ..addListener(_tick)
       ..addStatusListener(_onStatus);
@@ -81,43 +88,43 @@ class _JewishConfettiState extends State<JewishConfetti>
   List<_Particle> _spawn() {
     final list = <_Particle>[];
 
-    // Emoji / symbol particles — 28 spread across the top half
+    // Emoji / symbol particles — 28 spread across the top
     for (int i = 0; i < 28; i++) {
       list.add(_Particle(
-        startX:   0.04 + _rng.nextDouble() * 0.92,
-        startY:  -0.02 - _rng.nextDouble() * 0.10,
-        vx:       (_rng.nextDouble() - 0.5) * 0.48,
-        vy:        0.20 + _rng.nextDouble() * 0.35,
-        gravity:   0.10 + _rng.nextDouble() * 0.18,
-        wobbleAmp: _rng.nextDouble() * 0.022,
+        startX:    0.04 + _rng.nextDouble() * 0.92,
+        startY:   -0.02 - _rng.nextDouble() * 0.10,
+        vx:        (_rng.nextDouble() - 0.5) * 0.55,
+        vy:         0.45 + _rng.nextDouble() * 0.45,
+        gravity:    0.28 + _rng.nextDouble() * 0.30,
+        wobbleAmp:  _rng.nextDouble() * 0.022,
         wobbleFreq: 1.5 + _rng.nextDouble() * 2.5,
-        rotation:  0, // no rotation on emoji — avoids glyph corruption
-        rotSpeed:  0,
-        symbol:    _symbols[_rng.nextInt(_symbols.length)],
-        color:     Colors.white,
-        size:      22 + _rng.nextDouble() * 16,
-        delay:     _rng.nextDouble() * 0.22,
-        shapeType: 0,
+        rotation:   0,
+        rotSpeed:   0,
+        symbol:     _symbols[_rng.nextInt(_symbols.length)],
+        color:      Colors.white,
+        size:       22 + _rng.nextDouble() * 16,
+        delay:      _rng.nextDouble() * 0.18,
+        shapeType:  0,
       ));
     }
 
-    // Colored shape particles — 65 pieces (thin rects, circles, squares)
-    for (int i = 0; i < 65; i++) {
+    // Colored shape particles — 80 pieces (thin rects, circles, squares)
+    for (int i = 0; i < 80; i++) {
       list.add(_Particle(
         startX:    0.01 + _rng.nextDouble() * 0.98,
         startY:   -0.01 - _rng.nextDouble() * 0.07,
-        vx:        (_rng.nextDouble() - 0.5) * 0.60,
-        vy:         0.18 + _rng.nextDouble() * 0.50,
-        gravity:    0.08 + _rng.nextDouble() * 0.28,
+        vx:        (_rng.nextDouble() - 0.5) * 0.65,
+        vy:         0.42 + _rng.nextDouble() * 0.55,
+        gravity:    0.22 + _rng.nextDouble() * 0.35,
         wobbleAmp:  _rng.nextDouble() * 0.038,
         wobbleFreq: 2.0 + _rng.nextDouble() * 5.0,
         rotation:   _rng.nextDouble() * 2 * pi,
-        rotSpeed:   (_rng.nextDouble() - 0.5) * 12,
+        rotSpeed:   (_rng.nextDouble() - 0.5) * 14,
         symbol:     null,
         color:      _shapeColors[_rng.nextInt(_shapeColors.length)],
         size:        5 + _rng.nextDouble() * 10,
-        delay:      _rng.nextDouble() * 0.30,
-        shapeType:  _rng.nextInt(3), // 0=thin rect, 1=circle, 2=square
+        delay:      _rng.nextDouble() * 0.22,
+        shapeType:  _rng.nextInt(3),
       ));
     }
 
