@@ -16,9 +16,9 @@ import '../../pushka/presentation/building_770_widget.dart';
 //  0.0 s  Dark sky + stars appear; Building 770 fades in (0.8 s)
 //  0.5 s  Dollar bill starts slow fall from very top + bill sound
 //  5.5 s  Bill fully faded out
-//  6.3 s  Shooting star crosses right → left (~0.8 s)
-//  7.3 s  Warm-gold radial flood fills screen (1.8 s)
-//  9.1 s  Navigate to main app
+//  5.8 s  Shooting star crosses right → left (~0.8 s)
+//  6.8 s  Warm-gold radial flood fills screen (1.8 s)
+//  8.6 s  Navigate to main app
 // ─────────────────────────────────────────────────────────────────────────────
 
 class SplashScreen extends StatefulWidget {
@@ -133,8 +133,8 @@ class _SplashScreenState extends State<SplashScreen>
       _billAudio.play(AssetSource('sounds/bill_flutter.wav')).catchError((_) {}),
     );
 
-    // 5.8 s — shooting star  (500 + 5300 = 5800 ms from start)
-    await Future.delayed(5300.ms);
+    // 5.3 s — shooting star  (500 + 4800 = 5300 ms from start)
+    await Future.delayed(4800.ms);
     if (!mounted) return;
     setState(() => _showShooter = true);
     _shootCtrl.forward();
@@ -292,7 +292,7 @@ class _SplashScreenState extends State<SplashScreen>
     final boost = 1.0 + pulse * 0.35;
     return Positioned(
       top:   pad,
-      right: pad,
+      right: math.max(0.0, pad - 50.0),
       child: ColorFiltered(
         colorFilter: ColorFilter.matrix(<double>[
           boost, 0, 0, 0, 0,
