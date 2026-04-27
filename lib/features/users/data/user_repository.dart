@@ -108,7 +108,8 @@ class UserRepository {
         'uid': user.uid,
         'lastLoginAt': FieldValue.serverTimestamp(),
       };
-      if ((data['walletId'] as String?)?.trim().isEmpty != false) {
+      final existingWalletId = (data['walletId'] as String?)?.trim();
+      if (existingWalletId == null || existingWalletId.isEmpty) {
         patch['walletId'] = walletIdFromUid(user.uid);
       }
       if (data['walletBalance'] == null || data['walletBalance'] is! num) {
@@ -120,7 +121,8 @@ class UserRepository {
       if (data['walletAutoTopUpAmount'] == null || data['walletAutoTopUpAmount'] is! num) {
         patch['walletAutoTopUpAmount'] = 0.0;
       }
-      if ((data['walletAutoTopUpFrequency'] as String?)?.trim().isEmpty != false) {
+      final existingFrequency = (data['walletAutoTopUpFrequency'] as String?)?.trim();
+      if (existingFrequency == null || existingFrequency.isEmpty) {
         patch['walletAutoTopUpFrequency'] = 'weekly';
       }
       if (data['walletAutoTopUpWeekday'] == null || data['walletAutoTopUpWeekday'] is! num) {

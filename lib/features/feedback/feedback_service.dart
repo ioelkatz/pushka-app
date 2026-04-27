@@ -10,6 +10,7 @@ class FeedbackService {
 
   final AudioPlayer _coinPlayer = AudioPlayer();
   final AudioPlayer _successPlayer = AudioPlayer();
+  final AudioPlayer _billPlayer = AudioPlayer();
   bool _initialized = false;
 
   bool soundEnabled = true;
@@ -21,8 +22,10 @@ class FeedbackService {
     try {
       await _coinPlayer.setSource(AssetSource('sounds/coin.wav'));
       await _successPlayer.setSource(AssetSource('sounds/success.wav'));
+      await _billPlayer.setSource(AssetSource('sounds/bill_flutter.wav'));
       await _coinPlayer.setVolume(0.7);
       await _successPlayer.setVolume(0.6);
+      await _billPlayer.setVolume(0.8);
       _initialized = true;
     } catch (e, st) {
       debugPrint('FeedbackService init error: $e\n$st');
@@ -67,6 +70,25 @@ class FeedbackService {
     } catch (_) {}
   }
 
+  /// Soft flutter at start of bill fall, then a thud at 2.5 s when it enters.
+  Future<void> playBillFall() async {
+    if (!soundEnabled || kIsWeb) return;
+    try {
+      await _billPlayer.stop();
+      await _billPlayer.setVolume(0.8);
+      await _billPlayer.play(AssetSource('sounds/bill_flutter.wav'),
+          position: const Duration(milliseconds: 300));
+      // Fade out over the last 600 ms to match the bill's opacity fade
+      unawaited(Future.delayed(const Duration(milliseconds: 2900), () async {
+        for (final step in [0.65, 0.45, 0.28, 0.14, 0.04]) {
+          await Future<void>.delayed(const Duration(milliseconds: 120));
+          try { await _billPlayer.setVolume(step); } catch (_) {}
+        }
+        try { await _billPlayer.stop(); } catch (_) {}
+      }));
+    } catch (_) {}
+  }
+
   /// Heavy thud + light echo — used when pushka is emptied.
   void vibratePushkaEmpty() {
     if (!vibrationEnabled || kIsWeb) return;
@@ -96,5 +118,6 @@ class FeedbackService {
     _disposed = true;
     _coinPlayer.dispose();
     _successPlayer.dispose();
+    _billPlayer.dispose();
   }
 }

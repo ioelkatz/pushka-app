@@ -157,7 +157,7 @@ class AuthController {
 
   Future<void> signInWithApple() async {
     if (kIsWeb) {
-      throw Exception('Inicio de sesión con Apple no está disponible en web');
+      throw Exception('Apple Sign-In is not available on web');
     }
     // Apple Sign-In is only available on iOS and macOS
     final appleCredential = await SignInWithApple.getAppleIDCredential(

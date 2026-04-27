@@ -224,8 +224,8 @@ class NotificationService {
 
     const androidDetails = AndroidNotificationDetails(
       'pushka_notifications',
-      'Notificaciones Pushka',
-      channelDescription: 'Notificaciones generales de Pushka',
+      'Pushka Notifications',
+      channelDescription: 'General Pushka notifications',
       importance: Importance.high,
       priority: Priority.high,
     );
@@ -346,8 +346,8 @@ class NotificationService {
   NotificationDetails _notificationDetails() {
     const androidDetails = AndroidNotificationDetails(
       'pushka_reminders',
-      'Recordatorios Pushka',
-      channelDescription: 'Recordatorios y alertas programadas',
+      'Pushka Reminders',
+      channelDescription: 'Scheduled reminders and alerts',
       importance: Importance.high,
       priority: Priority.high,
     );

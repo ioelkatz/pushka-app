@@ -18,7 +18,7 @@ Future<T?> showKeyboardSafeSheet<T>({
     shape: const RoundedRectangleBorder(
       borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
     ),
-    backgroundColor: Colors.white,
+    backgroundColor: Theme.of(context).colorScheme.surface,
     barrierColor: const Color(0xDD000000),
     builder: (sheetCtx) => Padding(
       padding: EdgeInsets.only(

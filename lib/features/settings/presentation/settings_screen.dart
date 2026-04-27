@@ -125,7 +125,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             return Padding(
               padding: EdgeInsets.only(bottom: MediaQuery.of(ctx).viewInsets.bottom),
               child: Container(
-                decoration: const BoxDecoration(color: Colors.white, borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+                decoration: BoxDecoration(color: Theme.of(ctx).colorScheme.surface, borderRadius: const BorderRadius.vertical(top: Radius.circular(20))),
                 child: SafeArea(top: false, child: SingleChildScrollView(
                   padding: const EdgeInsets.fromLTRB(20, 8, 20, 16),
                   child: Column(
@@ -136,14 +136,14 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                       Text(S.of(context).addNewPushka, textAlign: TextAlign.center, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
                       const SizedBox(height: 18),
                       SizedBox(height: 52, child: ElevatedButton(
-                        style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFE05A4F), foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
+                        style: ElevatedButton.styleFrom(backgroundColor: Theme.of(ctx).brightness == Brightness.dark ? Theme.of(ctx).colorScheme.primary : const Color(0xFFE05A4F), foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
                         onPressed: () => Navigator.of(ctx).pop(''),
                         child: Text(S.of(context).scanQrCode, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
                       )),
                       const SizedBox(height: 12),
                       if (!showManualEntry)
                         SizedBox(height: 52, child: OutlinedButton(
-                          style: OutlinedButton.styleFrom(foregroundColor: const Color(0xFFE05A4F), side: const BorderSide(color: Color(0xFFE05A4F), width: 2), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
+                          style: OutlinedButton.styleFrom(foregroundColor: Theme.of(ctx).brightness == Brightness.dark ? Theme.of(ctx).colorScheme.primary : const Color(0xFFE05A4F), side: BorderSide(color: Theme.of(ctx).brightness == Brightness.dark ? Theme.of(ctx).colorScheme.primary : const Color(0xFFE05A4F), width: 2), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
                           onPressed: () { setSheetState(() { showManualEntry = true; error = null; }); },
                           child: Text(S.of(context).enterPushkaId, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
                         )),
@@ -160,7 +160,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                             hintText: S.of(context).pushkaIdHint, errorText: error,
                             contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
                             border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                            focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: Color(0xFFE05A4F), width: 1.6)),
+                            focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide(color: Theme.of(ctx).brightness == Brightness.dark ? Theme.of(ctx).colorScheme.primary : const Color(0xFFE05A4F), width: 1.6)),
                           ),
                         ),
                       ],
@@ -185,7 +185,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   @override
   Widget build(BuildContext context) {
     final tr = S.of(context);
-    const red = Color(0xFFE05A4F);
+    final red = Theme.of(context).brightness == Brightness.dark
+        ? Theme.of(context).colorScheme.primary
+        : const Color(0xFFE05A4F);
     final blue = Theme.of(context).colorScheme.primary;
 
     final user = ref.watch(currentUserProvider);
@@ -609,7 +611,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             child: OutlinedButton(
               onPressed: () => _showLogoutDialog(),
               style: OutlinedButton.styleFrom(
-                side: const BorderSide(color: red, width: 2),
+                side: BorderSide(color: red, width: 2),
                 padding: const EdgeInsets.symmetric(vertical: 14),
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(8),
@@ -1467,7 +1469,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     keyboardType: TextInputType.phone,
                     decoration: InputDecoration(hintText: S.of(context).phoneHint, errorText: errorText,
                       border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                      focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: Color(0xFFE05A4F), width: 1.6)),
+                      focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide(color: Theme.of(ctx).brightness == Brightness.dark ? Theme.of(ctx).colorScheme.primary : const Color(0xFFE05A4F), width: 1.6)),
                     ),
                     onChanged: (_) { if (errorText != null) setDialogState(() => errorText = null); },
                   )),
@@ -1479,7 +1481,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   keyboardType: _keyboardTypeForKey(fieldKey),
                   decoration: InputDecoration(hintText: S.of(context).enterField(title.toLowerCase()), errorText: errorText,
                     border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                    focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: Color(0xFFE05A4F), width: 1.6)),
+                    focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide(color: Theme.of(ctx).brightness == Brightness.dark ? Theme.of(ctx).colorScheme.primary : const Color(0xFFE05A4F), width: 1.6)),
                   ),
                   onChanged: (_) { if (errorText != null) setDialogState(() => errorText = null); },
                 ),
@@ -1487,7 +1489,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             ]),
             actions: [
               SizedBox(width: double.infinity, height: 48, child: ElevatedButton(
-                style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFE05A4F), foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
+                style: ElevatedButton.styleFrom(backgroundColor: Theme.of(ctx).brightness == Brightness.dark ? Theme.of(ctx).colorScheme.primary : const Color(0xFFE05A4F), foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
                 onPressed: () {
                   final value = isPhone ? '$phonePrefix ${controller.text.trim()}'.trim() : controller.text.trim();
                   final validationError = _validateByKey(fieldKey, value);
@@ -1822,7 +1824,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             ]),
             actions: [
               SizedBox(width: double.infinity, height: 48, child: ElevatedButton(
-                style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFE05A4F), foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
+                style: ElevatedButton.styleFrom(backgroundColor: Theme.of(ctx).brightness == Brightness.dark ? Theme.of(ctx).colorScheme.primary : const Color(0xFFE05A4F), foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
                 onPressed: () {
                   final value = double.tryParse(controller.text.trim().replaceAll(',', '.'));
                   if (value == null || value <= 0) { setDialogState(() => errorText = S.of(context).enterValidAmount); return; }

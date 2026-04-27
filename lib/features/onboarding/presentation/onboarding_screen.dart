@@ -70,7 +70,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     final isLast = _page == _total - 1;
 
     return Scaffold(
-      backgroundColor: Colors.white,
+      backgroundColor: Theme.of(context).colorScheme.surface,
       body: SafeArea(
         child: Column(
           children: [

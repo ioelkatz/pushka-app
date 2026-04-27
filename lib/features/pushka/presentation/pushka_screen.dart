@@ -8,6 +8,7 @@ import '../../../app/theme/app_tokens.dart';
 import '../../../core/keyboard_safe_sheet.dart';
 import 'pushka_3d_widget.dart';
 import 'building_770_widget.dart';
+import 'bill_fall_animation.dart';
 import '../../../core/pushka_style_provider.dart';
 import '../../../core/l10n/s.dart';
 
@@ -36,9 +37,14 @@ class PushkaScreen extends ConsumerStatefulWidget {
 class _PushkaScreenState extends ConsumerState<PushkaScreen>
     with SingleTickerProviderStateMixin {
   final _pushkaKey = GlobalKey<Pushka3DWidgetState>();
+  final _fillItTitleKey = GlobalKey();
+  final _stackKey = GlobalKey();
   late final ConfettiController _confettiController;
   late final AnimationController _lottieController;
   bool _showGoalLottie = false;
+  bool _showBill = false;
+  int _billKey = 0;
+  double _billStartY = -90.0;
   double pushkaAmount = 0;
   double pushkaGoal = UserRepository.defaultGoalForCurrency('USD');
   List<double> _presetAmounts = [];
@@ -140,6 +146,13 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
     if (!wasFull && nowFull) _triggerCelebration();
     _pushkaKey.currentState?.triggerCoinDrop();
     FeedbackService.instance.playCoinDrop();
+    FeedbackService.instance.playBillFall();
+    final titleBox = _fillItTitleKey.currentContext?.findRenderObject() as RenderBox?;
+    final stackBox = _stackKey.currentContext?.findRenderObject() as RenderBox?;
+    final startY = (titleBox != null && stackBox != null)
+        ? stackBox.globalToLocal(titleBox.localToGlobal(Offset(0, titleBox.size.height))).dy + 8
+        : -90.0;
+    setState(() { _showBill = true; _billKey++; _billStartY = startY; });
     try {
       await _persistPushkaAmount();
     } catch (_) {
@@ -590,11 +603,34 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
               ),
             ] else ...[
               Text(
+                key: _fillItTitleKey,
                 tr.fillIt,
                 style: TextStyle(
                   fontSize: titleSize,
                   fontWeight: FontWeight.w700,
                   color: Theme.of(context).colorScheme.onSurface,
+                ),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                '${_currencySymbol(_currencyCodeFromProfile())}${formatAmount(pushkaAmount)} / ${_currencySymbol(_currencyCodeFromProfile())}${formatAmount(pushkaGoal)}',
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w500,
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Padding(
+                padding: EdgeInsets.symmetric(horizontal: constraints.maxWidth * 0.09),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(2),
+                  child: LinearProgressIndicator(
+                    value: fillPercentage,
+                    minHeight: 4,
+                    backgroundColor: Theme.of(context).colorScheme.surfaceContainerHighest,
+                    valueColor: AlwaysStoppedAnimation<Color>(Theme.of(context).colorScheme.primary),
+                  ),
                 ),
               ),
               SizedBox(height: titleBottomGap),
@@ -657,6 +693,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
               ],
             );
             return Stack(
+              key: _stackKey,
               children: [
                 SingleChildScrollView(child: content),
                 Align(
@@ -675,6 +712,16 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                     ),
                   ),
                 ),
+                if (_showBill)
+                  Positioned.fill(
+                    child: IgnorePointer(
+                      child: BillFallAnimation(
+                        key: ValueKey(_billKey),
+                        startY: _billStartY,
+                        onDone: () { if (mounted) setState(() => _showBill = false); },
+                      ),
+                    ),
+                  ),
                 if (_showGoalLottie)
                   Positioned.fill(
                     child: IgnorePointer(
@@ -1576,10 +1623,11 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                     child: Text(
                       S.of(context).tzedakahSettings,
                       textAlign: TextAlign.center,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 28,
                         fontWeight: FontWeight.w800,
                         letterSpacing: -0.3,
+                        color: cs.onSurface,
                       ),
                     ),
                   ),
@@ -1677,7 +1725,9 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                             textAlign: TextAlign.center,
                             style: TextStyle(
                               fontSize: 16,
-                              color: cs.primary,
+                              color: Theme.of(ctx).brightness == Brightness.dark
+                                  ? cs.onSurface
+                                  : cs.primary,
                               fontWeight: FontWeight.w600,
                             ),
                             decoration: InputDecoration(
