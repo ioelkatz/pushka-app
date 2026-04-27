@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'dart:math' as math;
-import 'package:confetti/confetti.dart';
 import '../../../core/hive_cache.dart';
+import 'jewish_confetti.dart';
 import '../../../core/format_utils.dart';
 import '../../../app/theme/app_tokens.dart';
 import '../../../core/keyboard_safe_sheet.dart';
@@ -38,7 +38,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
   final _pushkaKey = GlobalKey<Pushka3DWidgetState>();
   final _fillItTitleKey = GlobalKey();
   final _stackKey = GlobalKey();
-  late final ConfettiController _confettiController;
+  final _confettiController = JewishConfettiController();
   bool _showBill = false;
   int _billKey = 0;
   double _billStartY = -90.0;
@@ -52,9 +52,6 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
   @override
   void initState() {
     super.initState();
-    _confettiController = ConfettiController(
-      duration: const Duration(seconds: 3),
-    );
     _loadFromCache();
   }
 
@@ -706,22 +703,8 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
               key: _stackKey,
               children: [
                 SingleChildScrollView(child: content),
-                Align(
-                  alignment: Alignment.topCenter,
-                  child: IgnorePointer(
-                    child: ConfettiWidget(
-                      confettiController: _confettiController,
-                      blastDirectionality: BlastDirectionality.explosive,
-                      numberOfParticles: 24,
-                      gravity: 0.25,
-                      emissionFrequency: 0.06,
-                      colors: const [
-                        Color(0xFFFFD700), Color(0xFF2563EB), Color(0xFFFFFFFF),
-                        Color(0xFF60A5FA), Color(0xFFFF6B35), Color(0xFF10B981),
-                      ],
-                      createParticlePath: _jewishConfettiPath,
-                    ),
-                  ),
+                Positioned.fill(
+                  child: JewishConfetti(controller: _confettiController),
                 ),
                 if (_showBill)
                   Positioned.fill(
@@ -739,89 +722,6 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
         ),
       ),
     );
-  }
-
-  static final _confettiRng = math.Random();
-
-  // Cycles randomly through Jewish symbols: Magen David, challah, Shabbat candle, 5-pointed star.
-  static Path _jewishConfettiPath(Size size) {
-    final choice = _confettiRng.nextInt(4);
-    switch (choice) {
-      case 0: { return _magenDavidPath(size); }
-      case 1: { return _challahPath(size); }
-      case 2: { return _candlePath(size); }
-      default: { return _starPath(size); }
-    }
-  }
-
-  // Star of David — two overlapping equilateral triangles.
-  static Path _magenDavidPath(Size size) {
-    final cx = size.width / 2;
-    final cy = size.height / 2;
-    final r = size.width / 2;
-    final path = Path();
-    // Triangle pointing up
-    path.moveTo(cx, cy - r);
-    path.lineTo(cx + r * 0.866, cy + r * 0.5);
-    path.lineTo(cx - r * 0.866, cy + r * 0.5);
-    path.close();
-    // Triangle pointing down
-    path.moveTo(cx, cy + r);
-    path.lineTo(cx + r * 0.866, cy - r * 0.5);
-    path.lineTo(cx - r * 0.866, cy - r * 0.5);
-    path.close();
-    return path;
-  }
-
-  // Challah — braided oval (approximated with a wide rounded rect + a small bump on top).
-  static Path _challahPath(Size size) {
-    final path = Path();
-    final w = size.width;
-    final h = size.height * 0.6;
-    final top = size.height * 0.2;
-    path.addRRect(RRect.fromLTRBR(0, top, w, top + h, Radius.circular(h / 2)));
-    // small braid bump
-    path.addOval(Rect.fromCenter(
-        center: Offset(w * 0.5, top + h * 0.15), width: w * 0.55, height: h * 0.35));
-    return path;
-  }
-
-  // Shabbat candle — thin rectangle body + teardrop flame.
-  static Path _candlePath(Size size) {
-    final w = size.width;
-    final h = size.height;
-    final path = Path();
-    // candle body
-    final cw = w * 0.28;
-    final cx = (w - cw) / 2;
-    path.addRect(Rect.fromLTWH(cx, h * 0.42, cw, h * 0.58));
-    // flame (teardrop)
-    final fx = w / 2;
-    final fy = h * 0.35;
-    path.moveTo(fx, h * 0.02);
-    path.cubicTo(fx + w * 0.22, fy * 0.5, fx + w * 0.22, fy, fx, fy);
-    path.cubicTo(fx - w * 0.22, fy, fx - w * 0.22, fy * 0.5, fx, h * 0.02);
-    path.close();
-    return path;
-  }
-
-  // 5-pointed star.
-  static Path _starPath(Size size) {
-    final cx = size.width / 2;
-    final cy = size.height / 2;
-    final outer = size.width / 2;
-    final inner = outer * 0.4;
-    const points = 5;
-    final path = Path();
-    for (var i = 0; i < points * 2; i++) {
-      final r = i.isEven ? outer : inner;
-      final angle = (math.pi / points) * i - math.pi / 2;
-      final x = cx + r * math.cos(angle);
-      final y = cy + r * math.sin(angle);
-      if (i == 0) path.moveTo(x, y); else path.lineTo(x, y);
-    }
-    path.close();
-    return path;
   }
 
   Widget _buildStreakBanner(Color bgColor, Color brandBlue) {
