@@ -24,7 +24,7 @@ class FeedbackService {
       await _successPlayer.setSource(AssetSource('sounds/success.wav'));
       await _billPlayer.setSource(AssetSource('sounds/bill_flutter.wav'));
       await _coinPlayer.setVolume(0.7);
-      await _successPlayer.setVolume(0.6);
+      await _successPlayer.setVolume(1.0);
       await _billPlayer.setVolume(0.8);
       _initialized = true;
     } catch (e, st) {
@@ -66,8 +66,11 @@ class FeedbackService {
     }
     try {
       await _successPlayer.stop();
+      await _successPlayer.setVolume(1.0);
       await _successPlayer.play(AssetSource('sounds/success.wav'));
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('[FeedbackService] playSuccess error: $e');
+    }
   }
 
   /// Soft flutter at start of bill fall, then a thud at 2.5 s when it enters.
