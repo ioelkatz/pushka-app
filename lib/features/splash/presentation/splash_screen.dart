@@ -101,7 +101,7 @@ class _SplashScreenState extends State<SplashScreen>
       ..repeat();
     _billCtrl     = AnimationController(vsync: this, duration: 7000.ms);
     _shootCtrl    = AnimationController(vsync: this, duration: 800.ms);
-    _floodCtrl    = AnimationController(vsync: this, duration: 1800.ms);
+    _floodCtrl    = AnimationController(vsync: this, duration: 1300.ms);
     _moonGlowCtrl = AnimationController(vsync: this, duration: 2500.ms);
 
     _buildingCtrl.forward();
