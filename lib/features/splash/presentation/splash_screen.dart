@@ -188,8 +188,8 @@ class _SplashScreenState extends State<SplashScreen>
               size: Size.infinite,
             ),
 
-            // 3. Moon — top-right corner, equal margin
-            _buildMoon(MediaQuery.of(context).padding.top),
+            // 3. Moon — top-right corner
+            _buildMoon(),
 
             // 4. Building 770 — perfectly centered
             Center(
@@ -292,16 +292,15 @@ class _SplashScreenState extends State<SplashScreen>
   }
 
   // ── moon — top-right corner ──────────────────────────────────────────────
-  Widget _buildMoon(double statusBarH) {
-    final pad = math.max(20.0, statusBarH + 8.0);
+  Widget _buildMoon() {
     // Pulse: triangle wave 0→1→0 — adds a subtle brightness flare
     final v     = _moonGlowCtrl.value;
     final pulse = v < 0.5 ? v * 2.0 : (1.0 - v) * 2.0;
     // Map pulse to a brightness boost: 1.0 (base) → 1.35 (peak) → 1.0
     final boost = 1.0 + pulse * 0.35;
     return Positioned(
-      top:   math.max(0.0, pad - 30.0),
-      right: math.max(0.0, pad - 135.0),
+      top:   8.0,
+      right: 0.0,
       child: ColorFiltered(
         colorFilter: ColorFilter.matrix(<double>[
           boost, 0, 0, 0, 0,
