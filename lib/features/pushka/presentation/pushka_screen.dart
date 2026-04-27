@@ -143,16 +143,20 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
     final wasFull = pushkaGoal > 0 && pushkaAmount >= pushkaGoal;
     setState(() => pushkaAmount += clamped);
     final nowFull = pushkaGoal > 0 && pushkaAmount >= pushkaGoal;
-    if (!wasFull && nowFull) _triggerCelebration();
-    _pushkaKey.currentState?.triggerCoinDrop();
-    FeedbackService.instance.playCoinDrop();
-    FeedbackService.instance.playBillFall();
-    final titleBox = _fillItTitleKey.currentContext?.findRenderObject() as RenderBox?;
-    final stackBox = _stackKey.currentContext?.findRenderObject() as RenderBox?;
-    final startY = (titleBox != null && stackBox != null)
-        ? stackBox.globalToLocal(titleBox.localToGlobal(Offset(0, titleBox.size.height))).dy + 8
-        : -90.0;
-    setState(() { _showBill = true; _billKey++; _billStartY = startY; });
+    final goalJustReached = !wasFull && nowFull;
+    if (goalJustReached) {
+      _triggerCelebration();
+    } else {
+      _pushkaKey.currentState?.triggerCoinDrop();
+      FeedbackService.instance.playCoinDrop();
+      FeedbackService.instance.playBillFall();
+      final titleBox = _fillItTitleKey.currentContext?.findRenderObject() as RenderBox?;
+      final stackBox = _stackKey.currentContext?.findRenderObject() as RenderBox?;
+      final startY = (titleBox != null && stackBox != null)
+          ? stackBox.globalToLocal(titleBox.localToGlobal(Offset(0, titleBox.size.height))).dy + 8
+          : -90.0;
+      setState(() { _showBill = true; _billKey++; _billStartY = startY; });
+    }
     try {
       await _persistPushkaAmount();
     } catch (_) {
