@@ -70,6 +70,7 @@ service cloud.firestore {
             'soundEnabled',
             'coinJingleEnabled',
             'vibrationEnabled',
+            'ambientEnabled',
             'partialPaymentsEnabled',
             'additionalPaymentOptionsEnabled',
             'biometricAuthenticationEnabled',
@@ -141,6 +142,8 @@ service cloud.firestore {
               request.resource.data.coinJingleEnabled is bool) &&
           (!('vibrationEnabled' in request.resource.data) ||
               request.resource.data.vibrationEnabled is bool) &&
+          (!('ambientEnabled' in request.resource.data) ||
+              request.resource.data.ambientEnabled is bool) &&
           (!('partialPaymentsEnabled' in request.resource.data) ||
               request.resource.data.partialPaymentsEnabled is bool) &&
           (!('additionalPaymentOptionsEnabled' in request.resource.data) ||

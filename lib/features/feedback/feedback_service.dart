@@ -73,7 +73,7 @@ class FeedbackService {
     if (kIsWeb) return;
     ambientEnabled = true;
     try {
-      await _ambientPlayer.setVolume(0.28);
+      await _ambientPlayer.setVolume(0.85);
       await _ambientPlayer.setReleaseMode(ReleaseMode.loop);
       await _ambientPlayer.play(UrlSource(_ambientUrl));
     } catch (e) {
