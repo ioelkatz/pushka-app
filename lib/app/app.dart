@@ -33,6 +33,12 @@ class _PushkaAppState extends ConsumerState<PushkaApp> with WidgetsBindingObserv
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
       _applyProfilePreferences();
+      // Restart ambient if it was active before the app went to background.
+      // We call startAmbient() directly rather than re-reading the profile
+      // because ambientEnabled already reflects the user's saved preference.
+      if (FeedbackService.instance.ambientEnabled) {
+        FeedbackService.instance.startAmbient();
+      }
     }
   }
 
@@ -45,11 +51,13 @@ class _PushkaAppState extends ConsumerState<PushkaApp> with WidgetsBindingObserv
       ref.read(localeProvider.notifier).syncFromRemote(lang);
     }
 
+    // ambient is intentionally excluded here: it must only start once the
+    // main pushka screen is visible (never during the splash). PushkaScreen
+    // calls updatePreferences(ambient: ...) in its _loadedRemote block.
     FeedbackService.instance.updatePreferences(
       sound: (profile['soundEnabled'] as bool?) ?? true,
       coinJingle: (profile['coinJingleEnabled'] as bool?) ?? true,
       vibration: (profile['vibrationEnabled'] as bool?) ?? true,
-      ambient: (profile['ambientEnabled'] as bool?) ?? false,
     );
   }
 
@@ -58,7 +66,8 @@ class _PushkaAppState extends ConsumerState<PushkaApp> with WidgetsBindingObserv
     final locale = ref.watch(localeProvider);
     final themeMode = ref.watch(themeModeProvider);
 
-    // Sync language + FeedbackService preferences whenever Firestore profile changes.
+    // Sync language + non-ambient FeedbackService preferences whenever
+    // the Firestore profile changes. Ambient is owned by PushkaScreen.
     ref.listen(userProfileProvider, (_, next) {
       final profile = next.valueOrNull;
       if (profile == null) return;
@@ -72,7 +81,6 @@ class _PushkaAppState extends ConsumerState<PushkaApp> with WidgetsBindingObserv
         sound: (profile['soundEnabled'] as bool?) ?? true,
         coinJingle: (profile['coinJingleEnabled'] as bool?) ?? true,
         vibration: (profile['vibrationEnabled'] as bool?) ?? true,
-        ambient: (profile['ambientEnabled'] as bool?) ?? false,
       );
     });
 
