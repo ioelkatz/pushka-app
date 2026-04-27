@@ -382,9 +382,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           const SizedBox(height: 18),
 
           // AMBIENT MUSIC
-          _buildToggleRowWithSubtitle(
+          _buildToggleRow(
             tr.ambientMusic,
-            tr.ambientMusicSub,
             ambientEnabled,
             onChanged: (value) {
               setState(() => ambientEnabled = value);
