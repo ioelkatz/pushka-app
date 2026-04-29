@@ -2689,3 +2689,37 @@ exports.getFailedPayments = onCall(
     }));
   }
 );
+
+// ---------------------------------------------------------------------------
+// Admin: setUserBlocked — disable/enable Firebase Auth account + write adminData
+// ---------------------------------------------------------------------------
+
+exports.setUserBlocked = onCall(
+  { enforceAppCheck: false },
+  async (request) => {
+    if (request.auth?.token?.admin !== true) {
+      throw new HttpsError("permission-denied", "Solo administradores.");
+    }
+
+    const uid = String(request.data?.uid || "").trim();
+    const isBlocked = Boolean(request.data?.isBlocked);
+    const notes = request.data?.notes !== undefined ? String(request.data.notes) : undefined;
+
+    if (!uid) throw new HttpsError("invalid-argument", "uid requerido.");
+
+    // Disable/enable the Firebase Auth account — this prevents login entirely
+    await admin.auth().updateUser(uid, { disabled: isBlocked });
+
+    // Write to adminData for UI display and audit trail
+    const adminDataPatch = {
+      isBlocked,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedBy: request.auth.token?.email ?? request.auth.uid,
+    };
+    if (notes !== undefined) adminDataPatch.notes = notes;
+
+    await db.collection("adminData").doc(uid).set(adminDataPatch, { merge: true });
+
+    return { success: true, uid, isBlocked };
+  }
+);
