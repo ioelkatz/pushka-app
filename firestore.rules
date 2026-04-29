@@ -44,11 +44,16 @@ service cloud.firestore {
                         'stripeCustomerIdPending']);
     }
 
+    function isBlockedNotChanged() {
+      // isBlocked is written exclusively by Cloud Functions (Admin SDK bypasses rules).
+      // Clients may not change this field — only read it.
+      return !request.resource.data.diff(resource.data).affectedKeys().hasAny(['isBlocked']);
+    }
+
     function validUserDoc(uid) {
-      // hasOnly includes Stripe fields so that on UPDATE, pre-existing CF-written
-      // Stripe data in the resulting document doesn't fail the check.
-      // Writing/changing Stripe fields is separately blocked by hasNoStripeFields()
-      // (create) and hasNoStripeFieldsWritten() (update).
+      // hasOnly includes Stripe fields and isBlocked so that on UPDATE, pre-existing
+      // CF-written fields in the resulting document don't fail the check.
+      // Writing/changing those fields is separately blocked by the specific guards below.
       return request.resource.data.keys().hasOnly([
             'uid',
             'email',
@@ -96,7 +101,8 @@ service cloud.firestore {
             'stripeDefaultPaymentMethodId',
             'stripeDefaultPaymentMethodLast4',
             'stripeDefaultPaymentMethodBrand',
-            'stripeCustomerIdPending'
+            'stripeCustomerIdPending',
+            'isBlocked'
           ]) &&
           request.resource.data.uid is string &&
           request.resource.data.uid == uid &&
@@ -342,14 +348,14 @@ service cloud.firestore {
           hasNoStripeFields() &&
           (!('walletBalance' in request.resource.data) ||
               request.resource.data.walletBalance == 0);
-      // On update: walletId and walletBalance are immutable from the client side.
+      // On update: walletId, walletBalance, and isBlocked are immutable from the client.
       // Stripe fields must not be written or changed — CFs own them via Admin SDK.
-      // NOTE: hasNoStripeFieldsWritten() checks the diff (not request.resource.data),
-      // because request.resource.data on update includes pre-existing CF-written Stripe
-      // fields — checking the full doc would block all updates for users who have a card.
+      // NOTE: hasNoStripeFieldsWritten() and isBlockedNotChanged() check the diff (not
+      // request.resource.data) because the full doc may include CF-written fields.
       allow update: if isOwner(uid) &&
           validUserDoc(uid) &&
           hasNoStripeFieldsWritten() &&
+          isBlockedNotChanged() &&
           (
             request.resource.data.walletId == resource.data.walletId ||
             !('walletId' in resource.data)

@@ -2337,10 +2337,12 @@ async function convertToUSD(amount, currencyCode) {
 // Admin: setAdminClaim — grant or revoke admin access
 // ---------------------------------------------------------------------------
 
+// The principal admin can grant AND revoke. Regular admins can only grant.
+const PRINCIPAL_ADMIN_EMAIL = "jymmexico@gmail.com";
+
 exports.setAdminClaim = onCall(
   { enforceAppCheck: false },
   async (request) => {
-    // Only existing admins (or during bootstrap: no admins yet) can call this.
     const callerUid = request.auth?.uid;
     if (!callerUid) {
       throw new HttpsError("unauthenticated", "Debes estar autenticado.");
@@ -2348,7 +2350,6 @@ exports.setAdminClaim = onCall(
 
     const callerRecord = await admin.auth().getUser(callerUid);
     const callerIsAdmin = callerRecord.customClaims?.admin === true;
-
     if (!callerIsAdmin) {
       throw new HttpsError("permission-denied", "Solo administradores pueden gestionar otros administradores.");
     }
@@ -2358,11 +2359,23 @@ exports.setAdminClaim = onCall(
       throw new HttpsError("invalid-argument", "Se requieren targetEmail y grant (boolean).");
     }
 
+    const callerIsPrincipal = callerRecord.email === PRINCIPAL_ADMIN_EMAIL;
+
+    // Revoking is restricted to the principal admin only
+    if (!grant && !callerIsPrincipal) {
+      throw new HttpsError("permission-denied", "Solo el administrador principal puede revocar accesos.");
+    }
+
+    // The principal admin account can never be revoked
+    if (!grant && targetEmail === PRINCIPAL_ADMIN_EMAIL) {
+      throw new HttpsError("permission-denied", "No se pueden revocar los permisos del administrador principal.");
+    }
+
     const targetRecord = await admin.auth().getUserByEmail(targetEmail);
     const existingClaims = targetRecord.customClaims || {};
     await admin.auth().setCustomUserClaims(targetRecord.uid, { ...existingClaims, admin: grant });
 
-    console.info("setAdminClaim", { callerUid, targetEmail, grant });
+    console.info("setAdminClaim", { callerUid, callerEmail: callerRecord.email, targetEmail, grant });
     return { success: true, uid: targetRecord.uid };
   }
 );
