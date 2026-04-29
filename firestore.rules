@@ -9,6 +9,10 @@ service cloud.firestore {
       return isSignedIn() && request.auth.uid == uid;
     }
 
+    function isAdmin() {
+      return isSignedIn() && request.auth.token.admin == true;
+    }
+
     function validFrequency(value) {
       return value == 'manual' ||
           value == 'weekly' ||
@@ -306,13 +310,31 @@ service cloud.firestore {
               request.resource.data.platform == 'ios');
     }
 
-    // Rate limit documents are written server-side only; clients are denied all access.
+    // Internal collections — server-side only, deny all client access.
     match /_rateLimits/{document=**} {
       allow read, write: if false;
     }
+    match /_exchangeRates/{document=**} {
+      allow read, write: if false;
+    }
+    match /_walletTopUpIntents/{document=**} {
+      allow read, write: if false;
+    }
+    match /_stripeWebhookEvents/{document=**} {
+      allow read, write: if false;
+    }
+
+    // Admin-only config and notes collections
+    match /adminConfig/{document} {
+      allow read, write: if isAdmin();
+    }
+
+    match /adminData/{uid} {
+      allow read, write: if isAdmin();
+    }
 
     match /users/{uid} {
-      allow read: if isOwner(uid);
+      allow read: if isOwner(uid) || isAdmin();
       // On create: walletBalance must be 0 (server-side CFs credit the balance).
       // Stripe fields must not be present — they are written exclusively by CFs.
       allow create: if isOwner(uid) &&
@@ -339,7 +361,7 @@ service cloud.firestore {
       allow delete: if false;
 
       match /transactions/{transactionId} {
-        allow read: if isOwner(uid);
+        allow read: if isOwner(uid) || isAdmin();
         // validTransactionDoc() already restricts type to 'tzedaka' | 'pushkaEmpty';
         // 'walletFill' is exclusively written by Cloud Functions (admin SDK bypasses rules).
         allow create: if isOwner(uid) && validTransactionDoc();
