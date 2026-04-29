@@ -1,3 +1,4 @@
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -71,6 +72,12 @@ class _PushkaAppState extends ConsumerState<PushkaApp> with WidgetsBindingObserv
     ref.listen(userProfileProvider, (_, next) {
       final profile = next.valueOrNull;
       if (profile == null) return;
+
+      // If an admin blocked this user while they were active, sign them out immediately.
+      if (profile['isBlocked'] == true) {
+        FirebaseAuth.instance.signOut();
+        return;
+      }
 
       final lang = profile['language'] as String?;
       if (lang != null && lang.isNotEmpty) {

@@ -2710,6 +2710,10 @@ exports.setUserBlocked = onCall(
     // Disable/enable the Firebase Auth account — this prevents login entirely
     await admin.auth().updateUser(uid, { disabled: isBlocked });
 
+    // Write isBlocked to the user's own document so the Flutter app can react
+    // in real-time via its Firestore listener and sign out immediately.
+    await db.collection("users").doc(uid).update({ isBlocked });
+
     // Write to adminData for UI display and audit trail
     const adminDataPatch = {
       isBlocked,
