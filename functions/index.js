@@ -361,6 +361,12 @@ exports.createPaymentIntent = onCall(
     throw new HttpsError("failed-precondition", "Stripe no configurado.");
   }
 
+  // Block payments for suspended users
+  const adminDataSnap = await db.collection("adminData").doc(request.auth.uid).get();
+  if (adminDataSnap.exists && adminDataSnap.data()?.isBlocked === true) {
+    throw new HttpsError("permission-denied", "Tu cuenta está temporalmente suspendida. Contactá a soporte.");
+  }
+
   const amount = Number(request.data?.amount || 0);
   // Validate currency against supported list before touching Stripe.
   const currency = validateCurrency(request.data?.currency || "usd");
@@ -769,6 +775,9 @@ exports.stripeWebhook = onRequest(
       } else if (uid && (purpose === "donation" || purpose === "pushka_empty")) {
         const txType = purpose === "pushka_empty" ? "pushkaEmpty" : "tzedaka";
         const txDesc = purpose === "pushka_empty" ? "Vaciado de Pushka (Stripe)" : "Donación Stripe";
+        const txCurrency = String(intent.currency || "usd").toUpperCase();
+        const txRates = await getExchangeRates(null);
+        const txSnap = buildCurrencySnapshot(amount, txCurrency, txRates);
         await db
           .collection("users")
           .doc(uid)
@@ -777,6 +786,8 @@ exports.stripeWebhook = onRequest(
           .set({
             type: txType,
             amount,
+            currencyCode: txCurrency,
+            ...txSnap,
             description: txDesc,
             createdAt: admin.firestore.FieldValue.serverTimestamp(),
           });
@@ -825,6 +836,7 @@ exports.stripeWebhook = onRequest(
           provider: "stripe",
           paymentIntentId: intent.id,
           amount,
+          currencyCode: String(intent.currency || "usd").toUpperCase(),
           message: reason,
           livemode: !!event.livemode,
         });
@@ -1008,6 +1020,10 @@ exports.walletTopUpFromPaymentIntent = onCall(
       throw new HttpsError("failed-precondition", "Monto de recarga inválido.");
     }
 
+    const wfCurrency = String(intent.currency || "usd").toUpperCase();
+    const wfRates = await getExchangeRates(null);
+    const wfSnap = buildCurrencySnapshot(amount, wfCurrency, wfRates);
+
     const consumeRef = db.collection("_walletTopUpIntents").doc(paymentIntentId);
     const userRef = db.collection("users").doc(uid);
     let updatedBalance = 0;
@@ -1039,6 +1055,8 @@ exports.walletTopUpFromPaymentIntent = onCall(
       tx.set(movementRef, {
         type: "walletFill",
         amount,
+        currencyCode: wfCurrency,
+        ...wfSnap,
         description: "Recarga de billetera con tarjeta",
         createdAt: admin.firestore.FieldValue.serverTimestamp(),
       });
@@ -1098,6 +1116,7 @@ exports.walletTransfer = onCall(
 
     const senderRef = db.collection("users").doc(senderUid);
     let senderBalanceAfter = 0;
+    const transferRates = await getExchangeRates(null);
 
     await db.runTransaction(async (tx) => {
       const senderSnap = await tx.get(senderRef);
@@ -1141,9 +1160,18 @@ exports.walletTransfer = onCall(
         { merge: true },
       );
 
+      const senderCurrency = String((senderSnap.data() || {}).currencyCode || "USD").toUpperCase();
+      const receiverCurrency = String((receiverSnap.data() || {}).currencyCode || "USD").toUpperCase();
+      const senderCurrSnap = buildCurrencySnapshot(amount, senderCurrency, transferRates);
+      const receiverCurrSnap = buildCurrencySnapshot(amount, receiverCurrency, transferRates);
+
       tx.set(senderRef.collection("transactions").doc(), {
         type: "walletFill",
         amount: -amount,
+        currencyCode: senderCurrency,
+        ...senderCurrSnap,
+        amountUSD: -senderCurrSnap.amountUSD,
+        amountMXN: -senderCurrSnap.amountMXN,
         description: `Transferencia enviada a ${targetWalletId}`,
         createdAt: admin.firestore.FieldValue.serverTimestamp(),
       });
@@ -1151,6 +1179,8 @@ exports.walletTransfer = onCall(
       tx.set(receiverRef.collection("transactions").doc(), {
         type: "walletFill",
         amount,
+        currencyCode: receiverCurrency,
+        ...receiverCurrSnap,
         description: "Transferencia recibida",
         createdAt: admin.firestore.FieldValue.serverTimestamp(),
       });
@@ -1794,9 +1824,13 @@ exports.processWalletAutoTopUps = onSchedule(
               walletBalance: Math.round((currentBalance + toppedUpAmount) * 100) / 100,
               updatedAt: admin.firestore.FieldValue.serverTimestamp(),
             }, { merge: true });
+            const autoTopRates = await getExchangeRates(null);
+            const autoTopSnap = buildCurrencySnapshot(toppedUpAmount, chargeData.currency.toUpperCase(), autoTopRates);
             tx.set(movementRef, {
               type: "walletFill",
               amount: toppedUpAmount,
+              currencyCode: chargeData.currency.toUpperCase(),
+              ...autoTopSnap,
               description: "Recarga automática de billetera",
               skipNotification: true,
               createdAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -2062,6 +2096,8 @@ exports.processPushkaAutoEmpty = onSchedule(
         // is idempotent and cannot create a duplicate record.
         const emptiedAmount = chargeData.amount;
         const emptyPiId = paymentIntent.id;
+        const emptyRates = await getExchangeRates(null);
+        const emptySnap = buildCurrencySnapshot(emptiedAmount, chargeData.currency.toUpperCase(), emptyRates);
         try {
           await db.runTransaction(async (tx) => {
             tx.set(doc.ref, {
@@ -2072,6 +2108,8 @@ exports.processPushkaAutoEmpty = onSchedule(
             tx.set(movementRef, {
               type: "pushkaEmpty",
               amount: emptiedAmount,
+              currencyCode: chargeData.currency.toUpperCase(),
+              ...emptySnap,
               description: "Vaciado automático de Pushka",
               paymentMethod: "auto_card",
               status: "completed",
@@ -2124,4 +2162,530 @@ exports.processPushkaAutoEmpty = onSchedule(
 
     console.info("processPushkaAutoEmpty: completed", { processed, failed });
   },
+);
+
+// ---------------------------------------------------------------------------
+// Currency snapshot helper
+// ---------------------------------------------------------------------------
+
+/**
+ * Given an amount in currencyCode and today's rates map, returns a frozen
+ * snapshot of USD and MXN equivalents to embed in every transaction document.
+ * This ensures historical figures never drift when exchange rates change.
+ * rates: map from getExchangeRates (currencyCode → units per 1 USD).
+ */
+function buildCurrencySnapshot(amount, currencyCode, rates) {
+  const code = String(currencyCode || "USD").toUpperCase();
+  const rate = rates[code] ?? 1;           // units of `code` per 1 USD
+  const mxnRate = rates["MXN"] ?? 17.1;    // units of MXN per 1 USD
+  const amountUSD = code === "USD" ? amount : amount / rate;
+  const amountMXN = amountUSD * mxnRate;
+  return {
+    amountUSD:         Math.round(amountUSD * 100) / 100,
+    amountMXN:         Math.round(amountMXN * 100) / 100,
+    exchangeRateToUSD: Math.round((1 / rate) * 1_000_000) / 1_000_000,
+    exchangeRateToMXN: Math.round((mxnRate / rate) * 1_000_000) / 1_000_000,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Exchange rate helpers — cached in Firestore _exchangeRates/{YYYY-MM-DD}
+// ---------------------------------------------------------------------------
+
+/**
+ * Fetches USD-based exchange rates, always cross-validating two independent sources:
+ *   Primary:   open.er-api.com  (multi-provider aggregator, best LatAm coverage)
+ *   Secondary: frankfurter.app  (ECB-based, fully independent)
+ *
+ * Both sources are fetched in parallel. If they agree within 2% on MXN and EUR,
+ * the primary is used (more complete coverage). If they diverge, a warning is
+ * logged and the primary is still used — frankfurter is the safety net, not the override.
+ * If the primary fails or produces implausible values, frankfurter is used as fallback.
+ * If both fail, hardcoded fallback rates are returned.
+ *
+ * Results are cached in Firestore _exchangeRates/{YYYY-MM-DD} to avoid repeat fetches.
+ * Returns a map: currencyCode (uppercase) → units per 1 USD.
+ */
+async function getExchangeRates(dateStr) {
+  const key = dateStr ?? new Date().toISOString().slice(0, 10);
+  const ref = db.collection("_exchangeRates").doc(key);
+
+  const snap = await ref.get();
+  if (snap.exists) return snap.data().rates;
+
+  const FALLBACK_RATES = {
+    USD: 1, EUR: 0.93, GBP: 0.79, CAD: 1.37,
+    ILS: 3.70, MXN: 17.1, BRL: 5.0,
+    ARS: 900, CLP: 930, COP: 4000,
+  };
+
+  // Range guards for key currencies — catches API bugs and extreme outliers.
+  // Ranges are intentionally wide to allow real market moves.
+  const PLAUSIBLE_RANGES = {
+    MXN: [10, 35],
+    EUR: [0.65, 1.30],
+    GBP: [0.55, 1.10],
+    ILS: [2.5, 6.0],
+  };
+
+  function isPlausible(rates) {
+    for (const [code, [min, max]] of Object.entries(PLAUSIBLE_RANGES)) {
+      const v = rates[code];
+      if (!v || v < min || v > max) {
+        console.warn(`getExchangeRates: implausible ${code}=${v} (expected ${min}–${max})`);
+        return false;
+      }
+    }
+    return true;
+  }
+
+  // Fetch from frankfurter.app (ECB-based). Returns rates relative to USD.
+  async function fetchFrankfurter() {
+    const res = await fetch("https://api.frankfurter.app/latest?from=USD");
+    const data = await res.json();
+    if (!data.rates) throw new Error("Frankfurter: no rates field");
+    const rates = { ...data.rates, USD: 1 };
+    return rates;
+  }
+
+  // Fetch from open.er-api.com (primary, multi-provider aggregator).
+  async function fetchOpenER() {
+    const res = await fetch("https://open.er-api.com/v6/latest/USD");
+    const data = await res.json();
+    if (data.result !== "success") throw new Error("ExchangeRate-API: result not success");
+    return { ...data.rates, USD: 1 };
+  }
+
+  // Cross-validate: check that a shared key differs by less than maxDiff (fraction).
+  function pctDiff(a, b, key) {
+    if (!a[key] || !b[key]) return null;
+    return Math.abs(a[key] - b[key]) / a[key];
+  }
+
+  try {
+    const [primaryResult, secondaryResult] = await Promise.allSettled([
+      fetchOpenER(),
+      fetchFrankfurter(),
+    ]);
+
+    const primary   = primaryResult.status   === "fulfilled" ? primaryResult.value   : null;
+    const secondary = secondaryResult.status === "fulfilled" ? secondaryResult.value : null;
+
+    if (!primary && !secondary) {
+      console.error("getExchangeRates: both sources failed, using hardcoded fallback");
+      return FALLBACK_RATES;
+    }
+
+    if (!primary) {
+      console.warn("getExchangeRates: primary (open.er-api.com) failed, using frankfurter");
+      const rates = secondary;
+      if (!isPlausible(rates)) return FALLBACK_RATES;
+      await ref.set({ rates, source: "frankfurter_only", fetchedAt: admin.firestore.FieldValue.serverTimestamp() });
+      return rates;
+    }
+
+    if (!secondary) {
+      console.warn("getExchangeRates: secondary (frankfurter) failed, using primary only");
+    } else {
+      // Both succeeded — cross-validate MXN and EUR (2% tolerance)
+      const mxnDiff = pctDiff(primary, secondary, "MXN");
+      const eurDiff = pctDiff(primary, secondary, "EUR");
+      const MAX_DIFF = 0.02;
+      if ((mxnDiff !== null && mxnDiff > MAX_DIFF) || (eurDiff !== null && eurDiff > MAX_DIFF)) {
+        console.warn("getExchangeRates: sources diverge beyond 2%", {
+          primary_MXN: primary["MXN"], secondary_MXN: secondary["MXN"],
+          primary_EUR: primary["EUR"], secondary_EUR: secondary["EUR"],
+        });
+        // Sources disagree — still use primary but do NOT cache so next transaction re-checks
+        if (!isPlausible(primary)) return FALLBACK_RATES;
+        return primary;
+      }
+    }
+
+    if (!isPlausible(primary)) {
+      console.warn("getExchangeRates: primary implausible, using fallback");
+      return FALLBACK_RATES;
+    }
+
+    // All good — cache and return primary
+    await ref.set({
+      rates: primary,
+      source: secondary ? "dual_validated" : "primary_only",
+      fetchedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+    return primary;
+
+  } catch (err) {
+    console.error("getExchangeRates: unexpected error, using fallback", String(err?.message || err));
+    return FALLBACK_RATES;
+  }
+}
+
+/**
+ * Given an amount in `currencyCode` (uppercase), returns the equivalent in USD.
+ */
+async function convertToUSD(amount, currencyCode) {
+  const code = String(currencyCode || "USD").toUpperCase();
+  if (code === "USD") return amount;
+  const rates = await getExchangeRates(null);
+  const rate = rates[code];
+  if (!rate) return null;
+  return amount / rate;
+}
+
+// ---------------------------------------------------------------------------
+// Admin: setAdminClaim — grant or revoke admin access
+// ---------------------------------------------------------------------------
+
+exports.setAdminClaim = onCall(
+  { enforceAppCheck: false },
+  async (request) => {
+    // Only existing admins (or during bootstrap: no admins yet) can call this.
+    const callerUid = request.auth?.uid;
+    if (!callerUid) {
+      throw new HttpsError("unauthenticated", "Debes estar autenticado.");
+    }
+
+    const callerRecord = await admin.auth().getUser(callerUid);
+    const callerIsAdmin = callerRecord.customClaims?.admin === true;
+
+    if (!callerIsAdmin) {
+      throw new HttpsError("permission-denied", "Solo administradores pueden gestionar otros administradores.");
+    }
+
+    const { targetEmail, grant } = request.data;
+    if (!targetEmail || typeof grant !== "boolean") {
+      throw new HttpsError("invalid-argument", "Se requieren targetEmail y grant (boolean).");
+    }
+
+    const targetRecord = await admin.auth().getUserByEmail(targetEmail);
+    const existingClaims = targetRecord.customClaims || {};
+    await admin.auth().setCustomUserClaims(targetRecord.uid, { ...existingClaims, admin: grant });
+
+    console.info("setAdminClaim", { callerUid, targetEmail, grant });
+    return { success: true, uid: targetRecord.uid };
+  }
+);
+
+// ---------------------------------------------------------------------------
+// Admin: listAdmins — returns all users with admin custom claim
+// ---------------------------------------------------------------------------
+
+exports.listAdmins = onCall(
+  { enforceAppCheck: false },
+  async (request) => {
+    if (request.auth?.token?.admin !== true) {
+      throw new HttpsError("permission-denied", "Solo administradores.");
+    }
+    const listResult = await admin.auth().listUsers(1000);
+    const admins = listResult.users
+      .filter((u) => u.customClaims?.admin === true)
+      .map((u) => ({ uid: u.uid, email: u.email, displayName: u.displayName }));
+    return { admins };
+  }
+);
+
+// ---------------------------------------------------------------------------
+// Admin: getAdminStats — aggregated stats for the dashboard Overview
+// ---------------------------------------------------------------------------
+
+exports.getAdminStats = onCall(
+  { enforceAppCheck: false },
+  async (request) => {
+    if (request.auth?.token?.admin !== true) {
+      throw new HttpsError("permission-denied", "Solo administradores.");
+    }
+
+    const now = new Date();
+    const startOfMonth    = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+    const startOfLastMonth = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1));
+    const startOfYear     = new Date(Date.UTC(now.getUTCFullYear(), 0, 1));
+    const startOf12Months = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 11, 1));
+
+    const rates = await getExchangeRates(null);
+
+    // 2 queries instead of N+1: users + all transactions via collectionGroup
+    const [usersSnap, txSnap] = await Promise.all([
+      db.collection("users").get(),
+      db.collectionGroup("transactions").get(),
+    ]);
+
+    const mxnRate = rates["MXN"] ?? 17.1; // units of MXN per 1 USD
+
+    // Build user metadata map for enriching transaction data
+    const userMap = {};
+    let totalWalletBalanceMXN = 0;
+    for (const d of usersSnap.docs) {
+      const u = d.data();
+      const currency = String(u.currencyCode || "USD").toUpperCase();
+      const rate = rates[currency] ?? 1;
+      userMap[d.id] = {
+        displayName: u.displayName || u.email || d.id,
+        email: u.email || "",
+        currencyCode: currency,
+      };
+      // wallet balance is in the user's currency; convert to MXN via USD
+      if (u.walletBalance) totalWalletBalanceMXN += (u.walletBalance / rate) * mxnRate;
+    }
+
+    const totalUsersCount = usersSnap.size;
+    let newUsersThisMonth = 0;
+    let newUsersLastMonth = 0;
+    for (const d of usersSnap.docs) {
+      const createdAt = d.data().createdAt?.toDate?.() ?? null;
+      if (!createdAt) continue;
+      if (createdAt >= startOfMonth) newUsersThisMonth++;
+      else if (createdAt >= startOfLastMonth) newUsersLastMonth++;
+    }
+
+    // Monthly buckets for last 12 months — all values in MXN
+    const monthlyBuckets = {};
+    for (let i = 11; i >= 0; i--) {
+      const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - i, 1));
+      const key = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
+      monthlyBuckets[key] = { totalMXN: 0, count: 0, tzedaka: 0, pushkaEmpty: 0, walletFill: 0 };
+    }
+
+    let totalMonthMXN = 0;
+    let totalLastMonthMXN = 0;
+    let totalYearMXN = 0;
+    let totalAllTimeMXN = 0;
+    const topDonorsMap = {};
+    const topDonorsThisMonthMap = {};
+    const currencyTotals = {};         // MXN equivalent, for sorting/percentage
+    const currencyTotalsOriginal = {}; // sum in original currency, for display
+    const activeThisMonthSet = new Set();
+
+    for (const txDoc of txSnap.docs) {
+      const tx = txDoc.data();
+      if (tx.type === "walletFill" && tx.amount < 0) continue; // skip outgoing transfers
+
+      const uid = txDoc.ref.parent.parent?.id;
+      if (!uid) continue;
+
+      const userMeta = userMap[uid] || { displayName: uid, email: "", currencyCode: "USD" };
+      const txCurrency = String(tx.currencyCode || userMeta.currencyCode).toUpperCase();
+
+      // Priority: frozen snapshot → frozen USD converted → live rate fallback
+      let amountMXN;
+      if (tx.amountMXN != null) {
+        amountMXN = tx.amountMXN;
+      } else if (tx.amountUSD != null) {
+        amountMXN = tx.amountUSD * mxnRate;
+      } else {
+        const txRate = rates[txCurrency] ?? 1;
+        amountMXN = (tx.amount / txRate) * mxnRate;
+      }
+
+      const txDate = tx.createdAt?.toDate?.() ?? new Date(tx.createdAt);
+      const monthKey = `${txDate.getUTCFullYear()}-${String(txDate.getUTCMonth() + 1).padStart(2, "0")}`;
+
+      if (txDate >= startOfMonth) activeThisMonthSet.add(uid);
+
+      if (monthlyBuckets[monthKey]) {
+        monthlyBuckets[monthKey].totalMXN += amountMXN;
+        monthlyBuckets[monthKey].count++;
+        if (tx.type === "tzedaka") monthlyBuckets[monthKey].tzedaka += amountMXN;
+        else if (tx.type === "pushkaEmpty") monthlyBuckets[monthKey].pushkaEmpty += amountMXN;
+        else monthlyBuckets[monthKey].walletFill += amountMXN;
+      }
+
+      totalAllTimeMXN += amountMXN;
+      if (txDate >= startOfMonth) totalMonthMXN += amountMXN;
+      if (txDate >= startOfLastMonth && txDate < startOfMonth) totalLastMonthMXN += amountMXN;
+      if (txDate >= startOfYear) totalYearMXN += amountMXN;
+
+      currencyTotals[txCurrency] = (currencyTotals[txCurrency] || 0) + amountMXN;
+      currencyTotalsOriginal[txCurrency] = (currencyTotalsOriginal[txCurrency] || 0) + (tx.amount ?? 0);
+
+      if (tx.type === "tzedaka" || tx.type === "pushkaEmpty") {
+        if (!topDonorsMap[uid]) {
+          topDonorsMap[uid] = {
+            uid,
+            displayName: userMeta.displayName,
+            email: userMeta.email,
+            currencyCode: userMeta.currencyCode,
+            totalMXN: 0,
+            count: 0,
+          };
+        }
+        topDonorsMap[uid].totalMXN += amountMXN;
+        topDonorsMap[uid].count++;
+
+        if (txDate >= startOfMonth) {
+          if (!topDonorsThisMonthMap[uid]) {
+            topDonorsThisMonthMap[uid] = {
+              uid,
+              displayName: userMeta.displayName,
+              email: userMeta.email,
+              currencyCode: userMeta.currencyCode,
+              totalMXN: 0,
+              count: 0,
+            };
+          }
+          topDonorsThisMonthMap[uid].totalMXN += amountMXN;
+          topDonorsThisMonthMap[uid].count++;
+        }
+      }
+    }
+
+    const topDonors = Object.values(topDonorsMap)
+      .sort((a, b) => b.totalMXN - a.totalMXN)
+      .slice(0, 10);
+
+    const topDonorsThisMonth = Object.values(topDonorsThisMonthMap)
+      .sort((a, b) => b.totalMXN - a.totalMXN)
+      .slice(0, 5);
+
+    const monthlyStats = Object.entries(monthlyBuckets).map(([key, v]) => {
+      const [year, month] = key.split("-");
+      const date = new Date(Date.UTC(Number(year), Number(month) - 1, 1));
+      const label = date.toLocaleDateString("es-ES", { month: "short", year: "numeric" });
+      return { month: key, label, ...v };
+    });
+
+    const monthGrowth = totalLastMonthMXN > 0
+      ? ((totalMonthMXN - totalLastMonthMXN) / totalLastMonthMXN) * 100
+      : null;
+
+    return {
+      totalUsersCount,
+      activeThisMonth: activeThisMonthSet.size,
+      newUsersThisMonth,
+      newUsersLastMonth,
+      totalMonthMXN,
+      totalLastMonthMXN,
+      totalYearMXN,
+      totalAllTimeMXN,
+      totalWalletBalanceMXN,
+      monthGrowth,
+      monthlyStats,
+      topDonors,
+      topDonorsThisMonth,
+      currencyTotals,
+      currencyTotalsOriginal,
+    };
+  }
+);
+
+// ---------------------------------------------------------------------------
+// Admin: getRecentTransactions — last N transactions across all users
+// ---------------------------------------------------------------------------
+
+exports.getRecentTransactions = onCall(
+  { enforceAppCheck: false },
+  async (request) => {
+    if (request.auth?.token?.admin !== true) {
+      throw new HttpsError("permission-denied", "Solo administradores.");
+    }
+
+    const { filterType, filterCurrency, searchText } = request.data ?? {};
+
+    const rates = await getExchangeRates(null);
+    const mxnRate = rates["MXN"] ?? 17.1;
+
+    const [txSnap, usersSnap] = await Promise.all([
+      db.collectionGroup("transactions").get(),
+      db.collection("users").get(),
+    ]);
+
+    const userMap = {};
+    usersSnap.docs.forEach((d) => {
+      const u = d.data();
+      userMap[d.id] = { displayName: u.displayName || u.email || d.id, email: u.email || "" };
+    });
+
+    let txs = txSnap.docs.map((d) => {
+      const tx = d.data();
+      const uid = d.ref.parent.parent?.id ?? "";
+      const user = userMap[uid] ?? { displayName: uid, email: "" };
+      let amountMXN = tx.amountMXN;
+      if (amountMXN == null && tx.amountUSD != null) amountMXN = tx.amountUSD * mxnRate;
+      if (amountMXN == null) {
+        const txRate = rates[String(tx.currencyCode || "USD").toUpperCase()] ?? 1;
+        amountMXN = (tx.amount / txRate) * mxnRate;
+      }
+      const createdAt = tx.createdAt?.toDate?.() ?? new Date(0);
+      return {
+        id: d.id,
+        uid,
+        displayName: user.displayName,
+        email: user.email,
+        type: tx.type ?? "tzedaka",
+        amount: tx.amount ?? 0,
+        currencyCode: String(tx.currencyCode || "USD").toUpperCase(),
+        amountMXN: Math.round((amountMXN || 0) * 100) / 100,
+        description: tx.description ?? "",
+        createdAt: createdAt.toISOString(),
+      };
+    });
+
+    if (filterType) txs = txs.filter((t) => t.type === filterType);
+    if (filterCurrency) txs = txs.filter((t) => t.currencyCode === String(filterCurrency).toUpperCase());
+    if (searchText) {
+      const q = String(searchText).toLowerCase();
+      txs = txs.filter((t) =>
+        t.displayName.toLowerCase().includes(q) ||
+        t.email.toLowerCase().includes(q)
+      );
+    }
+
+    txs.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    return txs.slice(0, 200);
+  }
+);
+
+// ---------------------------------------------------------------------------
+// Admin: getFailedPayments — recent payment failures (last 30 days)
+// ---------------------------------------------------------------------------
+
+exports.getFailedPayments = onCall(
+  { enforceAppCheck: false },
+  async (request) => {
+    if (request.auth?.token?.admin !== true) {
+      throw new HttpsError("permission-denied", "Solo administradores.");
+    }
+
+    const since = admin.firestore.Timestamp.fromDate(
+      new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
+    );
+
+    const snap = await db.collection("_stripeWebhookEvents")
+      .where("createdAt", ">=", since)
+      .get();
+
+    const failed = snap.docs
+      .filter((d) => {
+        const data = d.data();
+        return data.outcome === "failed" || data.status === "failed";
+      })
+      .map((d) => {
+        const ev = d.data();
+        return {
+          id: d.id,
+          uid: ev.uid ?? "",
+          amount: ev.amount ?? 0,
+          paymentIntentId: ev.paymentIntentId ?? d.id,
+          createdAt: ev.createdAt?.toDate?.()?.toISOString() ?? new Date().toISOString(),
+        };
+      })
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+      .slice(0, 50);
+
+    const uids = [...new Set(failed.map((f) => f.uid).filter(Boolean))];
+    const userSnaps = await Promise.all(uids.map((uid) => db.collection("users").doc(uid).get()));
+    const userMap = {};
+    userSnaps.forEach((s) => {
+      if (s.exists) {
+        const u = s.data();
+        userMap[s.id] = { displayName: u.displayName || u.email || s.id, email: u.email || "" };
+      }
+    });
+
+    return failed.map((f) => ({
+      ...f,
+      displayName: userMap[f.uid]?.displayName ?? f.uid,
+      email: userMap[f.uid]?.email ?? "",
+    }));
+  }
 );
