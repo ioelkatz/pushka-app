@@ -1784,10 +1784,9 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                           children: [
                             Text(
                               '$symbol${_formatPresetValue(displayedAmount)}',
-                              style: TextStyle(
+                              style: const TextStyle(
                                 fontSize: 16,
-                                fontWeight: FontWeight.w600,
-                                color: cs.onSurface,
+                                fontWeight: FontWeight.w500,
                               ),
                             ),
                             const Spacer(),
@@ -1825,12 +1824,9 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                             controller: ctrl,
                             keyboardType: const TextInputType.numberWithOptions(decimal: true),
                             textAlign: TextAlign.center,
-                            style: TextStyle(
+                            style: const TextStyle(
                               fontSize: 16,
-                              color: Theme.of(ctx).brightness == Brightness.dark
-                                  ? cs.onSurface
-                                  : cs.primary,
-                              fontWeight: FontWeight.w600,
+                              fontWeight: FontWeight.w500,
                             ),
                             decoration: InputDecoration(
                               prefixText: symbol,
