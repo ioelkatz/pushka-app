@@ -2337,8 +2337,8 @@ async function convertToUSD(amount, currencyCode) {
 // Admin: setAdminClaim — grant or revoke admin access
 // ---------------------------------------------------------------------------
 
-// The principal admin can grant AND revoke. Regular admins can only grant.
-const PRINCIPAL_ADMIN_EMAIL = "jymmexico@gmail.com";
+// Principal admins can grant AND revoke. Regular admins can only grant.
+const PRINCIPAL_ADMIN_EMAILS = new Set(["jymmexico@gmail.com", "ioelkatz@gmail.com"]);
 
 exports.setAdminClaim = onCall(
   { enforceAppCheck: false },
@@ -2359,16 +2359,16 @@ exports.setAdminClaim = onCall(
       throw new HttpsError("invalid-argument", "Se requieren targetEmail y grant (boolean).");
     }
 
-    const callerIsPrincipal = callerRecord.email === PRINCIPAL_ADMIN_EMAIL;
+    const callerIsPrincipal = PRINCIPAL_ADMIN_EMAILS.has(callerRecord.email);
 
-    // Revoking is restricted to the principal admin only
+    // Revoking is restricted to principal admins only
     if (!grant && !callerIsPrincipal) {
-      throw new HttpsError("permission-denied", "Solo el administrador principal puede revocar accesos.");
+      throw new HttpsError("permission-denied", "Solo administradores principales pueden revocar accesos.");
     }
 
-    // The principal admin account can never be revoked
-    if (!grant && targetEmail === PRINCIPAL_ADMIN_EMAIL) {
-      throw new HttpsError("permission-denied", "No se pueden revocar los permisos del administrador principal.");
+    // Principal admin accounts can never be revoked
+    if (!grant && PRINCIPAL_ADMIN_EMAILS.has(targetEmail)) {
+      throw new HttpsError("permission-denied", "No se pueden revocar los permisos de un administrador principal.");
     }
 
     const targetRecord = await admin.auth().getUserByEmail(targetEmail);
