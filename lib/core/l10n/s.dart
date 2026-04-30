@@ -1039,6 +1039,8 @@ class S {
   // ---------------------------------------------------------------------------
 
   String get savedCards => _t('Tarjeta guardada', 'Saved card', 'Carte enregistrée', 'כרטיס שמור');
+  String get myCards => _t('Mis tarjetas', 'My cards', 'Mes cartes', 'הכרטיסים שלי');
+  String get noCardsYet => _t('Sin tarjetas guardadas', 'No saved cards', 'Aucune carte enregistrée', 'אין כרטיסים שמורים');
   String get noSavedCards => _t(
     'No tienes ninguna tarjeta guardada.\nAgrega una para habilitar el vaciado y la recarga automáticos.',
     'No saved card yet.\nAdd one to enable automatic emptying and refills.',

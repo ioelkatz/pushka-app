@@ -193,6 +193,19 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
     }
   }
 
+  String _savedCardSubtitle(Map<String, dynamic>? profile, S tr) {
+    final last4 = profile?['stripeDefaultPaymentMethodLast4'] as String?;
+    final brand = profile?['stripeDefaultPaymentMethodBrand'] as String?;
+    if (last4 == null || last4.isEmpty) return tr.noCardsYet;
+    const brandLabels = {
+      'visa': 'Visa', 'mastercard': 'Mastercard', 'amex': 'Amex',
+      'discover': 'Discover', 'jcb': 'JCB', 'unionpay': 'UnionPay',
+      'diners': 'Diners',
+    };
+    final label = brandLabels[brand?.toLowerCase() ?? ''] ?? (brand ?? 'Card');
+    return '$label •••• $last4';
+  }
+
   Future<void> _copyWalletId(String walletId) async {
     await Clipboard.setData(ClipboardData(text: walletId));
     if (!mounted) return;
@@ -369,6 +382,15 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
             ),
             SizedBox(height: walletCardGap),
           ],
+          _WalletCard(
+            icon: Icons.credit_card_rounded,
+            iconBg: red,
+            title: tr.myCards,
+            subtitle: _savedCardSubtitle(profile, tr),
+            onTap: () => context.go('/settings/saved-cards'),
+            compact: compact,
+          ),
+          SizedBox(height: walletCardGap),
           _WalletCard(
             icon: Icons.swap_vert,
             iconBg: red,
