@@ -1265,7 +1265,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
 
   bool _partialPaymentsEnabled() {
     final profile = ref.read(userProfileProvider).valueOrNull;
-    return (profile?['partialPaymentsEnabled'] as bool?) ?? false;
+    return (profile?['partialPaymentsEnabled'] as bool?) ?? true;
   }
 
   bool _additionalPaymentOptionsEnabled() {

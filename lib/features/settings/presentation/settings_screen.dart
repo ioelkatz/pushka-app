@@ -38,7 +38,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   bool coinJingleEnabled = true;
   bool vibrationEnabled = true;
   bool ambientEnabled = false;
-  bool partialPaymentsEnabled = false;
+  bool partialPaymentsEnabled = true;
   bool additionalPaymentOptionsEnabled = false;
   bool biometricAuthenticationEnabled = false;
   String selectedCurrency = 'USD';

@@ -77,7 +77,7 @@ class UserRepository {
       'soundEnabled': true,
       'coinJingleEnabled': true,
       'vibrationEnabled': true,
-      'partialPaymentsEnabled': false,
+      'partialPaymentsEnabled': true,
       'additionalPaymentOptionsEnabled': false,
       'biometricAuthenticationEnabled': false,
       'currencyCountry': 'Estados Unidos',
