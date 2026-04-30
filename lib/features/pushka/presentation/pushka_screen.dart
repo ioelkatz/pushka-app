@@ -1582,6 +1582,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
     final symbol = _shortSymbol(currency);
 
     double selectedGoal = pushkaGoal;
+    double displayedAmount = pushkaAmount;
     bool isSaving = false;
 
     final ctrl1 = TextEditingController(text: _formatPresetValue(currentPresets[0]));
@@ -1674,6 +1675,137 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                       setDialogState(() => selectedGoal = value);
                     },
                   ),
+
+                  // ── Corregir monto acumulado ─────────────────────────────
+                  if (displayedAmount > 0) ...[
+                    const SizedBox(height: 18),
+                    Text(
+                      S.of(context).correctAmountLabel,
+                      style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700,
+                        color: cs.onSurfaceVariant,
+                        letterSpacing: 0.8,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      S.of(context).correctAmountHint,
+                      style: TextStyle(fontSize: 12, color: cs.onSurfaceVariant),
+                    ),
+                    const SizedBox(height: 10),
+                    InkWell(
+                      borderRadius: BorderRadius.circular(14),
+                      onTap: () async {
+                        final corrected = await showDialog<double>(
+                          context: ctx,
+                          builder: (dCtx) {
+                            final amtCtrl = TextEditingController(
+                              text: _formatPresetValue(displayedAmount),
+                            );
+                            String? errorText;
+                            return StatefulBuilder(
+                              builder: (dCtx, setDState) => AlertDialog(
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(20),
+                                ),
+                                title: Text(
+                                  S.of(context).correctAmountDialogTitle,
+                                  style: const TextStyle(
+                                    fontSize: 18,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                                content: TextField(
+                                  controller: amtCtrl,
+                                  autofocus: true,
+                                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                                  textInputAction: TextInputAction.done,
+                                  decoration: InputDecoration(
+                                    prefixText: '$symbol ',
+                                    border: OutlineInputBorder(
+                                      borderRadius: BorderRadius.circular(12),
+                                    ),
+                                    errorText: errorText,
+                                  ),
+                                  onSubmitted: (_) {
+                                    final v = double.tryParse(
+                                      amtCtrl.text.trim().replaceAll(',', '.'),
+                                    );
+                                    if (v == null || v < 0) {
+                                      setDState(() => errorText = S.of(context).enterValidAmount);
+                                      return;
+                                    }
+                                    Navigator.pop(dCtx, v);
+                                  },
+                                ),
+                                actions: [
+                                  TextButton(
+                                    onPressed: () => Navigator.pop(dCtx),
+                                    child: Text(S.of(context).cancel),
+                                  ),
+                                  ElevatedButton(
+                                    style: ElevatedButton.styleFrom(
+                                      backgroundColor: cs.primary,
+                                      foregroundColor: Colors.white,
+                                      shape: RoundedRectangleBorder(
+                                        borderRadius: BorderRadius.circular(10),
+                                      ),
+                                    ),
+                                    onPressed: () {
+                                      final v = double.tryParse(
+                                        amtCtrl.text.trim().replaceAll(',', '.'),
+                                      );
+                                      if (v == null || v < 0) {
+                                        setDState(() => errorText = S.of(context).enterValidAmount);
+                                        return;
+                                      }
+                                      Navigator.pop(dCtx, v);
+                                    },
+                                    child: Text(S.of(context).save),
+                                  ),
+                                ],
+                              ),
+                            );
+                          },
+                        );
+                        if (corrected == null || !mounted) return;
+                        final capped = pushkaGoal > 0
+                            ? corrected.clamp(0.0, pushkaGoal)
+                            : corrected.clamp(0.0, 100000.0);
+                        setDialogState(() => displayedAmount = capped);
+                        setState(() => pushkaAmount = capped);
+                        await _persistPushkaAmount(resetToZero: capped <= 0);
+                        if (mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(content: Text(S.of(context).correctAmountUpdated)),
+                          );
+                        }
+                      },
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+                        decoration: BoxDecoration(
+                          border: Border.all(color: cs.outline, width: 1.2),
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                        child: Row(
+                          children: [
+                            Text(
+                              '$symbol${_formatPresetValue(displayedAmount)}',
+                              style: TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.w600,
+                                color: cs.onSurface,
+                              ),
+                            ),
+                            const Spacer(),
+                            Icon(Icons.edit_outlined, size: 18, color: cs.onSurfaceVariant),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
+
                   const SizedBox(height: 18),
                   Text(
                     S.of(context).presetAmountsLabel,

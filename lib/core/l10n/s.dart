@@ -180,6 +180,10 @@ class S {
   String get cannotExceedBalance => _t('No puede ser mayor al saldo de tu Pushka', 'Cannot exceed your Pushka balance', 'Ne peut pas dépasser le solde de votre Pushka', 'לא יכול לעלות על יתרת הפושקה שלך');
   String get tzedakahSettings => _t('Configuración de Tzedaká', 'Tzedakah Settings', 'Configuration de Tsédaka', 'הגדרות צדקה');
   String get pushkaGoalLabel => _t('META DE PUSHKA', 'PUSHKA GOAL', 'OBJECTIF DE PUSHKA', 'יעד פושקה');
+  String get correctAmountLabel => _t('MONTO ACUMULADO', 'ACCUMULATED AMOUNT', 'MONTANT ACCUMULÉ', 'סכום שנצבר');
+  String get correctAmountHint => _t('¿Pusiste de más? Corregí el monto acumulado.', 'Added too much? Correct the accumulated amount.', 'Trop ajouté ? Corrigez le montant accumulé.', 'הוספת יותר מדי? תקן את הסכום שנצבר.');
+  String get correctAmountDialogTitle => _t('Corregir monto acumulado', 'Correct accumulated amount', 'Corriger le montant accumulé', 'תקן סכום שנצבר');
+  String get correctAmountUpdated => _t('Monto corregido', 'Amount corrected', 'Montant corrigé', 'הסכום תוקן');
   String get presetAmountsLabel => _t('MONTOS PREDEFINIDOS', 'PRESET AMOUNTS', 'MONTANTS PRÉDÉFINIS', 'סכומים קבועים מראש');
   String get editQuickAmountHint => _t('Edita los montos que aparecen como botones rápidos', 'Edit the amounts that appear as quick buttons', 'Modifiez les montants des boutons rapides', 'ערוך את הסכומים המופיעים כלחצנים מהירים');
   String get allAmountsMustBePositive => _t('Todos los montos deben ser mayores a 0', 'All amounts must be greater than 0', 'Tous les montants doivent être supérieurs à 0', 'כל הסכומים חייבים להיות גדולים מ-0');
