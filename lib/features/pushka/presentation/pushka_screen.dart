@@ -1646,12 +1646,26 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                     items: goalOptions.map((value) {
                       return DropdownMenuItem<double>(
                         value: value,
-                        child: Text(
-                          formatMoney(value),
-                          style: const TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.w500,
-                          ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              symbol,
+                              style: TextStyle(
+                                fontSize: 15,
+                                fontWeight: FontWeight.w500,
+                                color: cs.onSurfaceVariant,
+                              ),
+                            ),
+                            const SizedBox(width: 3),
+                            Text(
+                              formatAmount(value),
+                              style: const TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                          ],
                         ),
                       );
                     }).toList()
@@ -1782,12 +1796,26 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                         ),
                         child: Row(
                           children: [
-                            Text(
-                              '$symbol${_formatPresetValue(displayedAmount)}',
-                              style: const TextStyle(
-                                fontSize: 16,
-                                fontWeight: FontWeight.w500,
-                              ),
+                            Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Text(
+                                  symbol,
+                                  style: TextStyle(
+                                    fontSize: 15,
+                                    fontWeight: FontWeight.w500,
+                                    color: cs.onSurfaceVariant,
+                                  ),
+                                ),
+                                const SizedBox(width: 3),
+                                Text(
+                                  _formatPresetValue(displayedAmount),
+                                  style: const TextStyle(
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.w500,
+                                  ),
+                                ),
+                              ],
                             ),
                             const Spacer(),
                             Icon(Icons.edit_outlined, size: 18, color: cs.onSurfaceVariant),
@@ -1833,7 +1861,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                               prefixStyle: TextStyle(
                                 fontSize: 15,
                                 color: cs.onSurfaceVariant,
-                                fontWeight: FontWeight.w600,
+                                fontWeight: FontWeight.w500,
                               ),
                               contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 14),
                               border: OutlineInputBorder(
