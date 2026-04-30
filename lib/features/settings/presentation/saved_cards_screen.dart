@@ -83,6 +83,12 @@ class _SavedCardsScreenState extends ConsumerState<SavedCardsScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(e.message ?? tr.errorLoadingCards)),
       );
+    } on StripeServiceException catch (e) {
+      if (!mounted) return;
+      if (e.code == 'canceled') return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(tr.errorLoadingCards)),
+      );
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
