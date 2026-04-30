@@ -22,12 +22,12 @@ Future<void> _performDeferredInit() async {
         const String.fromEnvironment('RECAPTCHA_SITE_KEY', defaultValue: ''),
       ),
     );
-  } else {
+  } else if (kReleaseMode) {
+    // Only activate App Check in release builds — debug provider requires
+    // manual token registration in Firebase Console.
     await FirebaseAppCheck.instance.activate(
-      androidProvider:
-          kReleaseMode ? AndroidProvider.playIntegrity : AndroidProvider.debug,
-      appleProvider:
-          kReleaseMode ? AppleProvider.deviceCheck : AppleProvider.debug,
+      androidProvider: AndroidProvider.playIntegrity,
+      appleProvider: AppleProvider.deviceCheck,
     );
   }
 
