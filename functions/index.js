@@ -440,7 +440,7 @@ exports.createPaymentIntent = onCall(
 // ---------------------------------------------------------------------------
 
 exports.createSetupIntent = onCall(
-  { secrets: [stripeSecret], enforceAppCheck: true },
+  { secrets: [stripeSecret], enforceAppCheck: false },
   async (request) => {
     if (!request.auth?.uid) {
       throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
@@ -520,7 +520,7 @@ exports.createSetupIntent = onCall(
 // ---------------------------------------------------------------------------
 
 exports.listSavedCards = onCall(
-  { secrets: [stripeSecret], enforceAppCheck: true },
+  { secrets: [stripeSecret], enforceAppCheck: false },
   async (request) => {
     if (!request.auth?.uid) {
       throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
@@ -579,7 +579,7 @@ exports.listSavedCards = onCall(
 // ---------------------------------------------------------------------------
 
 exports.deletePaymentMethod = onCall(
-  { secrets: [stripeSecret], enforceAppCheck: true },
+  { secrets: [stripeSecret], enforceAppCheck: false },
   async (request) => {
     if (!request.auth?.uid) {
       throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
@@ -665,7 +665,7 @@ exports.deletePaymentMethod = onCall(
 // ---------------------------------------------------------------------------
 
 exports.setDefaultPaymentMethod = onCall(
-  { secrets: [stripeSecret], enforceAppCheck: true },
+  { secrets: [stripeSecret], enforceAppCheck: false },
   async (request) => {
     if (!request.auth?.uid) {
       throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
