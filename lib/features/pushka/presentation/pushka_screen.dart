@@ -1769,13 +1769,6 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                             ? corrected.clamp(0.0, pushkaGoal)
                             : corrected.clamp(0.0, 100000.0);
                         setDialogState(() => displayedAmount = capped);
-                        setState(() => pushkaAmount = capped);
-                        await _persistPushkaAmount(resetToZero: capped <= 0);
-                        if (mounted) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(content: Text(S.of(context).correctAmountUpdated)),
-                          );
-                        }
                       },
                       child: Container(
                         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
@@ -1892,6 +1885,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                               setState(() {
                                 pushkaGoal = selectedGoal;
                                 _presetAmounts = newPresets;
+                                pushkaAmount = displayedAmount;
                               });
                               unawaited(
                                 _syncTzedakahSettings(
@@ -1899,6 +1893,9 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                                   goal: selectedGoal,
                                   presets: newPresets,
                                 ),
+                              );
+                              unawaited(
+                                _persistPushkaAmount(resetToZero: displayedAmount <= 0),
                               );
                             },
                       child: isSaving
