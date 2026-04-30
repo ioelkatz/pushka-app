@@ -47,6 +47,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
   List<double> _presetAmounts = [];
   bool _loadedRemote = false;
   bool _isProcessing = false;
+  DateTime? _localWriteAt;
   int _streakCount = 0;
 
   @override
@@ -485,7 +486,9 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
           // snapshot never locks out the correct final value.
           if (remoteAmount is num) {
             final remote = remoteAmount.toDouble();
-            if (remote > pushkaAmount) {
+            final recentWrite = _localWriteAt != null &&
+                DateTime.now().difference(_localWriteAt!).inSeconds < 4;
+            if (!recentWrite && remote > pushkaAmount) {
               pushkaAmount = remote;
               if (uid != null) HiveCache.instance.savePushkaAmount(uid, pushkaAmount);
             }
@@ -1139,6 +1142,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
       _showError(S.of(context).signInToContinue);
       return;
     }
+    _localWriteAt = DateTime.now();
     final amount = resetToZero ? 0.0 : pushkaAmount;
     await Future.wait([
       ref.read(userRepositoryProvider).updatePushkaAmount(
