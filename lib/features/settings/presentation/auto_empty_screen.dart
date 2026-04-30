@@ -55,7 +55,9 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
       });
     }
 
-    const red = Color(0xFFE05A4F);
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final cs = Theme.of(context).colorScheme;
+    final red = isDark ? cs.primary : const Color(0xFFE05A4F);
 
     return Scaffold(
       appBar: AppBar(
@@ -258,7 +260,7 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
                               }
                             },
                       style: OutlinedButton.styleFrom(
-                        side: const BorderSide(color: red, width: 2),
+                        side: BorderSide(color: red, width: 2),
                         padding: const EdgeInsets.symmetric(vertical: 14),
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(10),
@@ -266,7 +268,7 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
                       ),
                       child: Text(
                         tr.saveBtn,
-                        style: const TextStyle(
+                        style: TextStyle(
                           color: red,
                           fontWeight: FontWeight.w700,
                         ),
@@ -322,8 +324,8 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
             actionsPadding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
             title: Row(
               children: [
-                const Icon(Icons.verified_user_rounded,
-                    color: Color(0xFFE05A4F), size: 22),
+                Icon(Icons.verified_user_rounded,
+                    color: Theme.of(ctx).brightness == Brightness.dark ? Theme.of(ctx).colorScheme.primary : const Color(0xFFE05A4F), size: 22),
                 const SizedBox(width: 10),
                 Expanded(
                   child: Text(
@@ -375,7 +377,7 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
                 width: double.infinity,
                 child: ElevatedButton(
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFFE05A4F),
+                    backgroundColor: Theme.of(ctx).brightness == Brightness.dark ? Theme.of(ctx).colorScheme.primary : const Color(0xFFE05A4F),
                     foregroundColor: Colors.white,
                     padding: const EdgeInsets.symmetric(vertical: 14),
                     shape: RoundedRectangleBorder(

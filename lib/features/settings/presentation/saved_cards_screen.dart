@@ -196,7 +196,9 @@ class _SavedCardsScreenState extends ConsumerState<SavedCardsScreen> {
   Widget build(BuildContext context) {
     final tr = S.of(context);
     const red = Color(0xFFE05A4F);
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     final blue = Theme.of(context).colorScheme.primary;
+    final actionColor = isDark ? blue : red;
 
     return Scaffold(
       body: SafeArea(
@@ -402,7 +404,7 @@ class _SavedCardsScreenState extends ConsumerState<SavedCardsScreen> {
                     style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15),
                   ),
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: red,
+                    backgroundColor: actionColor,
                     foregroundColor: Colors.white,
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                   ),

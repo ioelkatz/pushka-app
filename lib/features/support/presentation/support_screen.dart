@@ -12,7 +12,8 @@ class SupportScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     final tr = S.of(context);
     final cs = Theme.of(context).colorScheme;
-    const red = Color(0xFFE05A4F);
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final red = isDark ? cs.primary : const Color(0xFFE05A4F);
     const green = Color(0xFF25D366);
 
     return SingleChildScrollView(
@@ -130,7 +131,7 @@ class SupportScreen extends StatelessWidget {
             onTap: () => _launchEmail(context),
             child: Text(
               'app@colelchabad.org',
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: 16,
                 color: red,
                 decoration: TextDecoration.underline,
@@ -147,7 +148,7 @@ class SupportScreen extends StatelessWidget {
                 onTap: () => _launchPhone(context),
                 child: Text(
                   '+1 (718) 774-5446',
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 16,
                     color: red,
                     decoration: TextDecoration.underline,
