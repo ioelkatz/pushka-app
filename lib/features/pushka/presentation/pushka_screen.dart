@@ -1688,11 +1688,6 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                         letterSpacing: 0.8,
                       ),
                     ),
-                    const SizedBox(height: 4),
-                    Text(
-                      S.of(context).correctAmountHint,
-                      style: TextStyle(fontSize: 12, color: cs.onSurfaceVariant),
-                    ),
                     const SizedBox(height: 10),
                     InkWell(
                       borderRadius: BorderRadius.circular(14),
