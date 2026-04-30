@@ -387,7 +387,7 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
             iconBg: red,
             title: tr.myCards,
             subtitle: _savedCardSubtitle(profile, tr),
-            onTap: () => context.go('/settings/saved-cards'),
+            onTap: () => context.go('/wallet/saved-cards'),
             compact: compact,
           ),
           SizedBox(height: walletCardGap),

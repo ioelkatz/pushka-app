@@ -46,13 +46,15 @@ class _SavedCardsScreenState extends ConsumerState<SavedCardsScreen> {
         _loading = false;
       });
 
-      // Auto-set the only card as default when there is none yet
       if (autoSetDefault && defaultId == null && cards.isNotEmpty && mounted) {
         await _setDefault(cards.first['id'] as String);
       }
     } catch (e) {
       if (!mounted) return;
+      // Treat load errors as empty state — user can still add a card.
+      // Keep _error set so a subtle retry banner shows, but don't block the UI.
       setState(() {
+        _cards = [];
         _error = e.toString();
         _loading = false;
       });
@@ -192,205 +194,217 @@ class _SavedCardsScreenState extends ConsumerState<SavedCardsScreen> {
 
     return Scaffold(
       body: SafeArea(
-        child: _loading
-            ? const Center(child: CircularProgressIndicator())
-            : _error != null
-                ? Center(
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text(tr.errorLoadingCards, style: const TextStyle(color: Colors.red)),
-                        const SizedBox(height: 12),
-                        TextButton(
-                          onPressed: _loadCards,
-                          child: Text(tr.retry),
-                        ),
-                      ],
-                    ),
-                  )
-                : Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            // Error banner — shown only when load failed, non-blocking
+            if (!_loading && _error != null)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                  decoration: BoxDecoration(
+                    color: Colors.red.shade50,
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: Colors.red.shade200),
+                  ),
+                  child: Row(
                     children: [
+                      Icon(Icons.error_outline, size: 18, color: Colors.red.shade700),
+                      const SizedBox(width: 8),
                       Expanded(
-                        child: _cards.isEmpty
-                            ? Center(
-                                child: Padding(
-                                  padding: const EdgeInsets.symmetric(horizontal: 32),
-                                  child: Column(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      Icon(
-                                        Icons.credit_card_off_outlined,
-                                        size: 56,
-                                        color: Colors.grey.shade400,
-                                      ),
-                                      const SizedBox(height: 16),
-                                      Text(
-                                        tr.noSavedCards,
-                                        textAlign: TextAlign.center,
-                                        style: TextStyle(
-                                          fontSize: 15,
-                                          color: Colors.grey.shade600,
-                                          height: 1.5,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              )
-                            : ListView.separated(
-                                padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
-                                itemCount: _cards.length,
-                                separatorBuilder: (_, _) => const SizedBox(height: 10),
-                                itemBuilder: (context, index) {
-                                  final card = _cards[index];
-                                  final pmId = card['id'] as String;
-                                  final brand = card['brand'] as String? ?? 'card';
-                                  final last4 = card['last4'] as String? ?? '****';
-                                  final expMonth = (card['expMonth'] as num?)?.toInt() ?? 0;
-                                  final expYear = (card['expYear'] as num?)?.toInt() ?? 0;
-                                  final isDefault = pmId == _defaultPaymentMethodId;
-
-                                  return Container(
-                                    decoration: BoxDecoration(
-                                      color: Colors.white,
-                                      borderRadius: BorderRadius.circular(12),
-                                      border: Border.all(
-                                        color: isDefault ? blue : Colors.grey.shade200,
-                                        width: isDefault ? 1.5 : 1,
-                                      ),
-                                      boxShadow: [
-                                        BoxShadow(
-                                          color: Colors.black.withValues(alpha: 0.04),
-                                          blurRadius: 8,
-                                          offset: const Offset(0, 2),
-                                        ),
-                                      ],
-                                    ),
-                                    child: Padding(
-                                      padding: const EdgeInsets.fromLTRB(16, 14, 8, 14),
-                                      child: Row(
-                                        children: [
-                                          Icon(_brandIcon(brand), size: 32, color: blue),
-                                          const SizedBox(width: 14),
-                                          Expanded(
-                                            child: Column(
-                                              crossAxisAlignment: CrossAxisAlignment.start,
-                                              children: [
-                                                Row(
-                                                  children: [
-                                                    Text(
-                                                      '${_brandLabel(brand)}  ${tr.cardEndingIn(last4)}',
-                                                      style: const TextStyle(
-                                                        fontSize: 15,
-                                                        fontWeight: FontWeight.w600,
-                                                      ),
-                                                    ),
-                                                  ],
-                                                ),
-                                                const SizedBox(height: 2),
-                                                Text(
-                                                  tr.cardExpiry(
-                                                    expMonth.toString().padLeft(2, '0'),
-                                                    expYear.toString(),
-                                                  ),
-                                                  style: TextStyle(
-                                                    fontSize: 13,
-                                                    color: Colors.grey.shade600,
-                                                  ),
-                                                ),
-                                                if (isDefault) ...[
-                                                  const SizedBox(height: 4),
-                                                  Container(
-                                                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                                                    decoration: BoxDecoration(
-                                                      color: blue.withValues(alpha: 0.10),
-                                                      borderRadius: BorderRadius.circular(4),
-                                                    ),
-                                                    child: Text(
-                                                      tr.cardDefault,
-                                                      style: TextStyle(
-                                                        fontSize: 11,
-                                                        fontWeight: FontWeight.w600,
-                                                        color: blue,
-                                                      ),
-                                                    ),
-                                                  ),
-                                                ],
-                                              ],
-                                            ),
-                                          ),
-                                          PopupMenuButton<String>(
-                                            onSelected: (value) {
-                                              if (value == 'default') _setDefault(pmId);
-                                              if (value == 'delete') _deleteCard(pmId);
-                                            },
-                                            itemBuilder: (_) => [
-                                              if (!isDefault)
-                                                PopupMenuItem(
-                                                  value: 'default',
-                                                  child: Row(
-                                                    children: [
-                                                      const Icon(Icons.star_outline, size: 18),
-                                                      const SizedBox(width: 8),
-                                                      Text(tr.setAsDefault),
-                                                    ],
-                                                  ),
-                                                ),
-                                              PopupMenuItem(
-                                                value: 'delete',
-                                                child: Row(
-                                                  children: [
-                                                    const Icon(Icons.delete_outline, size: 18, color: Colors.red),
-                                                    const SizedBox(width: 8),
-                                                    Text(tr.deleteCard, style: const TextStyle(color: Colors.red)),
-                                                  ],
-                                                ),
-                                              ),
-                                            ],
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-                                  );
-                                },
-                              ),
-                      ),
-                      Padding(
-                        padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
-                        child: SizedBox(
-                          height: 50,
-                          child: ElevatedButton.icon(
-                            onPressed: _processing ? null : _addCard,
-                            icon: _processing
-                                ? const SizedBox(
-                                    width: 18,
-                                    height: 18,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2,
-                                      color: Colors.white,
-                                    ),
-                                  )
-                                : const Icon(Icons.add_card_outlined),
-                            label: Text(
-                              tr.addCard,
-                              style: const TextStyle(
-                                fontWeight: FontWeight.w700,
-                                fontSize: 15,
-                              ),
-                            ),
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: red,
-                              foregroundColor: Colors.white,
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(12),
-                              ),
-                            ),
-                          ),
+                        child: Text(
+                          tr.errorLoadingCards,
+                          style: TextStyle(fontSize: 13, color: Colors.red.shade700),
                         ),
+                      ),
+                      TextButton(
+                        onPressed: _loadCards,
+                        style: TextButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(horizontal: 8),
+                          minimumSize: Size.zero,
+                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        ),
+                        child: Text(tr.retry, style: TextStyle(color: Colors.red.shade700, fontSize: 13)),
                       ),
                     ],
                   ),
+                ),
+              ),
+
+            // Card list / loading / empty state
+            Expanded(
+              child: _loading
+                  ? const Center(child: CircularProgressIndicator())
+                  : _cards.isEmpty
+                      ? Center(
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 32),
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(
+                                  Icons.credit_card_off_outlined,
+                                  size: 56,
+                                  color: Colors.grey.shade400,
+                                ),
+                                const SizedBox(height: 16),
+                                Text(
+                                  tr.noSavedCards,
+                                  textAlign: TextAlign.center,
+                                  style: TextStyle(
+                                    fontSize: 15,
+                                    color: Colors.grey.shade600,
+                                    height: 1.5,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        )
+                      : ListView.separated(
+                          padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+                          itemCount: _cards.length,
+                          separatorBuilder: (_, _) => const SizedBox(height: 10),
+                          itemBuilder: (context, index) {
+                            final card = _cards[index];
+                            final pmId = card['id'] as String;
+                            final brand = card['brand'] as String? ?? 'card';
+                            final last4 = card['last4'] as String? ?? '****';
+                            final expMonth = (card['expMonth'] as num?)?.toInt() ?? 0;
+                            final expYear = (card['expYear'] as num?)?.toInt() ?? 0;
+                            final isDefault = pmId == _defaultPaymentMethodId;
+
+                            return Container(
+                              decoration: BoxDecoration(
+                                color: Colors.white,
+                                borderRadius: BorderRadius.circular(12),
+                                border: Border.all(
+                                  color: isDefault ? blue : Colors.grey.shade200,
+                                  width: isDefault ? 1.5 : 1,
+                                ),
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: Colors.black.withValues(alpha: 0.04),
+                                    blurRadius: 8,
+                                    offset: const Offset(0, 2),
+                                  ),
+                                ],
+                              ),
+                              child: Padding(
+                                padding: const EdgeInsets.fromLTRB(16, 14, 8, 14),
+                                child: Row(
+                                  children: [
+                                    Icon(_brandIcon(brand), size: 32, color: blue),
+                                    const SizedBox(width: 14),
+                                    Expanded(
+                                      child: Column(
+                                        crossAxisAlignment: CrossAxisAlignment.start,
+                                        children: [
+                                          Text(
+                                            '${_brandLabel(brand)}  ${tr.cardEndingIn(last4)}',
+                                            style: const TextStyle(
+                                              fontSize: 15,
+                                              fontWeight: FontWeight.w600,
+                                            ),
+                                          ),
+                                          const SizedBox(height: 2),
+                                          Text(
+                                            tr.cardExpiry(
+                                              expMonth.toString().padLeft(2, '0'),
+                                              expYear.toString(),
+                                            ),
+                                            style: TextStyle(
+                                              fontSize: 13,
+                                              color: Colors.grey.shade600,
+                                            ),
+                                          ),
+                                          if (isDefault) ...[
+                                            const SizedBox(height: 4),
+                                            Container(
+                                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                                              decoration: BoxDecoration(
+                                                color: blue.withValues(alpha: 0.10),
+                                                borderRadius: BorderRadius.circular(4),
+                                              ),
+                                              child: Text(
+                                                tr.cardDefault,
+                                                style: TextStyle(
+                                                  fontSize: 11,
+                                                  fontWeight: FontWeight.w600,
+                                                  color: blue,
+                                                ),
+                                              ),
+                                            ),
+                                          ],
+                                        ],
+                                      ),
+                                    ),
+                                    PopupMenuButton<String>(
+                                      onSelected: (value) {
+                                        if (value == 'default') _setDefault(pmId);
+                                        if (value == 'delete') _deleteCard(pmId);
+                                      },
+                                      itemBuilder: (_) => [
+                                        if (!isDefault)
+                                          PopupMenuItem(
+                                            value: 'default',
+                                            child: Row(
+                                              children: [
+                                                const Icon(Icons.star_outline, size: 18),
+                                                const SizedBox(width: 8),
+                                                Text(tr.setAsDefault),
+                                              ],
+                                            ),
+                                          ),
+                                        PopupMenuItem(
+                                          value: 'delete',
+                                          child: Row(
+                                            children: [
+                                              const Icon(Icons.delete_outline, size: 18, color: Colors.red),
+                                              const SizedBox(width: 8),
+                                              Text(tr.deleteCard, style: const TextStyle(color: Colors.red)),
+                                            ],
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            );
+                          },
+                        ),
+            ),
+
+            // Add card button — always visible
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
+              child: SizedBox(
+                height: 50,
+                child: ElevatedButton.icon(
+                  onPressed: (_processing || _loading) ? null : _addCard,
+                  icon: _processing
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                        )
+                      : const Icon(Icons.add_card_outlined),
+                  label: Text(
+                    tr.addCard,
+                    style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15),
+                  ),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: red,
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

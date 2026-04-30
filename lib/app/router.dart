@@ -262,6 +262,10 @@ final router = GoRouter(
               path: 'requests',
               pageBuilder: (context, state) => _slidePage(state, const WalletRequestsScreen()),
             ),
+            GoRoute(
+              path: 'saved-cards',
+              pageBuilder: (context, state) => _slidePage(state, const SavedCardsScreen()),
+            ),
           ],
         ),
         GoRoute(
@@ -385,6 +389,16 @@ PreferredSizeWidget? _buildAppBar(BuildContext context, String location) {
       leading: IconButton(
         icon: Icon(isRtl ? Icons.arrow_forward : Icons.arrow_back),
         onPressed: () => context.go('/settings'),
+      ),
+    );
+  } else if (location == '/wallet/saved-cards') {
+    final isRtl = Directionality.of(context) == TextDirection.rtl;
+    return AppBar(
+      title: Text(tr.myCards),
+      centerTitle: true,
+      leading: IconButton(
+        icon: Icon(isRtl ? Icons.arrow_forward : Icons.arrow_back),
+        onPressed: () => context.go('/wallet'),
       ),
     );
   } else if (location == '/prayers') {
