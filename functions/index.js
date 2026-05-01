@@ -3453,7 +3453,7 @@ exports.handleStripeConnectOAuth = onRequest(
 // ===========================================================================
 
 const SUPER_ADMIN_NOTIFICATION_EMAIL = "ioelkatz@gmail.com";
-const SENDGRID_FROM = "noreply@pushkaapp.com";
+const SENDGRID_FROM = "ioelkatz@gmail.com";
 
 // ---------------------------------------------------------------------------
 // sendEmail — internal helper using SendGrid
