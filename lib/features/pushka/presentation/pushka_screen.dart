@@ -488,7 +488,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
             final remote = remoteAmount.toDouble();
             final recentWrite = _localWriteAt != null &&
                 DateTime.now().difference(_localWriteAt!).inSeconds < 4;
-            if (!recentWrite && remote > pushkaAmount) {
+            if (!recentWrite && remote != pushkaAmount) {
               pushkaAmount = remote;
               if (uid != null) HiveCache.instance.savePushkaAmount(uid, pushkaAmount);
             }
@@ -1638,6 +1638,10 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                       border: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(14),
                       ),
+                      focusedBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(14),
+                        borderSide: BorderSide(color: cs.primary, width: 2),
+                      ),
                       contentPadding: const EdgeInsets.symmetric(
                         horizontal: 14,
                         vertical: 14,
@@ -1657,7 +1661,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                                 color: cs.onSurfaceVariant,
                               ),
                             ),
-                            const SizedBox(width: 3),
+                            const SizedBox(width: 6),
                             Text(
                               formatAmount(value),
                               style: const TextStyle(
@@ -1739,6 +1743,10 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                                     border: OutlineInputBorder(
                                       borderRadius: BorderRadius.circular(12),
                                     ),
+                                    focusedBorder: OutlineInputBorder(
+                                      borderRadius: BorderRadius.circular(12),
+                                      borderSide: BorderSide(color: cs.primary, width: 2),
+                                    ),
                                     errorText: errorText,
                                   ),
                                   onSubmitted: (_) {
@@ -1807,7 +1815,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                                     color: cs.onSurfaceVariant,
                                   ),
                                 ),
-                                const SizedBox(width: 3),
+                                const SizedBox(width: 6),
                                 Text(
                                   _formatPresetValue(displayedAmount),
                                   style: const TextStyle(

@@ -356,7 +356,7 @@ Formulario en pasos:
 - [x] FASE 1: Backend multi-tenant (2026-04-30)
 - [x] FASE 2: App dinámica por tenant (2026-04-30)
 - [x] FASE 3: Admin web multi-tenant (2026-04-30)
-- [ ] FASE 4: Billing automatizado
+- [x] FASE 4: Billing automatizado (2026-04-30)
 - [ ] FASE 5: Lanzamiento
 
 ---

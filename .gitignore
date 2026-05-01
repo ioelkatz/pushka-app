@@ -1,4 +1,7 @@
-﻿# Miscellaneous
+﻿# Dart defines (API keys — never commit)
+dart_defines/
+
+# Miscellaneous
 *.class
 *.log
 *.pyc

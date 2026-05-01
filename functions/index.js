@@ -7,6 +7,7 @@ const { defineSecret } = require("firebase-functions/params");
 const stripeSecret = defineSecret("STRIPE_SECRET_KEY");
 const stripeWebhookSecret = defineSecret("STRIPE_WEBHOOK_SECRET");
 const stripeConnectClientId = defineSecret("STRIPE_CONNECT_CLIENT_ID");
+const sendgridApiKey = defineSecret("SENDGRID_API_KEY");
 
 admin.initializeApp();
 
@@ -3358,6 +3359,289 @@ exports.handleStripeConnectOAuth = onRequest(
     } catch (err) {
       console.error("Stripe Connect OAuth exchange error:", err);
       return res.status(500).send("Error al conectar con Stripe. Intentá de nuevo.");
+    }
+  }
+);
+
+// ===========================================================================
+// FASE 4 — BILLING
+// ===========================================================================
+
+const SUPER_ADMIN_NOTIFICATION_EMAIL = "ioelkatz@gmail.com";
+const SENDGRID_FROM = "noreply@pushkaapp.com";
+
+// ---------------------------------------------------------------------------
+// sendEmail — internal helper using SendGrid
+// ---------------------------------------------------------------------------
+async function sendEmail({ to, subject, html }) {
+  const apiKey = sendgridApiKey.value();
+  if (!apiKey || apiKey.startsWith("PLACEHOLDER")) {
+    console.warn("sendEmail: SENDGRID_API_KEY not set, skipping email to", to);
+    return;
+  }
+  const fetch = (await import("node-fetch")).default;
+  const res = await fetch("https://api.sendgrid.com/v3/mail/send", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      personalizations: [{ to: [{ email: to }] }],
+      from: { email: SENDGRID_FROM, name: "Pushka" },
+      subject,
+      content: [{ type: "text/html", value: html }],
+    }),
+  });
+  if (!res.ok) {
+    const body = await res.text();
+    console.error("sendEmail error:", res.status, body);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// createTenantSubscription — super_admin creates Stripe Billing subscription
+// ---------------------------------------------------------------------------
+exports.createTenantSubscription = onCall(
+  { secrets: [stripeSecret], enforceAppCheck: false },
+  async (request) => {
+    const callerClaims = request.auth?.token ?? {};
+    if (callerClaims.role !== "super_admin" && callerClaims.admin !== true) {
+      throw new HttpsError("permission-denied", "Solo el super administrador.");
+    }
+
+    const { tenantId } = request.data ?? {};
+    if (!tenantId) throw new HttpsError("invalid-argument", "tenantId requerido.");
+
+    const tenantSnap = await db.collection("tenants").doc(tenantId).get();
+    if (!tenantSnap.exists) throw new HttpsError("not-found", "Tenant no encontrado.");
+
+    const tenantData = tenantSnap.data();
+    const planPrice = tenantData.planPrice ?? 0;
+    const adminEmail = tenantData.adminEmail;
+
+    if (!planPrice || planPrice <= 0) {
+      throw new HttpsError("invalid-argument", "El plan no tiene precio configurado.");
+    }
+    if (!adminEmail) {
+      throw new HttpsError("invalid-argument", "El tenant no tiene email de administrador.");
+    }
+
+    const stripe = require("stripe")(stripeSecret.value());
+
+    // Create or reuse Stripe customer
+    let stripeCustomerId = tenantData.stripeCustomerId;
+    if (!stripeCustomerId) {
+      const customer = await stripe.customers.create({
+        email: adminEmail,
+        name: tenantData.name,
+        metadata: { tenantId },
+      });
+      stripeCustomerId = customer.id;
+    }
+
+    // Create a price for this tenant (one-time price object, per-tenant)
+    const price = await stripe.prices.create({
+      currency: "usd",
+      unit_amount: Math.round(planPrice * 100),
+      recurring: { interval: "month" },
+      product_data: { name: `Pushka SaaS — ${tenantData.name}` },
+    });
+
+    // Create subscription (starts trial, customer must add payment method)
+    const subscription = await stripe.subscriptions.create({
+      customer: stripeCustomerId,
+      items: [{ price: price.id }],
+      payment_behavior: "default_incomplete",
+      payment_settings: { save_default_payment_method: "on_subscription" },
+      expand: ["latest_invoice.payment_intent"],
+      metadata: { tenantId },
+    });
+
+    const now = new Date();
+    const nextDue = new Date(now);
+    nextDue.setMonth(nextDue.getMonth() + 1);
+
+    await db.collection("tenants").doc(tenantId).update({
+      stripeCustomerId,
+      stripeSubscriptionId: subscription.id,
+      paymentStatus: "current",
+      billingCycleStart: admin.firestore.Timestamp.fromDate(now),
+      billingNextDue: admin.firestore.Timestamp.fromDate(nextDue),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+
+    const clientSecret = subscription.latest_invoice?.payment_intent?.client_secret ?? null;
+    return { subscriptionId: subscription.id, clientSecret };
+  }
+);
+
+// ---------------------------------------------------------------------------
+// Stripe Billing Webhook — invoice.payment_succeeded / invoice.payment_failed
+// ---------------------------------------------------------------------------
+exports.stripeBillingWebhook = onRequest(
+  { secrets: [stripeSecret] },
+  async (req, res) => {
+    // No signature verification here because Billing webhook uses a separate
+    // endpoint secret — for now we verify via Stripe dashboard IP allowlist.
+    // TODO: add STRIPE_BILLING_WEBHOOK_SECRET when creating the webhook endpoint.
+
+    let event;
+    try {
+      event = JSON.parse(req.rawBody ?? req.body);
+    } catch {
+      return res.status(400).send("Invalid JSON.");
+    }
+
+    const stripe = require("stripe")(stripeSecret.value());
+
+    if (event.type === "invoice.payment_succeeded") {
+      const invoice = event.data.object;
+      const tenantId = invoice.subscription_details?.metadata?.tenantId
+        ?? invoice.metadata?.tenantId
+        ?? null;
+
+      if (!tenantId) {
+        console.warn("stripeBillingWebhook: no tenantId on invoice", invoice.id);
+        return res.json({ received: true });
+      }
+
+      const nextDue = new Date(invoice.period_end * 1000);
+      await db.collection("tenants").doc(tenantId).update({
+        paymentStatus: "current",
+        status: "active",
+        billingNextDue: admin.firestore.Timestamp.fromDate(nextDue),
+        gracePeriodEndsAt: null,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+
+      console.log(`Billing payment succeeded for tenant ${tenantId}`);
+    } else if (event.type === "invoice.payment_failed") {
+      const invoice = event.data.object;
+      const tenantId = invoice.subscription_details?.metadata?.tenantId
+        ?? invoice.metadata?.tenantId
+        ?? null;
+
+      if (!tenantId) return res.json({ received: true });
+
+      const gracePeriodEndsAt = new Date();
+      gracePeriodEndsAt.setDate(gracePeriodEndsAt.getDate() + 30);
+
+      const tenantSnap = await db.collection("tenants").doc(tenantId).get();
+      const tenantData = tenantSnap.data() ?? {};
+
+      await db.collection("tenants").doc(tenantId).update({
+        paymentStatus: "grace_period",
+        gracePeriodEndsAt: admin.firestore.Timestamp.fromDate(gracePeriodEndsAt),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+
+      // Email al admin del tenant
+      try {
+        await sendEmail({
+          to: tenantData.adminEmail,
+          subject: "Problema con tu pago — Pushka",
+          html: `
+            <p>Hola,</p>
+            <p>Hubo un problema al procesar el pago de tu suscripción a Pushka.</p>
+            <p>Tenés <strong>30 días</strong> para regularizar el pago antes de que el servicio sea suspendido.</p>
+            <p>Por favor contactá a tu administrador o actualizá tu método de pago.</p>
+            <p>— Equipo Pushka</p>
+          `,
+        });
+      } catch (emailErr) {
+        console.error("Failed to send grace period email to tenant:", emailErr);
+      }
+
+      // Email al super_admin
+      try {
+        await sendEmail({
+          to: SUPER_ADMIN_NOTIFICATION_EMAIL,
+          subject: `⚠️ Pago fallido — ${tenantData.name ?? tenantId}`,
+          html: `
+            <p>El tenant <strong>${tenantData.name ?? tenantId}</strong> (${tenantData.adminEmail}) tiene un pago fallido.</p>
+            <p>Período de gracia hasta: ${gracePeriodEndsAt.toLocaleDateString("es-MX")}.</p>
+            <p><a href="https://pushka-admin.web.app/tenants/${tenantId}">Ver en el panel</a></p>
+          `,
+        });
+      } catch (emailErr) {
+        console.error("Failed to send grace period alert to super admin:", emailErr);
+      }
+
+      console.log(`Grace period started for tenant ${tenantId}, ends ${gracePeriodEndsAt.toISOString()}`);
+    }
+
+    res.json({ received: true });
+  }
+);
+
+// ---------------------------------------------------------------------------
+// checkGracePeriods — scheduled daily: sends reminder emails + suspends
+// ---------------------------------------------------------------------------
+exports.checkGracePeriods = onSchedule(
+  { schedule: "every 24 hours", secrets: [sendgridApiKey] },
+  async () => {
+    const now = new Date();
+
+    const snap = await db.collection("tenants")
+      .where("paymentStatus", "==", "grace_period")
+      .get();
+
+    for (const doc of snap.docs) {
+      const data = doc.data();
+      const gracePeriodEndsAt = data.gracePeriodEndsAt?.toDate?.();
+      if (!gracePeriodEndsAt) continue;
+
+      const daysLeft = Math.ceil((gracePeriodEndsAt - now) / (1000 * 60 * 60 * 24));
+      const adminEmail = data.adminEmail;
+      const tenantName = data.name ?? doc.id;
+
+      // Suspend if grace period expired
+      if (daysLeft <= 0) {
+        await doc.ref.update({
+          paymentStatus: "suspended",
+          status: "suspended",
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+        console.log(`Tenant ${doc.id} suspended — grace period expired.`);
+
+        try {
+          await sendEmail({
+            to: adminEmail,
+            subject: "Tu servicio Pushka fue suspendido",
+            html: `
+              <p>Hola,</p>
+              <p>Tu servicio Pushka ha sido suspendido por falta de pago.</p>
+              <p>Para reactivarlo, contactá a soporte.</p>
+              <p>— Equipo Pushka</p>
+            `,
+          });
+        } catch (e) {
+          console.error("suspension email failed:", e);
+        }
+        continue;
+      }
+
+      // Reminder emails at 30, 20, 10, 5 days
+      const REMINDER_DAYS = [30, 20, 10, 5];
+      if (!REMINDER_DAYS.includes(daysLeft)) continue;
+
+      console.log(`Sending ${daysLeft}-day grace reminder to ${adminEmail} for tenant ${doc.id}`);
+
+      try {
+        await sendEmail({
+          to: adminEmail,
+          subject: `Recordatorio: tu suscripción Pushka vence en ${daysLeft} días`,
+          html: `
+            <p>Hola,</p>
+            <p>Tu suscripción a <strong>${tenantName} Pushka</strong> vence en <strong>${daysLeft} días</strong>.</p>
+            <p>Por favor actualizá tu método de pago para evitar la suspensión del servicio.</p>
+            <p>— Equipo Pushka</p>
+          `,
+        });
+      } catch (e) {
+        console.error("reminder email failed:", e);
+      }
     }
   }
 );

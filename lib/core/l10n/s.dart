@@ -378,6 +378,13 @@ class S {
   String get accountDeleted => _t('Cuenta eliminada', 'Account deleted', 'Compte supprimé', 'החשבון נמחק');
   String get couldNotDeleteAccount => _t('No se pudo eliminar la cuenta', 'Could not delete account', 'Impossible de supprimer le compte', 'לא ניתן למחוק את החשבון');
   String get requiresRecentLogin => _t('Por seguridad, debes volver a iniciar sesión antes de eliminar tu cuenta.', 'For security, please sign in again before deleting your account.', 'Pour votre sécurité, reconnectez-vous avant de supprimer votre compte.', 'מטעמי אבטחה, התחבר שוב לפני מחיקת החשבון.');
+  String get deleteConfirmWord => _t('ELIMINAR', 'DELETE', 'SUPPRIMER', 'מחק');
+  String deleteTypeInstruction(String word) => _t('Escribe $word para confirmar', 'Type $word to confirm', 'Écrivez $word pour confirmer', 'כתוב $word לאישור');
+  String get verifyIdentityTitle => _t('Verificar identidad', 'Verify identity', 'Vérifier l\'identité', 'אמת זהות');
+  String get verifyIdentityBody => _t('Para mayor seguridad, confirma tu identidad antes de eliminar tu cuenta.', 'For security, confirm your identity before deleting your account.', 'Pour votre sécurité, confirmez votre identité avant de supprimer votre compte.', 'לאבטחתך, אמת את זהותך לפני מחיקת החשבון.');
+  String get reAuthFailed => _t('No se pudo verificar la identidad', 'Could not verify identity', 'Impossible de vérifier l\'identité', 'לא ניתן לאמת זהות');
+  String get verifyAndDelete => _t('Verificar y eliminar', 'Verify and delete', 'Vérifier et supprimer', 'אמת ומחק');
+  String get continueLabel => _t('Continuar', 'Continue', 'Continuer', 'המשך');
   String get logoutTitle => _t('Cerrar Sesión', 'Log Out', 'Déconnexion', 'התנתקות');
   String get logoutConfirm => _t(
     '¿Está seguro de que desea cerrar sesión?',
@@ -396,6 +403,13 @@ class S {
     'כדי לשנות מטבע, עליך קודם לרוקן או לתרום את יתרת הפושקה הנוכחית.',
   );
   String get selectCurrency => _t('Seleccionar Moneda', 'Select Currency', 'Sélectionner la devise', 'בחר מטבע');
+  String get changeCurrencyTitle => _t('Cambiar moneda', 'Change currency', 'Changer de devise', 'שנה מטבע');
+  String get currencyChangeConfirmBody => _t(
+    'El saldo actual de tu Pushka se reiniciará a \$0 al cambiar de moneda.',
+    'Your current Pushka balance will be reset to \$0 when changing currency.',
+    'Le solde actuel de votre Pushka sera réinitialisé à \$0 lors du changement de devise.',
+    'יתרת הפושקה הנוכחית שלך תאופס ל-\$0 בעת שינוי המטבע.',
+  );
   String get noBiometric => _t(
     'Tu dispositivo no soporta autenticación biométrica',
     'Your device does not support biometric authentication',
