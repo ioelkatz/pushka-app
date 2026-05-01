@@ -321,11 +321,12 @@ Formulario en pasos:
 - Resetear métricas
 - Dejar el sistema vacío y limpio
 
-### 5.2 [ ] Auditoría de seguridad
-- Revisar todas las Cloud Functions: validaciones, autenticación, rate limiting
-- Revisar Firestore rules: ningún dato sensible accesible sin auth
-- Revisar que Stripe keys nunca se exponen al cliente Flutter
-- Revisar que commissionRate no sea modificable por el tenant
+### 5.2 [x] Auditoría de seguridad (2026-04-30)
+- Revisar todas las Cloud Functions: validaciones, autenticación, rate limiting ✓
+- Revisar Firestore rules: ningún dato sensible accesible sin auth ✓
+- Revisar que Stripe keys nunca se exponen al cliente Flutter ✓
+- Revisar que commissionRate no sea modificable por el tenant ✓
+- Fixes aplicados: enforceAppCheck:true en 5 funciones de pago; firma Stripe en stripeBillingWebhook
 
 ### 5.3 [ ] CI/CD para iOS (GitHub Actions o Codemagic)
 - Build automático de iOS sin necesitar Mac local

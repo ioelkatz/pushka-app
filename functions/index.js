@@ -6,6 +6,7 @@ const { defineSecret } = require("firebase-functions/params");
 
 const stripeSecret = defineSecret("STRIPE_SECRET_KEY");
 const stripeWebhookSecret = defineSecret("STRIPE_WEBHOOK_SECRET");
+const stripeBillingWebhookSecret = defineSecret("STRIPE_BILLING_WEBHOOK_SECRET");
 const stripeConnectClientId = defineSecret("STRIPE_CONNECT_CLIENT_ID");
 const sendgridApiKey = defineSecret("SENDGRID_API_KEY");
 
@@ -352,7 +353,7 @@ exports.sendTestNotification = onCall({ enforceAppCheck: true }, async (request)
 });
 
 exports.createPaymentIntent = onCall(
-  { secrets: [stripeSecret], enforceAppCheck: false },
+  { secrets: [stripeSecret], enforceAppCheck: true },
   async (request) => {
   if (!request.auth?.uid) {
     throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
@@ -479,7 +480,7 @@ exports.createPaymentIntent = onCall(
 // ---------------------------------------------------------------------------
 
 exports.createSetupIntent = onCall(
-  { secrets: [stripeSecret], enforceAppCheck: false },
+  { secrets: [stripeSecret], enforceAppCheck: true },
   async (request) => {
     if (!request.auth?.uid) {
       throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
@@ -559,7 +560,7 @@ exports.createSetupIntent = onCall(
 // ---------------------------------------------------------------------------
 
 exports.listSavedCards = onCall(
-  { secrets: [stripeSecret], enforceAppCheck: false },
+  { secrets: [stripeSecret], enforceAppCheck: true },
   async (request) => {
     if (!request.auth?.uid) {
       throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
@@ -618,7 +619,7 @@ exports.listSavedCards = onCall(
 // ---------------------------------------------------------------------------
 
 exports.deletePaymentMethod = onCall(
-  { secrets: [stripeSecret], enforceAppCheck: false },
+  { secrets: [stripeSecret], enforceAppCheck: true },
   async (request) => {
     if (!request.auth?.uid) {
       throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
@@ -704,7 +705,7 @@ exports.deletePaymentMethod = onCall(
 // ---------------------------------------------------------------------------
 
 exports.setDefaultPaymentMethod = onCall(
-  { secrets: [stripeSecret], enforceAppCheck: false },
+  { secrets: [stripeSecret], enforceAppCheck: true },
   async (request) => {
     if (!request.auth?.uid) {
       throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
@@ -3480,20 +3481,29 @@ exports.createTenantSubscription = onCall(
 // Stripe Billing Webhook — invoice.payment_succeeded / invoice.payment_failed
 // ---------------------------------------------------------------------------
 exports.stripeBillingWebhook = onRequest(
-  { secrets: [stripeSecret] },
+  { secrets: [stripeSecret, stripeBillingWebhookSecret] },
   async (req, res) => {
-    // No signature verification here because Billing webhook uses a separate
-    // endpoint secret — for now we verify via Stripe dashboard IP allowlist.
-    // TODO: add STRIPE_BILLING_WEBHOOK_SECRET when creating the webhook endpoint.
+    const stripe = require("stripe")(stripeSecret.value());
+
+    const sig = req.headers["stripe-signature"];
+    if (!sig) {
+      console.error("stripeBillingWebhook: missing stripe-signature header");
+      return res.status(400).send("Missing stripe-signature header.");
+    }
+
+    const billingSecret = stripeBillingWebhookSecret.value();
+    if (!billingSecret || billingSecret.startsWith("PLACEHOLDER")) {
+      console.error("stripeBillingWebhook: STRIPE_BILLING_WEBHOOK_SECRET not configured");
+      return res.status(500).send("Webhook secret not configured.");
+    }
 
     let event;
     try {
-      event = JSON.parse(req.rawBody ?? req.body);
-    } catch {
-      return res.status(400).send("Invalid JSON.");
+      event = stripe.webhooks.constructEvent(req.rawBody, sig, billingSecret);
+    } catch (err) {
+      console.error("stripeBillingWebhook: signature verification failed", err?.message);
+      return res.status(400).send(`Webhook Error: ${err.message}`);
     }
-
-    const stripe = require("stripe")(stripeSecret.value());
 
     if (event.type === "invoice.payment_succeeded") {
       const invoice = event.data.object;
