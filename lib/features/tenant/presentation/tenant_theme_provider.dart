@@ -10,5 +10,8 @@ final tenantThemeProvider = Provider<({ThemeData light, ThemeData dark})>((ref) 
   final tenantAsync = ref.watch(tenantConfigProvider);
   final config = tenantAsync.valueOrNull;
 
-  return AppTheme.fromTenantColors(primaryColor: config?.primaryColor);
+  return AppTheme.fromTenantColors(
+    primaryColor: config?.primaryColor,
+    secondaryColor: config?.secondaryColor,
+  );
 });

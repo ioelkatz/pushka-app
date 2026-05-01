@@ -7,6 +7,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../../app/theme/app_tokens.dart';
 import '../../../app/router.dart';
+import '../../../core/l10n/locale_provider.dart';
 import '../data/tenant_repository.dart';
 import '../domain/tenant_config.dart';
 
@@ -61,10 +62,33 @@ class _TenantCodeScreenState extends ConsumerState<TenantCodeScreen> {
       final uid = FirebaseAuth.instance.currentUser?.uid;
       if (uid == null) throw Exception('Not logged in');
 
-      await FirebaseFirestore.instance.collection('users').doc(uid).set(
-        {'tenantId': config.tenantId, 'uid': uid},
-        SetOptions(merge: true),
-      );
+      final docRef = FirebaseFirestore.instance.collection('users').doc(uid);
+
+      // Read current doc to avoid overwriting user-defined preferences
+      final currentSnap = await docRef.get();
+      final current = currentSnap.data() ?? {};
+
+      final Map<String, dynamic> updateData = {
+        'tenantId': config.tenantId,
+        'uid': uid,
+      };
+      // Apply tenant defaults only for fields the user hasn't set yet
+      if (config.defaultLanguage != null && current['language'] == null) {
+        updateData['language'] = config.defaultLanguage;
+      }
+      if (config.defaultCurrency != null && current['currencyCode'] == null) {
+        updateData['currencyCode'] = config.defaultCurrency;
+      }
+      if (config.defaultCountry != null && current['currencyCountry'] == null) {
+        updateData['currencyCountry'] = config.defaultCountry;
+      }
+
+      await docRef.set(updateData, SetOptions(merge: true));
+
+      // Apply language locally if it was set as a default
+      if (updateData.containsKey('language')) {
+        ref.read(localeProvider.notifier).syncFromRemote(config.defaultLanguage!);
+      }
 
       // Invalidate tenant config so app.dart reloads with new branding
       ref.invalidate(tenantConfigProvider);
@@ -72,7 +96,7 @@ class _TenantCodeScreenState extends ConsumerState<TenantCodeScreen> {
       invalidateTenantCache();
 
       if (mounted) context.go('/');
-    } catch (_) {
+    } catch (e) {
       setState(() { _error = 'No se pudo guardar la organización. Intentá de nuevo.'; });
     } finally {
       if (mounted) setState(() { _loading = false; });

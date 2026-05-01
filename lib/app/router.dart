@@ -350,12 +350,23 @@ class _TenantMainAppBar extends ConsumerWidget implements PreferredSizeWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final tr = S.of(context);
     final tenantConfig = ref.watch(tenantConfigProvider).valueOrNull;
-    final title = (tenantConfig?.appName.isNotEmpty == true)
+    final appName = (tenantConfig?.appName.isNotEmpty == true)
         ? tenantConfig!.appName
         : tr.navPushka;
+    final logoUrl = tenantConfig?.logoUrl;
+
+    final Widget titleWidget = (logoUrl != null && logoUrl.isNotEmpty)
+        ? Image.network(
+            logoUrl,
+            height: 32,
+            fit: BoxFit.contain,
+            errorBuilder: (_, e, _) =>
+                Text(appName, style: const TextStyle(fontWeight: FontWeight.w600)),
+          )
+        : Text(appName, style: const TextStyle(fontWeight: FontWeight.w600));
 
     return AppBar(
-      title: Text(title, style: const TextStyle(fontWeight: FontWeight.w600)),
+      title: titleWidget,
       centerTitle: true,
       actions: [
         IconButton(
@@ -363,7 +374,7 @@ class _TenantMainAppBar extends ConsumerWidget implements PreferredSizeWidget {
           onPressed: () async {
             try {
               await SharePlus.instance.share(
-                ShareParams(text: tr.appShareText, subject: title),
+                ShareParams(text: tr.appShareText, subject: appName),
               );
             } catch (e) {
               debugPrint('[router] share failed: $e');
