@@ -206,10 +206,15 @@ class _OrgPreviewCard extends StatelessWidget {
               color: config.primaryColor ?? cs.primary,
               borderRadius: BorderRadius.circular(10),
             ),
-            child: config.logoUrl != null
+            child: (config.logoUrl != null && config.logoUrl!.isNotEmpty)
                 ? ClipRRect(
                     borderRadius: BorderRadius.circular(10),
-                    child: Image.network(config.logoUrl!, fit: BoxFit.cover),
+                    child: Image.network(
+                      config.logoUrl!,
+                      fit: BoxFit.cover,
+                      errorBuilder: (_, e, _) =>
+                          const Icon(Icons.business_rounded, color: Colors.white, size: 28),
+                    ),
                   )
                 : const Icon(Icons.business_rounded, color: Colors.white, size: 28),
           ),

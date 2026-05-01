@@ -39,18 +39,21 @@ class TenantConfig {
       name: (data['name'] as String?) ?? '',
       appName: (data['appName'] as String?) ?? 'Pushka',
       showPoweredBy: (data['showPoweredBy'] as bool?) ?? true,
-      welcomeText: data['welcomeText'] as String?,
+      welcomeText: _nonEmpty(data['welcomeText'] as String?),
       primaryColor: _parseColor(data['primaryColor'] as String?),
       secondaryColor: _parseColor(data['secondaryColor'] as String?),
-      logoUrl: data['logoUrl'] as String?,
-      defaultLanguage: data['defaultLanguage'] as String?,
-      defaultCurrency: data['defaultCurrency'] as String?,
-      defaultCountry: data['defaultCountry'] as String?,
-      contactEmail: data['contactEmail'] as String?,
-      privacyPolicyUrl: data['privacyPolicyUrl'] as String?,
-      termsUrl: data['termsUrl'] as String?,
+      logoUrl: _nonEmpty(data['logoUrl'] as String?),
+      defaultLanguage: _nonEmpty(data['defaultLanguage'] as String?),
+      defaultCurrency: _nonEmpty(data['defaultCurrency'] as String?),
+      defaultCountry: _nonEmpty(data['defaultCountry'] as String?),
+      contactEmail: _nonEmpty(data['contactEmail'] as String?),
+      privacyPolicyUrl: _nonEmpty(data['privacyPolicyUrl'] as String?),
+      termsUrl: _nonEmpty(data['termsUrl'] as String?),
     );
   }
+
+  static String? _nonEmpty(String? s) =>
+      (s == null || s.trim().isEmpty) ? null : s.trim();
 
   static Color? _parseColor(String? hex) {
     if (hex == null || hex.isEmpty) return null;

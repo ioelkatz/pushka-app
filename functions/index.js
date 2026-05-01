@@ -3105,24 +3105,24 @@ exports.createTenant = onCall(
 
       // Branding
       appName: String(appName || name).trim(),
-      welcomeText: String(welcomeText || "").trim(),
-      primaryColor: String(primaryColor || "#E8A87C").trim(),
-      secondaryColor: String(secondaryColor || "#D4A843").trim(),
-      logoUrl: String(logoUrl || "").trim(),
+      welcomeText: String(welcomeText || "").trim() || null,
+      primaryColor: /^#[0-9A-Fa-f]{6}$/.test(String(primaryColor || "")) ? String(primaryColor).trim() : "#E8A87C",
+      secondaryColor: /^#[0-9A-Fa-f]{6}$/.test(String(secondaryColor || "")) ? String(secondaryColor).trim() : "#D4A843",
+      logoUrl: String(logoUrl || "").trim() || null,
       showPoweredBy: true,
 
       // Localization
       defaultLanguage: String(defaultLanguage || "es"),
       defaultCurrency: String(defaultCurrency || "USD").toUpperCase(),
-      defaultCountry: String(defaultCountry || "").trim(),
+      defaultCountry: String(defaultCountry || "").trim() || null,
 
       // Legal / Contact
-      contactEmail: String(contactEmail || adminEmail).trim(),
-      contactPhone: String(contactPhone || "").trim(),
-      privacyPolicyUrl: String(privacyPolicyUrl || "").trim(),
-      termsUrl: String(termsUrl || "").trim(),
-      city: String(city || "").trim(),
-      country: String(country || "").trim(),
+      contactEmail: String(contactEmail || adminEmail).trim() || null,
+      contactPhone: String(contactPhone || "").trim() || null,
+      privacyPolicyUrl: String(privacyPolicyUrl || "").trim() || null,
+      termsUrl: String(termsUrl || "").trim() || null,
+      city: String(city || "").trim() || null,
+      country: String(country || "").trim() || null,
 
       // Stripe Connect — set later via OAuth
       stripeConnectAccountId: null,
@@ -3167,36 +3167,84 @@ exports.createTenant = onCall(
 );
 
 // ---------------------------------------------------------------------------
-// updateTenant — super_admin only
+// getTenantBranding — super_admin (any tenant) or tenant_admin (own tenant)
+// ---------------------------------------------------------------------------
+exports.getTenantBranding = onCall(
+  { enforceAppCheck: false },
+  async (request) => {
+    const callerClaims = request.auth?.token ?? {};
+    const isSuper = callerClaims.role === "super_admin" || callerClaims.admin === true;
+    const isTenantAdmin = callerClaims.role === "tenant_admin";
+    if (!isSuper && !isTenantAdmin) {
+      throw new HttpsError("permission-denied", "Acceso denegado.");
+    }
+
+    const tenantId = isSuper
+      ? (request.data?.tenantId ?? null)
+      : callerClaims.tenantId;
+
+    if (!tenantId) throw new HttpsError("invalid-argument", "tenantId requerido.");
+
+    const snap = await db.collection("tenants").doc(tenantId).get();
+    if (!snap.exists) throw new HttpsError("not-found", "Tenant no encontrado.");
+
+    const data = snap.data();
+    const fields = [
+      "name", "slug", "appName", "welcomeText",
+      "primaryColor", "secondaryColor", "logoUrl", "showPoweredBy",
+      "defaultLanguage", "defaultCurrency", "defaultCountry",
+      "contactEmail", "contactPhone", "privacyPolicyUrl", "termsUrl",
+      "city", "country",
+    ];
+    const branding = { tenantId: snap.id };
+    for (const f of fields) {
+      if (data[f] !== undefined) branding[f] = data[f];
+    }
+    return branding;
+  }
+);
+
+// ---------------------------------------------------------------------------
+// updateTenant — super_admin (all fields) or tenant_admin (branding only)
 // ---------------------------------------------------------------------------
 exports.updateTenant = onCall(
   { enforceAppCheck: false },
   async (request) => {
     const callerClaims = request.auth?.token ?? {};
-    if (callerClaims.role !== "super_admin" && callerClaims.admin !== true) {
-      throw new HttpsError("permission-denied", "Solo el super administrador puede editar tenants.");
+    const isSuper = callerClaims.role === "super_admin" || callerClaims.admin === true;
+    const isTenantAdmin = callerClaims.role === "tenant_admin";
+    if (!isSuper && !isTenantAdmin) {
+      throw new HttpsError("permission-denied", "Acceso denegado.");
     }
 
     const { tenantId, ...updates } = request.data ?? {};
     if (!tenantId) throw new HttpsError("invalid-argument", "tenantId requerido.");
 
+    // Tenant admin can only edit their own tenant
+    if (isTenantAdmin && callerClaims.tenantId !== tenantId) {
+      throw new HttpsError("permission-denied", "Solo podés editar tu propia organización.");
+    }
+
     const tenantRef = db.collection("tenants").doc(tenantId);
     const snap = await tenantRef.get();
     if (!snap.exists) throw new HttpsError("not-found", "Tenant no encontrado.");
 
-    // Allowed fields that super_admin can update
-    const allowed = [
-      "name", "appName", "welcomeText",
+    // Super admin: all fields. Tenant admin: branding only.
+    const brandingFields = [
+      "appName", "welcomeText",
       "primaryColor", "secondaryColor", "logoUrl", "showPoweredBy",
       "defaultLanguage", "defaultCurrency", "defaultCountry",
       "contactEmail", "contactPhone", "privacyPolicyUrl", "termsUrl",
-      "city", "country", "status",
-      "commissionRate", "planPrice",
+      "city", "country",
+    ];
+    const superOnlyFields = [
+      "name", "status", "commissionRate", "planPrice",
       "stripeConnectAccountId", "stripeConnectStatus",
       "stripeSubscriptionId", "stripeCustomerId", "paymentStatus",
       "billingNextDue", "gracePeriodEndsAt", "billingCycleStart",
       "adminEmail", "adminUid",
     ];
+    const allowed = isSuper ? [...brandingFields, ...superOnlyFields] : brandingFields;
 
     // If slug is being updated, validate uniqueness
     let normalizedSlug;
@@ -3204,9 +3252,26 @@ exports.updateTenant = onCall(
       normalizedSlug = await validateSlug(updates.slug, tenantId);
     }
 
+    // Fields where empty string means "not set" — store null instead of ""
+    const nullableStringFields = new Set([
+      "logoUrl", "welcomeText", "contactEmail", "contactPhone",
+      "privacyPolicyUrl", "termsUrl", "defaultCountry", "city", "country",
+    ]);
+
+    // Hex color fields — must be exactly #rrggbb
+    const hexColorFields = new Set(["primaryColor", "secondaryColor"]);
+    const hexRe = /^#[0-9A-Fa-f]{6}$/;
+
     const patch = { updatedAt: admin.firestore.FieldValue.serverTimestamp() };
     for (const key of allowed) {
-      if (key in updates) patch[key] = updates[key];
+      if (!(key in updates)) continue;
+      let val = updates[key];
+      if (typeof val === "string") {
+        val = val.trim();
+        if (nullableStringFields.has(key) && val === "") val = null;
+        if (hexColorFields.has(key) && !hexRe.test(val)) continue; // skip invalid hex
+      }
+      patch[key] = val;
     }
     if (normalizedSlug) patch.slug = normalizedSlug;
 
