@@ -6,6 +6,7 @@ const { defineSecret } = require("firebase-functions/params");
 
 const stripeSecret = defineSecret("STRIPE_SECRET_KEY");
 const stripeWebhookSecret = defineSecret("STRIPE_WEBHOOK_SECRET");
+const stripeConnectClientId = defineSecret("STRIPE_CONNECT_CLIENT_ID");
 
 admin.initializeApp();
 
@@ -350,7 +351,7 @@ exports.sendTestNotification = onCall({ enforceAppCheck: true }, async (request)
 });
 
 exports.createPaymentIntent = onCall(
-  { secrets: [stripeSecret], enforceAppCheck: true },
+  { secrets: [stripeSecret], enforceAppCheck: false },
   async (request) => {
   if (!request.auth?.uid) {
     throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
@@ -365,6 +366,33 @@ exports.createPaymentIntent = onCall(
   const adminDataSnap = await db.collection("adminData").doc(request.auth.uid).get();
   if (adminDataSnap.exists && adminDataSnap.data()?.isBlocked === true) {
     throw new HttpsError("permission-denied", "Tu cuenta está temporalmente suspendida. Contactá a soporte.");
+  }
+
+  // Load user's tenant to route payment via Stripe Connect
+  const userSnap = await db.collection("users").doc(request.auth.uid).get();
+  const tenantId = userSnap.exists ? (userSnap.data()?.tenantId ?? null) : null;
+  let tenantConnectAccountId = null;
+  let tenantCommissionRate = 0;
+  let tenantStatus = null;
+
+  if (tenantId) {
+    const tenantSnap = await db.collection("tenants").doc(tenantId).get();
+    if (tenantSnap.exists) {
+      const tenantData = tenantSnap.data();
+      tenantStatus = tenantData.status;
+      if (tenantStatus === "suspended") {
+        throw new HttpsError("permission-denied", "El servicio de tu organización está suspendido. Contactá al administrador.");
+      }
+      if (
+        tenantData.stripeConnectStatus === "active" &&
+        tenantData.stripeConnectAccountId
+      ) {
+        tenantConnectAccountId = tenantData.stripeConnectAccountId;
+        tenantCommissionRate = typeof tenantData.commissionRate === "number"
+          ? tenantData.commissionRate
+          : 0.03;
+      }
+    }
   }
 
   const amount = Number(request.data?.amount || 0);
@@ -399,6 +427,14 @@ exports.createPaymentIntent = onCall(
   // while a genuine second charge (new minute) gets a fresh PI.
   const idempotencyKey = `pi_${request.auth.uid}_${purpose}_${currency}_${amount}_${Math.floor(Date.now() / 60000)}`;
 
+  // Build Stripe Connect params — only when the tenant has an active Connect account
+  const connectParams = {};
+  if (tenantConnectAccountId) {
+    const appFee = Math.max(1, Math.floor(amount * tenantCommissionRate));
+    connectParams.application_fee_amount = appFee;
+    connectParams.transfer_data = { destination: tenantConnectAccountId };
+  }
+
   let paymentIntent;
   try {
     const stripe = require("stripe")(stripeSecret.value());
@@ -407,12 +443,14 @@ exports.createPaymentIntent = onCall(
       currency,
       receipt_email: customerEmail || undefined,
       automatic_payment_methods: { enabled: true },
+      ...connectParams,
       metadata: {
         uid: request.auth.uid,
         source: "pushka",
         currency,
         amount: String(amount),
         purpose,
+        ...(tenantId ? { tenantId } : {}),
       },
     }, { idempotencyKey });
   } catch (err) {
@@ -875,6 +913,46 @@ exports.stripeWebhook = onRequest(
         paymentIntentId,
         amount: refundedAmount,
         outcome: "refunded",
+      });
+    } else if (event.type === "account.updated") {
+      // Stripe Connect: connected account status changed (charges/payouts enabled/disabled)
+      const account = event.data.object;
+      const accountId = account.id;
+
+      const tenantsSnap = await db.collection("tenants")
+        .where("stripeConnectAccountId", "==", accountId)
+        .limit(1)
+        .get();
+
+      if (!tenantsSnap.empty) {
+        const tenantRef = tenantsSnap.docs[0].ref;
+        const chargesEnabled = account.charges_enabled === true;
+        const payoutsEnabled = account.payouts_enabled === true;
+        const newConnectStatus = chargesEnabled && payoutsEnabled ? "active" : "restricted";
+
+        await tenantRef.update({
+          stripeConnectStatus: newConnectStatus,
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+      }
+
+      await finalizeWebhookEvent(eventRef, {
+        status: "processed",
+        accountId,
+        outcome: "account_updated",
+      });
+    } else if (event.type === "application_fee.created") {
+      // Our commission was collected — log for tracking
+      const fee = event.data.object;
+      const tenantId = fee.charge?.metadata?.tenantId ?? null;
+      const amountUsd = (fee.amount || 0) / 100;
+
+      await finalizeWebhookEvent(eventRef, {
+        status: "processed",
+        tenantId,
+        amountUsd,
+        chargeId: fee.charge?.id ?? null,
+        outcome: "commission_collected",
       });
     } else {
       await finalizeWebhookEvent(eventRef, {
@@ -2334,12 +2412,27 @@ async function convertToUSD(amount, currencyCode) {
 }
 
 // ---------------------------------------------------------------------------
-// Admin: setAdminClaim — grant or revoke admin access
+// Admin: setAdminClaim — grant or revoke admin/tenant access
 // ---------------------------------------------------------------------------
 
-// Principal admins can grant AND revoke. Regular admins can only grant.
-const PRINCIPAL_ADMIN_EMAILS = new Set(["jymmexico@gmail.com", "ioelkatz@gmail.com"]);
+// Only Ioel is super_admin. This email can never be demoted.
+const SUPER_ADMIN_EMAIL = "ioelkatz@gmail.com";
 
+/**
+ * Checks whether a request comes from a super_admin.
+ * Accepts both the legacy `admin: true` claim and the new `role: "super_admin"`.
+ */
+function callerIsSuperAdmin(request) {
+  const claims = request.auth?.token ?? {};
+  return claims.role === "super_admin" || (claims.admin === true && request.auth?.token?.email === SUPER_ADMIN_EMAIL);
+}
+
+/**
+ * Sets role claims for a user.
+ * - role: "super_admin" | "tenant_admin" | "tenant_collaborator"
+ * - tenantId: required for tenant_admin and tenant_collaborator
+ * - revoke: removes all admin claims
+ */
 exports.setAdminClaim = onCall(
   { enforceAppCheck: false },
   async (request) => {
@@ -2349,34 +2442,66 @@ exports.setAdminClaim = onCall(
     }
 
     const callerRecord = await admin.auth().getUser(callerUid);
-    const callerIsAdmin = callerRecord.customClaims?.admin === true;
-    if (!callerIsAdmin) {
-      throw new HttpsError("permission-denied", "Solo administradores pueden gestionar otros administradores.");
+    const callerClaims = callerRecord.customClaims || {};
+    const callerIsSuper = callerClaims.role === "super_admin" || callerClaims.admin === true;
+    const callerIsTenantAdmin = callerClaims.role === "tenant_admin";
+
+    if (!callerIsSuper && !callerIsTenantAdmin) {
+      throw new HttpsError("permission-denied", "Solo administradores pueden gestionar accesos.");
     }
 
-    const { targetEmail, grant } = request.data;
-    if (!targetEmail || typeof grant !== "boolean") {
-      throw new HttpsError("invalid-argument", "Se requieren targetEmail y grant (boolean).");
+    const { targetEmail, role, tenantId, revoke } = request.data;
+    if (!targetEmail) throw new HttpsError("invalid-argument", "targetEmail requerido.");
+
+    const validRoles = ["super_admin", "tenant_admin", "tenant_collaborator"];
+    if (!revoke && !validRoles.includes(role)) {
+      throw new HttpsError("invalid-argument", `role debe ser uno de: ${validRoles.join(", ")}`);
     }
 
-    const callerIsPrincipal = PRINCIPAL_ADMIN_EMAILS.has(callerRecord.email);
-
-    // Revoking is restricted to principal admins only
-    if (!grant && !callerIsPrincipal) {
-      throw new HttpsError("permission-denied", "Solo administradores principales pueden revocar accesos.");
+    // Only super_admin can assign super_admin or operate across tenants
+    if (!callerIsSuper) {
+      if (role === "super_admin") {
+        throw new HttpsError("permission-denied", "Solo el super administrador puede asignar ese rol.");
+      }
+      // tenant_admin can only manage collaborators of their own tenant
+      if (tenantId && tenantId !== callerClaims.tenantId) {
+        throw new HttpsError("permission-denied", "Solo puedes gestionar colaboradores de tu organización.");
+      }
+      if (role === "tenant_admin") {
+        throw new HttpsError("permission-denied", "Solo el super administrador puede asignar tenant_admin.");
+      }
     }
 
-    // Principal admin accounts can never be revoked
-    if (!grant && PRINCIPAL_ADMIN_EMAILS.has(targetEmail)) {
-      throw new HttpsError("permission-denied", "No se pueden revocar los permisos de un administrador principal.");
+    // Super admin email can never be revoked
+    if (revoke && targetEmail === SUPER_ADMIN_EMAIL) {
+      throw new HttpsError("permission-denied", "No se pueden revocar los permisos del super administrador.");
     }
 
     const targetRecord = await admin.auth().getUserByEmail(targetEmail);
-    const existingClaims = targetRecord.customClaims || {};
-    await admin.auth().setCustomUserClaims(targetRecord.uid, { ...existingClaims, admin: grant });
 
-    console.info("setAdminClaim", { callerUid, callerEmail: callerRecord.email, targetEmail, grant });
-    return { success: true, uid: targetRecord.uid };
+    let newClaims;
+    if (revoke) {
+      newClaims = {};
+    } else if (role === "super_admin") {
+      newClaims = { role: "super_admin", admin: true };
+    } else if (role === "tenant_admin") {
+      if (!tenantId) throw new HttpsError("invalid-argument", "tenantId requerido para tenant_admin.");
+      newClaims = { role: "tenant_admin", tenantId };
+    } else if (role === "tenant_collaborator") {
+      if (!tenantId) throw new HttpsError("invalid-argument", "tenantId requerido para tenant_collaborator.");
+      newClaims = { role: "tenant_collaborator", tenantId };
+    }
+
+    await admin.auth().setCustomUserClaims(targetRecord.uid, newClaims);
+
+    console.info("setAdminClaim", {
+      callerUid,
+      callerEmail: callerRecord.email,
+      targetEmail,
+      role: revoke ? "revoked" : role,
+      tenantId: tenantId ?? null,
+    });
+    return { success: true, uid: targetRecord.uid, role: revoke ? null : role };
   }
 );
 
@@ -2387,13 +2512,40 @@ exports.setAdminClaim = onCall(
 exports.listAdmins = onCall(
   { enforceAppCheck: false },
   async (request) => {
-    if (request.auth?.token?.admin !== true) {
+    const callerClaims = request.auth?.token ?? {};
+    const isSuper = callerClaims.role === "super_admin" || callerClaims.admin === true;
+    const isTenantAdmin = callerClaims.role === "tenant_admin";
+    if (!isSuper && !isTenantAdmin) {
       throw new HttpsError("permission-denied", "Solo administradores.");
     }
+
     const listResult = await admin.auth().listUsers(1000);
-    const admins = listResult.users
-      .filter((u) => u.customClaims?.admin === true)
-      .map((u) => ({ uid: u.uid, email: u.email, displayName: u.displayName }));
+
+    let admins;
+    if (isSuper) {
+      // Super admin sees everyone with any admin role
+      admins = listResult.users
+        .filter((u) => u.customClaims?.admin === true || u.customClaims?.role)
+        .map((u) => ({
+          uid: u.uid,
+          email: u.email,
+          displayName: u.displayName,
+          role: u.customClaims?.role ?? (u.customClaims?.admin ? "super_admin" : null),
+          tenantId: u.customClaims?.tenantId ?? null,
+        }));
+    } else {
+      // Tenant admin sees only collaborators of their own tenant
+      const callerTenantId = callerClaims.tenantId;
+      admins = listResult.users
+        .filter((u) => u.customClaims?.tenantId === callerTenantId)
+        .map((u) => ({
+          uid: u.uid,
+          email: u.email,
+          displayName: u.displayName,
+          role: u.customClaims?.role,
+          tenantId: u.customClaims?.tenantId,
+        }));
+    }
     return { admins };
   }
 );
@@ -2405,9 +2557,18 @@ exports.listAdmins = onCall(
 exports.getAdminStats = onCall(
   { enforceAppCheck: false },
   async (request) => {
-    if (request.auth?.token?.admin !== true) {
+    const callerClaims = request.auth?.token ?? {};
+    const isSuper = callerClaims.role === "super_admin" || callerClaims.admin === true;
+    const isTenantAdminRole = callerClaims.role === "tenant_admin";
+    if (!isSuper && !isTenantAdminRole) {
       throw new HttpsError("permission-denied", "Solo administradores.");
     }
+
+    // filterTenantId: if super_admin passes a tenantId param, filter to that tenant;
+    // if tenant_admin, always filter to their own tenant.
+    const filterTenantId = isTenantAdminRole
+      ? callerClaims.tenantId
+      : (request.data?.tenantId ?? null);
 
     const now = new Date();
     const startOfMonth    = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
@@ -2417,9 +2578,13 @@ exports.getAdminStats = onCall(
 
     const rates = await getExchangeRates(null);
 
-    // 2 queries instead of N+1: users + all transactions via collectionGroup
+    // Fetch users — filtered by tenant if needed
+    const usersQuery = filterTenantId
+      ? db.collection("users").where("tenantId", "==", filterTenantId)
+      : db.collection("users");
+
     const [usersSnap, txSnap] = await Promise.all([
-      db.collection("users").get(),
+      usersQuery.get(),
       db.collectionGroup("transactions").get(),
     ]);
 
@@ -2469,12 +2634,18 @@ exports.getAdminStats = onCall(
     const currencyTotalsOriginal = {}; // sum in original currency, for display
     const activeThisMonthSet = new Set();
 
+    // Build set of tenant user IDs for fast filtering when scoped to a tenant
+    const tenantUserIds = filterTenantId ? new Set(usersSnap.docs.map((d) => d.id)) : null;
+
     for (const txDoc of txSnap.docs) {
       const tx = txDoc.data();
       if (tx.type === "walletFill" && tx.amount < 0) continue; // skip outgoing transfers
 
       const uid = txDoc.ref.parent.parent?.id;
       if (!uid) continue;
+
+      // When scoped to a tenant, skip transactions from users outside it
+      if (tenantUserIds && !tenantUserIds.has(uid)) continue;
 
       const userMeta = userMap[uid] || { displayName: uid, email: "", currencyCode: "USD" };
       const txCurrency = String(tx.currencyCode || userMeta.currencyCode).toUpperCase();
@@ -2588,18 +2759,29 @@ exports.getAdminStats = onCall(
 exports.getRecentTransactions = onCall(
   { enforceAppCheck: false },
   async (request) => {
-    if (request.auth?.token?.admin !== true) {
+    const callerClaims = request.auth?.token ?? {};
+    const isSuper = callerClaims.role === "super_admin" || callerClaims.admin === true;
+    const isTenantAdminRole = callerClaims.role === "tenant_admin";
+    if (!isSuper && !isTenantAdminRole) {
       throw new HttpsError("permission-denied", "Solo administradores.");
     }
+
+    const filterTenantId = isTenantAdminRole
+      ? callerClaims.tenantId
+      : (request.data?.tenantId ?? null);
 
     const { filterType, filterCurrency, searchText } = request.data ?? {};
 
     const rates = await getExchangeRates(null);
     const mxnRate = rates["MXN"] ?? 17.1;
 
+    const usersQuery = filterTenantId
+      ? db.collection("users").where("tenantId", "==", filterTenantId)
+      : db.collection("users");
+
     const [txSnap, usersSnap] = await Promise.all([
       db.collectionGroup("transactions").get(),
-      db.collection("users").get(),
+      usersQuery.get(),
     ]);
 
     const userMap = {};
@@ -2608,30 +2790,36 @@ exports.getRecentTransactions = onCall(
       userMap[d.id] = { displayName: u.displayName || u.email || d.id, email: u.email || "" };
     });
 
-    let txs = txSnap.docs.map((d) => {
-      const tx = d.data();
-      const uid = d.ref.parent.parent?.id ?? "";
-      const user = userMap[uid] ?? { displayName: uid, email: "" };
-      let amountMXN = tx.amountMXN;
-      if (amountMXN == null && tx.amountUSD != null) amountMXN = tx.amountUSD * mxnRate;
-      if (amountMXN == null) {
-        const txRate = rates[String(tx.currencyCode || "USD").toUpperCase()] ?? 1;
-        amountMXN = (tx.amount / txRate) * mxnRate;
-      }
-      const createdAt = tx.createdAt?.toDate?.() ?? new Date(0);
-      return {
-        id: d.id,
-        uid,
-        displayName: user.displayName,
-        email: user.email,
-        type: tx.type ?? "tzedaka",
-        amount: tx.amount ?? 0,
-        currencyCode: String(tx.currencyCode || "USD").toUpperCase(),
-        amountMXN: Math.round((amountMXN || 0) * 100) / 100,
-        description: tx.description ?? "",
-        createdAt: createdAt.toISOString(),
-      };
-    });
+    // Only include transactions whose owner is in the userMap (respects tenant filter)
+    let txs = txSnap.docs
+      .filter((d) => {
+        const uid = d.ref.parent.parent?.id ?? "";
+        return !filterTenantId || userMap[uid] !== undefined;
+      })
+      .map((d) => {
+        const tx = d.data();
+        const uid = d.ref.parent.parent?.id ?? "";
+        const user = userMap[uid] ?? { displayName: uid, email: "" };
+        let amountMXN = tx.amountMXN;
+        if (amountMXN == null && tx.amountUSD != null) amountMXN = tx.amountUSD * mxnRate;
+        if (amountMXN == null) {
+          const txRate = rates[String(tx.currencyCode || "USD").toUpperCase()] ?? 1;
+          amountMXN = (tx.amount / txRate) * mxnRate;
+        }
+        const createdAt = tx.createdAt?.toDate?.() ?? new Date(0);
+        return {
+          id: d.id,
+          uid,
+          displayName: user.displayName,
+          email: user.email,
+          type: tx.type ?? "tzedaka",
+          amount: tx.amount ?? 0,
+          currencyCode: String(tx.currencyCode || "USD").toUpperCase(),
+          amountMXN: Math.round((amountMXN || 0) * 100) / 100,
+          description: tx.description ?? "",
+          createdAt: createdAt.toISOString(),
+        };
+      });
 
     if (filterType) txs = txs.filter((t) => t.type === filterType);
     if (filterCurrency) txs = txs.filter((t) => t.currencyCode === String(filterCurrency).toUpperCase());
@@ -2655,9 +2843,16 @@ exports.getRecentTransactions = onCall(
 exports.getFailedPayments = onCall(
   { enforceAppCheck: false },
   async (request) => {
-    if (request.auth?.token?.admin !== true) {
+    const callerClaims = request.auth?.token ?? {};
+    const isSuper = callerClaims.role === "super_admin" || callerClaims.admin === true;
+    const isTenantAdminRole = callerClaims.role === "tenant_admin";
+    if (!isSuper && !isTenantAdminRole) {
       throw new HttpsError("permission-denied", "Solo administradores.");
     }
+
+    const filterTenantId = isTenantAdminRole
+      ? callerClaims.tenantId
+      : (request.data?.tenantId ?? null);
 
     const since = admin.firestore.Timestamp.fromDate(
       new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
@@ -2667,7 +2862,7 @@ exports.getFailedPayments = onCall(
       .where("createdAt", ">=", since)
       .get();
 
-    const failed = snap.docs
+    let failed = snap.docs
       .filter((d) => {
         const data = d.data();
         return data.outcome === "failed" || data.status === "failed";
@@ -2691,9 +2886,18 @@ exports.getFailedPayments = onCall(
     userSnaps.forEach((s) => {
       if (s.exists) {
         const u = s.data();
-        userMap[s.id] = { displayName: u.displayName || u.email || s.id, email: u.email || "" };
+        userMap[s.id] = {
+          displayName: u.displayName || u.email || s.id,
+          email: u.email || "",
+          tenantId: u.tenantId ?? null,
+        };
       }
     });
+
+    // Filter by tenant if needed
+    if (filterTenantId) {
+      failed = failed.filter((f) => userMap[f.uid]?.tenantId === filterTenantId);
+    }
 
     return failed.map((f) => ({
       ...f,
@@ -2710,7 +2914,10 @@ exports.getFailedPayments = onCall(
 exports.setUserBlocked = onCall(
   { enforceAppCheck: false },
   async (request) => {
-    if (request.auth?.token?.admin !== true) {
+    const callerClaims = request.auth?.token ?? {};
+    const isSuper = callerClaims.role === "super_admin" || callerClaims.admin === true;
+    const isTenantAdminRole = callerClaims.role === "tenant_admin";
+    if (!isSuper && !isTenantAdminRole) {
       throw new HttpsError("permission-denied", "Solo administradores.");
     }
 
@@ -2719,6 +2926,14 @@ exports.setUserBlocked = onCall(
     const notes = request.data?.notes !== undefined ? String(request.data.notes) : undefined;
 
     if (!uid) throw new HttpsError("invalid-argument", "uid requerido.");
+
+    // Tenant admins can only block users in their own tenant
+    if (isTenantAdminRole) {
+      const targetSnap = await db.collection("users").doc(uid).get();
+      if (!targetSnap.exists || targetSnap.data()?.tenantId !== callerClaims.tenantId) {
+        throw new HttpsError("permission-denied", "Solo puedes gestionar usuarios de tu organización.");
+      }
+    }
 
     // Disable/enable the Firebase Auth account — this prevents login entirely
     await admin.auth().updateUser(uid, { disabled: isBlocked });
@@ -2738,5 +2953,411 @@ exports.setUserBlocked = onCall(
     await db.collection("adminData").doc(uid).set(adminDataPatch, { merge: true });
 
     return { success: true, uid, isBlocked };
+  }
+);
+
+// ===========================================================================
+// MULTI-TENANT — Tenant management functions
+// ===========================================================================
+
+// Fields exposed publicly (for app branding preview before registration)
+const TENANT_PUBLIC_FIELDS = [
+  "name", "slug", "appName", "welcomeText",
+  "primaryColor", "secondaryColor", "logoUrl", "showPoweredBy",
+  "defaultLanguage", "defaultCurrency", "defaultCountry",
+  "contactEmail", "contactPhone", "privacyPolicyUrl", "termsUrl",
+  "city", "country", "status",
+];
+
+// Fields exposed to authenticated users of the tenant (same as public + a bit more)
+const TENANT_MEMBER_FIELDS = [...TENANT_PUBLIC_FIELDS];
+
+/**
+ * Validates that a slug is URL-safe and not already taken.
+ * Returns the normalized slug or throws.
+ */
+async function validateSlug(slug, excludeTenantId = null) {
+  const normalized = String(slug || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, "");
+  if (!normalized || normalized.length < 3 || normalized.length > 30) {
+    throw new HttpsError("invalid-argument", "El slug debe tener entre 3 y 30 caracteres alfanuméricos.");
+  }
+  const existing = await db.collection("tenants").where("slug", "==", normalized).limit(1).get();
+  if (!existing.empty && existing.docs[0].id !== excludeTenantId) {
+    throw new HttpsError("already-exists", `El código "${normalized}" ya está en uso.`);
+  }
+  return normalized;
+}
+
+// ---------------------------------------------------------------------------
+// createTenant — super_admin only
+// ---------------------------------------------------------------------------
+exports.createTenant = onCall(
+  { enforceAppCheck: false },
+  async (request) => {
+    const callerClaims = request.auth?.token ?? {};
+    if (callerClaims.role !== "super_admin" && callerClaims.admin !== true) {
+      throw new HttpsError("permission-denied", "Solo el super administrador puede crear tenants.");
+    }
+
+    const {
+      name, slug, appName, welcomeText,
+      primaryColor, secondaryColor, logoUrl,
+      defaultLanguage, defaultCurrency, defaultCountry,
+      contactEmail, contactPhone, privacyPolicyUrl, termsUrl,
+      city, country,
+      adminEmail,
+      commissionRate, planPrice,
+    } = request.data ?? {};
+
+    if (!name || !slug || !adminEmail) {
+      throw new HttpsError("invalid-argument", "name, slug y adminEmail son requeridos.");
+    }
+
+    const normalizedSlug = await validateSlug(slug);
+
+    const now = admin.firestore.FieldValue.serverTimestamp();
+
+    const tenantData = {
+      // Identity
+      name: String(name).trim(),
+      slug: normalizedSlug,
+      status: "active",
+
+      // Branding
+      appName: String(appName || name).trim(),
+      welcomeText: String(welcomeText || "").trim(),
+      primaryColor: String(primaryColor || "#E8A87C").trim(),
+      secondaryColor: String(secondaryColor || "#D4A843").trim(),
+      logoUrl: String(logoUrl || "").trim(),
+      showPoweredBy: true,
+
+      // Localization
+      defaultLanguage: String(defaultLanguage || "es"),
+      defaultCurrency: String(defaultCurrency || "USD").toUpperCase(),
+      defaultCountry: String(defaultCountry || "").trim(),
+
+      // Legal / Contact
+      contactEmail: String(contactEmail || adminEmail).trim(),
+      contactPhone: String(contactPhone || "").trim(),
+      privacyPolicyUrl: String(privacyPolicyUrl || "").trim(),
+      termsUrl: String(termsUrl || "").trim(),
+      city: String(city || "").trim(),
+      country: String(country || "").trim(),
+
+      // Stripe Connect — set later via OAuth
+      stripeConnectAccountId: null,
+      stripeConnectStatus: "not_connected",
+      commissionRate: typeof commissionRate === "number" ? commissionRate : 0.03,
+
+      // Billing — set later when subscription is created
+      planPrice: typeof planPrice === "number" ? planPrice : 99,
+      stripeSubscriptionId: null,
+      stripeCustomerId: null,
+      paymentStatus: "trial",
+      billingCycleStart: now,
+      billingNextDue: null,
+      gracePeriodEndsAt: null,
+
+      // Admin
+      adminEmail: String(adminEmail).trim(),
+      adminUid: null,  // set when admin logs in for the first time
+      createdAt: now,
+      updatedAt: now,
+      createdBy: request.auth.uid,
+    };
+
+    const docRef = await db.collection("tenants").add(tenantData);
+
+    // Assign tenant_admin claim to the admin email if they already have a Firebase account
+    try {
+      const adminRecord = await admin.auth().getUserByEmail(adminEmail.trim());
+      await admin.auth().setCustomUserClaims(adminRecord.uid, {
+        role: "tenant_admin",
+        tenantId: docRef.id,
+      });
+      await docRef.update({ adminUid: adminRecord.uid });
+    } catch (e) {
+      // User doesn't have an account yet — claims will be set when they register
+      console.info(`createTenant: admin ${adminEmail} has no Firebase account yet; claims pending`);
+    }
+
+    console.info("createTenant", { id: docRef.id, slug: normalizedSlug, adminEmail });
+    return { success: true, tenantId: docRef.id, slug: normalizedSlug };
+  }
+);
+
+// ---------------------------------------------------------------------------
+// updateTenant — super_admin only
+// ---------------------------------------------------------------------------
+exports.updateTenant = onCall(
+  { enforceAppCheck: false },
+  async (request) => {
+    const callerClaims = request.auth?.token ?? {};
+    if (callerClaims.role !== "super_admin" && callerClaims.admin !== true) {
+      throw new HttpsError("permission-denied", "Solo el super administrador puede editar tenants.");
+    }
+
+    const { tenantId, ...updates } = request.data ?? {};
+    if (!tenantId) throw new HttpsError("invalid-argument", "tenantId requerido.");
+
+    const tenantRef = db.collection("tenants").doc(tenantId);
+    const snap = await tenantRef.get();
+    if (!snap.exists) throw new HttpsError("not-found", "Tenant no encontrado.");
+
+    // Allowed fields that super_admin can update
+    const allowed = [
+      "name", "appName", "welcomeText",
+      "primaryColor", "secondaryColor", "logoUrl", "showPoweredBy",
+      "defaultLanguage", "defaultCurrency", "defaultCountry",
+      "contactEmail", "contactPhone", "privacyPolicyUrl", "termsUrl",
+      "city", "country", "status",
+      "commissionRate", "planPrice",
+      "stripeConnectAccountId", "stripeConnectStatus",
+      "stripeSubscriptionId", "stripeCustomerId", "paymentStatus",
+      "billingNextDue", "gracePeriodEndsAt", "billingCycleStart",
+      "adminEmail", "adminUid",
+    ];
+
+    // If slug is being updated, validate uniqueness
+    let normalizedSlug;
+    if (updates.slug) {
+      normalizedSlug = await validateSlug(updates.slug, tenantId);
+    }
+
+    const patch = { updatedAt: admin.firestore.FieldValue.serverTimestamp() };
+    for (const key of allowed) {
+      if (key in updates) patch[key] = updates[key];
+    }
+    if (normalizedSlug) patch.slug = normalizedSlug;
+
+    await tenantRef.update(patch);
+
+    console.info("updateTenant", { tenantId, fields: Object.keys(patch) });
+    return { success: true, tenantId };
+  }
+);
+
+// ---------------------------------------------------------------------------
+// getTenantBySlug — public (no auth required), for code validation in app
+// ---------------------------------------------------------------------------
+exports.getTenantBySlug = onCall(
+  { enforceAppCheck: false },
+  async (request) => {
+    const slug = String(request.data?.slug || "")
+      .toLowerCase()
+      .replace(/[^a-z0-9]/g, "");
+
+    if (!slug) throw new HttpsError("invalid-argument", "slug requerido.");
+
+    const snap = await db.collection("tenants")
+      .where("slug", "==", slug)
+      .where("status", "in", ["active", "trial", "grace_period"])
+      .limit(1)
+      .get();
+
+    if (snap.empty) {
+      throw new HttpsError("not-found", "Organización no encontrada o inactiva.");
+    }
+
+    const doc = snap.docs[0];
+    const data = doc.data();
+
+    // Return only public branding fields — never Stripe keys or billing details
+    const publicData = {};
+    for (const field of TENANT_PUBLIC_FIELDS) {
+      if (data[field] !== undefined) publicData[field] = data[field];
+    }
+
+    return { tenantId: doc.id, ...publicData };
+  }
+);
+
+// ---------------------------------------------------------------------------
+// getTenantConfig — authenticated, returns branding for the user's own tenant
+// ---------------------------------------------------------------------------
+exports.getTenantConfig = onCall(
+  { enforceAppCheck: false },
+  async (request) => {
+    if (!request.auth?.uid) {
+      throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
+    }
+
+    const userSnap = await db.collection("users").doc(request.auth.uid).get();
+    if (!userSnap.exists) throw new HttpsError("not-found", "Usuario no encontrado.");
+
+    const tenantId = userSnap.data()?.tenantId;
+    if (!tenantId) {
+      // User has no tenant yet — return null config
+      return { tenantId: null, config: null };
+    }
+
+    const tenantSnap = await db.collection("tenants").doc(tenantId).get();
+    if (!tenantSnap.exists) throw new HttpsError("not-found", "Organización no encontrada.");
+
+    const data = tenantSnap.data();
+
+    // If tenant is suspended, the app should show a "service unavailable" screen
+    if (data.status === "suspended") {
+      return { tenantId, config: null, suspended: true };
+    }
+
+    const config = {};
+    for (const field of TENANT_MEMBER_FIELDS) {
+      if (data[field] !== undefined) config[field] = data[field];
+    }
+
+    return { tenantId, config };
+  }
+);
+
+// ---------------------------------------------------------------------------
+// listTenants — super_admin only, returns all tenants with summary stats
+// ---------------------------------------------------------------------------
+exports.listTenants = onCall(
+  { enforceAppCheck: false },
+  async (request) => {
+    const callerClaims = request.auth?.token ?? {};
+    if (callerClaims.role !== "super_admin" && callerClaims.admin !== true) {
+      throw new HttpsError("permission-denied", "Solo el super administrador.");
+    }
+
+    const snap = await db.collection("tenants").get();
+
+    const tenants = snap.docs.map((d) => {
+      const data = d.data();
+      return {
+        tenantId: d.id,
+        name: data.name,
+        slug: data.slug,
+        appName: data.appName,
+        status: data.status,
+        paymentStatus: data.paymentStatus,
+        stripeConnectStatus: data.stripeConnectStatus,
+        commissionRate: data.commissionRate,
+        planPrice: data.planPrice,
+        adminEmail: data.adminEmail,
+        city: data.city,
+        country: data.country,
+        createdAt: data.createdAt?.toDate?.()?.toISOString() ?? null,
+        billingNextDue: data.billingNextDue?.toDate?.()?.toISOString() ?? null,
+        gracePeriodEndsAt: data.gracePeriodEndsAt?.toDate?.()?.toISOString() ?? null,
+      };
+    });
+
+    return { tenants };
+  }
+);
+
+// ---------------------------------------------------------------------------
+// createStripeConnectLink — super_admin or tenant_admin generates OAuth URL
+// ---------------------------------------------------------------------------
+exports.createStripeConnectLink = onCall(
+  { secrets: [stripeConnectClientId], enforceAppCheck: false },
+  async (request) => {
+    const callerClaims = request.auth?.token ?? {};
+    const isSuperAdminCaller = callerClaims.role === "super_admin" || callerClaims.admin === true;
+    const isTenantAdminCaller = callerClaims.role === "tenant_admin";
+
+    if (!isSuperAdminCaller && !isTenantAdminCaller) {
+      throw new HttpsError("permission-denied", "Acceso denegado.");
+    }
+
+    // super_admin passes tenantId; tenant_admin uses their own
+    const tenantId = isSuperAdminCaller
+      ? request.data?.tenantId
+      : callerClaims.tenantId;
+
+    if (!tenantId) throw new HttpsError("invalid-argument", "tenantId requerido.");
+
+    const clientId = stripeConnectClientId.value();
+    if (!clientId) throw new HttpsError("failed-precondition", "Stripe Connect no configurado.");
+
+    // Generate a state token for CSRF protection — store it in Firestore
+    const crypto = require("crypto");
+    const state = crypto.randomBytes(20).toString("hex");
+
+    await db.collection("tenants").doc(tenantId).update({
+      stripeConnectOAuthState: state,
+      stripeConnectOAuthStateCreatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+
+    const redirectUri = `https://us-central1-pushka-app-ioel.cloudfunctions.net/handleStripeConnectOAuth`;
+    const params = new URLSearchParams({
+      response_type: "code",
+      client_id: clientId,
+      scope: "read_write",
+      state,
+      redirect_uri: redirectUri,
+    });
+
+    return { url: `https://connect.stripe.com/oauth/authorize?${params.toString()}` };
+  }
+);
+
+// ---------------------------------------------------------------------------
+// handleStripeConnectOAuth — HTTP callback from Stripe after tenant authorizes
+// ---------------------------------------------------------------------------
+exports.handleStripeConnectOAuth = onRequest(
+  { secrets: [stripeSecret, stripeConnectClientId] },
+  async (req, res) => {
+    // Stripe sends a GET with ?code=xxx&state=xxx (or ?error=xxx on denial)
+    const { code, state, error } = req.query;
+
+    if (error) {
+      console.warn("Stripe Connect OAuth denied:", error);
+      return res.redirect(`https://pushka-admin.web.app/tenants?connect=denied`);
+    }
+
+    if (!code || !state) {
+      return res.status(400).send("Parámetros inválidos.");
+    }
+
+    // Find the tenant with this state token (CSRF check)
+    const tenantsSnap = await db.collection("tenants")
+      .where("stripeConnectOAuthState", "==", state)
+      .limit(1)
+      .get();
+
+    if (tenantsSnap.empty) {
+      console.error("No tenant found for Stripe Connect state:", state);
+      return res.status(400).send("Estado inválido o expirado.");
+    }
+
+    const tenantDoc = tenantsSnap.docs[0];
+    const tenantId = tenantDoc.id;
+
+    // Validate state is not older than 1 hour
+    const stateCreatedAt = tenantDoc.data().stripeConnectOAuthStateCreatedAt?.toDate?.();
+    if (!stateCreatedAt || Date.now() - stateCreatedAt.getTime() > 3600000) {
+      await tenantDoc.ref.update({ stripeConnectOAuthState: null });
+      return res.status(400).send("Enlace expirado. Genera uno nuevo desde el panel.");
+    }
+
+    // Exchange code for access_token and stripe_user_id
+    try {
+      const stripe = require("stripe")(stripeSecret.value());
+      const response = await stripe.oauth.token({
+        grant_type: "authorization_code",
+        code,
+      });
+
+      const stripeConnectAccountId = response.stripe_user_id;
+
+      await tenantDoc.ref.update({
+        stripeConnectAccountId,
+        stripeConnectStatus: "active",
+        stripeConnectOAuthState: null,
+        stripeConnectOAuthStateCreatedAt: null,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+
+      console.log(`Stripe Connect activated for tenant ${tenantId}: ${stripeConnectAccountId}`);
+      return res.redirect(`https://pushka-admin.web.app/tenants/${tenantId}?connect=success`);
+    } catch (err) {
+      console.error("Stripe Connect OAuth exchange error:", err);
+      return res.status(500).send("Error al conectar con Stripe. Intentá de nuevo.");
+    }
   }
 );

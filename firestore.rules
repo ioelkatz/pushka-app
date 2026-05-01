@@ -10,7 +10,30 @@ service cloud.firestore {
     }
 
     function isAdmin() {
-      return isSignedIn() && request.auth.token.admin == true;
+      return isSignedIn() && (
+        request.auth.token.admin == true ||
+        request.auth.token.role == 'super_admin'
+      );
+    }
+
+    function isSuperAdmin() {
+      return isSignedIn() && request.auth.token.role == 'super_admin';
+    }
+
+    function isTenantAdmin() {
+      return isSignedIn() && request.auth.token.role == 'tenant_admin';
+    }
+
+    function isTenantCollaborator() {
+      return isSignedIn() && request.auth.token.role == 'tenant_collaborator';
+    }
+
+    function callerTenantId() {
+      return request.auth.token.tenantId;
+    }
+
+    function isTenantMember() {
+      return isTenantAdmin() || isTenantCollaborator();
     }
 
     function validFrequency(value) {
@@ -102,7 +125,8 @@ service cloud.firestore {
             'stripeDefaultPaymentMethodLast4',
             'stripeDefaultPaymentMethodBrand',
             'stripeCustomerIdPending',
-            'isBlocked'
+            'isBlocked',
+            'tenantId'
           ]) &&
           request.resource.data.uid is string &&
           request.resource.data.uid == uid &&
@@ -316,6 +340,14 @@ service cloud.firestore {
               request.resource.data.platform == 'ios');
     }
 
+    // Tenants — branding and config for each organization
+    match /tenants/{tenantId} {
+      // Super admin: full read/write
+      allow read, write: if isAdmin();
+      // Tenant admin and collaborator: read only their own tenant (for branding)
+      allow read: if isTenantMember() && callerTenantId() == tenantId;
+    }
+
     // Internal collections — server-side only, deny all client access.
     match /_rateLimits/{document=**} {
       allow read, write: if false;
@@ -340,7 +372,8 @@ service cloud.firestore {
     }
 
     match /users/{uid} {
-      allow read: if isOwner(uid) || isAdmin();
+      allow read: if isOwner(uid) || isAdmin() ||
+        (isTenantMember() && resource.data.tenantId == callerTenantId());
       // On create: walletBalance must be 0 (server-side CFs credit the balance).
       // Stripe fields must not be present — they are written exclusively by CFs.
       allow create: if isOwner(uid) &&
