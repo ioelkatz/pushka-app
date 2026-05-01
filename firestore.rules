@@ -43,6 +43,17 @@ service cloud.firestore {
           value == 'erev_rosh_chodesh';
     }
 
+    // tenantId on users/{uid} must reference an existing tenants/{id} document.
+    // Without this, any user could self-assign an arbitrary tenantId string
+    // and appear as a member of that tenant in `where(tenantId == X)` queries.
+    function validTenantIdField() {
+      return !('tenantId' in request.resource.data) ||
+          (request.resource.data.tenantId is string &&
+              request.resource.data.tenantId.size() > 0 &&
+              request.resource.data.tenantId.size() <= 50 &&
+              exists(/databases/$(database)/documents/tenants/$(request.resource.data.tenantId)));
+    }
+
     // Fields that only Cloud Functions may write (server-side only).
     // hasNoStripeFields() is for CREATE (new doc must not contain them).
     // hasNoStripeFieldsWritten() is for UPDATE (checks the diff — existing CF-written
@@ -87,14 +98,6 @@ service cloud.firestore {
             'billingEmail',
             'phoneNumber',
             'mailingAddress',
-            'walletId',
-            'walletBalance',
-            'walletAutoTopUpEnabled',
-            'walletAutoTopUpAmount',
-            'walletAutoTopUpFrequency',
-            'walletAutoTopUpWeekday',
-            'walletAutoTopUpDayOfMonth',
-            'walletAutoTopUpNextRunAt',
             'pushkaAmount',
             'pushkaGoal',
             'presetAmount',
@@ -130,32 +133,6 @@ service cloud.firestore {
           ]) &&
           request.resource.data.uid is string &&
           request.resource.data.uid == uid &&
-          (!('walletId' in request.resource.data) ||
-              (request.resource.data.walletId is string &&
-                  request.resource.data.walletId.size() >= 1 &&
-                  request.resource.data.walletId.size() <= 20)) &&
-          (!('walletBalance' in request.resource.data) ||
-              request.resource.data.walletBalance is number) &&
-          (!('walletAutoTopUpEnabled' in request.resource.data) ||
-              request.resource.data.walletAutoTopUpEnabled is bool) &&
-          (!('walletAutoTopUpAmount' in request.resource.data) ||
-              (request.resource.data.walletAutoTopUpAmount is number &&
-                  request.resource.data.walletAutoTopUpAmount >= 0)) &&
-          (!('walletAutoTopUpFrequency' in request.resource.data) ||
-              (request.resource.data.walletAutoTopUpFrequency is string &&
-                  (request.resource.data.walletAutoTopUpFrequency == 'weekly' ||
-                      request.resource.data.walletAutoTopUpFrequency == 'monthly'))) &&
-          (!('walletAutoTopUpWeekday' in request.resource.data) ||
-              (request.resource.data.walletAutoTopUpWeekday is int &&
-                  request.resource.data.walletAutoTopUpWeekday >= 1 &&
-                  request.resource.data.walletAutoTopUpWeekday <= 7)) &&
-          (!('walletAutoTopUpDayOfMonth' in request.resource.data) ||
-              (request.resource.data.walletAutoTopUpDayOfMonth is int &&
-                  request.resource.data.walletAutoTopUpDayOfMonth >= 1 &&
-                  request.resource.data.walletAutoTopUpDayOfMonth <= 31)) &&
-          (!('walletAutoTopUpNextRunAt' in request.resource.data) ||
-              request.resource.data.walletAutoTopUpNextRunAt is timestamp ||
-              request.resource.data.walletAutoTopUpNextRunAt == null) &&
           (!('pushkaAmount' in request.resource.data) ||
               (request.resource.data.pushkaAmount is number &&
                   request.resource.data.pushkaAmount >= 0 &&
@@ -247,9 +224,9 @@ service cloud.firestore {
             'paymentMethod',
             'status',
             'currencyCode',
+            'tenantId',
             'createdAt'
           ]) &&
-          // Only client-writable types; 'walletFill' is exclusively written by CFs.
           (request.resource.data.type == 'tzedaka' ||
               request.resource.data.type == 'pushkaEmpty') &&
           request.resource.data.amount is number &&
@@ -269,7 +246,13 @@ service cloud.firestore {
                   request.resource.data.status.size() <= 50)) &&
           (!('currencyCode' in request.resource.data) ||
               (request.resource.data.currencyCode is string &&
-                  request.resource.data.currencyCode.size() == 3));
+                  request.resource.data.currencyCode.size() == 3)) &&
+          // Optional tenantId — when present, must match the user's own tenantId
+          // (read from the parent users/{uid} doc) so users can't tag a tx as
+          // belonging to a different tenant for accounting purposes.
+          (!('tenantId' in request.resource.data) ||
+              (request.resource.data.tenantId is string &&
+                  request.resource.data.tenantId == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.tenantId));
     }
 
     function validReminderDoc() {
@@ -355,7 +338,7 @@ service cloud.firestore {
     match /_exchangeRates/{document=**} {
       allow read, write: if false;
     }
-    match /_walletTopUpIntents/{document=**} {
+    match /_tenantSlugs/{slug} {
       allow read, write: if false;
     }
     match /_stripeWebhookEvents/{document=**} {
@@ -374,40 +357,31 @@ service cloud.firestore {
     match /users/{uid} {
       allow read: if isOwner(uid) || isAdmin() ||
         (isTenantMember() && resource.data.tenantId == callerTenantId());
-      // On create: walletBalance must be 0 (server-side CFs credit the balance).
       // Stripe fields must not be present — they are written exclusively by CFs.
+      // tenantId, if present, must reference an existing tenants/{id} doc.
       allow create: if isOwner(uid) &&
           validUserDoc(uid) &&
           hasNoStripeFields() &&
-          (!('walletBalance' in request.resource.data) ||
-              request.resource.data.walletBalance == 0);
-      // On update: walletId, walletBalance, and isBlocked are immutable from the client.
-      // Stripe fields must not be written or changed — CFs own them via Admin SDK.
-      // NOTE: hasNoStripeFieldsWritten() and isBlockedNotChanged() check the diff (not
-      // request.resource.data) because the full doc may include CF-written fields.
+          validTenantIdField();
+      // Stripe fields and isBlocked are not writable from the client — CFs own
+      // them via Admin SDK. NOTE: hasNoStripeFieldsWritten() and
+      // isBlockedNotChanged() check the diff (not request.resource.data)
+      // because the full doc may include CF-written fields.
       allow update: if isOwner(uid) &&
           validUserDoc(uid) &&
           hasNoStripeFieldsWritten() &&
           isBlockedNotChanged() &&
+          // tenantId is immutable once set — prevents tenant-hopping attacks.
+          // When first being set, must reference an existing tenant.
           (
-            request.resource.data.walletId == resource.data.walletId ||
-            !('walletId' in resource.data)
-          ) &&
-          (
-            request.resource.data.walletBalance == resource.data.walletBalance ||
-            !('walletBalance' in resource.data)
-          ) &&
-          // tenantId is immutable once set — prevents tenant-hopping attacks
-          (
-            !('tenantId' in resource.data) ||
-            request.resource.data.tenantId == resource.data.tenantId
+            !('tenantId' in resource.data)
+              ? validTenantIdField()
+              : request.resource.data.tenantId == resource.data.tenantId
           );
       allow delete: if false;
 
       match /transactions/{transactionId} {
         allow read: if isOwner(uid) || isAdmin();
-        // validTransactionDoc() already restricts type to 'tzedaka' | 'pushkaEmpty';
-        // 'walletFill' is exclusively written by Cloud Functions (admin SDK bypasses rules).
         allow create: if isOwner(uid) && validTransactionDoc();
         allow update, delete: if false;
       }
@@ -429,15 +403,6 @@ service cloud.firestore {
         allow write: if false;
       }
 
-      match /walletContacts/{contactId} {
-        allow read: if isOwner(uid);
-        allow write: if false;
-      }
-
-      match /walletRequests/{requestId} {
-        allow read: if isOwner(uid);
-        allow write: if false;
-      }
     }
   }
 }

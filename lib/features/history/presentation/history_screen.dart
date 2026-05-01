@@ -15,7 +15,6 @@ enum _HistoryFilter {
   all,
   tzedaka,
   pushkaEmpty,
-  walletFill,
 }
 
 class HistoryScreen extends ConsumerStatefulWidget {
@@ -96,10 +95,6 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
                 value: _HistoryFilter.pushkaEmpty,
                 child: Text(_tr.filterPushkaEmpty),
               ),
-              PopupMenuItem(
-                value: _HistoryFilter.walletFill,
-                child: Text(_tr.filterWalletFill),
-              ),
               const PopupMenuDivider(),
               PopupMenuItem(
                 value: _HistoryFilter.all,
@@ -126,8 +121,6 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
                     return t.type == TransactionType.tzedaka;
                   case _HistoryFilter.pushkaEmpty:
                     return t.type == TransactionType.pushkaEmpty;
-                  case _HistoryFilter.walletFill:
-                    return t.type == TransactionType.walletFill;
                 }
               }).toList();
 
@@ -255,9 +248,6 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
     final (typeIcon, typeColor) = switch (t.type) {
       TransactionType.tzedaka     => (Icons.volunteer_activism_rounded, const Color(0xFF2563EB)),
       TransactionType.pushkaEmpty => (Icons.monetization_on_rounded,            const Color(0xFF059669)),
-      TransactionType.walletFill  => amount >= 0
-          ? (Icons.arrow_downward_rounded, const Color(0xFF059669))
-          : (Icons.arrow_upward_rounded,   const Color(0xFFE05A4F)),
     };
 
     showModalBottomSheet<void>(
@@ -355,8 +345,6 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
         return _tr.filterTzedaka;
       case _HistoryFilter.pushkaEmpty:
         return _tr.filterPushkaEmpty;
-      case _HistoryFilter.walletFill:
-        return _tr.filterWalletFill;
       case _HistoryFilter.all:
         return _tr.filterAll;
     }
@@ -377,9 +365,6 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
     final (typeIcon, typeColor) = switch (transaction.type) {
       TransactionType.tzedaka      => (Icons.volunteer_activism_rounded, const Color(0xFF2563EB)),
       TransactionType.pushkaEmpty  => (Icons.monetization_on_rounded,            const Color(0xFF059669)),
-      TransactionType.walletFill   => amount >= 0
-          ? (Icons.arrow_downward_rounded, const Color(0xFF059669))
-          : (Icons.arrow_upward_rounded,   const Color(0xFFE05A4F)),
     };
 
     return Container(
@@ -479,8 +464,6 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
         return _tr.filterTzedaka;
       case TransactionType.pushkaEmpty:
         return _tr.filterPushkaEmpty;
-      case TransactionType.walletFill:
-        return _tr.filterWalletFill;
     }
   }
 

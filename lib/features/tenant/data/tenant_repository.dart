@@ -3,9 +3,24 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../auth/providers/auth_state_provider.dart';
 import '../domain/tenant_config.dart';
+import '../domain/tenant_summary.dart';
 
 class TenantRepository {
   const TenantRepository();
+
+  /// Lists all active+discoverable tenants for the onboarding picker.
+  /// Tenants with `discoverable: false` are hidden (joinable only via code).
+  Future<List<TenantSummary>> listDiscoverable() async {
+    final result = await FirebaseFunctions.instance
+        .httpsCallable('listDiscoverableTenants')
+        .call<Map<Object?, Object?>>({});
+
+    final data = Map<String, dynamic>.from(result.data);
+    final raw = (data['tenants'] as List?) ?? const [];
+    return raw
+        .map((e) => TenantSummary.fromMap(Map<String, dynamic>.from(e as Map)))
+        .toList();
+  }
 
   /// Calls getTenantConfig Cloud Function for the currently logged-in user.
   /// Returns null if the user has no tenant yet.

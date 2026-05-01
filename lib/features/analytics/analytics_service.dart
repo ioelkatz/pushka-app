@@ -57,28 +57,6 @@ class AnalyticsService {
     }
   }
 
-  Future<void> logWalletFill(double amount) async {
-    try {
-      await _analytics.logEvent(
-        name: 'wallet_fill',
-        parameters: {'amount': amount},
-      );
-    } catch (e) {
-      debugPrint('Analytics.logWalletFill error: $e');
-    }
-  }
-
-  Future<void> logWalletTransfer(double amount) async {
-    try {
-      await _analytics.logEvent(
-        name: 'wallet_transfer',
-        parameters: {'amount': amount},
-      );
-    } catch (e) {
-      debugPrint('Analytics.logWalletTransfer error: $e');
-    }
-  }
-
   Future<void> logReminderCreated() async {
     try {
       await _analytics.logEvent(name: 'reminder_created');

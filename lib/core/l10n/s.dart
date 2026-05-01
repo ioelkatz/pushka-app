@@ -53,7 +53,6 @@ class S {
 
   String hello(String name) => _t('Hola $name', 'Hello $name', 'Bonjour $name', 'שלום $name');
   String get myPushka => _t('Mi Pushka', 'My Pushka', 'Ma Pushka', 'הפושקה שלי');
-  String get wallet => _t('Billetera', 'Wallet', 'Portefeuille', 'ארנק');
   String get reminders => _t('Recordatorios', 'Reminders', 'Rappels', 'תזכורות');
   String get history => _t('Historial', 'History', 'Historique', 'היסטוריה');
   String get settings => _t('Configuración', 'Settings', 'Paramètres', 'הגדרות');
@@ -512,7 +511,6 @@ class S {
   String get filterAll => _t('Todos', 'All', 'Tous', 'הכל');
   String get filterTzedaka => _t('Mi Tzedaka', 'My Tzedakah', 'Ma Tsédaka', 'הצדקה שלי');
   String get filterPushkaEmpty => _t('Pushka Vacía', 'Pushka Empty', 'Pushka vidée', 'פושקה ריקה');
-  String get filterWalletFill => _t('Billetera Rellena', 'Wallet Fill', 'Portefeuille rechargé', 'ארנק טעון');
   String get noTransactions => _t('No hay transacciones', 'No transactions', 'Aucune transaction', 'אין עסקאות');
   String get noTransactionsSubtitle => _t('Tus donaciones aparecerán aquí', 'Your donations will appear here', 'Vos dons apparaîtront ici', 'התרומות שלך יופיעו כאן');
   String get noContactsSubtitle => _t('Agregá tu primer contacto con el botón +', 'Add your first contact with the + button', 'Ajoutez votre premier contact avec le bouton +', 'הוסף את הקשר הראשון שלך עם כפתור +');
@@ -535,7 +533,6 @@ class S {
 
   String get typeTzedaka => _t('Mi Tzedaka', 'My Tzedakah', 'Ma Tsédaka', 'הצדקה שלי');
   String get typePushkaEmpty => _t('Pushka Vacía', 'Pushka Empty', 'Pushka vidée', 'פושקה ריקה');
-  String get typeWalletFill => _t('Billetera Rellena', 'Wallet Fill', 'Portefeuille rechargé', 'ארנק טעון');
   String get methodCard => _t('Tarjeta', 'Card', 'Carte', 'כרטיס');
   String get methodCheck => _t('Cheque', 'Check', 'Chèque', "צ'ק");
   String get methodTransfer => _t('Transferencia', 'Transfer', 'Virement', 'העברה');
@@ -954,9 +951,6 @@ class S {
   // ---------------------------------------------------------------------------
 
   String get navPushka => _t('Mi Pushka', 'My Pushka', 'Ma Pushka', 'הפושקה שלי');
-  String get navWallet => _t('Billetera', 'Wallet', 'Portefeuille', 'ארנק');
-  String get navSendRequest => _t('Enviar/Solicitar', 'Send/Request', 'Envoyer/Demander', 'שלח/בקש');
-  String get navAutoRefill => _t('Recarga automática', 'Auto refill', 'Recharge automatique', 'טעינה אוטומטית');
   String get navReminders => _t('Recordatorios', 'Reminders', 'Rappels', 'תזכורות');
   String get navHistory => _t('Historial', 'History', 'Historique', 'היסטוריה');
   String get navSettings => _t('Configuración', 'Settings', 'Paramètres', 'הגדרות');
@@ -967,19 +961,6 @@ class S {
   // QR WALLET DIALOG
   // ---------------------------------------------------------------------------
 
-  String get showMyQr => _t('Mostrar mi QR', 'Show my QR', 'Afficher mon QR', 'הצג את ה-QR שלי');
-  String get signInToSeeQr => _t('Inicia sesión para ver tu código QR', 'Sign in to see your QR code', 'Connectez-vous pour voir votre code QR', 'התחבר כדי לראות את קוד ה-QR שלך');
-  String get closeTooltip => _t('Cerrar', 'Close', 'Fermer', 'סגור');
-  String get yourWalletDialog => _t('Tu billetera', 'Your wallet', 'Votre portefeuille', 'הארנק שלך');
-  String get yourSixDigitCode => _t('Tu código de 8 dígitos', 'Your 8-digit code', 'Votre code à 8 chiffres', 'הקוד בן 8 הספרות שלך');
-  String get walletCodeCopied => _t('Código copiado y listo para compartir', 'Code copied and ready to share', 'Code copié et prêt à partager', 'הקוד הועתק ומוכן לשיתוף');
-  String get walletShareSubject => _t('Mi código de billetera Pushka', 'My Pushka wallet code', 'Mon code portefeuille Pushka', 'קוד ארנק הפושקה שלי');
-  String walletShareMessage(String id) => _t(
-    'Mi código de billetera Pushka es: $id\nEscanealo o ingrésalo manualmente para enviar o solicitar tzedaká.\nDescargar app: https://pushkapp.cc/share',
-    'My Pushka wallet code is: $id\nScan it or enter it manually to send or request tzedakah.\nDownload app: https://pushkapp.cc/share',
-    'Mon code portefeuille Pushka est : $id\nScannez-le ou entrez-le manuellement pour envoyer ou demander de la tsédaka.\nTélécharger l\'app : https://pushkapp.cc/share',
-    'קוד ארנק הפושקה שלי הוא: $id\nסרוק אותו או הכנס ידנית לשליחה או בקשת צדקה.\nהורד את האפליקציה: https://pushkapp.cc/share',
-  );
   // ---------------------------------------------------------------------------
   // PAYMENT CONFIRMATION
   // ---------------------------------------------------------------------------
@@ -1014,15 +995,8 @@ class S {
     'Appuyez sur les montants prédéfinis pour continuer à accumuler. Fixez-vous un objectif et quand vous l\'atteignez, célébrez votre mitsva !',
     'לחץ על הסכומים הקבועים מראש כדי להוסיף. קבע יעד וכשתגיע אליו, חגוג את המצווה שלך!',
   );
-  String get onboarding3Title => _t('Tu Billetera', 'Your Wallet', 'Votre Portefeuille', 'הארנק שלך');
+  String get onboarding3Title => _t('Recordatorios', 'Reminders', 'Rappels', 'תזכורות');
   String get onboarding3Body => _t(
-    'Agrega fondos a tu billetera y envíalos a tus contactos. Comparte tu código QR para recibir tzedaká de otros.',
-    'Add funds to your wallet and send them to your contacts. Share your QR code to receive tzedakah from others.',
-    'Ajoutez des fonds à votre portefeuille et envoyez-les à vos contacts. Partagez votre code QR pour recevoir de la tsédaka des autres.',
-    'הוסף כספים לארנק שלך ושלח אותם לקשרים שלך. שתף את קוד ה-QR שלך לקבלת צדקה מאחרים.',
-  );
-  String get onboarding4Title => _t('Recordatorios', 'Reminders', 'Rappels', 'תזכורות');
-  String get onboarding4Body => _t(
     'Configura recordatorios diarios, semanales o para festividades judías. Nunca olvides tu mitzvá de Tzedaká.',
     'Set up daily, weekly, or Jewish holiday reminders. Never forget your Tzedakah mitzvah.',
     'Configurez des rappels quotidiens, hebdomadaires ou pour les fêtes juives. N\'oubliez jamais votre mitsva de Tsédaka.',
