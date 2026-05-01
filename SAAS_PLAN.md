@@ -353,9 +353,9 @@ Formulario en pasos:
 - [x] SHA-1 y SHA-256 registrados en Firebase para release
 - [x] Stripe Secret Key deployada en Firebase
 - [x] flutter_stripe actualizado a 12.6.0
-- [ ] FASE 1: Backend multi-tenant
-- [ ] FASE 2: App dinámica por tenant
-- [ ] FASE 3: Admin web multi-tenant
+- [x] FASE 1: Backend multi-tenant (2026-04-30)
+- [x] FASE 2: App dinámica por tenant (2026-04-30)
+- [x] FASE 3: Admin web multi-tenant (2026-04-30)
 - [ ] FASE 4: Billing automatizado
 - [ ] FASE 5: Lanzamiento
 
@@ -363,7 +363,8 @@ Formulario en pasos:
 
 ## Decisiones pendientes
 
-- [ ] ¿Qué ve un usuario que descarga la app sin link ni código? (decidir antes de Fase 2.3)
+- [x] ¿Qué ve un usuario sin link/código? → pantalla TenantCodeScreen (Fase 2.3 implementada)
+- [ ] ¿Qué pasa si un usuario nuevo descarga la app sin código? (actualmente ve TenantCodeScreen — pendiente definir si bloqueamos o permitimos uso limitado)
 - [ ] Nombre final de la app en las stores (por ahora: "Chabad Pushka")
 - [ ] ¿Self-service de branding para tenant_admin o solo Ioel edita? (recomendación: Ioel edita en onboarding, tenant puede cambiar logo/colores después)
 
