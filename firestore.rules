@@ -368,7 +368,8 @@ service cloud.firestore {
     }
 
     match /adminData/{uid} {
-      allow read, write: if isAdmin();
+      allow read: if isAdmin() || isTenantMember();
+      allow write: if isAdmin();
     }
 
     match /users/{uid} {

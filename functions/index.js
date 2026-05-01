@@ -2636,7 +2636,7 @@ exports.getAdminStats = onCall(
   async (request) => {
     const callerUid = request.auth?.uid;
     if (!callerUid) throw new HttpsError("unauthenticated", "Debes estar autenticado.");
-    await enforceRateLimit(callerUid, "getAdminStats", 30, 3600);
+    await enforceRateLimit(callerUid, "getAdminStats", 60, 3600);
 
     const callerClaims = request.auth?.token ?? {};
     const isSuper = callerClaims.role === "super_admin" || callerClaims.admin === true;
@@ -2939,10 +2939,16 @@ exports.getFailedPayments = onCall(
       new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
     );
 
-    const snap = await db.collection("_stripeWebhookEvents")
-      .where("status", "==", "failed")
-      .where("createdAt", ">=", since)
-      .get();
+    let snap;
+    try {
+      snap = await db.collection("_stripeWebhookEvents")
+        .where("status", "==", "failed")
+        .where("createdAt", ">=", since)
+        .get();
+    } catch (_) {
+      // Collection doesn't exist or missing composite index — return empty
+      return [];
+    }
 
     let failed = snap.docs
       .map((d) => {
