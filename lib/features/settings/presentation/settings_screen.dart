@@ -1,7 +1,6 @@
 import 'dart:typed_data';
-import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:google_sign_in/google_sign_in.dart';
 import 'package:country_picker/country_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -12,7 +11,7 @@ import 'package:mobile_scanner/mobile_scanner.dart';
 import '../../auth/providers/auth_controller.dart';
 import '../../users/data/user_repository.dart';
 import '../../users/presentation/user_profile_provider.dart';
-import '../../wallet/data/wallet_service.dart';
+import '../../tenant/data/tenant_repository.dart';
 import '../../../core/format_utils.dart';
 import '../../../core/l10n/locale_provider.dart';
 import 'package:go_router/go_router.dart';
@@ -47,23 +46,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   bool _loadedProfile = false;
   bool _uploadingPhoto = false;
 
-  Stream<QuerySnapshot<Map<String, dynamic>>> _pushkasStream(String uid) {
-    return FirebaseFirestore.instance
-        .collection('users')
-        .doc(uid)
-        .collection('walletContacts')
-        .orderBy('createdAt', descending: true)
-        .snapshots();
-  }
-
-  String _normalizeWalletId(String raw) {
-    final value = raw.trim().replaceAll(RegExp(r'\s'), '');
-    if (value.isEmpty) return '';
-    // Wallet IDs are always exactly 8 numeric digits
-    if (RegExp(r'^\d{8}$').hasMatch(value)) return value;
-    return '';
-  }
-
   String _currencySymbol(String code) {
     const symbols = {
       'usd': 'US\$', 'eur': '€', 'gbp': '£', 'cad': 'CA\$',
@@ -71,117 +53,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       'clp': 'CL\$', 'cop': 'CO\$',
     };
     return symbols[code.toLowerCase()] ?? '\$';
-  }
-
-  Future<void> _addPushkaByWalletId(String rawWalletId) async {
-    final walletId = _normalizeWalletId(rawWalletId);
-    if (walletId.isEmpty) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(S.of(context).invalidPushkaId)),
-      );
-      return;
-    }
-    try {
-      await WalletService.instance.addContact(walletId);
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(S.of(context).pushkaAdded)),
-      );
-    } catch (e) {
-      if (!mounted) return;
-      final String msg;
-      if (e is FirebaseFunctionsException) {
-        msg = switch (e.code) {
-          'not-found' => S.of(context).walletUserNotFound,
-          'invalid-argument' => S.of(context).invalidPushkaId,
-          _ => S.of(context).couldNotAddContact,
-        };
-      } else {
-        msg = S.of(context).couldNotAddContact;
-      }
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
-    }
-  }
-
-  Future<void> _openPushkaScanFlow() async {
-    final result = await Navigator.of(context, rootNavigator: true).push<String>(
-      MaterialPageRoute(builder: (_) => const _SettingsQrScannerScreen()),
-    );
-    if (result == null || result.isEmpty || !mounted) return;
-    await _addPushkaByWalletId(result);
-  }
-
-  Future<void> _showAddPushkaDialog() async {
-    bool showManualEntry = false;
-    String? error;
-
-    final manualWalletId = await showModalBottomSheet<String>(
-      context: context,
-      isScrollControlled: true,
-      useSafeArea: true,
-      backgroundColor: Colors.transparent,
-      builder: (ctx) {
-        return StatefulBuilder(
-          builder: (ctx, setSheetState) {
-            return Padding(
-              padding: EdgeInsets.only(bottom: MediaQuery.of(ctx).viewInsets.bottom),
-              child: Container(
-                decoration: BoxDecoration(color: Theme.of(ctx).colorScheme.surface, borderRadius: const BorderRadius.vertical(top: Radius.circular(20))),
-                child: SafeArea(top: false, child: SingleChildScrollView(
-                  padding: const EdgeInsets.fromLTRB(20, 8, 20, 16),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      Center(child: Container(width: 36, height: 4, margin: const EdgeInsets.only(bottom: 14), decoration: BoxDecoration(color: Colors.grey.shade300, borderRadius: BorderRadius.circular(2)))),
-                      Text(S.of(context).addNewPushka, textAlign: TextAlign.center, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
-                      const SizedBox(height: 18),
-                      SizedBox(height: 52, child: ElevatedButton(
-                        style: ElevatedButton.styleFrom(backgroundColor: Theme.of(ctx).brightness == Brightness.dark ? Theme.of(ctx).colorScheme.primary : const Color(0xFFE05A4F), foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
-                        onPressed: () => Navigator.of(ctx).pop(''),
-                        child: Text(S.of(context).scanQrCode, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
-                      )),
-                      const SizedBox(height: 12),
-                      if (!showManualEntry)
-                        SizedBox(height: 52, child: OutlinedButton(
-                          style: OutlinedButton.styleFrom(foregroundColor: Theme.of(ctx).brightness == Brightness.dark ? Theme.of(ctx).colorScheme.primary : const Color(0xFFE05A4F), side: BorderSide(color: Theme.of(ctx).brightness == Brightness.dark ? Theme.of(ctx).colorScheme.primary : const Color(0xFFE05A4F), width: 2), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
-                          onPressed: () { setSheetState(() { showManualEntry = true; error = null; }); },
-                          child: Text(S.of(context).enterPushkaId, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
-                        )),
-                      if (showManualEntry) ...[
-                        TextField(
-                          autofocus: true,
-                          textInputAction: TextInputAction.done,
-                          onChanged: (value) { if (error != null) setSheetState(() => error = null); },
-                          onSubmitted: (value) {
-                            if (_normalizeWalletId(value).isEmpty) { setSheetState(() => error = S.of(context).enterValidId); return; }
-                            Navigator.of(ctx).pop(value);
-                          },
-                          decoration: InputDecoration(
-                            hintText: S.of(context).pushkaIdHint, errorText: error,
-                            contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-                            border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                            focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide(color: Theme.of(ctx).brightness == Brightness.dark ? Theme.of(ctx).colorScheme.primary : const Color(0xFFE05A4F), width: 1.6)),
-                          ),
-                        ),
-                      ],
-                    ],
-                  ),
-                )),
-              ),
-            );
-          },
-        );
-      },
-    );
-
-    if (manualWalletId == null) return;
-    if (manualWalletId.isEmpty) {
-      await _openPushkaScanFlow();
-      return;
-    }
-    await _addPushkaByWalletId(manualWalletId);
   }
 
   @override
@@ -194,6 +65,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
     final user = ref.watch(currentUserProvider);
     final userProfile = ref.watch(userProfileProvider).valueOrNull;
+    final tenantConfig = ref.watch(tenantConfigProvider).valueOrNull;
 
     String? getProfileString(String key) {
       if (userProfile == null) return null;
@@ -340,13 +212,27 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           _buildLabel(tr.language),
           const SizedBox(height: 6),
           _buildLanguageSelector(),
-          const SizedBox(height: 18),
+          const SizedBox(height: 30),
 
           // APPEARANCE
-          _buildLabel('Apariencia'),
-          const SizedBox(height: 8),
-          _buildThemeSelector(),
-          const SizedBox(height: 32),
+          Row(
+            children: [
+              const Expanded(
+                child: Text(
+                  'APARIENCIA',
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w500),
+                ),
+              ),
+              const SizedBox(width: 8),
+              _ThemeToggle(
+                isDark: ref.watch(themeModeProvider) == ThemeMode.dark,
+                onChanged: (dark) => ref.read(themeModeProvider.notifier).setMode(
+                  dark ? ThemeMode.dark : ThemeMode.light,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 18),
 
           // SOUND
           _buildToggleRow(
@@ -469,83 +355,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           ),
           const SizedBox(height: 22),
 
-          // MY PUSHKAS Section
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text(
-                tr.myPushkaSection.toUpperCase(),
-                style: TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w700,
-                  letterSpacing: 1.2,
-                  color: Theme.of(context).colorScheme.onSurface,
-                ),
-              ),
-              const SizedBox(width: 10),
-              ElevatedButton(
-                onPressed: _showAddPushkaDialog,
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: red,
-                  foregroundColor: Colors.white,
-                  elevation: 0,
-                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(999),
-                  ),
-                ),
-                child: Text(
-                  tr.addPushkaBtn,
-                  style: TextStyle(
-                    fontWeight: FontWeight.w700,
-                    fontSize: 16,
-                    letterSpacing: 0.2,
-                  ),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 16),
-          if (user == null)
-            Text(tr.signInToSeePushkas)
-          else
-            StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-              stream: _pushkasStream(user.uid),
-              builder: (context, snapshot) {
-                if (snapshot.hasError) {
-                  return Text(tr.errorLoadingPushkas);
-                }
-                if (!snapshot.hasData) {
-                  return const Center(child: CircularProgressIndicator());
-                }
-                final docs = snapshot.data!.docs;
-                if (docs.isEmpty) {
-                  return _buildPushkaItem({
-                    'name': tr.defaultPushkaName,
-                    'id': 'colel-chabad-pushka',
-                  });
-                }
-                return Column(
-                  children: docs.map((doc) {
-                    final data = doc.data();
-                    return _buildPushkaItem({
-                      'name': (data['displayName'] as String?)?.trim().isNotEmpty == true
-                          ? data['displayName'] as String
-                          : 'Pushka',
-                      'id': (data['walletId'] as String?) ?? doc.id,
-                    });
-                  }).toList(),
-                );
-              },
-            ),
-          const SizedBox(height: 18),
-          Container(
-            height: 5,
-            width: double.infinity,
-            color: Theme.of(context).colorScheme.surfaceContainerHighest,
-          ),
-          const SizedBox(height: 22),
-
           // PROFILE Section
           _buildSectionTitle(tr.profileSection),
           const SizedBox(height: 12),
@@ -643,6 +452,20 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               ),
             ),
           ),
+          // POWERED BY footer — visible only when tenant has showPoweredBy: true
+          if (tenantConfig != null && tenantConfig.showPoweredBy) ...[
+            const SizedBox(height: 8),
+            Center(
+              child: Text(
+                '${tenantConfig.appName} · Powered by Pushka',
+                style: TextStyle(
+                  fontSize: 12,
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  fontWeight: FontWeight.w400,
+                ),
+              ),
+            ),
+          ],
           const SizedBox(height: 24),
         ],
       ),
@@ -914,28 +737,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       return '$brandLabel •••• $last4';
     }
     return tr.noSavedCards.split('\n').first;
-  }
-
-  Widget _buildThemeSelector() {
-    final mode = ref.watch(themeModeProvider);
-    final cs = Theme.of(context).colorScheme;
-    // Normalize legacy 'system' value to 'light'
-    final effectiveMode = mode == ThemeMode.system ? ThemeMode.light : mode;
-    return SegmentedButton<ThemeMode>(
-      segments: const [
-        ButtonSegment(value: ThemeMode.light, label: Text('Claro'), icon: Icon(Icons.light_mode_outlined, size: 16)),
-        ButtonSegment(value: ThemeMode.dark, label: Text('Oscuro'), icon: Icon(Icons.dark_mode_outlined, size: 16)),
-      ],
-      selected: {effectiveMode},
-      onSelectionChanged: (selection) {
-        ref.read(themeModeProvider.notifier).setMode(selection.first);
-      },
-      style: SegmentedButton.styleFrom(
-        selectedBackgroundColor: cs.primary,
-        selectedForegroundColor: cs.onPrimary,
-        foregroundColor: cs.onSurface,
-      ),
-    );
   }
 
   Widget _buildPushkaStyleSelector(WidgetRef ref) {
@@ -1259,86 +1060,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           onChanged: onChanged,
         ),
       ],
-    );
-  }
-
-  Widget _buildPushkaItem(Map<String, String> pushka) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 14),
-      child: Row(
-        children: [
-          // Icono de pushka
-          Container(
-            width: 52,
-            height: 52,
-            decoration: BoxDecoration(
-              color: Theme.of(context).colorScheme.surfaceContainer,
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Center(
-              child: Container(
-                width: 32,
-                height: 32,
-                decoration: BoxDecoration(
-                  color: Theme.of(context).colorScheme.surfaceContainerHigh,
-                  borderRadius: BorderRadius.circular(4),
-                  border: Border.all(color: Theme.of(context).colorScheme.outline, width: 1.5),
-                ),
-                child: Stack(
-                  children: [
-                    Positioned(
-                      top: 2,
-                      left: 8,
-                      right: 8,
-                      child: Container(
-                        height: 2,
-                        decoration: BoxDecoration(
-                          color: Theme.of(context).colorScheme.onSurfaceVariant,
-                          borderRadius: BorderRadius.circular(1),
-                        ),
-                      ),
-                    ),
-                    const Center(
-                      child: Text(
-                        'צדקה',
-                        style: TextStyle(
-                          fontSize: 8,
-                          fontWeight: FontWeight.w600,
-                          height: 1.2,
-                        ),
-                        textDirection: TextDirection.rtl,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  pushka['name']!,
-                  style: const TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  'ID: ${pushka['id']!}',
-                  style: TextStyle(
-                    fontSize: 14,
-                    color: Theme.of(context).colorScheme.onSurfaceVariant,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
     );
   }
 
@@ -1727,32 +1448,11 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       v == v.roundToDouble() ? v.toInt().toString() : v.toStringAsFixed(2);
 
   Future<void> _showDeleteAccountDialog() async {
-    final result = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text(S.of(context).deleteAccountTitle),
-        content: Text(
-          S.of(context).deleteAccountBody,
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: Text(S.of(context).cancel),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(context, true),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.red,
-              foregroundColor: Colors.white,
-            ),
-            child: Text(S.of(context).delete),
-          ),
-        ],
-      ),
-    );
+    final confirmed = await _showDeleteConfirmationDialog();
+    if (!confirmed || !mounted) return;
 
-    if (result != true) return;
-    if (!mounted) return;
+    final reAuthed = await _showReAuthDialog();
+    if (!reAuthed || !mounted) return;
 
     try {
       await FirebaseAuth.instance.currentUser?.delete();
@@ -1768,6 +1468,173 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(S.of(context).couldNotDeleteAccount)),
       );
+    }
+  }
+
+  Future<bool> _showDeleteConfirmationDialog() async {
+    final tr = S.of(context);
+    final confirmWord = tr.deleteConfirmWord;
+
+    final result = await showDialog<bool>(
+      context: context,
+      barrierDismissible: true,
+      builder: (ctx) => _DeleteConfirmDialog(
+        confirmWord: confirmWord,
+        title: tr.deleteAccountTitle,
+        body: tr.deleteAccountBody,
+        instruction: tr.deleteTypeInstruction(confirmWord),
+        continueLabel: tr.continueLabel,
+        cancelLabel: tr.cancel,
+      ),
+    );
+
+    return result == true;
+  }
+
+  Future<bool> _showReAuthDialog() async {
+    final tr = S.of(context);
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return false;
+
+    final providers = user.providerData.map((p) => p.providerId).toSet();
+    final isGoogle = providers.contains('google.com');
+    final isPassword = providers.contains('password');
+
+    final ctrl = TextEditingController();
+    String? errorText;
+    bool loading = false;
+
+    final result = await showDialog<bool>(
+      context: context,
+      barrierDismissible: true,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setSS) {
+          final cs = Theme.of(ctx).colorScheme;
+          return AlertDialog(
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+            contentPadding: const EdgeInsets.fromLTRB(24, 24, 24, 0),
+            actionsPadding: const EdgeInsets.fromLTRB(24, 8, 24, 20),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(tr.verifyIdentityTitle, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
+                const SizedBox(height: 8),
+                Text(tr.verifyIdentityBody, style: TextStyle(fontSize: 14, color: cs.onSurfaceVariant, height: 1.4)),
+                if (isPassword) ...[
+                  const SizedBox(height: 16),
+                  TextField(
+                    controller: ctrl,
+                    autofocus: !isGoogle,
+                    obscureText: true,
+                    decoration: InputDecoration(
+                      labelText: tr.passwordField,
+                      errorText: errorText,
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                      focusedBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: BorderSide(color: cs.primary, width: 2),
+                      ),
+                    ),
+                    onChanged: (_) { if (errorText != null) setSS(() => errorText = null); },
+                    onSubmitted: (_) => _reAuthWithPassword(user, ctrl, tr, setSS, ctx, () => loading, (v) => loading = v, (v) => errorText = v),
+                  ),
+                ],
+              ],
+            ),
+            actions: [
+              if (isPassword)
+                SizedBox(
+                  width: double.infinity,
+                  height: 48,
+                  child: ElevatedButton(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFFB91C1C),
+                      foregroundColor: Colors.white,
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      elevation: 0,
+                    ),
+                    onPressed: loading ? null : () => _reAuthWithPassword(user, ctrl, tr, setSS, ctx, () => loading, (v) => loading = v, (v) => errorText = v),
+                    child: loading && !isGoogle
+                        ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                        : Text(tr.verifyAndDelete, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+                  ),
+                ),
+              if (isGoogle) ...[
+                if (isPassword) const SizedBox(height: 8),
+                SizedBox(
+                  width: double.infinity,
+                  height: 48,
+                  child: OutlinedButton.icon(
+                    icon: loading && isGoogle && !isPassword
+                        ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
+                        : const Icon(Icons.login_rounded, size: 20),
+                    label: Text(tr.continueGoogle, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
+                    style: OutlinedButton.styleFrom(
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    ),
+                    onPressed: loading ? null : () async {
+                      setSS(() => loading = true);
+                      try {
+                        final googleUser = await GoogleSignIn().signIn();
+                        if (googleUser == null) { setSS(() => loading = false); return; }
+                        final googleAuth = await googleUser.authentication;
+                        final credential = GoogleAuthProvider.credential(
+                          accessToken: googleAuth.accessToken,
+                          idToken: googleAuth.idToken,
+                        );
+                        await user.reauthenticateWithCredential(credential);
+                        if (ctx.mounted) Navigator.pop(ctx, true);
+                      } catch (_) {
+                        if (ctx.mounted) setSS(() { loading = false; errorText = tr.reAuthFailed; });
+                      }
+                    },
+                  ),
+                ),
+              ],
+              const SizedBox(height: 4),
+              SizedBox(
+                width: double.infinity,
+                height: 44,
+                child: TextButton(
+                  onPressed: loading ? null : () => Navigator.pop(ctx, false),
+                  child: Text(tr.cancel, style: TextStyle(color: Colors.grey.shade600, fontWeight: FontWeight.w500)),
+                ),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+
+    ctrl.dispose();
+    return result == true;
+  }
+
+  Future<void> _reAuthWithPassword(
+    User user,
+    TextEditingController ctrl,
+    S tr,
+    StateSetter setSS,
+    BuildContext ctx,
+    bool Function() getLoading,
+    void Function(bool) setLoading,
+    void Function(String?) setError,
+  ) async {
+    final password = ctrl.text.trim();
+    if (password.isEmpty) { setSS(() => setError(tr.enterYourPassword)); return; }
+    setSS(() { setLoading(true); setError(null); });
+    try {
+      final credential = EmailAuthProvider.credential(email: user.email!, password: password);
+      await user.reauthenticateWithCredential(credential);
+      if (ctx.mounted) Navigator.pop(ctx, true);
+    } on FirebaseAuthException catch (e) {
+      setSS(() {
+        setLoading(false);
+        setError(e.code == 'wrong-password' || e.code == 'invalid-credential' ? tr.wrongPassword : tr.reAuthFailed);
+      });
+    } catch (_) {
+      setSS(() { setLoading(false); setError(tr.reAuthFailed); });
     }
   }
 
@@ -1821,7 +1688,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(22)),
             scrollable: true,
             contentPadding: const EdgeInsets.fromLTRB(20, 22, 20, 0),
-            actionsPadding: const EdgeInsets.fromLTRB(20, 0, 20, 18),
+            actionsPadding: const EdgeInsets.fromLTRB(20, 15, 20, 18),
             content: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
               Text(S.of(context).pushkaGoalDialog, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
               const SizedBox(height: 14),
@@ -1870,58 +1737,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   }
 
   Future<void> _showCurrencyDialog() async {
-    final profile = ref.read(userProfileProvider).valueOrNull;
-    final currentAmount = (profile?['pushkaAmount'] as num?)?.toDouble() ?? 0;
-    if (currentAmount > 0) {
-      if (!mounted) return;
-      showDialog(
-        context: context,
-        builder: (ctx) => Dialog(
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-          insetPadding: const EdgeInsets.symmetric(horizontal: 28),
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(24, 24, 24, 20),
-            child: Column(mainAxisSize: MainAxisSize.min, children: [
-              Container(
-                width: 56, height: 56,
-                decoration: BoxDecoration(
-                  color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.12),
-                  borderRadius: BorderRadius.circular(16),
-                ),
-                child: Icon(Icons.savings_outlined, color: Theme.of(context).colorScheme.primary, size: 30),
-              ),
-              const SizedBox(height: 16),
-              Text(
-                S.of(context).emptyPushkaFirst,
-                style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
-              ),
-              const SizedBox(height: 10),
-              Text(
-                S.of(context).currencyChangeBody,
-                textAlign: TextAlign.center,
-                style: TextStyle(fontSize: 14, color: Colors.grey.shade700, height: 1.4),
-              ),
-              const SizedBox(height: 20),
-              SizedBox(
-                width: double.infinity, height: 46,
-                child: ElevatedButton(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Theme.of(ctx).brightness == Brightness.dark ? Theme.of(ctx).colorScheme.primary : const Color(0xFFE05A4F),
-                    foregroundColor: Colors.white,
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                    elevation: 0,
-                  ),
-                  onPressed: () => Navigator.pop(ctx),
-                  child: Text(S.of(context).understood, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
-                ),
-              ),
-            ]),
-          ),
-        ),
-      );
-      return;
-    }
-
     final currencies = [
       {'country': 'Estados Unidos', 'currency': 'USD', 'flag': '🇺🇸'},
       {'country': 'México', 'currency': 'MXN', 'flag': '🇲🇽'},
@@ -1935,7 +1750,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       {'country': 'Canadá', 'currency': 'CAD', 'flag': '🇨🇦'},
     ];
 
-    final result = await showDialog<Map<String, String>>(
+    final selected = await showDialog<Map<String, String>>(
       context: context,
       builder: (context) => AlertDialog(
         title: Text(S.of(context).selectCurrency),
@@ -1961,23 +1776,98 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       ),
     );
 
-    if (result != null && mounted) {
-      final newCurrency = result['currency']!;
-      final newGoal = UserRepository.defaultGoalForCurrency(newCurrency);
-      setState(() {
-        selectedCountry = result['country']!;
-        selectedCurrency = newCurrency;
-        selectedFlag = result['flag'] ?? _flagForCountry(selectedCountry);
-        pushkaGoal = newGoal;
-      });
-      _updateSettings(
-        ref.read(currentUserProvider),
-        currencyCountry: result['country']!,
-        currencyCode: newCurrency,
-        pushkaGoal: newGoal,
-        presetAmounts: <double>[],
-      ).catchError((Object e) => debugPrint('currency updateSettings error: $e'));
+    if (selected == null || !mounted) return;
+    if (selected['currency'] == selectedCurrency) return;
+
+    // Confirmation modal
+    final tr = S.of(context);
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) {
+        final cs = Theme.of(ctx).colorScheme;
+        return AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          contentPadding: const EdgeInsets.fromLTRB(24, 24, 24, 0),
+          actionsPadding: const EdgeInsets.fromLTRB(24, 8, 24, 20),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(tr.changeCurrencyTitle, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
+              const SizedBox(height: 14),
+              Row(
+                children: [
+                  Text(selectedFlag, style: const TextStyle(fontSize: 26)),
+                  const SizedBox(width: 6),
+                  Text(selectedCurrency, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 10),
+                    child: Icon(Icons.arrow_forward_rounded, size: 18, color: cs.onSurfaceVariant),
+                  ),
+                  Text(selected['flag']!, style: const TextStyle(fontSize: 26)),
+                  const SizedBox(width: 6),
+                  Text(selected['currency']!, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+                ],
+              ),
+              const SizedBox(height: 12),
+              Text(
+                tr.currencyChangeConfirmBody,
+                style: TextStyle(fontSize: 14, color: cs.onSurfaceVariant, height: 1.4),
+              ),
+            ],
+          ),
+          actions: [
+            SizedBox(
+              width: double.infinity,
+              height: 48,
+              child: ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: cs.primary,
+                  foregroundColor: cs.onPrimary,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  elevation: 0,
+                ),
+                onPressed: () => Navigator.pop(ctx, true),
+                child: Text(tr.continueLabel, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+              ),
+            ),
+            const SizedBox(height: 4),
+            SizedBox(
+              width: double.infinity,
+              height: 44,
+              child: TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: Text(tr.cancel, style: TextStyle(color: Colors.grey.shade600, fontWeight: FontWeight.w500)),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (confirmed != true || !mounted) return;
+
+    final newCurrency = selected['currency']!;
+    final newGoal = UserRepository.defaultGoalForCurrency(newCurrency);
+    final user = ref.read(currentUserProvider);
+    setState(() {
+      selectedCountry = selected['country']!;
+      selectedCurrency = newCurrency;
+      selectedFlag = selected['flag'] ?? _flagForCountry(selectedCountry);
+      pushkaGoal = newGoal;
+    });
+    final uid = user?.uid;
+    if (uid != null) {
+      ref.read(userRepositoryProvider).updatePushkaAmount(uid: uid, amount: 0)
+          .catchError((Object e) => debugPrint('resetPushkaAmount error: $e'));
     }
+    _updateSettings(
+      user,
+      currencyCountry: selected['country']!,
+      currencyCode: newCurrency,
+      pushkaGoal: newGoal,
+      presetAmounts: <double>[],
+    ).catchError((Object e) => debugPrint('currency updateSettings error: $e'));
   }
 
 
@@ -2027,6 +1917,232 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       default:
         return null;
     }
+  }
+}
+
+class _DeleteConfirmDialog extends StatefulWidget {
+  final String confirmWord;
+  final String title;
+  final String body;
+  final String instruction;
+  final String continueLabel;
+  final String cancelLabel;
+
+  const _DeleteConfirmDialog({
+    required this.confirmWord,
+    required this.title,
+    required this.body,
+    required this.instruction,
+    required this.continueLabel,
+    required this.cancelLabel,
+  });
+
+  @override
+  State<_DeleteConfirmDialog> createState() => _DeleteConfirmDialogState();
+}
+
+class _DeleteConfirmDialogState extends State<_DeleteConfirmDialog> {
+  final _ctrl = TextEditingController();
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return AlertDialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      contentPadding: const EdgeInsets.fromLTRB(24, 24, 24, 0),
+      actionsPadding: const EdgeInsets.fromLTRB(24, 8, 24, 20),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(widget.title, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
+          const SizedBox(height: 10),
+          Text(widget.body, style: TextStyle(fontSize: 14, color: cs.onSurfaceVariant, height: 1.4)),
+          const SizedBox(height: 16),
+          Text(widget.instruction, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500)),
+          const SizedBox(height: 8),
+          TextField(
+            controller: _ctrl,
+            autofocus: true,
+            autocorrect: false,
+            textCapitalization: TextCapitalization.characters,
+            decoration: InputDecoration(
+              hintText: widget.confirmWord,
+              border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: BorderSide(color: cs.primary, width: 2),
+              ),
+            ),
+          ),
+        ],
+      ),
+      actions: [
+        ValueListenableBuilder<TextEditingValue>(
+          valueListenable: _ctrl,
+          builder: (_, value, _) {
+            final matches = value.text.trim() == widget.confirmWord;
+            return SizedBox(
+              width: double.infinity,
+              height: 48,
+              child: ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: matches ? const Color(0xFFB91C1C) : cs.surfaceContainerHighest,
+                  foregroundColor: matches ? Colors.white : cs.onSurfaceVariant,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  elevation: 0,
+                ),
+                onPressed: matches ? () => Navigator.pop(context, true) : null,
+                child: Text(widget.continueLabel, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+              ),
+            );
+          },
+        ),
+        const SizedBox(height: 4),
+        SizedBox(
+          width: double.infinity,
+          height: 44,
+          child: TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: Text(widget.cancelLabel, style: TextStyle(color: Colors.grey.shade600, fontWeight: FontWeight.w500)),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+
+class _ThemeToggle extends StatefulWidget {
+  final bool isDark;
+  final ValueChanged<bool> onChanged;
+  const _ThemeToggle({required this.isDark, required this.onChanged});
+
+  @override
+  State<_ThemeToggle> createState() => _ThemeToggleState();
+}
+
+class _ThemeToggleState extends State<_ThemeToggle> with SingleTickerProviderStateMixin {
+  late AnimationController _ctrl;
+  late bool _showDark;
+
+  @override
+  void initState() {
+    super.initState();
+    _showDark = widget.isDark;
+    _ctrl = AnimationController(vsync: this, duration: const Duration(milliseconds: 380));
+  }
+
+  @override
+  void didUpdateWidget(_ThemeToggle old) {
+    super.didUpdateWidget(old);
+    if (!_ctrl.isAnimating && old.isDark != widget.isDark) {
+      setState(() => _showDark = widget.isDark);
+    }
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  void _toggle() {
+    if (_ctrl.isAnimating) return;
+    final newDark = !_showDark;
+    bool flipped = false;
+
+    _ctrl.reset();
+    void listener() {
+      if (!flipped && _ctrl.value >= 0.5) {
+        flipped = true;
+        setState(() => _showDark = newDark);
+      }
+    }
+
+    _ctrl.addListener(listener);
+    _ctrl.forward().then((_) {
+      _ctrl.removeListener(listener);
+      widget.onChanged(newDark);
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    const trackW = 52.0;
+    const trackH = 32.0;
+    const thumbD = 24.0;
+    const pad = 4.0;
+    const travel = trackW - thumbD - pad * 2;
+
+    // Colores idénticos al SwitchTheme activo definido en AppTheme
+    const orange = Color(0xFFFF9500);
+    const skyBlue = Color(0xFF60A5FA);
+    final trackColor = _showDark
+        ? skyBlue.withValues(alpha: 0.45)
+        : orange.withValues(alpha: 0.45);
+    final thumbColor = _showDark ? skyBlue : orange;
+
+    return GestureDetector(
+      onTap: _toggle,
+      child: SizedBox(
+        width: 60,
+        height: 48,
+        child: Center(
+          child: AnimatedBuilder(
+            animation: _ctrl,
+            builder: (_, _) {
+              final t = _ctrl.value;
+              // 1 → 0 → 1: sale a la izq y vuelve a la der
+              final pos = t < 0.5 ? 1.0 - t * 2.0 : (t - 0.5) * 2.0;
+              return SizedBox(
+                width: trackW,
+                height: trackH,
+                child: Stack(
+                  clipBehavior: Clip.none,
+                  children: [
+                    Positioned.fill(
+                      child: DecoratedBox(
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(trackH / 2),
+                          color: trackColor,
+                        ),
+                      ),
+                    ),
+                    Positioned(
+                      left: pad + pos * travel,
+                      top: pad,
+                      child: Container(
+                        width: thumbD,
+                        height: thumbD,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: thumbColor,
+                          boxShadow: const [
+                            BoxShadow(color: Colors.black26, blurRadius: 4, offset: Offset(0, 2)),
+                          ],
+                        ),
+                        child: Icon(
+                          _showDark ? Icons.dark_mode_outlined : Icons.light_mode_outlined,
+                          size: 14,
+                          color: Colors.white,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            },
+          ),
+        ),
+      ),
+    );
   }
 }
 

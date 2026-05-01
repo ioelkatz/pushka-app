@@ -9,12 +9,16 @@ import 'package:go_router/go_router.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import 'package:share_plus/share_plus.dart';
 
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+
 import '../features/shell/presentation/app_shell.dart';
 import '../features/shell/presentation/app_drawer.dart';
 import '../features/auth/presentation/login_screen.dart';
 import '../features/auth/presentation/register_screen.dart';
 import '../features/onboarding/presentation/onboarding_screen.dart';
 import '../features/splash/presentation/splash_screen.dart';
+import '../features/tenant/presentation/tenant_code_screen.dart';
+import '../features/tenant/data/tenant_repository.dart';
 
 import '../features/pushka/presentation/pushka_screen.dart';
 import '../features/wallet/presentation/wallet_screen.dart';
@@ -211,6 +215,17 @@ final router = GoRouter(
       final done = snap.data()?['onboardingCompleted'] as bool? ?? false;
       return done ? '/' : '/onboarding';
     }
+    // If the user is logged in but has no tenantId, send them to tenant setup.
+    // Skip this check when already heading there or to auth/onboarding screens.
+    if (loggedIn && loc != '/tenant-setup' && !goingToAuth && loc != '/onboarding') {
+      final uid = _auth.currentUser?.uid;
+      if (uid != null) {
+        final snap = await _firestore.collection('users').doc(uid).get();
+        if (_auth.currentUser?.uid != uid) return '/login';
+        final tenantId = snap.data()?['tenantId'] as String?;
+        if (tenantId == null || tenantId.isEmpty) return '/tenant-setup';
+      }
+    }
     return null;
   },
   routes: [
@@ -229,6 +244,10 @@ final router = GoRouter(
     GoRoute(
       path: '/onboarding',
       pageBuilder: (context, state) => _fadePage(state, const OnboardingScreen()),
+    ),
+    GoRoute(
+      path: '/tenant-setup',
+      pageBuilder: (context, state) => _fadePage(state, const TenantCodeScreen()),
     ),
     ShellRoute(
       pageBuilder: (context, state, child) {
@@ -299,14 +318,23 @@ void initNotificationNavigation() {
   };
 }
 
-PreferredSizeWidget? _buildAppBar(BuildContext context, String location) {
-  final tr = S.of(context);
-  if (location == '/') {
+/// AppBar for the main pushka screen — reads tenant appName from provider.
+class _TenantMainAppBar extends ConsumerWidget implements PreferredSizeWidget {
+  const _TenantMainAppBar();
+
+  @override
+  Size get preferredSize => const Size.fromHeight(kToolbarHeight);
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final tr = S.of(context);
+    final tenantConfig = ref.watch(tenantConfigProvider).valueOrNull;
+    final title = (tenantConfig?.appName.isNotEmpty == true)
+        ? tenantConfig!.appName
+        : tr.navPushka;
+
     return AppBar(
-      title: Text(
-        tr.navPushka,
-        style: const TextStyle(fontWeight: FontWeight.w600),
-      ),
+      title: Text(title, style: const TextStyle(fontWeight: FontWeight.w600)),
       centerTitle: true,
       actions: [
         IconButton(
@@ -314,10 +342,7 @@ PreferredSizeWidget? _buildAppBar(BuildContext context, String location) {
           onPressed: () async {
             try {
               await SharePlus.instance.share(
-                ShareParams(
-                  text: tr.appShareText,
-                  subject: 'Pushka App',
-                ),
+                ShareParams(text: tr.appShareText, subject: title),
               );
             } catch (e) {
               debugPrint('[router] share failed: $e');
@@ -326,6 +351,13 @@ PreferredSizeWidget? _buildAppBar(BuildContext context, String location) {
         ),
       ],
     );
+  }
+}
+
+PreferredSizeWidget? _buildAppBar(BuildContext context, String location) {
+  final tr = S.of(context);
+  if (location == '/') {
+    return const _TenantMainAppBar();
   } else if (location == '/wallet') {
     return AppBar(
       title: Text(tr.navWallet),

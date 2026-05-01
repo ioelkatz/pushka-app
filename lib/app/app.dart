@@ -7,8 +7,8 @@ import '../core/l10n/locale_provider.dart';
 import '../core/theme_provider.dart';
 import '../features/users/presentation/user_profile_provider.dart';
 import '../features/feedback/feedback_service.dart';
+import '../features/tenant/presentation/tenant_theme_provider.dart';
 import 'router.dart';
-import 'theme/app_theme.dart';
 
 class PushkaApp extends ConsumerStatefulWidget {
   const PushkaApp({super.key});
@@ -91,12 +91,14 @@ class _PushkaAppState extends ConsumerState<PushkaApp> with WidgetsBindingObserv
       );
     });
 
+    final tenantTheme = ref.watch(tenantThemeProvider);
+
     return MaterialApp.router(
       title: 'Pushka',
       debugShowCheckedModeBanner: false,
       routerConfig: router,
-      theme: AppTheme.light(),
-      darkTheme: AppTheme.dark(),
+      theme: tenantTheme.light,
+      darkTheme: tenantTheme.dark,
       themeMode: themeMode,
       locale: locale,
       supportedLocales: S.supportedLocales,

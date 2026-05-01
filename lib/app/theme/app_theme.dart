@@ -6,6 +6,46 @@ import 'app_tokens.dart';
 class AppTheme {
   const AppTheme._();
 
+  /// Builds light + dark themes using a custom primary color from the tenant.
+  /// If [primaryColor] is null, falls back to [AppTokens.primaryBlue].
+  static ({ThemeData light, ThemeData dark}) fromTenantColors({
+    Color? primaryColor,
+  }) {
+    final effectivePrimary = primaryColor ?? AppTokens.primaryBlue;
+    // For dark mode, use a lighter version of the tenant color
+    final effectiveDark = Color.lerp(effectivePrimary, Colors.white, 0.3) ?? AppTokens.skyBlue;
+
+    final lightBase = light();
+    final darkBase = dark();
+
+    return (
+      light: lightBase.copyWith(
+        colorScheme: lightBase.colorScheme.copyWith(
+          primary: effectivePrimary,
+          onPrimary: Colors.white,
+        ),
+        elevatedButtonTheme: ElevatedButtonThemeData(
+          style: ElevatedButton.styleFrom(
+            backgroundColor: effectivePrimary,
+            foregroundColor: Colors.white,
+            minimumSize: const Size(0, AppTokens.buttonHeight),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(AppTokens.radiusMd),
+            ),
+            elevation: 0,
+            textStyle: const TextStyle(fontWeight: FontWeight.w600, fontSize: 15),
+          ),
+        ),
+      ),
+      dark: darkBase.copyWith(
+        colorScheme: darkBase.colorScheme.copyWith(
+          primary: effectiveDark,
+          onPrimary: Colors.white,
+        ),
+      ),
+    );
+  }
+
   static ThemeData dark() {
     final textTheme = GoogleFonts.plusJakartaSansTextTheme(
       ThemeData(brightness: Brightness.dark).textTheme,
