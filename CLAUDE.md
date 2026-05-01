@@ -101,7 +101,16 @@ firebase deploy --only functions --project pushka-app-ioel-test     # to dev
 firebase deploy --only functions --project pushka-app-ioel          # to prod
 ```
 
-Secrets are scoped per project (`firebase functions:secrets:set <NAME> --project <PROJECT_ID>`). Currently set in dev: `STRIPE_SECRET_KEY` (real test key), `STRIPE_WEBHOOK_SECRET`, `STRIPE_BILLING_WEBHOOK_SECRET`, `STRIPE_CONNECT_CLIENT_ID`, `SENDGRID_API_KEY` (placeholders — set real test values when testing those flows).
+Secrets are scoped per project (`firebase functions:secrets:set <NAME> --project <PROJECT_ID>`). Currently set in dev: `STRIPE_SECRET_KEY` + `STRIPE_WEBHOOK_SECRET` (real test values), `STRIPE_BILLING_WEBHOOK_SECRET`, `STRIPE_CONNECT_CLIENT_ID`, `SENDGRID_API_KEY` (placeholders — set real test values when testing those flows).
+
+### ⚠️ Always pipe secrets with `printf`, never `echo`
+
+`echo "value" | firebase functions:secrets:set NAME --data-file -` appends a `\n`
+to the secret value. The Stripe Node SDK (and any HTTP client that constructs
+strict headers) rejects the `Authorization: Bearer <secret>\n` header with
+`ERR_INVALID_CHAR`, surfacing as `StripeConnectionError: An error occurred with
+our connection to Stripe`. Use `printf 'value' | ...` instead — it does NOT
+add a trailing newline. This bit us hard once; don't repeat the mistake.
 
 ## Tooling versions
 
@@ -109,6 +118,34 @@ Secrets are scoped per project (`firebase functions:secrets:set <NAME> --project
 - JDK 17 (Microsoft OpenJDK)
 - Android SDK Platform 35/36 + NDK 28.2.13676358 + CMake 3.22.1
 - Firebase CLI 15.16.0 / flutterfire_cli 1.3.2
+
+## Known limitations
+
+- **Stripe Payment Sheet language follows the device locale.** `flutter_stripe`
+  v12 has no `locale` parameter on `SetupPaymentSheetParameters` or
+  `Stripe.instance`. To see the sheet in Spanish, the device's system language
+  must be Spanish. Most LATAM/IL users will already have this; not a blocker.
+
+## Pending TODOs (low priority — not blocking)
+
+These were left from the wallet-removal + audit work and are safe to defer:
+
+- **`pushka_screen.dart` `TextEditingController` leaks**: 5 dialogs
+  (`_donateNow`, `_otherAmount`, `_showHolidayDonationDialog`,
+  `_showCustomGoalDialog`, `_showTzedakahSettingsDialog`) create controllers
+  in function scope without `dispose()`. Wrap each in a `StatefulWidget` sheet.
+- **`_processAlternativePayment` race**: local `setState` reduces pushkaAmount
+  *before* the Firestore write succeeds. If the user closes the app between
+  the two, the local reduction is lost. Make the Firestore write succeed first.
+- **Wallet l10n strings**: ~50 orphan getters in `lib/core/l10n/s.dart` were
+  left in place (dead but harmless). Remove in a future cleanup PR.
+- **`tenant_code_screen.dart`**: hard-coded Spanish strings in the picker UI.
+  Move to `s.dart` so the picker localizes for FR/EN/HE users.
+- **Backfill `_tenantSlugs`**: prod (`pushka-app-ioel`) tenants created before
+  the slug-lock collection was introduced don't have entries in
+  `_tenantSlugs/{slug}`. Without backfill, a malicious `createTenant` with
+  the same slug would succeed. Run a one-shot backfill before the next
+  `createTenant` is allowed in prod.
 
 ## For Claude (both Alans)
 
@@ -118,3 +155,4 @@ Secrets are scoped per project (`firebase functions:secrets:set <NAME> --project
 - Default to `--flavor dev` when running locally — never test against prod backend with real card data unless explicitly asked.
 - For payment flow tests: always use `pk_test_...` + Stripe test cards (`4242...`).
 - If both devs are working in parallel: prefer narrow, focused commits so PRs are easier to review and conflict-free.
+- **Always set Cloud Functions secrets with `printf`, never `echo`** (see Functions deployment section above).
