@@ -41,12 +41,12 @@
                 <category android:name="android.intent.category.BROWSABLE"/>
                 <data android:scheme="pushka"/>
             </intent-filter>
-            <!-- HTTPS App Links: https://pushka.app/join/{slug} -->
+            <!-- HTTPS App Links: https://pushka-app-ioel.web.app/join/{slug} -->
             <intent-filter android:autoVerify="true">
                 <action android:name="android.intent.action.VIEW"/>
                 <category android:name="android.intent.category.DEFAULT"/>
                 <category android:name="android.intent.category.BROWSABLE"/>
-                <data android:scheme="https" android:host="pushka.app" android:pathPrefix="/join/"/>
+                <data android:scheme="https" android:host="pushka-app-ioel.web.app" android:pathPrefix="/join/"/>
             </intent-filter>
         </activity>
         <!-- Don't delete the meta-data below.

@@ -3417,7 +3417,7 @@ exports.checkGracePeriods = onSchedule(
 
 // ---------------------------------------------------------------------------
 // Android App Links verification — serves /.well-known/assetlinks.json
-// Must be reachable at https://pushka.app/.well-known/assetlinks.json
+// Reachable at https://pushka-app-ioel.web.app/.well-known/assetlinks.json
 // ---------------------------------------------------------------------------
 exports.assetlinks = onRequest({ cors: true }, (req, res) => {
   // SHA-256 certificate fingerprints for both prod and dev release keystores.
@@ -3434,6 +3434,6 @@ exports.assetlinks = onRequest({ cors: true }, (req, res) => {
       },
     },
   ];
-  res.set("Cache-Control", "public, max-age=3600");
+  res.set("Cache-Control", "no-store");
   res.json(assetLinks);
 });

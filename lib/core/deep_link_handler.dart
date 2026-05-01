@@ -33,7 +33,7 @@ void stopDeepLinkListener() {
 }
 
 String? _slugFromUri(Uri uri) {
-  // Handles: https://pushka.app/join/chabadmexico
+  // Handles: https://pushka-app-ioel.web.app/join/chabadmexico
   //      and: pushka:///join/chabadmexico
   final segments = uri.pathSegments;
   if (segments.length >= 2 && segments[0] == 'join') {
