@@ -61,8 +61,10 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
     // Show locally-cached amount immediately — no spinner on open
     final uid = ref.read(currentUserProvider)?.uid;
     if (uid == null) return;
-    final cached = HiveCache.instance.loadPushkaAmount(uid);
-    final cachedGoal = HiveCache.instance.loadPushkaGoal(uid);
+    final tenantId = ref.read(userProfileProvider).valueOrNull?['tenantId'] as String?;
+    if (tenantId == null || tenantId.isEmpty) return;
+    final cached = HiveCache.instance.loadPushkaAmount(uid, tenantId);
+    final cachedGoal = HiveCache.instance.loadPushkaGoal(uid, tenantId);
     if (cached != null) setState(() => pushkaAmount = cached);
     if (cachedGoal != null) setState(() => pushkaGoal = cachedGoal);
   }
@@ -81,12 +83,15 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
   Future<void> _updateStreak() async {
     final user = ref.read(currentUserProvider);
     if (user == null) return;
-    final profile = ref.read(userProfileProvider).valueOrNull;
-    if (profile == null) return;
+    final userProfile = ref.read(userProfileProvider).valueOrNull;
+    final tenantId = userProfile?['tenantId'] as String?;
+    if (tenantId == null || tenantId.isEmpty) return;
+    final tenantState = ref.read(tenantStateProvider).valueOrNull;
+    if (tenantState == null) return;
 
     final now = DateTime.now();
     final today = DateTime(now.year, now.month, now.day);
-    final lastDateRaw = profile['lastStreakDate'];
+    final lastDateRaw = tenantState['lastStreakDate'];
     DateTime? lastDate;
     if (lastDateRaw is Timestamp) {
       lastDate = lastDateRaw.toDate();
@@ -102,8 +107,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
       }
 
       if (lastDay == prevWeekday || lastDay.isAfter(prevWeekday)) {
-        // Use the profile value as the authoritative count when local is stale (0).
-        final authoritative = (profile['streakCount'] as num?)?.toInt() ?? _streakCount;
+        final authoritative = (tenantState['streakCount'] as num?)?.toInt() ?? _streakCount;
         _streakCount = (authoritative > 0 ? authoritative : 1) + 1;
       } else {
         _streakCount = 1;
@@ -114,10 +118,12 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
 
     if (mounted) setState(() {});
     try {
-      await FirebaseFirestore.instance.collection('users').doc(user.uid).update({
-        'streakCount': _streakCount,
-        'lastStreakDate': Timestamp.fromDate(today),
-      });
+      await ref.read(userRepositoryProvider).updateTenantState(
+        uid: user.uid,
+        tenantId: tenantId,
+        streakCount: _streakCount,
+        lastStreakDate: today,
+      );
     } catch (_) {}
   }
   Future<void> addAmount(double amount) async {
@@ -476,12 +482,14 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
     final tr = S.of(context);
 
     final userProfile = ref.watch(userProfileProvider).valueOrNull;
+    final tenantState = ref.watch(tenantStateProvider).valueOrNull;
     final pushkaStyle = ref.watch(pushkaStyleProvider);
-    final remoteGoal = userProfile?['pushkaGoal'];
-    final remoteAmount = userProfile?['pushkaAmount'];
-    final remotePresets = userProfile?['presetAmounts'];
+    final tenantId = userProfile?['tenantId'] as String?;
+    final remoteGoal = tenantState?['pushkaGoal'];
+    final remoteAmount = tenantState?['pushkaAmount'];
+    final remotePresets = tenantState?['presetAmounts'];
 
-    if (userProfile != null) {
+    if (tenantState != null) {
       final uid = ref.read(currentUserProvider)?.uid;
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
@@ -498,13 +506,17 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
             final shouldSync = !recentWrite || remote < pushkaAmount;
             if (shouldSync && remote != pushkaAmount) {
               pushkaAmount = remote;
-              if (uid != null) HiveCache.instance.savePushkaAmount(uid, pushkaAmount);
+              if (uid != null && tenantId != null) {
+                HiveCache.instance.savePushkaAmount(uid, tenantId, pushkaAmount);
+              }
             }
           }
           if (!_loadedRemote) {
             if (remoteGoal is num) {
               pushkaGoal = remoteGoal.toDouble();
-              if (uid != null) HiveCache.instance.savePushkaGoal(uid, pushkaGoal);
+              if (uid != null && tenantId != null) {
+                HiveCache.instance.savePushkaGoal(uid, tenantId, pushkaGoal);
+              }
             }
             if (remotePresets is List && remotePresets.length == 3) {
               try {
@@ -515,13 +527,15 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
               }
             }
             _loadedRemote = true;
-            _streakCount = (userProfile['streakCount'] as num?)?.toInt() ?? 0;
-            FeedbackService.instance.updatePreferences(
-              sound: (userProfile['soundEnabled'] as bool?) ?? true,
-              coinJingle: (userProfile['coinJingleEnabled'] as bool?) ?? true,
-              vibration: (userProfile['vibrationEnabled'] as bool?) ?? true,
-              ambient: (userProfile['ambientEnabled'] as bool?) ?? false,
-            );
+            _streakCount = (tenantState['streakCount'] as num?)?.toInt() ?? 0;
+            if (userProfile != null) {
+              FeedbackService.instance.updatePreferences(
+                sound: (userProfile['soundEnabled'] as bool?) ?? true,
+                coinJingle: (userProfile['coinJingleEnabled'] as bool?) ?? true,
+                vibration: (userProfile['vibrationEnabled'] as bool?) ?? true,
+                ambient: (userProfile['ambientEnabled'] as bool?) ?? false,
+              );
+            }
           }
         });
       });
@@ -1150,14 +1164,17 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
       _showError(S.of(context).signInToContinue);
       return;
     }
+    final tenantId = ref.read(userProfileProvider).valueOrNull?['tenantId'] as String?;
+    if (tenantId == null || tenantId.isEmpty) return;
     _localWriteAt = DateTime.now();
     final amount = resetToZero ? 0.0 : pushkaAmount;
     await Future.wait([
       ref.read(userRepositoryProvider).updatePushkaAmount(
         uid: user.uid,
+        tenantId: tenantId,
         amount: amount,
       ),
-      HiveCache.instance.savePushkaAmount(user.uid, amount),
+      HiveCache.instance.savePushkaAmount(user.uid, tenantId, amount),
     ]);
   }
 
@@ -1548,11 +1565,14 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
     required double goal,
     required List<double> presets,
   }) async {
+    final tenantId = ref.read(userProfileProvider).valueOrNull?['tenantId'] as String?;
+    if (tenantId == null || tenantId.isEmpty) return;
     try {
       await ref
           .read(userRepositoryProvider)
-          .updateSettings(
+          .updateTenantState(
             uid: uid,
+            tenantId: tenantId,
             pushkaGoal: goal,
             presetAmounts: presets,
           )

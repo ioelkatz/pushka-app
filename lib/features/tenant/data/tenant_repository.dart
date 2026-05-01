@@ -1,7 +1,9 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../auth/providers/auth_state_provider.dart';
+import '../../users/presentation/user_profile_provider.dart';
 import '../domain/tenant_config.dart';
 import '../domain/tenant_summary.dart';
 
@@ -56,6 +58,28 @@ class TenantRepository {
     final tenantId = data['tenantId'] as String;
     return TenantConfig.fromMap(tenantId, data);
   }
+
+  /// Joins a tenant org. Idempotent — safe to call even if already a member.
+  /// On first join, sets tenantId and creates the per-tenant state doc.
+  Future<void> joinTenant(String tenantId) async {
+    await FirebaseFunctions.instance
+        .httpsCallable('joinTenant')
+        .call<Map<Object?, Object?>>({'tenantId': tenantId});
+  }
+
+  /// Switches the active tenant to [tenantId] (must be in the user's tenantIds).
+  Future<void> switchTenant(String tenantId) async {
+    await FirebaseFunctions.instance
+        .httpsCallable('switchTenant')
+        .call<Map<Object?, Object?>>({'tenantId': tenantId});
+  }
+
+  /// Leaves a tenant. If it was the active tenant, falls back to the first remaining.
+  Future<void> leaveTenant(String tenantId) async {
+    await FirebaseFunctions.instance
+        .httpsCallable('leaveTenant')
+        .call<Map<Object?, Object?>>({'tenantId': tenantId});
+  }
 }
 
 class TenantSuspendedException implements Exception {
@@ -70,10 +94,59 @@ final tenantRepositoryProvider = Provider<TenantRepository>((ref) {
 });
 
 /// Async provider that loads the current user's tenant config.
+/// Also returns `tenantIds` (all memberships) via [TenantConfigResult].
 /// Returns null if user has no tenant yet or is not logged in.
 /// Throws [TenantSuspendedException] if the tenant is suspended.
 final tenantConfigProvider = FutureProvider<TenantConfig?>((ref) async {
   final user = ref.watch(authStateChangesProvider).valueOrNull;
   if (user == null) return null;
   return ref.read(tenantRepositoryProvider).loadConfig();
+});
+
+/// Stream provider for the per-tenant state doc of the currently active tenant.
+/// Contains pushkaAmount, pushkaGoal, streak, autoEmpty settings, etc.
+/// Returns null if the user has no active tenant or is not logged in.
+final tenantStateProvider = StreamProvider<Map<String, dynamic>?>((ref) {
+  final user = ref.watch(authStateChangesProvider).valueOrNull;
+  if (user == null) return const Stream.empty();
+
+  final profile = ref.watch(userProfileProvider).valueOrNull;
+  final currentTenantId = profile?['tenantId'] as String?;
+  if (currentTenantId == null || currentTenantId.isEmpty) {
+    return Stream.value(null);
+  }
+
+  return FirebaseFirestore.instance
+      .collection('users')
+      .doc(user.uid)
+      .collection('tenantState')
+      .doc(currentTenantId)
+      .snapshots()
+      .map((snap) => snap.exists ? snap.data() : null);
+});
+
+/// Returns all tenantState summaries (name, logo, id) for the user's memberships,
+/// read from the tenantState sub-docs that the CF caches at join time.
+final userTenantSummariesProvider = StreamProvider<List<TenantSummary>>((ref) {
+  final user = ref.watch(authStateChangesProvider).valueOrNull;
+  if (user == null) return Stream.value([]);
+
+  return FirebaseFirestore.instance
+      .collection('users')
+      .doc(user.uid)
+      .collection('tenantState')
+      .snapshots()
+      .map((snap) {
+        return snap.docs.map((doc) {
+          final d = doc.data();
+          return TenantSummary.fromMap({
+            'tenantId': doc.id,
+            'name': d['tenantName'] ?? '',
+            'appName': d['tenantAppName'] ?? d['tenantName'] ?? '',
+            'slug': '',
+            'logoUrl': d['tenantLogoUrl'],
+            'primaryColor': d['tenantPrimaryColor'],
+          });
+        }).toList();
+      });
 });

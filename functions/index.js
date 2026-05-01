@@ -1241,6 +1241,11 @@ function computeNextErevRoshChodesh(baseDate) {
 }
 
 // --- Pushka Auto Empty (scheduled) ---
+// Reads from the `users/{uid}/tenantState/{tenantId}` subcollection so that
+// auto-empty settings and pushka balance are per-organisation. The Stripe
+// credentials (customer id, payment method, currency) remain on the user doc.
+// Requires a Firestore composite index on tenantState:
+//   Collection group: tenantState  Fields: autoEmptyNextRunAt ASC
 exports.processPushkaAutoEmpty = onSchedule(
   {
     schedule: "every 60 minutes",
@@ -1254,24 +1259,16 @@ exports.processPushkaAutoEmpty = onSchedule(
     }
 
     const nowTs = admin.firestore.Timestamp.now();
-    // Pre-filter on autoEmptyFrequency to avoid burning the 150-doc page limit on
-    // users who have autoEmptyFrequency === "manual" but a stale past autoEmptyNextRunAt.
-    // Firestore inequality + != filters don't mix with other inequalities, so we
-    // use an existence-based guard: only users who have stored a non-"manual" value.
-    // The transaction body still double-checks freq === "manual" as a safety net.
-    // NOTE: Firestore does not allow two inequality filters on different fields
-    // in the same query (e.g., "<=" on autoEmptyNextRunAt and "!=" on
-    // autoEmptyFrequency). We therefore filter only on the timestamp here and
-    // guard against freq === "manual" inside the transaction body (which already
-    // does this). This keeps the query valid and avoids a runtime Firestore error.
-    const dueUsers = await db
-      .collection("users")
+
+    // Query tenantState docs (one per user+org) that are due for auto-empty.
+    const dueStates = await db
+      .collectionGroup("tenantState")
       .where("autoEmptyNextRunAt", "<=", nowTs)
       .limit(150)
       .get();
 
-    if (dueUsers.empty) {
-      console.info("processPushkaAutoEmpty: no_due_users");
+    if (dueStates.empty) {
+      console.info("processPushkaAutoEmpty: no_due_states");
       return;
     }
 
@@ -1279,28 +1276,43 @@ exports.processPushkaAutoEmpty = onSchedule(
     let failed = 0;
     const stripe = require("stripe")(stripeSecret.value());
 
-    for (const doc of dueUsers.docs) {
-      let chargeData = null; // set inside transaction, used outside
+    for (const stateDoc of dueStates.docs) {
+      const stateRef = stateDoc.ref;
+      const stateDataRaw = stateDoc.data() || {};
+      const uid = stateDataRaw.uid;
+      const tenantId = stateDataRaw.tenantId;
+
+      if (!uid || !tenantId) {
+        console.warn("processPushkaAutoEmpty: missing uid/tenantId in state doc", { path: stateDoc.ref.path });
+        continue;
+      }
+
+      const userRef = db.collection("users").doc(uid);
+      let chargeData = null;
+
       try {
         // Step 1: Firestore transaction — verify due, grab data, advance schedule.
-        // Does NOT reset the pushka yet (that happens only after Stripe confirms).
         await db.runTransaction(async (tx) => {
-          const userRef = doc.ref;
-          const snap = await tx.get(userRef);
-          if (!snap.exists) return;
+          const [stateSnap, userSnap] = await Promise.all([
+            tx.get(stateRef),
+            tx.get(userRef),
+          ]);
+          if (!stateSnap.exists || !userSnap.exists) return;
 
-          const data = snap.data() || {};
-          const freq = data.autoEmptyFrequency || "manual";
+          const state = stateSnap.data() || {};
+          const userData = userSnap.data() || {};
+
+          const freq = state.autoEmptyFrequency || "manual";
           if (freq === "manual") return;
 
-          const nextRun = data.autoEmptyNextRunAt;
+          const nextRun = state.autoEmptyNextRunAt;
           if (!nextRun || nextRun.toMillis() > Date.now()) return;
 
-          const currentAmount = Number(data.pushkaAmount || 0);
+          const currentAmount = Number(state.pushkaAmount || 0);
           const minBalance = 5;
 
-          const weekday = Number(data.autoEmptyWeekday || 1);
-          const dayOfMonth = Number(data.autoEmptyDayOfMonth || 1);
+          const weekday = Number(state.autoEmptyWeekday || 1);
+          const dayOfMonth = Number(state.autoEmptyDayOfMonth || 1);
           let nextDate;
           if (freq === "erev_rosh_chodesh") {
             nextDate = computeNextErevRoshChodesh(new Date());
@@ -1308,54 +1320,42 @@ exports.processPushkaAutoEmpty = onSchedule(
             nextDate = computeNextScheduleDate({ frequency: freq, weekday, dayOfMonth, baseDate: new Date() });
           }
 
-          // Below minimum — advance schedule without charging
-          if (currentAmount < minBalance) {
-            tx.set(userRef, {
+          const advanceOnly = () => {
+            tx.set(stateRef, {
               autoEmptyNextRunAt: admin.firestore.Timestamp.fromDate(nextDate),
               updatedAt: admin.firestore.FieldValue.serverTimestamp(),
             }, { merge: true });
-            return;
-          }
+          };
 
-          const customerId = String(data.stripeCustomerId || "").trim();
-          const pmId = String(data.stripeDefaultPaymentMethodId || "").trim();
+          if (currentAmount < minBalance) { advanceOnly(); return; }
+          if (userData.isBlocked === true) { advanceOnly(); return; }
+
+          const customerId = String(userData.stripeCustomerId || "").trim();
+          const pmId = String(userData.stripeDefaultPaymentMethodId || "").trim();
           if (!customerId || !pmId) {
-            // No saved card — advance schedule without charging
-            console.warn("processPushkaAutoEmpty: no_saved_card", { uid: doc.id });
-            tx.set(userRef, {
-              autoEmptyNextRunAt: admin.firestore.Timestamp.fromDate(nextDate),
-              updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-            }, { merge: true });
+            console.warn("processPushkaAutoEmpty: no_saved_card", { uid, tenantId });
+            advanceOnly();
             return;
           }
 
-          const topOffEnabled = data.autoEmptyTopOffEnabled === true;
-          const topOffAmount = topOffEnabled ? Number(data.autoEmptyTopOffAmount || 0) : 0;
+          const topOffEnabled = state.autoEmptyTopOffEnabled === true;
+          const topOffAmount = topOffEnabled ? Number(state.autoEmptyTopOffAmount || 0) : 0;
           const newPushkaAmount = topOffEnabled && topOffAmount > 0 ? topOffAmount : 0;
 
-          // Validate currency from user profile before it reaches Stripe.
-          // If the stored value is not in the supported list, skip this user.
-          const rawCurrency = String(data.currencyCode || "usd").toLowerCase().trim();
+          const rawCurrency = String(userData.currencyCode || "usd").toLowerCase().trim();
           if (!SUPPORTED_CURRENCIES.has(rawCurrency)) {
-            console.warn("processPushkaAutoEmpty: unsupported_currency", { uid: doc.id, rawCurrency });
-            tx.set(userRef, {
-              autoEmptyNextRunAt: admin.firestore.Timestamp.fromDate(nextDate),
-              updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-            }, { merge: true });
+            console.warn("processPushkaAutoEmpty: unsupported_currency", { uid, tenantId, rawCurrency });
+            advanceOnly();
             return;
           }
-          const currency = rawCurrency;
 
-          // Capture current nextRunAt as a stable key for Stripe idempotency.
           const runTs = nextRun.toMillis();
-
-          // Advance schedule — charge and pushka reset happen outside the transaction
-          tx.set(userRef, {
-            autoEmptyNextRunAt: admin.firestore.Timestamp.fromDate(nextDate),
-            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-          }, { merge: true });
-
-          chargeData = { amount: currentAmount, currency, customerId, pmId, newPushkaAmount, nextRunDateKey: String(runTs) };
+          advanceOnly();
+          chargeData = {
+            amount: currentAmount, currency: rawCurrency,
+            customerId, pmId, newPushkaAmount,
+            nextRunDateKey: String(runTs), tenantId,
+          };
         });
 
         if (!chargeData) continue;
@@ -1364,13 +1364,11 @@ exports.processPushkaAutoEmpty = onSchedule(
         const amountCents = Math.round(chargeData.amount * 100);
         const minCents = minAmountForCurrency(chargeData.currency);
         if (amountCents < minCents) {
-          console.warn("processPushkaAutoEmpty: amount_below_stripe_minimum", { uid: doc.id, amountCents, minCents });
+          console.warn("processPushkaAutoEmpty: amount_below_minimum", { uid, amountCents, minCents });
           continue;
         }
 
-        // Idempotency key: uid + scheduled run date prevents double-charges on retry.
-        const emptyIdempotencyKey = `pushka_auto_empty_${doc.id}_${chargeData.nextRunDateKey}`;
-
+        const emptyIdempotencyKey = `pushka_auto_empty_${uid}_${tenantId}_${chargeData.nextRunDateKey}`;
         let paymentIntent;
         try {
           paymentIntent = await stripe.paymentIntents.create({
@@ -1381,20 +1379,13 @@ exports.processPushkaAutoEmpty = onSchedule(
             off_session: true,
             confirm: true,
             error_on_requires_action: true,
-            metadata: {
-              uid: doc.id,
-              source: "pushka",
-              purpose: "pushka_auto_empty",
-            },
+            metadata: { uid, source: "pushka", purpose: "pushka_auto_empty", tenantId },
           }, { idempotencyKey: emptyIdempotencyKey });
         } catch (stripeErr) {
           console.error("processPushkaAutoEmpty: stripe_charge_failed", {
-            uid: doc.id,
-            error: String(stripeErr?.message || stripeErr),
-            code: stripeErr?.code,
+            uid, tenantId, error: String(stripeErr?.message || stripeErr), code: stripeErr?.code,
           });
-          // Notify user their card was declined
-          const failLang = await getUserLanguage(doc.id);
+          const failLang = await getUserLanguage(uid);
           const failTitles = { es: "Vaciado fallido", en: "Empty failed", fr: "Vidage échoué", he: "הריקון נכשל" };
           const failBodies = {
             es: "No pudimos cobrar tu tarjeta para el vaciado automático. Revisá tu tarjeta en Configuración.",
@@ -1402,7 +1393,7 @@ exports.processPushkaAutoEmpty = onSchedule(
             fr: "Nous n'avons pas pu débiter votre carte pour le vidage automatique. Vérifiez votre carte dans Paramètres.",
             he: "לא הצלחנו לחייב את הכרטיס שלך לריקון האוטומטי. בדוק את הכרטיס שלך בהגדרות.",
           };
-          await sendToUser(doc.id, {
+          await sendToUser(uid, {
             notification: { title: failTitles[failLang], body: failBodies[failLang] },
             data: { type: "pushkaAutoEmptyFailed" },
           }).catch(() => {});
@@ -1411,29 +1402,28 @@ exports.processPushkaAutoEmpty = onSchedule(
         }
 
         if (paymentIntent.status !== "succeeded") {
-          console.warn("processPushkaAutoEmpty: payment_not_succeeded", { uid: doc.id, status: paymentIntent.status });
+          console.warn("processPushkaAutoEmpty: payment_not_succeeded", { uid, tenantId, status: paymentIntent.status });
           failed += 1;
           continue;
         }
 
-        // Step 3: Charge confirmed — reset pushka and write transaction.
-        // Use paymentIntentId as the transaction doc ID so a retry of this step
-        // is idempotent and cannot create a duplicate record.
+        // Step 3: Charge confirmed — reset tenantState.pushkaAmount and write transaction.
         const emptiedAmount = chargeData.amount;
         const emptyPiId = paymentIntent.id;
         const emptyRates = await getExchangeRates(null);
         const emptySnap = buildCurrencySnapshot(emptiedAmount, chargeData.currency.toUpperCase(), emptyRates);
         try {
           await db.runTransaction(async (tx) => {
-            tx.set(doc.ref, {
+            tx.set(stateRef, {
               pushkaAmount: chargeData.newPushkaAmount,
               updatedAt: admin.firestore.FieldValue.serverTimestamp(),
             }, { merge: true });
-            const movementRef = doc.ref.collection("transactions").doc(emptyPiId);
+            const movementRef = userRef.collection("transactions").doc(emptyPiId);
             tx.set(movementRef, {
               type: "pushkaEmpty",
               amount: emptiedAmount,
               currencyCode: chargeData.currency.toUpperCase(),
+              tenantId: chargeData.tenantId,
               ...emptySnap,
               description: "Vaciado automático de Pushka",
               paymentMethod: "auto_card",
@@ -1443,13 +1433,9 @@ exports.processPushkaAutoEmpty = onSchedule(
             });
           });
         } catch (step3Err) {
-          // CRITICAL: Stripe charge succeeded but pushka reset failed.
-          // Log with paymentIntentId so this can be manually recovered.
           console.error("processPushkaAutoEmpty: step3_reset_failed_after_charge", {
-            uid: doc.id,
-            paymentIntentId: emptyPiId,
-            amount: emptiedAmount,
-            error: String(step3Err?.message || step3Err),
+            uid, tenantId, paymentIntentId: emptyPiId,
+            amount: emptiedAmount, error: String(step3Err?.message || step3Err),
           });
           failed += 1;
           continue;
@@ -1457,7 +1443,7 @@ exports.processPushkaAutoEmpty = onSchedule(
 
         // Step 4: Notify success
         try {
-          const emptyLang = await getUserLanguage(doc.id);
+          const emptyLang = await getUserLanguage(uid);
           const emptySym = currencySymbol(chargeData.currency);
           const amtStr = Number(emptiedAmount).toFixed(2);
           const emptyTitles = { es: "Pushka vaciada ✡", en: "Pushka emptied ✡", fr: "Pushka vidée ✡", he: "הפושקה רוקנה ✡" };
@@ -1467,20 +1453,19 @@ exports.processPushkaAutoEmpty = onSchedule(
             fr: `Votre Pushka a été vidée automatiquement. Don : ${emptySym}${amtStr}`,
             he: `הפושקה שלך רוקנה אוטומטית. תרומה: ${emptySym}${amtStr}`,
           };
-          await sendToUser(doc.id, {
+          await sendToUser(uid, {
             notification: { title: emptyTitles[emptyLang], body: emptyBodies[emptyLang] },
-            data: { type: "pushkaEmpty", amount: String(emptiedAmount) },
+            data: { type: "pushkaEmpty", amount: String(emptiedAmount), tenantId },
           }).catch(() => {});
         } catch (notifErr) {
-          console.warn("processPushkaAutoEmpty: notification_failed", { uid: doc.id, error: String(notifErr?.message || notifErr) });
+          console.warn("processPushkaAutoEmpty: notification_failed", { uid, tenantId, error: String(notifErr?.message || notifErr) });
         }
 
         processed += 1;
       } catch (err) {
         failed += 1;
-        console.error("processPushkaAutoEmpty: user_failed", {
-          uid: doc.id,
-          error: String(err?.message || err),
+        console.error("processPushkaAutoEmpty: state_failed", {
+          path: stateDoc.ref.path, error: String(err?.message || err),
         });
       }
     }
@@ -1645,6 +1630,18 @@ async function getExchangeRates(dateStr) {
     console.error("getExchangeRates: unexpected error, using fallback", String(err?.message || err));
     return FALLBACK_RATES;
   }
+}
+
+/**
+ * Returns the default pushka goal for a given ISO 4217 currency code (uppercase).
+ * Values mirror the Flutter UserRepository.defaultGoalForCurrency constants.
+ */
+function defaultGoalForCurrency(currency) {
+  const goals = {
+    EUR: 180, GBP: 180, CAD: 180, ILS: 770,
+    MXN: 1800, BRL: 770, ARS: 180000, CLP: 180000, COP: 770000,
+  };
+  return goals[String(currency || "USD").toUpperCase()] ?? 180;
 }
 
 /**
@@ -2249,6 +2246,195 @@ exports.setUserBlocked = onCall(
 );
 
 // ===========================================================================
+// MULTI-MEMBERSHIP — join / switch / leave
+// ===========================================================================
+
+// ---------------------------------------------------------------------------
+// joinTenant — adds the caller to a tenant's membership list.
+// Idempotent: calling it twice with the same tenantId is a no-op.
+// On first join: sets tenantId (active) and creates tenantState doc with
+// defaults (migrating pushka state if this is the user's first tenant).
+// ---------------------------------------------------------------------------
+exports.joinTenant = onCall(
+  { enforceAppCheck: true },
+  async (request) => {
+    if (!request.auth?.uid) throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
+    await enforceRateLimit(request.auth.uid, "joinTenant", 10, 3600);
+
+    const uid = request.auth.uid;
+    const tenantId = String(request.data?.tenantId || "").trim();
+    if (!tenantId) throw new HttpsError("invalid-argument", "tenantId requerido.");
+
+    // Validate tenant exists and is active
+    const tenantSnap = await db.collection("tenants").doc(tenantId).get();
+    if (!tenantSnap.exists) throw new HttpsError("not-found", "Organización no encontrada.");
+    const tenantData = tenantSnap.data();
+    if (!["active", "trial", "grace_period"].includes(tenantData.status)) {
+      throw new HttpsError("failed-precondition", "Esta organización no está disponible.");
+    }
+
+    const userRef = db.collection("users").doc(uid);
+    const stateRef = userRef.collection("tenantState").doc(tenantId);
+
+    await db.runTransaction(async (tx) => {
+      const userSnap = await tx.get(userRef);
+      const stateSnap = await tx.get(stateRef);
+      if (!userSnap.exists) throw new HttpsError("not-found", "Usuario no encontrado.");
+
+      const userData = userSnap.data();
+      const existing = userData.tenantIds || (userData.tenantId ? [userData.tenantId] : []);
+      const isFirst = !userData.tenantId;
+
+      // Idempotent — already a member
+      if (existing.includes(tenantId) && !isFirst) {
+        // Ensure tenantId (active) is set if somehow missing
+        if (!userData.tenantId) {
+          tx.set(userRef, {
+            tenantId,
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          }, { merge: true });
+        }
+        return;
+      }
+
+      const newTenantIds = [...new Set([...existing, tenantId])];
+      const patch = {
+        tenantIds: newTenantIds,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      };
+      // First org ever: set as active tenant; apply tenant defaults if present
+      if (isFirst) {
+        patch.tenantId = tenantId;
+        if (tenantData.defaultLanguage && !userData.language) {
+          patch.language = tenantData.defaultLanguage;
+        }
+        if (tenantData.defaultCurrency && !userData.currencyCode) {
+          patch.currencyCode = String(tenantData.defaultCurrency).toUpperCase();
+        }
+      }
+      tx.set(userRef, patch, { merge: true });
+
+      // Create tenantState doc if it doesn't exist yet
+      if (!stateSnap.exists) {
+        const currency = String(userData.currencyCode || tenantData.defaultCurrency || "USD").toUpperCase();
+        tx.set(stateRef, {
+          uid,
+          tenantId,
+          tenantName: tenantData.name || "",
+          tenantAppName: tenantData.appName || tenantData.name || "Pushka",
+          tenantLogoUrl: tenantData.logoUrl || null,
+          tenantPrimaryColor: tenantData.primaryColor || null,
+          // First org: migrate existing pushka state; subsequent orgs start fresh
+          pushkaAmount: isFirst ? Number(userData.pushkaAmount || 0) : 0,
+          pushkaGoal: isFirst
+            ? Number(userData.pushkaGoal || defaultGoalForCurrency(currency))
+            : defaultGoalForCurrency(currency),
+          presetAmount: isFirst ? Number(userData.presetAmount || 1.0) : 1.0,
+          presetAmounts: isFirst && Array.isArray(userData.presetAmounts)
+            ? userData.presetAmounts : [],
+          streakCount: isFirst ? Number(userData.streakCount || 0) : 0,
+          lastStreakDate: isFirst ? (userData.lastStreakDate || null) : null,
+          autoEmptyFrequency: "manual",
+          autoEmptyWeekday: null,
+          autoEmptyDayOfMonth: null,
+          autoEmptyTopOffEnabled: false,
+          autoEmptyTopOffAmount: null,
+          autoEmptyNextRunAt: null,
+          createdAt: admin.firestore.FieldValue.serverTimestamp(),
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+        // If this was the first tenant, clear autoEmptyNextRunAt on user doc
+        // so the legacy scheduler no longer processes this user.
+        if (isFirst) {
+          tx.set(userRef, { autoEmptyNextRunAt: null }, { merge: true });
+        }
+      }
+    });
+
+    return { success: true, tenantId };
+  }
+);
+
+// ---------------------------------------------------------------------------
+// switchTenant — changes the caller's active tenant (tenantId field).
+// The target tenantId must already be in the caller's tenantIds array.
+// ---------------------------------------------------------------------------
+exports.switchTenant = onCall(
+  { enforceAppCheck: true },
+  async (request) => {
+    if (!request.auth?.uid) throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
+    await enforceRateLimit(request.auth.uid, "switchTenant", 30, 3600);
+
+    const uid = request.auth.uid;
+    const tenantId = String(request.data?.tenantId || "").trim();
+    if (!tenantId) throw new HttpsError("invalid-argument", "tenantId requerido.");
+
+    const userRef = db.collection("users").doc(uid);
+    const userSnap = await userRef.get();
+    if (!userSnap.exists) throw new HttpsError("not-found", "Usuario no encontrado.");
+
+    const userData = userSnap.data();
+    const tenantIds = userData.tenantIds || (userData.tenantId ? [userData.tenantId] : []);
+
+    if (!tenantIds.includes(tenantId)) {
+      throw new HttpsError("permission-denied", "No eres miembro de esa organización.");
+    }
+
+    await userRef.set({
+      tenantId,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    }, { merge: true });
+
+    return { success: true, tenantId };
+  }
+);
+
+// ---------------------------------------------------------------------------
+// leaveTenant — removes the caller from a tenant's membership list.
+// If the tenant being left is the active one, falls back to the first
+// remaining tenant (or clears tenantId if none remain).
+// ---------------------------------------------------------------------------
+exports.leaveTenant = onCall(
+  { enforceAppCheck: true },
+  async (request) => {
+    if (!request.auth?.uid) throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
+    await enforceRateLimit(request.auth.uid, "leaveTenant", 10, 3600);
+
+    const uid = request.auth.uid;
+    const tenantId = String(request.data?.tenantId || "").trim();
+    if (!tenantId) throw new HttpsError("invalid-argument", "tenantId requerido.");
+
+    const userRef = db.collection("users").doc(uid);
+
+    await db.runTransaction(async (tx) => {
+      const userSnap = await tx.get(userRef);
+      if (!userSnap.exists) throw new HttpsError("not-found", "Usuario no encontrado.");
+
+      const userData = userSnap.data();
+      const existing = userData.tenantIds || (userData.tenantId ? [userData.tenantId] : []);
+      const newTenantIds = existing.filter((t) => t !== tenantId);
+      const currentTenantId = userData.tenantId;
+
+      const patch = {
+        tenantIds: newTenantIds,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      };
+      // If leaving the active tenant, switch to the first remaining
+      if (currentTenantId === tenantId) {
+        if (newTenantIds.length > 0) {
+          patch.tenantId = newTenantIds[0];
+        } else {
+          patch.tenantId = admin.firestore.FieldValue.delete();
+        }
+      }
+      tx.set(userRef, patch, { merge: true });
+    });
+
+    return { success: true };
+  }
+);
+
+// ===========================================================================
 // MULTI-TENANT — Tenant management functions
 // ===========================================================================
 
@@ -2483,12 +2669,6 @@ exports.updateTenant = onCall(
     ];
     const allowed = isSuper ? [...brandingFields, ...superOnlyFields] : brandingFields;
 
-    // If slug is being updated, validate uniqueness
-    let normalizedSlug;
-    if (updates.slug) {
-      normalizedSlug = await validateSlug(updates.slug, tenantId);
-    }
-
     // Fields where empty string means "not set" — store null instead of ""
     const nullableStringFields = new Set([
       "logoUrl", "welcomeText", "contactEmail", "contactPhone",
@@ -2641,7 +2821,10 @@ exports.listDiscoverableTenants = onCall(
 );
 
 // ---------------------------------------------------------------------------
-// getTenantConfig — authenticated, returns branding for the user's own tenant
+// getTenantConfig — authenticated, returns branding for the user's own tenant.
+// Also performs a lazy migration: users with a legacy single `tenantId` field
+// get `tenantIds: [tenantId]` written and a `tenantState/{tenantId}` doc created
+// the first time they open the app after the multi-membership rollout.
 // ---------------------------------------------------------------------------
 exports.getTenantConfig = onCall(
   { enforceAppCheck: false },
@@ -2650,23 +2833,86 @@ exports.getTenantConfig = onCall(
       throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
     }
 
-    const userSnap = await db.collection("users").doc(request.auth.uid).get();
+    const uid = request.auth.uid;
+    const userSnap = await db.collection("users").doc(uid).get();
     if (!userSnap.exists) throw new HttpsError("not-found", "Usuario no encontrado.");
 
-    const tenantId = userSnap.data()?.tenantId;
+    const userData = userSnap.data();
+    const tenantId = userData?.tenantId;
+
+    // ── Lazy migration ──────────────────────────────────────────────────────
+    // User has a legacy `tenantId` but the new `tenantIds` array hasn't been
+    // written yet (first launch after multi-membership rollout).
+    if (tenantId && !userData.tenantIds) {
+      try {
+        const tenantDocSnap = await db.collection("tenants").doc(tenantId).get();
+        const tenantData = tenantDocSnap.exists ? tenantDocSnap.data() : {};
+        const stateRef = db.collection("users").doc(uid)
+          .collection("tenantState").doc(tenantId);
+        const stateSnap = await stateRef.get();
+        const currency = String(userData.currencyCode || "USD").toUpperCase();
+
+        const batch = db.batch();
+        // Set tenantIds on the user doc
+        batch.set(
+          db.collection("users").doc(uid),
+          { tenantIds: [tenantId], updatedAt: admin.firestore.FieldValue.serverTimestamp() },
+          { merge: true },
+        );
+        // Create tenantState doc if it doesn't exist yet
+        if (!stateSnap.exists) {
+          batch.set(stateRef, {
+            uid,
+            tenantId,
+            tenantName: tenantData.name || "",
+            tenantAppName: tenantData.appName || tenantData.name || "Pushka",
+            tenantLogoUrl: tenantData.logoUrl || null,
+            tenantPrimaryColor: tenantData.primaryColor || null,
+            pushkaAmount: Number(userData.pushkaAmount || 0),
+            pushkaGoal: Number(userData.pushkaGoal || defaultGoalForCurrency(currency)),
+            presetAmount: Number(userData.presetAmount || 1.0),
+            presetAmounts: Array.isArray(userData.presetAmounts) ? userData.presetAmounts : [],
+            streakCount: Number(userData.streakCount || 0),
+            lastStreakDate: userData.lastStreakDate || null,
+            autoEmptyFrequency: userData.autoEmptyFrequency || "manual",
+            autoEmptyWeekday: userData.autoEmptyWeekday ?? null,
+            autoEmptyDayOfMonth: userData.autoEmptyDayOfMonth ?? null,
+            autoEmptyTopOffEnabled: userData.autoEmptyTopOffEnabled || false,
+            autoEmptyTopOffAmount: userData.autoEmptyTopOffAmount ?? null,
+            // Clear autoEmptyNextRunAt on user doc below — tenantState is now authoritative.
+            // Copy the schedule so the tenantState-based scheduler picks it up.
+            autoEmptyNextRunAt: userData.autoEmptyNextRunAt || null,
+            createdAt: admin.firestore.FieldValue.serverTimestamp(),
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          });
+          // Nullify autoEmptyNextRunAt on user doc so the legacy scheduler skips it.
+          batch.set(
+            db.collection("users").doc(uid),
+            { autoEmptyNextRunAt: null, updatedAt: admin.firestore.FieldValue.serverTimestamp() },
+            { merge: true },
+          );
+        }
+        await batch.commit();
+      } catch (migErr) {
+        console.warn("getTenantConfig: lazy migration failed", {
+          uid, error: String(migErr?.message || migErr),
+        });
+      }
+    }
+
     if (!tenantId) {
-      // User has no tenant yet — return null config
-      return { tenantId: null, config: null };
+      return { tenantId: null, config: null, tenantIds: [] };
     }
 
     const tenantSnap = await db.collection("tenants").doc(tenantId).get();
     if (!tenantSnap.exists) throw new HttpsError("not-found", "Organización no encontrada.");
 
     const data = tenantSnap.data();
+    const tenantIds = userData.tenantIds || [tenantId];
 
     // If tenant is suspended, the app should show a "service unavailable" screen
     if (data.status === "suspended") {
-      return { tenantId, config: null, suspended: true };
+      return { tenantId, config: null, suspended: true, tenantIds };
     }
 
     const config = {};
@@ -2674,7 +2920,7 @@ exports.getTenantConfig = onCall(
       if (data[field] !== undefined) config[field] = data[field];
     }
 
-    return { tenantId, config };
+    return { tenantId, config, tenantIds };
   }
 );
 

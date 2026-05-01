@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../users/data/user_repository.dart';
 import '../../users/presentation/user_profile_provider.dart';
+import '../../tenant/data/tenant_repository.dart';
 import '../../../core/l10n/s.dart';
 
 class AutoEmptyScreen extends ConsumerStatefulWidget {
@@ -36,20 +37,21 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
   Widget build(BuildContext context) {
     final tr = S.of(context);
     final user = ref.watch(currentUserProvider);
-    final profile = ref.watch(userProfileProvider).valueOrNull;
+    ref.watch(userProfileProvider); // keep alive for tenantId reads
+    final tenantState = ref.watch(tenantStateProvider).valueOrNull;
 
-    if (!_loaded && profile != null) {
+    if (!_loaded && tenantState != null) {
       _loaded = true; // set synchronously so subsequent rebuilds never enqueue a second callback
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
         setState(() {
-          _frequency = (profile['autoEmptyFrequency'] as String?) ?? 'manual';
+          _frequency = (tenantState['autoEmptyFrequency'] as String?) ?? 'manual';
           _savedFrequency = _frequency;
-          _weekday = (profile['autoEmptyWeekday'] as num?)?.toInt() ?? DateTime.monday;
-          _dayOfMonth = (profile['autoEmptyDayOfMonth'] as num?)?.toInt() ?? 1;
+          _weekday = (tenantState['autoEmptyWeekday'] as num?)?.toInt() ?? DateTime.monday;
+          _dayOfMonth = (tenantState['autoEmptyDayOfMonth'] as num?)?.toInt() ?? 1;
           _topOffEnabled =
-              (profile['autoEmptyTopOffEnabled'] as bool?) ?? false;
-          _topOffAmount = (profile['autoEmptyTopOffAmount'] as num?)?.toDouble();
+              (tenantState['autoEmptyTopOffEnabled'] as bool?) ?? false;
+          _topOffAmount = (tenantState['autoEmptyTopOffAmount'] as num?)?.toDouble();
           _amountController.text = _topOffAmount?.toStringAsFixed(0) ?? '';
         });
       });
@@ -412,10 +414,13 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
   }
 
   Future<void> _saveConfig(String uid) async {
+    final tenantId = ref.read(userProfileProvider).valueOrNull?['tenantId'] as String?;
+    if (tenantId == null || tenantId.isEmpty) return;
     final repo = ref.read(userRepositoryProvider);
     final nextRunAt = _frequency == 'manual' ? null : _computeNextRunAt();
-    await repo.updateSettings(
+    await repo.updateTenantState(
       uid: uid,
+      tenantId: tenantId,
       autoEmptyFrequency: _frequency,
       autoEmptyWeekday: _frequency == 'weekly' ? _weekday : null,
       autoEmptyDayOfMonth: _frequency == 'monthly' ? _dayOfMonth : null,

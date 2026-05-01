@@ -16,12 +16,14 @@ class TransactionRepository {
   /// show a "showing last N" notice when this limit is reached.
   static const int pageSize = 100;
 
-  Stream<List<Transaction>> watchTransactions(String uid) {
-    return _collection(uid)
+  Stream<List<Transaction>> watchTransactions(String uid, {String? tenantId}) {
+    var query = _collection(uid)
         .orderBy('createdAt', descending: true)
-        .limit(pageSize)
-        .snapshots()
-        .map((snapshot) {
+        .limit(pageSize);
+    if (tenantId != null && tenantId.isNotEmpty) {
+      query = query.where('tenantId', isEqualTo: tenantId);
+    }
+    return query.snapshots().map((snapshot) {
       final result = <Transaction>[];
       for (final doc in snapshot.docs) {
         try {
@@ -43,8 +45,9 @@ class TransactionRepository {
     PaymentStatus status = PaymentStatus.completed,
     String? docId,
     String currencyCode = 'USD',
+    String? tenantId,
   }) async {
-    final data = {
+    final data = <String, dynamic>{
       'type': type.name,
       'amount': amount,
       'description': description ?? '',
@@ -53,6 +56,9 @@ class TransactionRepository {
       'currencyCode': currencyCode.toUpperCase(),
       'createdAt': firestore.FieldValue.serverTimestamp(),
     };
+    if (tenantId != null && tenantId.isNotEmpty) {
+      data['tenantId'] = tenantId;
+    }
     if (docId != null) {
       await _collection(uid).doc(docId).set(data);
     } else {
@@ -103,6 +109,7 @@ class TransactionRepository {
       paymentMethod: method,
       status: paymentStatus,
       currencyCode: (data['currencyCode'] as String?) ?? 'USD',
+      tenantId: data['tenantId'] as String?,
     );
   }
 }
