@@ -17,7 +17,9 @@ import '../features/onboarding/presentation/onboarding_screen.dart';
 import '../features/splash/presentation/splash_screen.dart';
 import '../features/tenant/presentation/tenant_code_screen.dart';
 import '../features/tenant/presentation/tenant_suspended_screen.dart';
+import '../features/tenant/presentation/join_via_link_screen.dart';
 import '../features/tenant/data/tenant_repository.dart';
+import '../core/deep_link_handler.dart';
 
 import '../features/pushka/presentation/pushka_screen.dart';
 import '../features/reminders/presentation/reminders_screen.dart';
@@ -69,9 +71,17 @@ final router = GoRouter(
       final done = snap.data()?['onboardingCompleted'] as bool? ?? false;
       return done ? '/' : '/onboarding';
     }
+    // Cold-start deep link: user tapped pushka.app/join/{slug} while logged in.
+    // Consume the pending slug and redirect to the join screen.
+    if (loggedIn && pendingJoinSlug != null && !loc.startsWith('/join/')) {
+      final slug = pendingJoinSlug!;
+      pendingJoinSlug = null;
+      return '/join/$slug';
+    }
+
     // If the user is logged in but has no tenantId, send them to tenant setup.
     // Skip this check when already heading there or to auth/onboarding screens.
-    if (loggedIn && loc != '/tenant-setup' && loc != '/suspended' && !goingToAuth && loc != '/onboarding') {
+    if (loggedIn && loc != '/tenant-setup' && loc != '/suspended' && !goingToAuth && loc != '/onboarding' && !loc.startsWith('/join/')) {
       final uid = _auth.currentUser?.uid;
       if (uid != null) {
         // Use cache to avoid a Firestore read on every navigation event.
@@ -112,6 +122,13 @@ final router = GoRouter(
     GoRoute(
       path: '/suspended',
       pageBuilder: (context, state) => _fadePage(state, const TenantSuspendedScreen()),
+    ),
+    GoRoute(
+      path: '/join/:slug',
+      pageBuilder: (context, state) {
+        final slug = state.pathParameters['slug']!;
+        return _fadePage(state, JoinViaLinkScreen(slug: slug));
+      },
     ),
     ShellRoute(
       pageBuilder: (context, state, child) {

@@ -3414,3 +3414,29 @@ exports.checkGracePeriods = onSchedule(
     }
   }
 );
+
+// ---------------------------------------------------------------------------
+// Android App Links verification — serves /.well-known/assetlinks.json
+// Must be reachable at https://pushka.app/.well-known/assetlinks.json
+// ---------------------------------------------------------------------------
+exports.assetlinks = onRequest({ cors: true }, (req, res) => {
+  // SHA-256 certificate fingerprints for both prod and dev release keystores.
+  // Add debug keystores here during development if needed.
+  const assetLinks = [
+    {
+      relation: ["delegate_permission/common.handle_all_urls"],
+      target: {
+        namespace: "android_app",
+        package_name: "com.pushka.app",
+        sha256_cert_fingerprints: [
+          // TODO: replace with the actual release keystore SHA-256 fingerprint
+          // Run: keytool -list -v -keystore pushka-release-key.jks -alias pushka -storepass <pass>
+          // and paste the SHA-256 here
+          "REPLACE_WITH_PROD_SHA256_FINGERPRINT",
+        ],
+      },
+    },
+  ];
+  res.set("Cache-Control", "public, max-age=3600");
+  res.json(assetLinks);
+});
