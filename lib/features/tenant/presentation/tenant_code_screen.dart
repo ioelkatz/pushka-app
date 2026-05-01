@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../app/theme/app_tokens.dart';
+import '../../../app/router.dart';
 import '../data/tenant_repository.dart';
 import '../domain/tenant_config.dart';
 
@@ -67,6 +68,8 @@ class _TenantCodeScreenState extends ConsumerState<TenantCodeScreen> {
 
       // Invalidate tenant config so app.dart reloads with new branding
       ref.invalidate(tenantConfigProvider);
+      // Clear router cache so the next redirect check re-reads from Firestore
+      invalidateTenantCache();
 
       if (mounted) context.go('/');
     } catch (_) {

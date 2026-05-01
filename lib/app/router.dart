@@ -18,6 +18,7 @@ import '../features/auth/presentation/register_screen.dart';
 import '../features/onboarding/presentation/onboarding_screen.dart';
 import '../features/splash/presentation/splash_screen.dart';
 import '../features/tenant/presentation/tenant_code_screen.dart';
+import '../features/tenant/presentation/tenant_suspended_screen.dart';
 import '../features/tenant/data/tenant_repository.dart';
 
 import '../features/pushka/presentation/pushka_screen.dart';
@@ -39,6 +40,16 @@ import '../core/l10n/s.dart';
 final _auth = FirebaseAuth.instance;
 final _firestore = FirebaseFirestore.instance;
 final navigatorKey = GlobalKey<NavigatorState>();
+
+// Cache tenantId per uid to avoid a Firestore read on every navigation event.
+String? _cachedTenantCheckUid;
+bool? _cachedHasTenant;
+
+/// Call this after the user joins a tenant so the next redirect re-reads Firestore.
+void invalidateTenantCache() {
+  _cachedTenantCheckUid = null;
+  _cachedHasTenant = null;
+}
 
 Future<String?> _resolveWalletId() async {
   final uid = _auth.currentUser?.uid;
@@ -217,13 +228,19 @@ final router = GoRouter(
     }
     // If the user is logged in but has no tenantId, send them to tenant setup.
     // Skip this check when already heading there or to auth/onboarding screens.
-    if (loggedIn && loc != '/tenant-setup' && !goingToAuth && loc != '/onboarding') {
+    if (loggedIn && loc != '/tenant-setup' && loc != '/suspended' && !goingToAuth && loc != '/onboarding') {
       final uid = _auth.currentUser?.uid;
       if (uid != null) {
-        final snap = await _firestore.collection('users').doc(uid).get();
-        if (_auth.currentUser?.uid != uid) return '/login';
-        final tenantId = snap.data()?['tenantId'] as String?;
-        if (tenantId == null || tenantId.isEmpty) return '/tenant-setup';
+        // Use cache to avoid a Firestore read on every navigation event.
+        // Cache is invalidated when uid changes (login/logout).
+        if (_cachedTenantCheckUid != uid) {
+          final snap = await _firestore.collection('users').doc(uid).get();
+          if (_auth.currentUser?.uid != uid) return '/login';
+          final tenantId = snap.data()?['tenantId'] as String?;
+          _cachedTenantCheckUid = uid;
+          _cachedHasTenant = tenantId != null && tenantId.isNotEmpty;
+        }
+        if (_cachedHasTenant == false) return '/tenant-setup';
       }
     }
     return null;
@@ -248,6 +265,10 @@ final router = GoRouter(
     GoRoute(
       path: '/tenant-setup',
       pageBuilder: (context, state) => _fadePage(state, const TenantCodeScreen()),
+    ),
+    GoRoute(
+      path: '/suspended',
+      pageBuilder: (context, state) => _fadePage(state, const TenantSuspendedScreen()),
     ),
     ShellRoute(
       pageBuilder: (context, state, child) {

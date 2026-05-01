@@ -396,6 +396,11 @@ service cloud.firestore {
           (
             request.resource.data.walletBalance == resource.data.walletBalance ||
             !('walletBalance' in resource.data)
+          ) &&
+          // tenantId is immutable once set — prevents tenant-hopping attacks
+          (
+            !('tenantId' in resource.data) ||
+            request.resource.data.tenantId == resource.data.tenantId
           );
       allow delete: if false;
 

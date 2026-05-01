@@ -1077,6 +1077,13 @@ exports.walletTopUpFromPaymentIntent = onCall(
     await enforceRateLimit(request.auth.uid, "walletTopUpFromPaymentIntent", 20, 3600);
 
     const uid = request.auth.uid;
+
+    // Block suspended users from claiming wallet top-ups
+    const adminDataSnap = await db.collection("adminData").doc(uid).get();
+    if (adminDataSnap.exists && adminDataSnap.data()?.isBlocked === true) {
+      throw new HttpsError("permission-denied", "Tu cuenta está temporalmente suspendida. Contactá a soporte.");
+    }
+
     const paymentIntentId = String(request.data?.paymentIntentId || "").trim();
     if (!paymentIntentId.startsWith("pi_")) {
       throw new HttpsError("invalid-argument", "paymentIntentId inválido.");
@@ -2409,7 +2416,10 @@ async function convertToUSD(amount, currencyCode) {
   if (code === "USD") return amount;
   const rates = await getExchangeRates(null);
   const rate = rates[code];
-  if (!rate) return null;
+  if (!rate) {
+    console.warn(`convertToUSD: no exchange rate for currency "${code}", returning null`);
+    return null;
+  }
   return amount / rate;
 }
 
@@ -2521,12 +2531,18 @@ exports.listAdmins = onCall(
       throw new HttpsError("permission-denied", "Solo administradores.");
     }
 
-    const listResult = await admin.auth().listUsers(1000);
+    // Paginate through all Firebase Auth users (max 1000 per page)
+    const allUsers = [];
+    let pageToken;
+    do {
+      const listResult = await admin.auth().listUsers(1000, pageToken);
+      allUsers.push(...listResult.users);
+      pageToken = listResult.pageToken;
+    } while (pageToken);
 
     let admins;
     if (isSuper) {
-      // Super admin sees everyone with any admin role
-      admins = listResult.users
+      admins = allUsers
         .filter((u) => u.customClaims?.admin === true || u.customClaims?.role)
         .map((u) => ({
           uid: u.uid,
@@ -2536,9 +2552,8 @@ exports.listAdmins = onCall(
           tenantId: u.customClaims?.tenantId ?? null,
         }));
     } else {
-      // Tenant admin sees only collaborators of their own tenant
       const callerTenantId = callerClaims.tenantId;
-      admins = listResult.users
+      admins = allUsers
         .filter((u) => u.customClaims?.tenantId === callerTenantId)
         .map((u) => ({
           uid: u.uid,
@@ -2861,14 +2876,11 @@ exports.getFailedPayments = onCall(
     );
 
     const snap = await db.collection("_stripeWebhookEvents")
+      .where("status", "==", "failed")
       .where("createdAt", ">=", since)
       .get();
 
     let failed = snap.docs
-      .filter((d) => {
-        const data = d.data();
-        return data.outcome === "failed" || data.status === "failed";
-      })
       .map((d) => {
         const ev = d.data();
         return {
@@ -3330,9 +3342,9 @@ exports.handleStripeConnectOAuth = onRequest(
     const tenantDoc = tenantsSnap.docs[0];
     const tenantId = tenantDoc.id;
 
-    // Validate state is not older than 1 hour
+    // Validate state is not older than 24 hours
     const stateCreatedAt = tenantDoc.data().stripeConnectOAuthStateCreatedAt?.toDate?.();
-    if (!stateCreatedAt || Date.now() - stateCreatedAt.getTime() > 3600000) {
+    if (!stateCreatedAt || Date.now() - stateCreatedAt.getTime() > 86400000) {
       await tenantDoc.ref.update({ stripeConnectOAuthState: null });
       return res.status(400).send("Enlace expirado. Genera uno nuevo desde el panel.");
     }

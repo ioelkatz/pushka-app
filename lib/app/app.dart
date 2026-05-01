@@ -8,6 +8,7 @@ import '../core/theme_provider.dart';
 import '../features/users/presentation/user_profile_provider.dart';
 import '../features/feedback/feedback_service.dart';
 import '../features/tenant/presentation/tenant_theme_provider.dart';
+import '../features/tenant/data/tenant_repository.dart';
 import 'router.dart';
 
 class PushkaApp extends ConsumerStatefulWidget {
@@ -89,6 +90,13 @@ class _PushkaAppState extends ConsumerState<PushkaApp> with WidgetsBindingObserv
         coinJingle: (profile['coinJingleEnabled'] as bool?) ?? true,
         vibration: (profile['vibrationEnabled'] as bool?) ?? true,
       );
+    });
+
+    // Navigate to /suspended if the tenant gets suspended while the app is open
+    ref.listen(tenantConfigProvider, (_, next) {
+      if (next.error is TenantSuspendedException) {
+        router.go('/suspended');
+      }
     });
 
     final tenantTheme = ref.watch(tenantThemeProvider);
