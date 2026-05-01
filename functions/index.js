@@ -3429,10 +3429,7 @@ exports.assetlinks = onRequest({ cors: true }, (req, res) => {
         namespace: "android_app",
         package_name: "com.pushka.app",
         sha256_cert_fingerprints: [
-          // TODO: replace with the actual release keystore SHA-256 fingerprint
-          // Run: keytool -list -v -keystore pushka-release-key.jks -alias pushka -storepass <pass>
-          // and paste the SHA-256 here
-          "REPLACE_WITH_PROD_SHA256_FINGERPRINT",
+          "12:71:ED:79:A4:BF:E9:6C:84:C3:F7:7A:29:7C:EE:17:76:89:83:7C:1E:E1:B8:F3:1A:3D:EB:16:A4:26:D1:45",
         ],
       },
     },
