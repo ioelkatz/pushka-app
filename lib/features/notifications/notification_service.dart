@@ -144,6 +144,56 @@ class NotificationService {
     _tokenRefreshSub = null;
   }
 
+  /// Removes this device's FCM token from `users/{uid}/fcmTokens` AND deletes
+  /// the token from FCM's side, then stops the refresh listener.
+  ///
+  /// Must be called BEFORE `FirebaseAuth.signOut()` — otherwise the Firestore
+  /// delete is rejected by rules (`isOwner(uid)` requires the auth context).
+  ///
+  /// Without this, after a user signs out:
+  /// - their token doc lingers in Firestore, so server-side `sendToUser(uid)`
+  ///   keeps pushing to this device for the previous account
+  /// - if a new user signs in, the same FCM token gets written to their docs
+  ///   too, so a single push from the previous account arrives even after the
+  ///   new sign-in (privacy leak: notifications meant for user A reach user B's
+  ///   eyes if they share the device)
+  Future<void> revokeFcmTokenForUser(String uid) async {
+    String? token;
+    try {
+      token = await _messaging.getToken();
+    } catch (e) {
+      debugPrint('NotificationService.revokeFcmTokenForUser: getToken failed: $e');
+    }
+
+    if (token != null) {
+      try {
+        await FirebaseFirestore.instance
+            .collection('users')
+            .doc(uid)
+            .collection('fcmTokens')
+            .doc(token)
+            .delete();
+      } catch (e) {
+        // Most likely the token was never registered (sync failed earlier),
+        // or the user has no Firestore connectivity. Either way, swallow —
+        // we still want sign-out to complete.
+        debugPrint('NotificationService.revokeFcmTokenForUser: delete failed: $e');
+      }
+    }
+
+    // Force FCM to issue a new token for the next sign-in. Without this, the
+    // next user signs in with the SAME token, which (a) leaks history if the
+    // previous user's token doc still exists and (b) keeps the previous
+    // user's stale push subscriptions on the FCM side.
+    try {
+      await _messaging.deleteToken();
+    } catch (e) {
+      debugPrint('NotificationService.revokeFcmTokenForUser: deleteToken failed: $e');
+    }
+
+    await stopTokenRefresh();
+  }
+
   Future<void> _configureLocalTimezone() async {
     tz.initializeTimeZones();
     final timeZoneName = DateTime.now().timeZoneName;

@@ -238,9 +238,18 @@ service cloud.firestore {
           (!('description' in request.resource.data) ||
               (request.resource.data.description is string &&
                   request.resource.data.description.size() <= 500)) &&
-          (!('paymentMethod' in request.resource.data) ||
-              (request.resource.data.paymentMethod is string &&
-                  request.resource.data.paymentMethod.size() <= 100)) &&
+          // paymentMethod is required for client-written transactions and must
+          // NOT be 'card' / 'auto_card' — those are exclusively webhook-written
+          // via Admin SDK (which bypasses these rules). This prevents a
+          // malicious client from inflating their own donation history with
+          // fake card transactions, and from creating a phantom record
+          // alongside the legitimate webhook-written one.
+          ('paymentMethod' in request.resource.data) &&
+          request.resource.data.paymentMethod is string &&
+          request.resource.data.paymentMethod.size() <= 100 &&
+          request.resource.data.paymentMethod != 'card' &&
+          request.resource.data.paymentMethod != 'auto_card' &&
+          request.resource.data.paymentMethod != 'auto' &&
           (!('status' in request.resource.data) ||
               (request.resource.data.status is string &&
                   request.resource.data.status.size() <= 50)) &&

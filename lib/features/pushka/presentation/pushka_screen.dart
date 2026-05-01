@@ -169,7 +169,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
       }
 
       final currency = _currencyCodeFromProfile();
-      final amountCents = ((amountToEmpty * 100) ).round();
+      final amountCents = amountToStripeUnits(amountToEmpty, currency);
       final minCents = _minAmountCentsForCurrency(currency);
 
       if (amountCents < minCents) {
@@ -303,7 +303,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
       }
 
       final currency = _currencyCodeFromProfile();
-      final amountCents = ((donationAmount * 100) ).round();
+      final amountCents = amountToStripeUnits(donationAmount, currency);
       final minCents = _minAmountCentsForCurrency(currency);
       if (amountCents < minCents) {
         if (!mounted) return;
@@ -345,8 +345,8 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
         throw Exception(tr.stripeNotConfigured);
       }
 
-      final amountCents = ((donationAmount * 100) ).round();
       final currency = _currencyCodeFromProfile();
+      final amountCents = amountToStripeUnits(donationAmount, currency);
       final minCents = _minAmountCentsForCurrency(currency);
       if (amountCents < minCents) {
         if (!mounted) return;
@@ -554,6 +554,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
 
             SizedBox(height: topGap),
 
+            // Title / subtitle / progress vary by full vs filling state.
             if (isFull) ...[
               Text(
                 tr.pushkaFull,
@@ -574,46 +575,6 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                   fontSize: subtitleSize,
                 ),
                 textAlign: TextAlign.center,
-              ),
-              SizedBox(height: titleBottomGap),
-
-              RepaintBoundary(
-                child: SizedBox(
-                  height: imageHeight,
-                  child: pushkaStyle == PushkaStyle.building770
-                      ? Building770Widget(fillFraction: fillPercentage)
-                      : Pushka3DWidget(
-                          key: _pushkaKey,
-                          fillPercentage: fillPercentage,
-                          goal: pushkaGoal,
-                          amount: pushkaAmount,
-                          currencySymbol: _currencySymbol(_currencyCodeFromProfile()),
-                        ),
-                ),
-              ),
-
-              SizedBox(height: actionsTopGap),
-
-              SizedBox(
-                width: double.infinity,
-                height: 50,
-                child: ElevatedButton(
-                  onPressed: emptyPushka,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AppTokens.primaryBlue,
-                    foregroundColor: Colors.white,
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                  ),
-                  child: Text(tr.emptyPushkaBtn, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 16)),
-                ),
-              ),
-              const SizedBox(height: 10),
-              TextButton(
-                onPressed: _showTzedakahSettingsDialog,
-                child: Text(
-                  tr.changePushkaGoal,
-                  style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15),
-                ),
               ),
             ] else ...[
               Text(
@@ -651,25 +612,57 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                   ),
                 ),
               ),
-              SizedBox(height: titleBottomGap),
+            ],
+            SizedBox(height: titleBottomGap),
 
-              RepaintBoundary(
-                child: SizedBox(
-                  height: imageHeight,
-                  child: pushkaStyle == PushkaStyle.building770
-                      ? Building770Widget(fillFraction: fillPercentage)
-                      : Pushka3DWidget(
-                          key: _pushkaKey,
-                          fillPercentage: fillPercentage,
-                          goal: pushkaGoal,
-                          amount: pushkaAmount,
-                          currencySymbol: _currencySymbol(_currencyCodeFromProfile()),
-                        ),
+            // Single Pushka3DWidget instance — keyed once at this position so
+            // the AnimationControllers (wave/fill/coin) survive isFull flips
+            // without GlobalKey duplication. Previously the same _pushkaKey was
+            // attached to two widgets in different branches of an if/else,
+            // which is a Flutter footgun: any moment both branches mount
+            // (animated transitions, hot-reload races, debug overlays) crashes
+            // with "Multiple widgets used the same GlobalKey".
+            RepaintBoundary(
+              child: SizedBox(
+                height: imageHeight,
+                child: pushkaStyle == PushkaStyle.building770
+                    ? Building770Widget(fillFraction: fillPercentage)
+                    : Pushka3DWidget(
+                        key: _pushkaKey,
+                        fillPercentage: fillPercentage,
+                        goal: pushkaGoal,
+                        amount: pushkaAmount,
+                        currencySymbol: _currencySymbol(_currencyCodeFromProfile()),
+                      ),
+              ),
+            ),
+
+            SizedBox(height: actionsTopGap),
+
+            // Action buttons differ by state.
+            if (isFull) ...[
+              SizedBox(
+                width: double.infinity,
+                height: 50,
+                child: ElevatedButton(
+                  onPressed: emptyPushka,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppTokens.primaryBlue,
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  ),
+                  child: Text(tr.emptyPushkaBtn, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 16)),
                 ),
               ),
-
-              SizedBox(height: actionsTopGap),
-
+              const SizedBox(height: 10),
+              TextButton(
+                onPressed: _showTzedakahSettingsDialog,
+                child: Text(
+                  tr.changePushkaGoal,
+                  style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15),
+                ),
+              ),
+            ] else ...[
               Row(
                 children: [
                   _moneyBtn(_formatQuickAmount(quickAmounts[0]), () => addAmount(quickAmounts[0])),
@@ -1180,7 +1173,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
   void _showMinAmountDialog(String currency, int minCents, double attempted) {
     final tr = S.of(context);
     final symbol = _currencySymbol(currency);
-    final minAmount = _formatAmountFromCents(minCents);
+    final minAmount = _formatAmountFromCents(minCents, currency: currency);
     final code = currency.toUpperCase();
 
     showDialog(
@@ -1478,12 +1471,15 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
     }
   }
 
-  String _formatAmountFromCents(int cents) {
-    final value = cents / 100;
+  String _formatAmountFromCents(int cents, {String? currency}) {
+    final code = currency ?? _currencyCodeFromProfile();
+    final value = stripeUnitsToAmount(cents, code);
+    final mult = currencyUnitMultiplier(code);
+    if (mult == 1) return value.toStringAsFixed(0);
     if (value == value.roundToDouble() && value >= 1) {
       return value.toStringAsFixed(0);
     }
-    return value.toStringAsFixed(2);
+    return value.toStringAsFixed(mult == 1000 ? 3 : 2);
   }
 
   List<double> _presetsForCurrency(String currency) {
