@@ -488,7 +488,11 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
             final remote = remoteAmount.toDouble();
             final recentWrite = _localWriteAt != null &&
                 DateTime.now().difference(_localWriteAt!).inSeconds < 4;
-            if (!recentWrite && remote != pushkaAmount) {
+            // Always accept remote if it's lower (pushka emptied or corrected).
+            // Only suppress sync if remote > local and we have a recent write
+            // (prevents the server echo from overwriting an optimistic add).
+            final shouldSync = !recentWrite || remote < pushkaAmount;
+            if (shouldSync && remote != pushkaAmount) {
               pushkaAmount = remote;
               if (uid != null) HiveCache.instance.savePushkaAmount(uid, pushkaAmount);
             }

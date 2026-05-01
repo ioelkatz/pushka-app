@@ -1056,9 +1056,10 @@ exports.onTransactionCreated = onDocumentCreated(
     else if (type === "walletFill" && amount >= 0) body = m.walletFillPos;
     else if (type === "walletFill" && amount < 0) body = m.walletFillNeg;
 
+    const tenantId = data.tenantId ?? "";
     await sendToUser(uid, {
       notification: { title: "Pushka", body },
-      data: { type, amount: String(amount) },
+      data: { type, amount: String(amount), tenantId },
     });
   },
 );
@@ -1170,6 +1171,13 @@ exports.walletTransfer = onCall(
     await enforceRateLimit(request.auth.uid, "walletTransfer", 20, 3600);
 
     const senderUid = request.auth.uid;
+
+    // Block transfers for suspended users
+    const senderAdminSnap = await db.collection("adminData").doc(senderUid).get();
+    if (senderAdminSnap.exists && senderAdminSnap.data()?.isBlocked === true) {
+      throw new HttpsError("permission-denied", "Tu cuenta está temporalmente suspendida. Contactá a soporte.");
+    }
+
     const targetWalletId = String(request.data?.targetWalletId || "").trim();
     const rawAmount = Number(request.data?.amount || 0);
     // Round to 2 decimal places to avoid floating-point precision issues.
@@ -1249,6 +1257,8 @@ exports.walletTransfer = onCall(
 
       const senderCurrency = String((senderSnap.data() || {}).currencyCode || "USD").toUpperCase();
       const receiverCurrency = String((receiverSnap.data() || {}).currencyCode || "USD").toUpperCase();
+      const senderTenantId = (senderSnap.data() || {}).tenantId ?? null;
+      const receiverTenantId = (receiverSnap.data() || {}).tenantId ?? null;
       const senderCurrSnap = buildCurrencySnapshot(amount, senderCurrency, transferRates);
       const receiverCurrSnap = buildCurrencySnapshot(amount, receiverCurrency, transferRates);
 
@@ -1259,6 +1269,7 @@ exports.walletTransfer = onCall(
         ...senderCurrSnap,
         amountUSD: -senderCurrSnap.amountUSD,
         amountMXN: -senderCurrSnap.amountMXN,
+        tenantId: senderTenantId,
         description: `Transferencia enviada a ${targetWalletId}`,
         createdAt: admin.firestore.FieldValue.serverTimestamp(),
       });
@@ -1268,6 +1279,7 @@ exports.walletTransfer = onCall(
         amount,
         currencyCode: receiverCurrency,
         ...receiverCurrSnap,
+        tenantId: receiverTenantId,
         description: "Transferencia recibida",
         createdAt: admin.firestore.FieldValue.serverTimestamp(),
       });
@@ -1287,6 +1299,13 @@ exports.walletRequestTransfer = onCall(
     await enforceRateLimit(request.auth.uid, "walletRequestTransfer", 30, 3600);
 
     const requesterUid = request.auth.uid;
+
+    // Block requests from suspended users
+    const reqAdminSnap = await db.collection("adminData").doc(requesterUid).get();
+    if (reqAdminSnap.exists && reqAdminSnap.data()?.isBlocked === true) {
+      throw new HttpsError("permission-denied", "Tu cuenta está temporalmente suspendida. Contactá a soporte.");
+    }
+
     const fromWalletId = String(request.data?.fromWalletId || "").trim();
     const rawAmount = Number(request.data?.amount || 0);
     // Round to 2 decimal places to avoid floating-point precision issues.
@@ -1371,6 +1390,13 @@ exports.acceptWalletRequest = onCall(
     await enforceRateLimit(request.auth.uid, "acceptWalletRequest", 20, 3600);
 
     const uid = request.auth.uid;
+
+    // Block transfers for suspended users
+    const acceptorAdminSnap = await db.collection("adminData").doc(uid).get();
+    if (acceptorAdminSnap.exists && acceptorAdminSnap.data()?.isBlocked === true) {
+      throw new HttpsError("permission-denied", "Tu cuenta está temporalmente suspendida. Contactá a soporte.");
+    }
+
     const requestId = String(request.data?.requestId || "").trim();
     if (!requestId) {
       throw new HttpsError("invalid-argument", "requestId inválido.");
@@ -1437,9 +1463,22 @@ exports.acceptWalletRequest = onCall(
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       }, { merge: true });
 
+      const reqRates = await getExchangeRates(null);
+      const senderCurrCode = String((senderSnap.data() || {}).currencyCode || "USD").toUpperCase();
+      const receiverCurrCode = String((receiverSnap.data() || {}).currencyCode || "USD").toUpperCase();
+      const reqSenderCurrSnap = buildCurrencySnapshot(amount, senderCurrCode, reqRates);
+      const reqReceiverCurrSnap = buildCurrencySnapshot(amount, receiverCurrCode, reqRates);
+      const senderTenantId = (senderSnap.data() || {}).tenantId ?? null;
+      const receiverTenantId = (receiverSnap.data() || {}).tenantId ?? null;
+
       tx.set(senderRef.collection("transactions").doc(), {
         type: "walletFill",
         amount: -amount,
+        currencyCode: senderCurrCode,
+        ...reqSenderCurrSnap,
+        amountUSD: -reqSenderCurrSnap.amountUSD,
+        amountMXN: -reqSenderCurrSnap.amountMXN,
+        tenantId: senderTenantId,
         description: `Solicitud aceptada — enviado a ${fromWalletId}`,
         createdAt: admin.firestore.FieldValue.serverTimestamp(),
       });
@@ -1447,6 +1486,9 @@ exports.acceptWalletRequest = onCall(
       tx.set(receiverRef.collection("transactions").doc(), {
         type: "walletFill",
         amount,
+        currencyCode: receiverCurrCode,
+        ...reqReceiverCurrSnap,
+        tenantId: receiverTenantId,
         description: `Solicitud aceptada — recibido de ${senderWalletId}`,
         createdAt: admin.firestore.FieldValue.serverTimestamp(),
       });
@@ -1491,6 +1533,13 @@ exports.rejectWalletRequest = onCall(
     await enforceRateLimit(request.auth.uid, "rejectWalletRequest", 20, 3600);
 
     const uid = request.auth.uid;
+
+    // Block action for suspended users (consistency with accept)
+    const rejectAdminSnap = await db.collection("adminData").doc(uid).get();
+    if (rejectAdminSnap.exists && rejectAdminSnap.data()?.isBlocked === true) {
+      throw new HttpsError("permission-denied", "Tu cuenta está temporalmente suspendida. Contactá a soporte.");
+    }
+
     const requestId = String(request.data?.requestId || "").trim();
     if (!requestId) {
       throw new HttpsError("invalid-argument", "requestId inválido.");
@@ -1578,6 +1627,14 @@ exports.addWalletContact = onCall(
     }
 
     const targetDoc = targetQuery.docs[0];
+
+    // Enforce same-tenant isolation for wallet contacts
+    const ownTenantId = ownSnap.data()?.tenantId ?? null;
+    const targetTenantId = targetDoc.data()?.tenantId ?? null;
+    if (ownTenantId && targetTenantId && ownTenantId !== targetTenantId) {
+      throw new HttpsError("not-found", "No existe una billetera con ese ID.");
+    }
+
     const displayName = String(targetDoc.data()?.displayName || "Contacto");
     const contactRef = db
       .collection("users")
@@ -2263,8 +2320,9 @@ exports.processPushkaAutoEmpty = onSchedule(
  */
 function buildCurrencySnapshot(amount, currencyCode, rates) {
   const code = String(currencyCode || "USD").toUpperCase();
-  const rate = rates[code] ?? 1;           // units of `code` per 1 USD
-  const mxnRate = rates["MXN"] ?? 17.1;    // units of MXN per 1 USD
+  const rawRate = rates[code] ?? 1;
+  const rate = (rawRate > 0) ? rawRate : 1;  // guard: never divide by zero
+  const mxnRate = rates["MXN"] ?? 17.1;
   const amountUSD = code === "USD" ? amount : amount / rate;
   const amountMXN = amountUSD * mxnRate;
   return {
@@ -2453,6 +2511,8 @@ exports.setAdminClaim = onCall(
       throw new HttpsError("unauthenticated", "Debes estar autenticado.");
     }
 
+    await enforceRateLimit(callerUid, "setAdminClaim", 20, 3600);
+
     const callerRecord = await admin.auth().getUser(callerUid);
     const callerClaims = callerRecord.customClaims || {};
     const callerIsSuper = callerClaims.role === "super_admin" || callerClaims.admin === true;
@@ -2574,6 +2634,10 @@ exports.listAdmins = onCall(
 exports.getAdminStats = onCall(
   { enforceAppCheck: false },
   async (request) => {
+    const callerUid = request.auth?.uid;
+    if (!callerUid) throw new HttpsError("unauthenticated", "Debes estar autenticado.");
+    await enforceRateLimit(callerUid, "getAdminStats", 30, 3600);
+
     const callerClaims = request.auth?.token ?? {};
     const isSuper = callerClaims.role === "super_admin" || callerClaims.admin === true;
     const isTenantAdminRole = callerClaims.role === "tenant_admin";
@@ -3232,6 +3296,10 @@ exports.getTenantConfig = onCall(
 exports.listTenants = onCall(
   { enforceAppCheck: false },
   async (request) => {
+    const callerUid = request.auth?.uid;
+    if (!callerUid) throw new HttpsError("unauthenticated", "Debes estar autenticado.");
+    await enforceRateLimit(callerUid, "listTenants", 30, 3600);
+
     const callerClaims = request.auth?.token ?? {};
     if (callerClaims.role !== "super_admin" && callerClaims.admin !== true) {
       throw new HttpsError("permission-denied", "Solo el super administrador.");
@@ -3270,6 +3338,10 @@ exports.listTenants = onCall(
 exports.createStripeConnectLink = onCall(
   { secrets: [stripeConnectClientId], enforceAppCheck: false },
   async (request) => {
+    const callerUid = request.auth?.uid;
+    if (!callerUid) throw new HttpsError("unauthenticated", "Debes estar autenticado.");
+    await enforceRateLimit(callerUid, "createStripeConnectLink", 10, 3600);
+
     const callerClaims = request.auth?.token ?? {};
     const isSuperAdminCaller = callerClaims.role === "super_admin" || callerClaims.admin === true;
     const isTenantAdminCaller = callerClaims.role === "tenant_admin";
@@ -3387,6 +3459,11 @@ const SENDGRID_FROM = "noreply@pushkaapp.com";
 // sendEmail — internal helper using SendGrid
 // ---------------------------------------------------------------------------
 async function sendEmail({ to, subject, html }) {
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  if (!to || !emailRegex.test(to)) {
+    console.warn("sendEmail: invalid or missing recipient address, skipping:", to);
+    return;
+  }
   const apiKey = sendgridApiKey.value();
   if (!apiKey || apiKey.startsWith("PLACEHOLDER")) {
     console.warn("sendEmail: SENDGRID_API_KEY not set, skipping email to", to);
@@ -3475,10 +3552,12 @@ exports.createTenantSubscription = onCall(
     const nextDue = new Date(now);
     nextDue.setMonth(nextDue.getMonth() + 1);
 
+    // Use "pending_payment" — subscription is incomplete until customer
+    // adds a payment method and the first invoice is confirmed via webhook.
     await db.collection("tenants").doc(tenantId).update({
       stripeCustomerId,
       stripeSubscriptionId: subscription.id,
-      paymentStatus: "current",
+      paymentStatus: "pending_payment",
       billingCycleStart: admin.firestore.Timestamp.fromDate(now),
       billingNextDue: admin.firestore.Timestamp.fromDate(nextDue),
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -3644,9 +3723,16 @@ exports.checkGracePeriods = onSchedule(
         continue;
       }
 
-      // Reminder emails at 30, 20, 10, 5 days
+      // Reminder emails at 30, 20, 10, 5 days — deduplicated by day
       const REMINDER_DAYS = [30, 20, 10, 5];
       if (!REMINDER_DAYS.includes(daysLeft)) continue;
+
+      const todayKey = now.toISOString().slice(0, 10); // "YYYY-MM-DD"
+      const lastSentKey = data.lastReminderEmailSentAt?.toDate?.()?.toISOString?.()?.slice(0, 10);
+      if (lastSentKey === todayKey) {
+        console.log(`Skipping duplicate reminder for tenant ${doc.id} — already sent today`);
+        continue;
+      }
 
       console.log(`Sending ${daysLeft}-day grace reminder to ${adminEmail} for tenant ${doc.id}`);
 
@@ -3660,6 +3746,9 @@ exports.checkGracePeriods = onSchedule(
             <p>Por favor actualizá tu método de pago para evitar la suspensión del servicio.</p>
             <p>— Equipo Pushka</p>
           `,
+        });
+        await doc.ref.update({
+          lastReminderEmailSentAt: admin.firestore.FieldValue.serverTimestamp(),
         });
       } catch (e) {
         console.error("reminder email failed:", e);
