@@ -1,4 +1,4 @@
-﻿import java.util.Properties
+import java.util.Properties
 import java.io.FileInputStream
 
 plugins {
@@ -36,6 +36,19 @@ android {
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
+    }
+
+    flavorDimensions += "environment"
+    productFlavors {
+        create("prod") {
+            dimension = "environment"
+            resValue("string", "app_name", "Pushka")
+        }
+        create("dev") {
+            dimension = "environment"
+            applicationIdSuffix = ".test"
+            resValue("string", "app_name", "Pushka Test")
+        }
     }
 
     signingConfigs {

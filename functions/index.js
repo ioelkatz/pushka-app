@@ -48,6 +48,22 @@ async function enforceRateLimit(uid, action, maxCalls, windowSeconds) {
   });
 }
 
+/**
+ * Rate-limits unauthenticated callables by client IP. Cloud Run forwards the
+ * client IP via x-forwarded-for; in dev/emulator we fall back to "unknown".
+ * IPs are not perfect (NAT, mobile carriers, VPN) but better than no limit.
+ */
+async function enforceRateLimitByIp(request, action, maxCalls, windowSeconds) {
+  const fwd = request.rawRequest?.headers?.["x-forwarded-for"];
+  const ip = (Array.isArray(fwd) ? fwd[0] : (fwd || "").split(",")[0])
+    .trim()
+    || request.rawRequest?.ip
+    || "unknown";
+  // Sanitize to a Firestore-safe id (max 1500 bytes; commonly < 50).
+  const safeIp = ip.replace(/[^a-zA-Z0-9.:_-]/g, "_").slice(0, 100);
+  await enforceRateLimit(`ip:${safeIp}`, action, maxCalls, windowSeconds);
+}
+
 // Exhaustive list of currencies accepted by the app and their Stripe minimum
 // charge amounts (in the smallest currency unit, e.g. cents).
 // Any currency NOT in this map is rejected before reaching Stripe.
@@ -116,7 +132,18 @@ async function getUserCurrency(uid) {
   }
 }
 
-function computeNextWalletTopUpDate({
+/**
+ * Computes the next run date for a recurring schedule (weekly or monthly).
+ * Used by `processPushkaAutoEmpty` to advance `autoEmptyNextRunAt` after each run.
+ *
+ * @param {object} opts
+ * @param {string} opts.frequency  "weekly" or "monthly"
+ * @param {number} opts.weekday    1=Monday … 7=Sunday (Firestore/UI convention)
+ * @param {number} opts.dayOfMonth 1-31; clamped to month length
+ * @param {Date}   [opts.baseDate] reference "now" for testing
+ * @returns {Date} next run timestamp (UTC, 08:00)
+ */
+function computeNextScheduleDate({
   frequency = "weekly",
   weekday = 1,
   dayOfMonth = 1,
@@ -140,7 +167,7 @@ function computeNextWalletTopUpDate({
     return run;
   }
 
-  // Firestore/UI weekday uses Monday=1...Sunday=7
+  // Weekly: Firestore/UI weekday uses Monday=1...Sunday=7
   const target = Math.min(Math.max(Number(weekday) || 1, 1), 7);
   let run = new Date(Date.UTC(
     now.getUTCFullYear(),
@@ -385,15 +412,27 @@ exports.createPaymentIntent = onCall(
       if (tenantStatus === "suspended") {
         throw new HttpsError("permission-denied", "El servicio de tu organización está suspendido. Contactá al administrador.");
       }
-      if (
-        tenantData.stripeConnectStatus === "active" &&
-        tenantData.stripeConnectAccountId
-      ) {
-        tenantConnectAccountId = tenantData.stripeConnectAccountId;
+      const connectStatus = tenantData.stripeConnectStatus;
+      const connectAccountId = tenantData.stripeConnectAccountId;
+      if (connectStatus === "active" && connectAccountId) {
+        tenantConnectAccountId = connectAccountId;
         tenantCommissionRate = typeof tenantData.commissionRate === "number"
           ? tenantData.commissionRate
           : 0.03;
+      } else if (connectAccountId && connectStatus !== "active") {
+        // Stripe Connect account exists but is not "active" (likely "restricted"
+        // or "pending"). Refusing the payment is safer than silently routing
+        // the donation to the platform account — that would mean the donor's
+        // money goes to us, not to their tenant org. Surface the error so the
+        // tenant admin notices and re-completes Stripe onboarding.
+        throw new HttpsError(
+          "failed-precondition",
+          "Tu organización está temporalmente sin conexión con el procesador de pagos. Avisale al administrador de tu Jabad para que lo regularice.",
+        );
       }
+      // If connectAccountId is null AND status is not_connected: tenant never
+      // set up Connect — fall through to platform-account charge (the original
+      // behavior). This is intentional for tenants still in onboarding.
     }
   }
 
@@ -406,7 +445,7 @@ exports.createPaymentIntent = onCall(
     ? String(request.auth.token.email).slice(0, 254)
     : null;
   const purpose = String(request.data?.purpose || "donation").toLowerCase();
-  if (purpose !== "donation" && purpose !== "wallet_topup" && purpose !== "pushka_empty") {
+  if (purpose !== "donation" && purpose !== "pushka_empty") {
     throw new HttpsError("invalid-argument", "Propósito de pago inválido.");
   }
 
@@ -439,7 +478,7 @@ exports.createPaymentIntent = onCall(
 
   let paymentIntent;
   try {
-    const stripe = require("stripe")(stripeSecret.value());
+    const stripe = require("stripe")(stripeSecret.value(), { timeout: 15000 });
     paymentIntent = await stripe.paymentIntents.create({
       amount,
       currency,
@@ -802,9 +841,9 @@ exports.stripeWebhook = onRequest(
       const amount = (intent.amount || 0) / 100;
       const docId = intent.id;
 
-      // wallet_auto_topup / pushka_auto_empty: state already updated by the
-      // scheduled CF that confirmed the charge. Just mark the event as processed.
-      if (uid && (purpose === "wallet_auto_topup" || purpose === "pushka_auto_empty")) {
+      // pushka_auto_empty: state already updated by the scheduled CF that
+      // confirmed the charge. Just mark the event as processed.
+      if (uid && purpose === "pushka_auto_empty") {
         await finalizeWebhookEvent(eventRef, {
           status: "processed",
           uid,
@@ -837,22 +876,6 @@ exports.stripeWebhook = onRequest(
           uid,
           paymentIntentId: docId,
           amount,
-        });
-      } else if (uid && purpose === "wallet_topup") {
-        await writeUserPaymentEvent(uid, event.id, {
-          kind: "wallet_topup_payment_succeeded",
-          provider: "stripe",
-          paymentIntentId: docId,
-          amount,
-          livemode: !!event.livemode,
-        });
-
-        await finalizeWebhookEvent(eventRef, {
-          status: "processed",
-          uid,
-          paymentIntentId: docId,
-          amount,
-          outcome: "wallet_topup_payment_succeeded",
         });
       } else {
         await finalizeWebhookEvent(eventRef, {
@@ -1016,35 +1039,26 @@ exports.onTransactionCreated = onDocumentCreated(
     } catch (_) { /* default to Spanish / USD */ }
 
     const fmt = (n) => `${sym}${Number(n).toFixed(2)}`;
-    const abs = Math.abs(Number(amount));
 
     const messages = {
       es: {
         tzedaka:       `¡Gracias por tu donación! ${fmt(amount)}`,
         pushkaEmpty:   `Tu Pushka fue vaciada. Donación: ${fmt(amount)}`,
-        walletFillPos: `Billetera recargada con ${fmt(amount)}`,
-        walletFillNeg: `Transferencia enviada: ${fmt(abs)}`,
         default:       "Nueva transacción registrada",
       },
       en: {
         tzedaka:       `Thank you for your donation! ${fmt(amount)}`,
         pushkaEmpty:   `Your Pushka was emptied. Donation: ${fmt(amount)}`,
-        walletFillPos: `Wallet topped up with ${fmt(amount)}`,
-        walletFillNeg: `Transfer sent: ${fmt(abs)}`,
         default:       "New transaction recorded",
       },
       fr: {
         tzedaka:       `Merci pour votre don ! ${fmt(amount)}`,
         pushkaEmpty:   `Votre Pushka a été vidée. Don : ${fmt(amount)}`,
-        walletFillPos: `Portefeuille rechargé de ${fmt(amount)}`,
-        walletFillNeg: `Transfert envoyé : ${fmt(abs)}`,
         default:       "Nouvelle transaction enregistrée",
       },
       he: {
         tzedaka:       `תודה על תרומתך! ${fmt(amount)}`,
         pushkaEmpty:   `הפושקה שלך רוקנה. תרומה: ${fmt(amount)}`,
-        walletFillPos: `הארנק נטען ב-${fmt(amount)}`,
-        walletFillNeg: `העברה נשלחה: ${fmt(abs)}`,
         default:       "עסקה חדשה נרשמה",
       },
     };
@@ -1053,606 +1067,12 @@ exports.onTransactionCreated = onDocumentCreated(
     let body = m.default;
     if (type === "tzedaka") body = m.tzedaka;
     else if (type === "pushkaEmpty") body = m.pushkaEmpty;
-    else if (type === "walletFill" && amount >= 0) body = m.walletFillPos;
-    else if (type === "walletFill" && amount < 0) body = m.walletFillNeg;
 
     const tenantId = data.tenantId ?? "";
     await sendToUser(uid, {
       notification: { title: "Pushka", body },
       data: { type, amount: String(amount), tenantId },
     });
-  },
-);
-
-exports.walletTopUpFromPaymentIntent = onCall(
-  { secrets: [stripeSecret], enforceAppCheck: true },
-  async (request) => {
-    if (!request.auth?.uid) {
-      throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
-    }
-    if (!stripeSecret.value()) {
-      throw new HttpsError("failed-precondition", "Stripe no configurado.");
-    }
-
-    // 20 top-up confirmations per hour per user
-    await enforceRateLimit(request.auth.uid, "walletTopUpFromPaymentIntent", 20, 3600);
-
-    const uid = request.auth.uid;
-
-    // Block suspended users from claiming wallet top-ups
-    const adminDataSnap = await db.collection("adminData").doc(uid).get();
-    if (adminDataSnap.exists && adminDataSnap.data()?.isBlocked === true) {
-      throw new HttpsError("permission-denied", "Tu cuenta está temporalmente suspendida. Contactá a soporte.");
-    }
-
-    const paymentIntentId = String(request.data?.paymentIntentId || "").trim();
-    if (!paymentIntentId.startsWith("pi_")) {
-      throw new HttpsError("invalid-argument", "paymentIntentId inválido.");
-    }
-
-    const stripe = require("stripe")(stripeSecret.value());
-    const intent = await stripe.paymentIntents.retrieve(paymentIntentId);
-
-    if (!intent || intent.status !== "succeeded") {
-      throw new HttpsError("failed-precondition", "El pago aún no fue confirmado.");
-    }
-    if (String(intent.metadata?.uid || "") !== uid) {
-      throw new HttpsError("permission-denied", "El pago no pertenece a este usuario.");
-    }
-    if (String(intent.metadata?.purpose || "") !== "wallet_topup") {
-      throw new HttpsError("invalid-argument", "El pago no es de recarga de billetera.");
-    }
-
-    const amount = Number(intent.amount_received || intent.amount || 0) / 100;
-    if (!Number.isFinite(amount) || amount <= 0) {
-      throw new HttpsError("failed-precondition", "Monto de recarga inválido.");
-    }
-
-    const wfCurrency = String(intent.currency || "usd").toUpperCase();
-    const wfRates = await getExchangeRates(null);
-    const wfSnap = buildCurrencySnapshot(amount, wfCurrency, wfRates);
-
-    const consumeRef = db.collection("_walletTopUpIntents").doc(paymentIntentId);
-    const userRef = db.collection("users").doc(uid);
-    let updatedBalance = 0;
-
-    await db.runTransaction(async (tx) => {
-      const consumeSnap = await tx.get(consumeRef);
-      if (consumeSnap.exists) {
-        throw new HttpsError("already-exists", "Esta recarga ya fue aplicada.");
-      }
-
-      const userSnap = await tx.get(userRef);
-      if (!userSnap.exists) {
-        throw new HttpsError("not-found", "No se encontró el usuario.");
-      }
-      const userData = userSnap.data() || {};
-      const currentBalance = Number(userData.walletBalance || 0);
-      updatedBalance = Math.round((currentBalance + amount) * 100) / 100;
-
-      tx.set(
-        userRef,
-        {
-          walletBalance: updatedBalance,
-          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-        },
-        { merge: true },
-      );
-
-      const movementRef = userRef.collection("transactions").doc();
-      tx.set(movementRef, {
-        type: "walletFill",
-        amount,
-        currencyCode: wfCurrency,
-        ...wfSnap,
-        description: "Recarga de billetera con tarjeta",
-        createdAt: admin.firestore.FieldValue.serverTimestamp(),
-      });
-
-      tx.set(consumeRef, {
-        uid,
-        amount,
-        paymentIntentId,
-        createdAt: admin.firestore.FieldValue.serverTimestamp(),
-      });
-    });
-
-    return { success: true, walletBalance: updatedBalance };
-  },
-);
-
-exports.walletTransfer = onCall(
-  { enforceAppCheck: true },
-  async (request) => {
-    if (!request.auth?.uid) {
-      throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
-    }
-    // 20 transfers per hour per user
-    await enforceRateLimit(request.auth.uid, "walletTransfer", 20, 3600);
-
-    const senderUid = request.auth.uid;
-
-    // Block transfers for suspended users
-    const senderAdminSnap = await db.collection("adminData").doc(senderUid).get();
-    if (senderAdminSnap.exists && senderAdminSnap.data()?.isBlocked === true) {
-      throw new HttpsError("permission-denied", "Tu cuenta está temporalmente suspendida. Contactá a soporte.");
-    }
-
-    const targetWalletId = String(request.data?.targetWalletId || "").trim();
-    const rawAmount = Number(request.data?.amount || 0);
-    // Round to 2 decimal places to avoid floating-point precision issues.
-    const amount = Math.round(rawAmount * 100) / 100;
-
-    if (!targetWalletId || !/^\d{8}$/.test(targetWalletId)) {
-      throw new HttpsError("invalid-argument", "ID destino debe ser de 8 dígitos.");
-    }
-    if (!Number.isFinite(amount) || amount <= 0) {
-      throw new HttpsError("invalid-argument", "Monto inválido.");
-    }
-    if (amount > 1000000) {
-      throw new HttpsError("invalid-argument", "El monto excede el límite permitido.");
-    }
-
-    const targetQuery = await db
-      .collection("users")
-      .where("walletId", "==", targetWalletId)
-      .limit(1)
-      .get();
-
-    if (targetQuery.empty) {
-      throw new HttpsError("not-found", "No existe una billetera con ese ID.");
-    }
-
-    const receiverRef = targetQuery.docs[0].ref;
-    const receiverUid = targetQuery.docs[0].id;
-    if (receiverUid === senderUid) {
-      throw new HttpsError("failed-precondition", "No puedes transferirte a ti mismo.");
-    }
-
-    const senderRef = db.collection("users").doc(senderUid);
-    let senderBalanceAfter = 0;
-    const transferRates = await getExchangeRates(null);
-
-    await db.runTransaction(async (tx) => {
-      const senderSnap = await tx.get(senderRef);
-      const receiverSnap = await tx.get(receiverRef);
-
-      if (!senderSnap.exists || !receiverSnap.exists) {
-        throw new HttpsError("not-found", "No se pudo completar la transferencia.");
-      }
-
-      // Re-validate that the receiver's walletId hasn't changed since the
-      // pre-transaction query (walletIds should be immutable, but verify defensively).
-      if ((receiverSnap.data() || {}).walletId !== targetWalletId) {
-        throw new HttpsError("not-found", "La billetera destino ya no existe.");
-      }
-
-      const senderBalance = Number((senderSnap.data() || {}).walletBalance || 0);
-      const receiverBalance = Number((receiverSnap.data() || {}).walletBalance || 0);
-
-      if (senderBalance < amount) {
-        throw new HttpsError("failed-precondition", "Saldo insuficiente.");
-      }
-
-      senderBalanceAfter = Math.round((senderBalance - amount) * 100) / 100;
-      const receiverBalanceAfter = Math.round((receiverBalance + amount) * 100) / 100;
-
-      tx.set(
-        senderRef,
-        {
-          walletBalance: senderBalanceAfter,
-          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-        },
-        { merge: true },
-      );
-
-      tx.set(
-        receiverRef,
-        {
-          walletBalance: receiverBalanceAfter,
-          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-        },
-        { merge: true },
-      );
-
-      const senderCurrency = String((senderSnap.data() || {}).currencyCode || "USD").toUpperCase();
-      const receiverCurrency = String((receiverSnap.data() || {}).currencyCode || "USD").toUpperCase();
-      const senderTenantId = (senderSnap.data() || {}).tenantId ?? null;
-      const receiverTenantId = (receiverSnap.data() || {}).tenantId ?? null;
-      const senderCurrSnap = buildCurrencySnapshot(amount, senderCurrency, transferRates);
-      const receiverCurrSnap = buildCurrencySnapshot(amount, receiverCurrency, transferRates);
-
-      tx.set(senderRef.collection("transactions").doc(), {
-        type: "walletFill",
-        amount: -amount,
-        currencyCode: senderCurrency,
-        ...senderCurrSnap,
-        amountUSD: -senderCurrSnap.amountUSD,
-        amountMXN: -senderCurrSnap.amountMXN,
-        tenantId: senderTenantId,
-        description: `Transferencia enviada a ${targetWalletId}`,
-        createdAt: admin.firestore.FieldValue.serverTimestamp(),
-      });
-
-      tx.set(receiverRef.collection("transactions").doc(), {
-        type: "walletFill",
-        amount,
-        currencyCode: receiverCurrency,
-        ...receiverCurrSnap,
-        tenantId: receiverTenantId,
-        description: "Transferencia recibida",
-        createdAt: admin.firestore.FieldValue.serverTimestamp(),
-      });
-    });
-
-    return { success: true, walletBalance: senderBalanceAfter };
-  },
-);
-
-exports.walletRequestTransfer = onCall(
-  { enforceAppCheck: true },
-  async (request) => {
-    if (!request.auth?.uid) {
-      throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
-    }
-    // 30 requests per hour per user
-    await enforceRateLimit(request.auth.uid, "walletRequestTransfer", 30, 3600);
-
-    const requesterUid = request.auth.uid;
-
-    // Block requests from suspended users
-    const reqAdminSnap = await db.collection("adminData").doc(requesterUid).get();
-    if (reqAdminSnap.exists && reqAdminSnap.data()?.isBlocked === true) {
-      throw new HttpsError("permission-denied", "Tu cuenta está temporalmente suspendida. Contactá a soporte.");
-    }
-
-    const fromWalletId = String(request.data?.fromWalletId || "").trim();
-    const rawAmount = Number(request.data?.amount || 0);
-    // Round to 2 decimal places to avoid floating-point precision issues.
-    const amount = Math.round(rawAmount * 100) / 100;
-
-    if (!fromWalletId || !/^\d{8}$/.test(fromWalletId)) {
-      throw new HttpsError("invalid-argument", "ID de billetera debe ser de 8 dígitos.");
-    }
-    if (!Number.isFinite(amount) || amount <= 0) {
-      throw new HttpsError("invalid-argument", "Monto inválido.");
-    }
-    if (amount > 1000000) {
-      throw new HttpsError("invalid-argument", "El monto excede el límite permitido.");
-    }
-
-    // Resolve target user by walletId
-    const targetQuery = await db
-      .collection("users")
-      .where("walletId", "==", fromWalletId)
-      .limit(1)
-      .get();
-
-    if (targetQuery.empty) {
-      throw new HttpsError("not-found", "No existe una billetera con ese ID.");
-    }
-
-    const targetUid = targetQuery.docs[0].id;
-    if (targetUid === requesterUid) {
-      throw new HttpsError("failed-precondition", "No puedes solicitarte a ti mismo.");
-    }
-
-    // Get requester wallet ID and currency to display in notification
-    const requesterSnap = await db.collection("users").doc(requesterUid).get();
-    const requesterWalletId = String(requesterSnap.data()?.walletId || "");
-    if (!requesterWalletId || !/^\d{8}$/.test(requesterWalletId)) {
-      throw new HttpsError("not-found", "Tu billetera no está configurada correctamente.");
-    }
-    const requesterCurrencyCode = String(requesterSnap.data()?.currencyCode || "usd").toLowerCase().trim();
-    const requesterSym = currencySymbol(SUPPORTED_CURRENCIES.has(requesterCurrencyCode) ? requesterCurrencyCode : "usd");
-
-    // Write pending request to target user
-    await db.collection("users").doc(targetUid).collection("walletRequests").add({
-      fromUid: requesterUid,
-      fromWalletId: requesterWalletId,
-      amount,
-      currency: requesterCurrencyCode,
-      status: "pending",
-      createdAt: admin.firestore.FieldValue.serverTimestamp(),
-    });
-
-    // Notify target user (in their language)
-    const targetLang = await getUserLanguage(targetUid);
-    const requestTitles = { es: "Solicitud de Tzedaká", en: "Tzedakah Request", fr: "Demande de Tzedaka", he: "בקשת צדקה" };
-    const requestBodies = {
-      es: `${requesterWalletId} te solicita ${requesterSym}${amount.toFixed(2)}`,
-      en: `${requesterWalletId} is requesting ${requesterSym}${amount.toFixed(2)} from you`,
-      fr: `${requesterWalletId} vous demande ${requesterSym}${amount.toFixed(2)}`,
-      he: `${requesterWalletId} מבקש ${requesterSym}${amount.toFixed(2)} ממך`,
-    };
-    await sendToUser(targetUid, {
-      notification: {
-        title: requestTitles[targetLang],
-        body: requestBodies[targetLang],
-      },
-      data: { type: "wallet_request", amount: String(amount), fromWalletId: requesterWalletId },
-    }).catch(() => {});
-
-    return { success: true };
-  },
-);
-
-// ---------------------------------------------------------------------------
-// Accept a pending wallet payment request (caller = target user who was asked)
-// ---------------------------------------------------------------------------
-
-exports.acceptWalletRequest = onCall(
-  { enforceAppCheck: true },
-  async (request) => {
-    if (!request.auth?.uid) {
-      throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
-    }
-    await enforceRateLimit(request.auth.uid, "acceptWalletRequest", 20, 3600);
-
-    const uid = request.auth.uid;
-
-    // Block transfers for suspended users
-    const acceptorAdminSnap = await db.collection("adminData").doc(uid).get();
-    if (acceptorAdminSnap.exists && acceptorAdminSnap.data()?.isBlocked === true) {
-      throw new HttpsError("permission-denied", "Tu cuenta está temporalmente suspendida. Contactá a soporte.");
-    }
-
-    const requestId = String(request.data?.requestId || "").trim();
-    if (!requestId) {
-      throw new HttpsError("invalid-argument", "requestId inválido.");
-    }
-
-    const requestRef = db.collection("users").doc(uid).collection("walletRequests").doc(requestId);
-
-    // All reads — including requestRef status — happen INSIDE the transaction.
-    // This closes the TOCTOU race where two concurrent acceptWalletRequest calls
-    // both pass a pre-transaction status check and both execute the debit.
-    let fromUid = "";
-    let amount = 0;
-    let fromWalletId = "";
-    await db.runTransaction(async (tx) => {
-      // Re-read the request inside the transaction so Firestore serialises
-      // concurrent accept calls on this document.
-      const requestSnap = await tx.get(requestRef);
-
-      if (!requestSnap.exists) {
-        throw new HttpsError("not-found", "Solicitud no encontrada.");
-      }
-
-      const reqData = requestSnap.data() || {};
-      if (reqData.status !== "pending") {
-        throw new HttpsError("failed-precondition", "Esta solicitud ya fue procesada.");
-      }
-
-      fromUid = String(reqData.fromUid || "");
-      amount = Number(reqData.amount || 0);
-      fromWalletId = String(reqData.fromWalletId || "");
-
-      if (!fromUid || !Number.isFinite(amount) || amount <= 0) {
-        throw new HttpsError("internal", "Datos de solicitud inválidos.");
-      }
-      if (amount > 1000000) {
-        throw new HttpsError("invalid-argument", "El monto de la solicitud excede el límite permitido.");
-      }
-
-      const senderRef = db.collection("users").doc(uid);
-      const receiverRef = db.collection("users").doc(fromUid);
-
-      const senderSnap = await tx.get(senderRef);
-      const receiverSnap = await tx.get(receiverRef);
-
-      if (!senderSnap.exists || !receiverSnap.exists) {
-        throw new HttpsError("not-found", "No se pudo completar la transferencia.");
-      }
-
-      const senderBalance = Number((senderSnap.data() || {}).walletBalance || 0);
-      if (senderBalance < amount) {
-        throw new HttpsError("failed-precondition", "Saldo insuficiente.");
-      }
-
-      const receiverBalance = Number((receiverSnap.data() || {}).walletBalance || 0);
-      const senderWalletId = String((senderSnap.data() || {}).walletId || uid);
-
-      tx.set(senderRef, {
-        walletBalance: Math.round((senderBalance - amount) * 100) / 100,
-        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-      }, { merge: true });
-
-      tx.set(receiverRef, {
-        walletBalance: Math.round((receiverBalance + amount) * 100) / 100,
-        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-      }, { merge: true });
-
-      const reqRates = await getExchangeRates(null);
-      const senderCurrCode = String((senderSnap.data() || {}).currencyCode || "USD").toUpperCase();
-      const receiverCurrCode = String((receiverSnap.data() || {}).currencyCode || "USD").toUpperCase();
-      const reqSenderCurrSnap = buildCurrencySnapshot(amount, senderCurrCode, reqRates);
-      const reqReceiverCurrSnap = buildCurrencySnapshot(amount, receiverCurrCode, reqRates);
-      const senderTenantId = (senderSnap.data() || {}).tenantId ?? null;
-      const receiverTenantId = (receiverSnap.data() || {}).tenantId ?? null;
-
-      tx.set(senderRef.collection("transactions").doc(), {
-        type: "walletFill",
-        amount: -amount,
-        currencyCode: senderCurrCode,
-        ...reqSenderCurrSnap,
-        amountUSD: -reqSenderCurrSnap.amountUSD,
-        amountMXN: -reqSenderCurrSnap.amountMXN,
-        tenantId: senderTenantId,
-        description: `Solicitud aceptada — enviado a ${fromWalletId}`,
-        createdAt: admin.firestore.FieldValue.serverTimestamp(),
-      });
-
-      tx.set(receiverRef.collection("transactions").doc(), {
-        type: "walletFill",
-        amount,
-        currencyCode: receiverCurrCode,
-        ...reqReceiverCurrSnap,
-        tenantId: receiverTenantId,
-        description: `Solicitud aceptada — recibido de ${senderWalletId}`,
-        createdAt: admin.firestore.FieldValue.serverTimestamp(),
-      });
-
-      // Mark request as accepted atomically with the balance update.
-      tx.set(requestRef, {
-        status: "accepted",
-        resolvedAt: admin.firestore.FieldValue.serverTimestamp(),
-      }, { merge: true });
-    });
-
-    // Notify the requester (in their language)
-    const receiverLang = await getUserLanguage(fromUid);
-    const acceptCurrency = await getUserCurrency(fromUid);
-    const acceptSym = currencySymbol(acceptCurrency);
-    const acceptTitles = { es: "Solicitud aceptada ✓", en: "Request accepted ✓", fr: "Demande acceptée ✓", he: "הבקשה אושרה ✓" };
-    const acceptBodies = {
-      es: `Tu solicitud de ${acceptSym}${amount.toFixed(2)} fue aceptada.`,
-      en: `Your request for ${acceptSym}${amount.toFixed(2)} was accepted.`,
-      fr: `Votre demande de ${acceptSym}${amount.toFixed(2)} a été acceptée.`,
-      he: `בקשתך ל-${acceptSym}${amount.toFixed(2)} אושרה.`,
-    };
-    await sendToUser(fromUid, {
-      notification: { title: acceptTitles[receiverLang], body: acceptBodies[receiverLang] },
-      data: { type: "walletFill", amount: String(amount) },
-    }).catch(() => {});
-
-    return { success: true };
-  },
-);
-
-// ---------------------------------------------------------------------------
-// Reject a pending wallet payment request
-// ---------------------------------------------------------------------------
-
-exports.rejectWalletRequest = onCall(
-  { enforceAppCheck: true },
-  async (request) => {
-    if (!request.auth?.uid) {
-      throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
-    }
-    await enforceRateLimit(request.auth.uid, "rejectWalletRequest", 20, 3600);
-
-    const uid = request.auth.uid;
-
-    // Block action for suspended users (consistency with accept)
-    const rejectAdminSnap = await db.collection("adminData").doc(uid).get();
-    if (rejectAdminSnap.exists && rejectAdminSnap.data()?.isBlocked === true) {
-      throw new HttpsError("permission-denied", "Tu cuenta está temporalmente suspendida. Contactá a soporte.");
-    }
-
-    const requestId = String(request.data?.requestId || "").trim();
-    if (!requestId) {
-      throw new HttpsError("invalid-argument", "requestId inválido.");
-    }
-
-    const requestRef = db.collection("users").doc(uid).collection("walletRequests").doc(requestId);
-
-    // Use a transaction to atomically check status and set rejected,
-    // preventing a race condition where two simultaneous calls both succeed.
-    let reqData = {};
-    await db.runTransaction(async (tx) => {
-      const requestSnap = await tx.get(requestRef);
-
-      if (!requestSnap.exists) {
-        throw new HttpsError("not-found", "Solicitud no encontrada.");
-      }
-
-      reqData = requestSnap.data() || {};
-      if (reqData.status !== "pending") {
-        throw new HttpsError("failed-precondition", "Esta solicitud ya fue procesada.");
-      }
-
-      tx.set(requestRef, {
-        status: "rejected",
-        resolvedAt: admin.firestore.FieldValue.serverTimestamp(),
-      }, { merge: true });
-    });
-
-    // Optionally notify the requester
-    const fromUid = String(reqData.fromUid || "");
-    const amount = Number(reqData.amount || 0);
-    if (fromUid) {
-      const rejectLang = await getUserLanguage(fromUid);
-      const rejectCurrency = await getUserCurrency(fromUid);
-      const rejectSym = currencySymbol(rejectCurrency);
-      const rejectTitles = { es: "Solicitud rechazada", en: "Request rejected", fr: "Demande rejetée", he: "הבקשה נדחתה" };
-      const rejectBodies = {
-        es: `Tu solicitud de ${rejectSym}${amount.toFixed(2)} fue rechazada.`,
-        en: `Your request for ${rejectSym}${amount.toFixed(2)} was rejected.`,
-        fr: `Votre demande de ${rejectSym}${amount.toFixed(2)} a été rejetée.`,
-        he: `בקשתך ל-${rejectSym}${amount.toFixed(2)} נדחתה.`,
-      };
-      await sendToUser(fromUid, {
-        notification: { title: rejectTitles[rejectLang], body: rejectBodies[rejectLang] },
-        data: { type: "walletRequestRejected", amount: String(amount) },
-      }).catch(() => {});
-    }
-
-    return { success: true };
-  },
-);
-
-exports.addWalletContact = onCall(
-  { enforceAppCheck: true },
-  async (request) => {
-    if (!request.auth?.uid) {
-      throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
-    }
-
-    // 30 contact additions per hour per user
-    await enforceRateLimit(request.auth.uid, "addWalletContact", 30, 3600);
-
-    const uid = request.auth.uid;
-    const walletId = String(request.data?.walletId || "").trim();
-    if (!walletId || !/^\d{8}$/.test(walletId)) {
-      throw new HttpsError("invalid-argument", "ID de billetera debe ser de 8 dígitos numéricos.");
-    }
-
-    const ownSnap = await db.collection("users").doc(uid).get();
-    if (!ownSnap.exists) {
-      throw new HttpsError("not-found", "No se encontró el usuario.");
-    }
-    const ownWalletId = String(ownSnap.data()?.walletId || "");
-    if (ownWalletId && ownWalletId === walletId) {
-      throw new HttpsError("failed-precondition", "No puedes agregarte a ti mismo.");
-    }
-
-    const targetQuery = await db
-      .collection("users")
-      .where("walletId", "==", walletId)
-      .limit(1)
-      .get();
-    if (targetQuery.empty) {
-      throw new HttpsError("not-found", "No existe una billetera con ese ID.");
-    }
-
-    const targetDoc = targetQuery.docs[0];
-
-    // Enforce same-tenant isolation for wallet contacts
-    const ownTenantId = ownSnap.data()?.tenantId ?? null;
-    const targetTenantId = targetDoc.data()?.tenantId ?? null;
-    if (ownTenantId && targetTenantId && ownTenantId !== targetTenantId) {
-      throw new HttpsError("not-found", "No existe una billetera con ese ID.");
-    }
-
-    const displayName = String(targetDoc.data()?.displayName || "Contacto");
-    const contactRef = db
-      .collection("users")
-      .doc(uid)
-      .collection("walletContacts")
-      .doc(walletId);
-
-    await contactRef.set(
-      {
-        walletId,
-        uid: targetDoc.id,
-        displayName,
-        createdAt: admin.firestore.FieldValue.serverTimestamp(),
-      },
-      { merge: true },
-    );
-
-    return { success: true, walletId, displayName };
   },
 );
 
@@ -1783,245 +1203,6 @@ exports.monitorStripeWebhookStuckEvents = onSchedule(
   },
 );
 
-exports.processWalletAutoTopUps = onSchedule(
-  {
-    schedule: "every 60 minutes",
-    timeZone: "Etc/UTC",
-    secrets: [stripeSecret],
-  },
-  async () => {
-    if (!stripeSecret.value()) {
-      console.error("processWalletAutoTopUps: STRIPE_SECRET_KEY missing");
-      return;
-    }
-
-    const nowTs = admin.firestore.Timestamp.now();
-    // Pre-filter on walletAutoTopUpEnabled to avoid burning the 150-doc page
-    // limit on users who have disabled auto top-up but still have a stale nextRunAt.
-    const dueUsers = await db
-      .collection("users")
-      .where("walletAutoTopUpEnabled", "==", true)
-      .where("walletAutoTopUpNextRunAt", "<=", nowTs)
-      .limit(150)
-      .get();
-
-    if (dueUsers.empty) {
-      console.info("processWalletAutoTopUps: no_due_users");
-      return;
-    }
-
-    let processed = 0;
-    let failed = 0;
-    const stripe = require("stripe")(stripeSecret.value());
-
-    for (const doc of dueUsers.docs) {
-      let chargeData = null; // captured inside transaction, used outside
-      try {
-        // Step 1: Firestore transaction — verify due, grab data, advance schedule.
-        // Does NOT update the balance yet (that happens only after Stripe confirms).
-        await db.runTransaction(async (tx) => {
-          const userRef = doc.ref;
-          const snap = await tx.get(userRef);
-          if (!snap.exists) return;
-
-          const data = snap.data() || {};
-          if (data.walletAutoTopUpEnabled !== true) return;
-          const nextRun = data.walletAutoTopUpNextRunAt;
-          if (!nextRun || nextRun.toMillis() > Date.now()) return;
-
-          const amount = Number(data.walletAutoTopUpAmount || 0);
-          if (!Number.isFinite(amount) || amount <= 0) {
-            // Invalid config — disable to stop retrying
-            tx.set(userRef, {
-              walletAutoTopUpEnabled: false,
-              walletAutoTopUpNextRunAt: null,
-              updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-            }, { merge: true });
-            return;
-          }
-
-          const customerId = String(data.stripeCustomerId || "").trim();
-          const pmId = String(data.stripeDefaultPaymentMethodId || "").trim();
-          if (!customerId || !pmId) {
-            // No saved card — advance schedule and skip charge
-            console.warn("processWalletAutoTopUps: no_saved_card", { uid: doc.id });
-            const frequency = String(data.walletAutoTopUpFrequency || "weekly");
-            const weekday = Number(data.walletAutoTopUpWeekday || 1);
-            const dayOfMonth = Number(data.walletAutoTopUpDayOfMonth || 1);
-            const nextDate = computeNextWalletTopUpDate({ frequency, weekday, dayOfMonth, baseDate: new Date() });
-            tx.set(userRef, {
-              walletAutoTopUpNextRunAt: admin.firestore.Timestamp.fromDate(nextDate),
-              updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-            }, { merge: true });
-            return;
-          }
-
-          const frequency = String(data.walletAutoTopUpFrequency || "weekly");
-          const weekday = Number(data.walletAutoTopUpWeekday || 1);
-          const dayOfMonth = Number(data.walletAutoTopUpDayOfMonth || 1);
-          const nextDate = computeNextWalletTopUpDate({ frequency, weekday, dayOfMonth, baseDate: new Date() });
-
-          // Validate currency from user profile before it reaches Stripe.
-          // If the stored value is not in the supported list, skip this user.
-          const rawCurrency = String(data.currencyCode || "usd").toLowerCase().trim();
-          if (!SUPPORTED_CURRENCIES.has(rawCurrency)) {
-            console.warn("processWalletAutoTopUps: unsupported_currency", { uid: doc.id, rawCurrency });
-            tx.set(userRef, {
-              walletAutoTopUpNextRunAt: admin.firestore.Timestamp.fromDate(nextDate),
-              updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-            }, { merge: true });
-            return;
-          }
-          const currency = rawCurrency;
-
-          // Capture current nextRunAt as a stable key for Stripe idempotency.
-          // Using the scheduled run timestamp (truncated to seconds) ensures
-          // crash-and-retry never creates a duplicate charge for the same cycle.
-          const runTs = nextRun.toMillis();
-
-          // Advance schedule now — charge happens outside the transaction
-          tx.set(userRef, {
-            walletAutoTopUpNextRunAt: admin.firestore.Timestamp.fromDate(nextDate),
-            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-          }, { merge: true });
-
-          chargeData = { amount, currency, customerId, pmId, nextRunDateKey: String(runTs) };
-        });
-
-        if (!chargeData) continue;
-
-        // Step 2: Off-session Stripe charge
-        const amountCents = Math.round(chargeData.amount * 100);
-        const minCents = minAmountForCurrency(chargeData.currency);
-        if (amountCents < minCents) {
-          console.warn("processWalletAutoTopUps: amount_below_minimum", { uid: doc.id, amountCents, minCents });
-          continue;
-        }
-
-        // Idempotency key: uid + scheduled run date (truncated to day) ensures
-        // a crash-and-retry never double-charges the same scheduled cycle.
-        const topUpIdempotencyKey = `wallet_auto_topup_${doc.id}_${chargeData.nextRunDateKey}`;
-
-        let paymentIntent;
-        try {
-          paymentIntent = await stripe.paymentIntents.create({
-            amount: amountCents,
-            currency: chargeData.currency,
-            customer: chargeData.customerId,
-            payment_method: chargeData.pmId,
-            off_session: true,
-            confirm: true,
-            error_on_requires_action: true,
-            metadata: {
-              uid: doc.id,
-              source: "pushka",
-              purpose: "wallet_auto_topup",
-            },
-          }, { idempotencyKey: topUpIdempotencyKey });
-        } catch (stripeErr) {
-          console.error("processWalletAutoTopUps: stripe_charge_failed", {
-            uid: doc.id,
-            error: String(stripeErr?.message || stripeErr),
-            code: stripeErr?.code,
-          });
-          // Notify user their card was declined
-          const failLang = await getUserLanguage(doc.id);
-          const failTitles = { es: "Recarga fallida", en: "Refill failed", fr: "Recharge échouée", he: "הטעינה נכשלה" };
-          const failBodies = {
-            es: "No pudimos cargar tu tarjeta para la recarga automática. Revisá tu tarjeta en Configuración.",
-            en: "We couldn't charge your card for the automatic refill. Please check your card in Settings.",
-            fr: "Nous n'avons pas pu débiter votre carte pour la recharge automatique. Vérifiez votre carte dans Paramètres.",
-            he: "לא הצלחנו לחייב את הכרטיס שלך לטעינה האוטומטית. בדוק את הכרטיס שלך בהגדרות.",
-          };
-          await sendToUser(doc.id, {
-            notification: { title: failTitles[failLang], body: failBodies[failLang] },
-            data: { type: "walletAutoTopUpFailed" },
-          }).catch(() => {});
-          failed += 1;
-          continue;
-        }
-
-        if (paymentIntent.status !== "succeeded") {
-          console.warn("processWalletAutoTopUps: payment_not_succeeded", { uid: doc.id, status: paymentIntent.status });
-          failed += 1;
-          continue;
-        }
-
-        // Step 3: Charge confirmed — update wallet balance.
-        // Use the paymentIntentId as the transaction doc ID to make this step
-        // idempotent: if it crashes and retries, the duplicate set() on the same
-        // doc ID will be a no-op (merge: true with same data).
-        const toppedUpAmount = chargeData.amount;
-        const piId = paymentIntent.id;
-        try {
-          await db.runTransaction(async (tx) => {
-            // Read the movement doc first — if it already exists this step was
-            // already applied (e.g. on a CF retry), so skip the balance update
-            // to prevent double-crediting.
-            const movementRef = doc.ref.collection("transactions").doc(piId);
-            const movementSnap = await tx.get(movementRef);
-            if (movementSnap.exists) return;
-
-            const snap = await tx.get(doc.ref);
-            const currentBalance = Number(snap.data()?.walletBalance || 0);
-            tx.set(doc.ref, {
-              walletBalance: Math.round((currentBalance + toppedUpAmount) * 100) / 100,
-              updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-            }, { merge: true });
-            const autoTopRates = await getExchangeRates(null);
-            const autoTopSnap = buildCurrencySnapshot(toppedUpAmount, chargeData.currency.toUpperCase(), autoTopRates);
-            tx.set(movementRef, {
-              type: "walletFill",
-              amount: toppedUpAmount,
-              currencyCode: chargeData.currency.toUpperCase(),
-              ...autoTopSnap,
-              description: "Recarga automática de billetera",
-              skipNotification: true,
-              createdAt: admin.firestore.FieldValue.serverTimestamp(),
-            });
-          });
-        } catch (step3Err) {
-          // CRITICAL: Stripe charge succeeded but balance update failed.
-          // Log with paymentIntentId so this can be manually recovered.
-          console.error("processWalletAutoTopUps: step3_balance_update_failed_after_charge", {
-            uid: doc.id,
-            paymentIntentId: piId,
-            amount: toppedUpAmount,
-            error: String(step3Err?.message || step3Err),
-          });
-          failed += 1;
-          continue;
-        }
-
-        // Step 4: Notify success
-        const topUpLang = await getUserLanguage(doc.id);
-        const topUpSym = currencySymbol(chargeData.currency);
-        const topUpTitles = { es: "Billetera recargada", en: "Wallet topped up", fr: "Portefeuille rechargé", he: "הארנק נטען" };
-        const topUpBodies = {
-          es: `Tu billetera fue recargada automáticamente con ${topUpSym}${toppedUpAmount.toFixed(2)}`,
-          en: `Your wallet was automatically topped up with ${topUpSym}${toppedUpAmount.toFixed(2)}`,
-          fr: `Votre portefeuille a été rechargé automatiquement de ${topUpSym}${toppedUpAmount.toFixed(2)}`,
-          he: `הארנק שלך נטען אוטומטית ב-${topUpSym}${toppedUpAmount.toFixed(2)}`,
-        };
-        await sendToUser(doc.id, {
-          notification: { title: topUpTitles[topUpLang], body: topUpBodies[topUpLang] },
-          data: { type: "walletFill" },
-        }).catch(() => {});
-
-        processed += 1;
-      } catch (err) {
-        failed += 1;
-        console.error("processWalletAutoTopUps: user_failed", {
-          uid: doc.id,
-          error: String(err?.message || err),
-        });
-      }
-    }
-
-    console.info("processWalletAutoTopUps: completed", { processed, failed });
-  },
-);
-
 
 // --- Erev Rosh Chodesh lookup (Gregorian dates for years 2025-2035) ---
 // Format: [month 0-indexed, day]. Tishrei (month 7 Hebrew) is skipped (Rosh HaShana).
@@ -2124,7 +1305,7 @@ exports.processPushkaAutoEmpty = onSchedule(
           if (freq === "erev_rosh_chodesh") {
             nextDate = computeNextErevRoshChodesh(new Date());
           } else {
-            nextDate = computeNextWalletTopUpDate({ frequency: freq, weekday, dayOfMonth, baseDate: new Date() });
+            nextDate = computeNextScheduleDate({ frequency: freq, weekday, dayOfMonth, baseDate: new Date() });
           }
 
           // Below minimum — advance schedule without charging
@@ -2515,7 +1696,9 @@ exports.setAdminClaim = onCall(
 
     const callerRecord = await admin.auth().getUser(callerUid);
     const callerClaims = callerRecord.customClaims || {};
-    const callerIsSuper = callerClaims.role === "super_admin" || callerClaims.admin === true;
+    // Use the centralized super-admin check — the legacy `admin: true` claim
+    // is only honored together with the canonical SUPER_ADMIN_EMAIL.
+    const callerIsSuper = callerIsSuperAdmin(request);
     const callerIsTenantAdmin = callerClaims.role === "tenant_admin";
 
     if (!callerIsSuper && !callerIsTenantAdmin) {
@@ -2551,6 +1734,13 @@ exports.setAdminClaim = onCall(
 
     const targetRecord = await admin.auth().getUserByEmail(targetEmail);
 
+    // setCustomUserClaims REPLACES the claims object — it does not merge.
+    // This is intentional:
+    //   - super_admin is cross-tenant, so we drop any prior tenantId.
+    //   - revoke wipes everything; the user's Firestore tenantId is also
+    //     cleared below so they don't appear as a stale tenant member.
+    //   - tenant_admin / tenant_collaborator always get a fresh tenantId
+    //     from the caller param (validated above).
     let newClaims;
     if (revoke) {
       newClaims = {};
@@ -2565,6 +1755,30 @@ exports.setAdminClaim = onCall(
     }
 
     await admin.auth().setCustomUserClaims(targetRecord.uid, newClaims);
+
+    // On revoke, also clear the user's tenantId in Firestore so the rule
+    // `(isTenantMember() && resource.data.tenantId == callerTenantId())`
+    // can never falsely include them in tenant queries (defense-in-depth;
+    // the role-claim check already blocks reads, but we keep state consistent).
+    if (revoke) {
+      try {
+        await db.collection("users").doc(targetRecord.uid).set(
+          { tenantId: admin.firestore.FieldValue.delete() },
+          { merge: true },
+        );
+      } catch (e) {
+        console.warn("setAdminClaim: failed to clear tenantId on revoke", { uid: targetRecord.uid, error: String(e?.message || e) });
+      }
+    }
+
+    // Force the target's next request to refresh their ID token so the new
+    // claims take effect immediately (otherwise stale tokens stay valid for
+    // up to 1 hour).
+    try {
+      await admin.auth().revokeRefreshTokens(targetRecord.uid);
+    } catch (e) {
+      console.warn("setAdminClaim: failed to revoke refresh tokens", { uid: targetRecord.uid, error: String(e?.message || e) });
+    }
 
     console.info("setAdminClaim", {
       callerUid,
@@ -2585,7 +1799,7 @@ exports.listAdmins = onCall(
   { enforceAppCheck: false },
   async (request) => {
     const callerClaims = request.auth?.token ?? {};
-    const isSuper = callerClaims.role === "super_admin" || callerClaims.admin === true;
+    const isSuper = callerIsSuperAdmin(request);
     const isTenantAdmin = callerClaims.role === "tenant_admin";
     if (!isSuper && !isTenantAdmin) {
       throw new HttpsError("permission-denied", "Solo administradores.");
@@ -2639,7 +1853,7 @@ exports.getAdminStats = onCall(
     await enforceRateLimit(callerUid, "getAdminStats", 60, 3600);
 
     const callerClaims = request.auth?.token ?? {};
-    const isSuper = callerClaims.role === "super_admin" || callerClaims.admin === true;
+    const isSuper = callerIsSuperAdmin(request);
     const isTenantAdminRole = callerClaims.role === "tenant_admin";
     if (!isSuper && !isTenantAdminRole) {
       throw new HttpsError("permission-denied", "Solo administradores.");
@@ -2673,7 +1887,6 @@ exports.getAdminStats = onCall(
 
     // Build user metadata map for enriching transaction data
     const userMap = {};
-    let totalWalletBalanceMXN = 0;
     for (const d of usersSnap.docs) {
       const u = d.data();
       const currency = String(u.currencyCode || "USD").toUpperCase();
@@ -2683,8 +1896,6 @@ exports.getAdminStats = onCall(
         email: u.email || "",
         currencyCode: currency,
       };
-      // wallet balance is in the user's currency; convert to MXN via USD
-      if (u.walletBalance) totalWalletBalanceMXN += (u.walletBalance / rate) * mxnRate;
     }
 
     const totalUsersCount = usersSnap.size;
@@ -2702,7 +1913,7 @@ exports.getAdminStats = onCall(
     for (let i = 11; i >= 0; i--) {
       const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - i, 1));
       const key = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
-      monthlyBuckets[key] = { totalMXN: 0, count: 0, tzedaka: 0, pushkaEmpty: 0, walletFill: 0 };
+      monthlyBuckets[key] = { totalMXN: 0, count: 0, tzedaka: 0, pushkaEmpty: 0 };
     }
 
     let totalMonthMXN = 0;
@@ -2720,7 +1931,6 @@ exports.getAdminStats = onCall(
 
     for (const txDoc of txSnap.docs) {
       const tx = txDoc.data();
-      if (tx.type === "walletFill" && tx.amount < 0) continue; // skip outgoing transfers
 
       const uid = txDoc.ref.parent.parent?.id;
       if (!uid) continue;
@@ -2752,7 +1962,6 @@ exports.getAdminStats = onCall(
         monthlyBuckets[monthKey].count++;
         if (tx.type === "tzedaka") monthlyBuckets[monthKey].tzedaka += amountMXN;
         else if (tx.type === "pushkaEmpty") monthlyBuckets[monthKey].pushkaEmpty += amountMXN;
-        else monthlyBuckets[monthKey].walletFill += amountMXN;
       }
 
       totalAllTimeMXN += amountMXN;
@@ -2822,7 +2031,6 @@ exports.getAdminStats = onCall(
       totalLastMonthMXN,
       totalYearMXN,
       totalAllTimeMXN,
-      totalWalletBalanceMXN,
       monthGrowth,
       monthlyStats,
       topDonors,
@@ -2841,7 +2049,7 @@ exports.getRecentTransactions = onCall(
   { enforceAppCheck: false },
   async (request) => {
     const callerClaims = request.auth?.token ?? {};
-    const isSuper = callerClaims.role === "super_admin" || callerClaims.admin === true;
+    const isSuper = callerIsSuperAdmin(request);
     const isTenantAdminRole = callerClaims.role === "tenant_admin";
     if (!isSuper && !isTenantAdminRole) {
       throw new HttpsError("permission-denied", "Solo administradores.");
@@ -2925,7 +2133,7 @@ exports.getFailedPayments = onCall(
   { enforceAppCheck: false },
   async (request) => {
     const callerClaims = request.auth?.token ?? {};
-    const isSuper = callerClaims.role === "super_admin" || callerClaims.admin === true;
+    const isSuper = callerIsSuperAdmin(request);
     const isTenantAdminRole = callerClaims.role === "tenant_admin";
     if (!isSuper && !isTenantAdminRole) {
       throw new HttpsError("permission-denied", "Solo administradores.");
@@ -2999,7 +2207,7 @@ exports.setUserBlocked = onCall(
   { enforceAppCheck: false },
   async (request) => {
     const callerClaims = request.auth?.token ?? {};
-    const isSuper = callerClaims.role === "super_admin" || callerClaims.admin === true;
+    const isSuper = callerIsSuperAdmin(request);
     const isTenantAdminRole = callerClaims.role === "tenant_admin";
     if (!isSuper && !isTenantAdminRole) {
       throw new HttpsError("permission-denied", "Solo administradores.");
@@ -3044,32 +2252,34 @@ exports.setUserBlocked = onCall(
 // MULTI-TENANT — Tenant management functions
 // ===========================================================================
 
-// Fields exposed publicly (for app branding preview before registration)
+// Fields exposed publicly via getTenantBySlug / listDiscoverableTenants.
+// `status` and `discoverable` are intentionally omitted — knowing a tenant
+// is in `grace_period` or `trial` leaks billing state to the public internet.
 const TENANT_PUBLIC_FIELDS = [
   "name", "slug", "appName", "welcomeText",
   "primaryColor", "secondaryColor", "logoUrl", "showPoweredBy",
   "defaultLanguage", "defaultCurrency", "defaultCountry",
   "contactEmail", "contactPhone", "privacyPolicyUrl", "termsUrl",
-  "city", "country", "status",
+  "city", "neighborhood", "country",
 ];
 
-// Fields exposed to authenticated users of the tenant (same as public + a bit more)
-const TENANT_MEMBER_FIELDS = [...TENANT_PUBLIC_FIELDS];
+// Fields exposed to authenticated users of the tenant (same as public + status
+// so members can see if their own tenant is in grace_period / suspended).
+const TENANT_MEMBER_FIELDS = [...TENANT_PUBLIC_FIELDS, "status"];
 
 /**
- * Validates that a slug is URL-safe and not already taken.
- * Returns the normalized slug or throws.
+ * Normalizes a slug to lowercase alphanumeric and validates length.
+ * Does NOT check uniqueness — that must be done atomically inside a
+ * transaction via the `_tenantSlugs/{slug}` lock collection (see
+ * `createTenant`/`updateTenant`). Querying-then-writing without a lock
+ * has a TOCTOU race that allows duplicate slugs under concurrent calls.
  */
-async function validateSlug(slug, excludeTenantId = null) {
+function normalizeSlug(slug) {
   const normalized = String(slug || "")
     .toLowerCase()
     .replace(/[^a-z0-9]/g, "");
   if (!normalized || normalized.length < 3 || normalized.length > 30) {
     throw new HttpsError("invalid-argument", "El slug debe tener entre 3 y 30 caracteres alfanuméricos.");
-  }
-  const existing = await db.collection("tenants").where("slug", "==", normalized).limit(1).get();
-  if (!existing.empty && existing.docs[0].id !== excludeTenantId) {
-    throw new HttpsError("already-exists", `El código "${normalized}" ya está en uso.`);
   }
   return normalized;
 }
@@ -3080,8 +2290,7 @@ async function validateSlug(slug, excludeTenantId = null) {
 exports.createTenant = onCall(
   { enforceAppCheck: false },
   async (request) => {
-    const callerClaims = request.auth?.token ?? {};
-    if (callerClaims.role !== "super_admin" && callerClaims.admin !== true) {
+    if (!callerIsSuperAdmin(request)) {
       throw new HttpsError("permission-denied", "Solo el super administrador puede crear tenants.");
     }
 
@@ -3099,7 +2308,7 @@ exports.createTenant = onCall(
       throw new HttpsError("invalid-argument", "name, slug y adminEmail son requeridos.");
     }
 
-    const normalizedSlug = await validateSlug(slug);
+    const normalizedSlug = normalizeSlug(slug);
 
     const now = admin.firestore.FieldValue.serverTimestamp();
 
@@ -3152,23 +2361,45 @@ exports.createTenant = onCall(
       createdBy: request.auth.uid,
     };
 
-    const docRef = await db.collection("tenants").add(tenantData);
+    // Atomic create: claim the slug AND create the tenant doc in one transaction.
+    // The `_tenantSlugs/{slug}` doc acts as a uniqueness lock — `tx.create()`
+    // throws ALREADY_EXISTS if a concurrent call already grabbed it. Without
+    // this, a query-then-write check has a TOCTOU race window.
+    const tenantRef = db.collection("tenants").doc();
+    const slugRef = db.collection("_tenantSlugs").doc(normalizedSlug);
+    try {
+      await db.runTransaction(async (tx) => {
+        const slugSnap = await tx.get(slugRef);
+        if (slugSnap.exists) {
+          throw new HttpsError("already-exists", `El código "${normalizedSlug}" ya está en uso.`);
+        }
+        tx.create(slugRef, { tenantId: tenantRef.id, createdAt: now });
+        tx.create(tenantRef, tenantData);
+      });
+    } catch (e) {
+      if (e instanceof HttpsError) throw e;
+      // Firestore throws "ALREADY_EXISTS" if tx.create races on the slug doc.
+      if (String(e?.code) === "6" || /ALREADY_EXISTS/i.test(String(e?.message))) {
+        throw new HttpsError("already-exists", `El código "${normalizedSlug}" ya está en uso.`);
+      }
+      throw e;
+    }
 
     // Assign tenant_admin claim to the admin email if they already have a Firebase account
     try {
       const adminRecord = await admin.auth().getUserByEmail(adminEmail.trim());
       await admin.auth().setCustomUserClaims(adminRecord.uid, {
         role: "tenant_admin",
-        tenantId: docRef.id,
+        tenantId: tenantRef.id,
       });
-      await docRef.update({ adminUid: adminRecord.uid });
+      await tenantRef.update({ adminUid: adminRecord.uid });
     } catch (e) {
       // User doesn't have an account yet — claims will be set when they register
       console.info(`createTenant: admin ${adminEmail} has no Firebase account yet; claims pending`);
     }
 
-    console.info("createTenant", { id: docRef.id, slug: normalizedSlug, adminEmail });
-    return { success: true, tenantId: docRef.id, slug: normalizedSlug };
+    console.info("createTenant", { id: tenantRef.id, slug: normalizedSlug, adminEmail });
+    return { success: true, tenantId: tenantRef.id, slug: normalizedSlug };
   }
 );
 
@@ -3279,9 +2510,43 @@ exports.updateTenant = onCall(
       }
       patch[key] = val;
     }
-    if (normalizedSlug) patch.slug = normalizedSlug;
 
-    await tenantRef.update(patch);
+    if (updates.slug) {
+      // Slug change: atomically free the old slug lock and grab the new one
+      // alongside the tenant patch. Same TOCTOU protection as createTenant.
+      const normalizedSlug = normalizeSlug(updates.slug);
+      const oldSlug = String(snap.data()?.slug || "");
+      patch.slug = normalizedSlug;
+
+      if (normalizedSlug !== oldSlug) {
+        const newSlugRef = db.collection("_tenantSlugs").doc(normalizedSlug);
+        const oldSlugRef = oldSlug ? db.collection("_tenantSlugs").doc(oldSlug) : null;
+        try {
+          await db.runTransaction(async (tx) => {
+            const newSlugSnap = await tx.get(newSlugRef);
+            if (newSlugSnap.exists && newSlugSnap.data()?.tenantId !== tenantId) {
+              throw new HttpsError("already-exists", `El código "${normalizedSlug}" ya está en uso.`);
+            }
+            if (oldSlugRef) tx.delete(oldSlugRef);
+            tx.set(newSlugRef, {
+              tenantId,
+              createdAt: admin.firestore.FieldValue.serverTimestamp(),
+            });
+            tx.update(tenantRef, patch);
+          });
+        } catch (e) {
+          if (e instanceof HttpsError) throw e;
+          if (String(e?.code) === "6" || /ALREADY_EXISTS/i.test(String(e?.message))) {
+            throw new HttpsError("already-exists", `El código "${normalizedSlug}" ya está en uso.`);
+          }
+          throw e;
+        }
+      } else {
+        await tenantRef.update(patch);
+      }
+    } else {
+      await tenantRef.update(patch);
+    }
 
     console.info("updateTenant", { tenantId, fields: Object.keys(patch) });
     return { success: true, tenantId };
@@ -3320,6 +2585,58 @@ exports.getTenantBySlug = onCall(
     }
 
     return { tenantId: doc.id, ...publicData };
+  }
+);
+
+// ---------------------------------------------------------------------------
+// listDiscoverableTenants — public (no auth required)
+// Returns active+discoverable tenants for the search-first onboarding UI.
+// Tenants with `discoverable: false` are hidden (only joinable via slug code).
+// ---------------------------------------------------------------------------
+// Fields exposed in the discoverable picker — strict subset of public fields.
+const TENANT_DISCOVERABLE_FIELDS = [
+  "name", "appName", "slug", "city", "neighborhood", "country",
+  "logoUrl", "primaryColor",
+];
+
+exports.listDiscoverableTenants = onCall(
+  { enforceAppCheck: false },
+  async (request) => {
+    // 30 calls per IP per 5 min — generous for legit picker use, blocks scrapers.
+    await enforceRateLimitByIp(request, "listDiscoverableTenants", 30, 300);
+
+    const snap = await db.collection("tenants")
+      .where("status", "in", ["active", "trial", "grace_period"])
+      .get();
+
+    const tenants = [];
+    for (const doc of snap.docs) {
+      const data = doc.data();
+      // Treat missing `discoverable` field as true for backward compat with
+      // tenants created before the field existed.
+      if (data.discoverable === false) continue;
+
+      const summary = { tenantId: doc.id };
+      for (const field of TENANT_DISCOVERABLE_FIELDS) {
+        if (data[field] !== undefined) summary[field] = data[field];
+      }
+      // Country fallback: legacy `defaultCountry` if no explicit `country`.
+      if (summary.country === undefined && data.defaultCountry !== undefined) {
+        summary.country = data.defaultCountry;
+      }
+      tenants.push(summary);
+    }
+
+    // Sort by country, city, then name for stable display.
+    tenants.sort((a, b) => {
+      const ca = (a.country || "").localeCompare(b.country || "");
+      if (ca !== 0) return ca;
+      const ci = (a.city || "").localeCompare(b.city || "");
+      if (ci !== 0) return ci;
+      return (a.name || "").localeCompare(b.name || "");
+    });
+
+    return { tenants };
   }
 );
 
@@ -3371,8 +2688,7 @@ exports.listTenants = onCall(
     if (!callerUid) throw new HttpsError("unauthenticated", "Debes estar autenticado.");
     await enforceRateLimit(callerUid, "listTenants", 30, 3600);
 
-    const callerClaims = request.auth?.token ?? {};
-    if (callerClaims.role !== "super_admin" && callerClaims.admin !== true) {
+    if (!callerIsSuperAdmin(request)) {
       throw new HttpsError("permission-denied", "Solo el super administrador.");
     }
 
@@ -3414,7 +2730,7 @@ exports.createStripeConnectLink = onCall(
     await enforceRateLimit(callerUid, "createStripeConnectLink", 10, 3600);
 
     const callerClaims = request.auth?.token ?? {};
-    const isSuperAdminCaller = callerClaims.role === "super_admin" || callerClaims.admin === true;
+    const isSuperAdminCaller = callerIsSuperAdmin(request);
     const isTenantAdminCaller = callerClaims.role === "tenant_admin";
 
     if (!isSuperAdminCaller && !isTenantAdminCaller) {
@@ -3566,8 +2882,7 @@ async function sendEmail({ to, subject, html }) {
 exports.createTenantSubscription = onCall(
   { secrets: [stripeSecret], enforceAppCheck: false },
   async (request) => {
-    const callerClaims = request.auth?.token ?? {};
-    if (callerClaims.role !== "super_admin" && callerClaims.admin !== true) {
+    if (!callerIsSuperAdmin(request)) {
       throw new HttpsError("permission-denied", "Solo el super administrador.");
     }
 
@@ -3667,6 +2982,15 @@ exports.stripeBillingWebhook = onRequest(
       return res.status(400).send(`Webhook Error: ${err.message}`);
     }
 
+    // Idempotency — Stripe retries failed webhooks for up to 3 days. Without
+    // this, retried `invoice.payment_failed` events would re-send dunning
+    // emails (to admin AND super_admin) on every retry.
+    const { eventRef, alreadyProcessed } = await reserveWebhookEvent(event);
+    if (alreadyProcessed) {
+      console.info("stripeBillingWebhook: duplicate event skipped", { id: event.id, type: event.type });
+      return res.json({ received: true, duplicate: true });
+    }
+
     if (event.type === "invoice.payment_succeeded") {
       const invoice = event.data.object;
       const tenantId = invoice.subscription_details?.metadata?.tenantId
@@ -3675,6 +2999,7 @@ exports.stripeBillingWebhook = onRequest(
 
       if (!tenantId) {
         console.warn("stripeBillingWebhook: no tenantId on invoice", invoice.id);
+        await finalizeWebhookEvent(eventRef, { status: "skipped", reason: "missing_tenantId", invoiceId: invoice.id });
         return res.json({ received: true });
       }
 
@@ -3687,6 +3012,11 @@ exports.stripeBillingWebhook = onRequest(
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       });
 
+      await finalizeWebhookEvent(eventRef, {
+        status: "processed",
+        tenantId,
+        outcome: "billing_payment_succeeded",
+      });
       console.log(`Billing payment succeeded for tenant ${tenantId}`);
     } else if (event.type === "invoice.payment_failed") {
       const invoice = event.data.object;
@@ -3694,7 +3024,10 @@ exports.stripeBillingWebhook = onRequest(
         ?? invoice.metadata?.tenantId
         ?? null;
 
-      if (!tenantId) return res.json({ received: true });
+      if (!tenantId) {
+        await finalizeWebhookEvent(eventRef, { status: "skipped", reason: "missing_tenantId", invoiceId: invoice.id });
+        return res.json({ received: true });
+      }
 
       const gracePeriodEndsAt = new Date();
       gracePeriodEndsAt.setDate(gracePeriodEndsAt.getDate() + 30);
@@ -3740,7 +3073,15 @@ exports.stripeBillingWebhook = onRequest(
         console.error("Failed to send grace period alert to super admin:", emailErr);
       }
 
+      await finalizeWebhookEvent(eventRef, {
+        status: "processed",
+        tenantId,
+        outcome: "billing_payment_failed_grace_started",
+      });
       console.log(`Grace period started for tenant ${tenantId}, ends ${gracePeriodEndsAt.toISOString()}`);
+    } else {
+      // Unhandled event type — mark as processed so we don't keep checking.
+      await finalizeWebhookEvent(eventRef, { status: "skipped", reason: "unhandled_event_type" });
     }
 
     res.json({ received: true });

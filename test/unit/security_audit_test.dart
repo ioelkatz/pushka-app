@@ -1,5 +1,4 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:pushka_app/features/users/data/user_repository.dart';
 import 'package:pushka_app/features/history/domain/transaction.dart';
 
 /// SECURITY AUDIT TESTS
@@ -7,85 +6,10 @@ import 'package:pushka_app/features/history/domain/transaction.dart';
 /// during code audit.
 
 void main() {
-  group('CRITICAL: walletIdFromUid collision vulnerability', () {
-    // walletIdFromUid uses FNV-1a 32-bit with 8-digit output (10M–99M space,
-    // 90M possible IDs). Birthday-paradox 50% collision at ~11,300 users.
-
-    test('wallet IDs are 8-digit numeric strings', () {
-      final id = UserRepository.walletIdFromUid('testUser123');
-      expect(id.length, 8);
-      expect(int.tryParse(id), isNotNull);
-      expect(int.parse(id), greaterThanOrEqualTo(10000000));
-      expect(int.parse(id), lessThanOrEqualTo(99999999));
-    });
-
-    test('different UIDs can produce same wallet ID (collision demo)', () {
-      // Brute-force search for a collision to document the space size.
-      // With 90M possible values, collision within 5000 attempts is unlikely
-      // (~0.014% probability) but the test still validates the generator runs.
-      final seen = <String, String>{};
-
-      for (int i = 0; i < 5000; i++) {
-        final uid = 'user_$i';
-        final walletId = UserRepository.walletIdFromUid(uid);
-        if (seen.containsKey(walletId)) {
-          break;
-        }
-        seen[walletId] = uid;
-      }
-
-      // All 5000 should be unique given the 90M ID space.
-      expect(seen.length, lessThanOrEqualTo(5000));
-    });
-
-    test('wallet ID is deterministic for same UID', () {
-      final id1 = UserRepository.walletIdFromUid('abc123');
-      final id2 = UserRepository.walletIdFromUid('abc123');
-      expect(id1, equals(id2));
-    });
-
-    test('empty UID still produces valid wallet ID', () {
-      final id = UserRepository.walletIdFromUid('');
-      expect(id.length, 8);
-      expect(int.tryParse(id), isNotNull);
-    });
-
-    test('very long UID does not crash', () {
-      final longUid = 'a' * 10000;
-      final id = UserRepository.walletIdFromUid(longUid);
-      expect(id.length, 8);
-      expect(int.tryParse(id), isNotNull);
-    });
-
-    test('UID with special characters produces valid ID', () {
-      final id = UserRepository.walletIdFromUid('user@#\$%^&*()');
-      expect(id.length, 8);
-      expect(int.tryParse(id), isNotNull);
-    });
-
-    test('UID with unicode produces valid ID', () {
-      final id = UserRepository.walletIdFromUid('用户名');
-      expect(id.length, 8);
-      expect(int.tryParse(id), isNotNull);
-    });
-  });
-
   group('CRITICAL: Transaction type validation', () {
     test('TransactionType enum covers all valid types', () {
       expect(TransactionType.values, contains(TransactionType.tzedaka));
       expect(TransactionType.values, contains(TransactionType.pushkaEmpty));
-      expect(TransactionType.values, contains(TransactionType.walletFill));
-    });
-
-    test('Transaction with negative amount is allowed (transfer debit)', () {
-      final tx = Transaction(
-        id: '1',
-        type: TransactionType.walletFill,
-        amount: -50.0,
-        description: 'Transfer sent',
-        dateTime: DateTime.now(),
-      );
-      expect(tx.amount, -50.0);
     });
 
     test('Transaction with zero amount', () {

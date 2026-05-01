@@ -62,7 +62,7 @@ void main() {
     test('generates auto id when docId is null', () async {
       await repo.addTransaction(
         uid: uid,
-        type: TransactionType.walletFill,
+        type: TransactionType.tzedaka,
         amount: 25.0,
       );
 
@@ -192,7 +192,7 @@ void main() {
     test('parsed Transaction has correct id from doc', () async {
       await repo.addTransaction(
         uid: uid,
-        type: TransactionType.walletFill,
+        type: TransactionType.tzedaka,
         amount: 30.0,
         docId: 'txn_001',
       );

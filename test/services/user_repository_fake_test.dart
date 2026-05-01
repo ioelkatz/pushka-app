@@ -18,35 +18,6 @@ void main() {
     );
   });
 
-  group('UserRepository.walletIdFromUid', () {
-    test('returns an 8-digit numeric string', () {
-      final id = UserRepository.walletIdFromUid('some_uid');
-      expect(id.length, 8);
-      expect(int.tryParse(id), isNotNull);
-    });
-
-    test('is deterministic — same uid → same wallet id', () {
-      final a = UserRepository.walletIdFromUid('uid_abc');
-      final b = UserRepository.walletIdFromUid('uid_abc');
-      expect(a, b);
-    });
-
-    test('different uids produce different wallet ids (probabilistic)', () {
-      final ids = {'uid_1', 'uid_2', 'uid_3', 'uid_4', 'uid_5'}
-          .map(UserRepository.walletIdFromUid)
-          .toSet();
-      // Highly unlikely all 5 collide
-      expect(ids.length, greaterThan(1));
-    });
-
-    test('result is always in [10000000, 99999999] range', () {
-      for (final uid in ['a', 'abc123', 'very_long_uid_string_here_1234567890']) {
-        final code = int.parse(UserRepository.walletIdFromUid(uid));
-        expect(code, inInclusiveRange(10000000, 99999999));
-      }
-    });
-  });
-
   group('UserRepository.createUserDocument', () {
     test('does nothing when user is null', () async {
       await repo.createUserDocument(user: null, displayName: 'Name');
@@ -96,7 +67,6 @@ void main() {
       await repo.createUserDocument(user: mockUser, displayName: null);
 
       final data = (await fakeFirestore.collection('users').doc(mockUser.uid).get()).data()!;
-      expect(data['walletBalance'], 0.0);
       expect(data['pushkaAmount'], 0.0);
       expect(data['pushkaGoal'], 180.0); // defaultGoalForCurrency('USD')
       expect(data['presetAmount'], 1.00);
@@ -110,16 +80,8 @@ void main() {
       expect(data['soundEnabled'], true);
       expect(data['coinJingleEnabled'], true);
       expect(data['vibrationEnabled'], true);
-      expect(data['walletAutoTopUpEnabled'], false);
-      expect(data['partialPaymentsEnabled'], false);
+      expect(data['partialPaymentsEnabled'], true);
       expect(data['biometricAuthenticationEnabled'], false);
-    });
-
-    test('sets walletId using walletIdFromUid', () async {
-      await repo.createUserDocument(user: mockUser, displayName: null);
-
-      final data = (await fakeFirestore.collection('users').doc(mockUser.uid).get()).data()!;
-      expect(data['walletId'], UserRepository.walletIdFromUid(mockUser.uid));
     });
 
     test('sets autoEmptyFrequency to manual by default', () async {
@@ -155,68 +117,16 @@ void main() {
     });
 
     test('does not overwrite existing document fields', () async {
-      // Pre-create with custom pushkaAmount
       await fakeFirestore.collection('users').doc(mockUser.uid).set({
         'displayName': 'Existing User',
         'pushkaAmount': 99.0,
-        'walletId': '123456',
-        'walletBalance': 50.0,
-        'walletAutoTopUpEnabled': true,
-        'walletAutoTopUpAmount': 25.0,
-        'walletAutoTopUpFrequency': 'monthly',
-        'walletAutoTopUpWeekday': DateTime.monday,
-        'walletAutoTopUpDayOfMonth': 1,
       });
 
       await repo.ensureUserDocument(user: mockUser, displayName: 'Should Not Override');
 
       final data = (await fakeFirestore.collection('users').doc(mockUser.uid).get()).data()!;
-      // Original values preserved
       expect(data['displayName'], 'Existing User');
       expect(data['pushkaAmount'], 99.0);
-      expect(data['walletId'], '123456');
-      expect(data['walletBalance'], 50.0);
-      expect(data['walletAutoTopUpEnabled'], true);
-      expect(data['walletAutoTopUpAmount'], 25.0);
-      expect(data['walletAutoTopUpFrequency'], 'monthly');
-    });
-
-    test('patches missing walletId on existing document', () async {
-      await fakeFirestore.collection('users').doc(mockUser.uid).set({
-        'displayName': 'User',
-        'walletId': '',  // empty — should be patched
-      });
-
-      await repo.ensureUserDocument(user: mockUser, displayName: null);
-
-      final data = (await fakeFirestore.collection('users').doc(mockUser.uid).get()).data()!;
-      expect(data['walletId'], UserRepository.walletIdFromUid(mockUser.uid));
-    });
-
-    test('patches missing walletBalance on existing document', () async {
-      await fakeFirestore.collection('users').doc(mockUser.uid).set({
-        'displayName': 'User',
-        'walletId': '123456',
-        // no walletBalance
-      });
-
-      await repo.ensureUserDocument(user: mockUser, displayName: null);
-
-      final data = (await fakeFirestore.collection('users').doc(mockUser.uid).get()).data()!;
-      expect(data['walletBalance'], 0.0);
-    });
-
-    test('patches walletAutoTopUpEnabled when missing', () async {
-      await fakeFirestore.collection('users').doc(mockUser.uid).set({
-        'walletId': '123456',
-        'walletBalance': 0.0,
-        // no walletAutoTopUpEnabled
-      });
-
-      await repo.ensureUserDocument(user: mockUser, displayName: null);
-
-      final data = (await fakeFirestore.collection('users').doc(mockUser.uid).get()).data()!;
-      expect(data['walletAutoTopUpEnabled'], false);
     });
   });
 
@@ -258,7 +168,6 @@ void main() {
 
       final data = (await fakeFirestore.collection('users').doc(mockUser.uid).get()).data()!;
       expect(data['pushkaAmount'], 0.0);
-      expect(data['walletBalance'], 0.0);
     });
 
     test('null params are not written to document', () async {
@@ -360,34 +269,6 @@ void main() {
 
       final data = (await fakeFirestore.collection('users').doc(mockUser.uid).get()).data()!;
       expect(data['autoEmptyNextRunAt'], isNull);
-    });
-
-    test('updates walletAutoTopUpEnabled', () async {
-      await repo.updateSettings(uid: mockUser.uid, walletAutoTopUpEnabled: true);
-
-      final data = (await fakeFirestore.collection('users').doc(mockUser.uid).get()).data()!;
-      expect(data['walletAutoTopUpEnabled'], true);
-    });
-
-    test('updates walletAutoTopUpAmount', () async {
-      await repo.updateSettings(uid: mockUser.uid, walletAutoTopUpAmount: 50.0);
-
-      final data = (await fakeFirestore.collection('users').doc(mockUser.uid).get()).data()!;
-      expect(data['walletAutoTopUpAmount'], 50.0);
-    });
-
-    test('clears walletAutoTopUpNextRunAt when flag is set', () async {
-      await repo.updateSettings(
-        uid: mockUser.uid,
-        walletAutoTopUpNextRunAt: DateTime(2026, 5, 1),
-      );
-      await repo.updateSettings(
-        uid: mockUser.uid,
-        walletAutoTopUpClearNextRunAt: true,
-      );
-
-      final data = (await fakeFirestore.collection('users').doc(mockUser.uid).get()).data()!;
-      expect(data['walletAutoTopUpNextRunAt'], isNull);
     });
 
     test('null params leave existing values intact', () async {

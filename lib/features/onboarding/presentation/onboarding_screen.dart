@@ -17,7 +17,7 @@ class OnboardingScreen extends StatefulWidget {
 class _OnboardingScreenState extends State<OnboardingScreen> {
   final _ctrl = PageController();
   int _page = 0;
-  static const _total = 4;
+  static const _total = 3;
   bool _completing = false;
 
   @override
@@ -105,16 +105,10 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                     body: tr.onboarding2Body,
                   ),
                   _OnboardingPage(
-                    icon: Icons.account_balance_wallet_rounded,
-                    color: const Color(0xFF7C3AED),
-                    title: tr.onboarding3Title,
-                    body: tr.onboarding3Body,
-                  ),
-                  _OnboardingPage(
                     icon: Icons.notifications_active_rounded,
                     color: const Color(0xFFD97706),
-                    title: tr.onboarding4Title,
-                    body: tr.onboarding4Body,
+                    title: tr.onboarding3Title,
+                    body: tr.onboarding3Body,
                   ),
                 ],
               ),

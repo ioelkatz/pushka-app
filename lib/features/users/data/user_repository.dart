@@ -31,18 +31,6 @@ class UserRepository {
     }
   }
 
-  static String walletIdFromUid(String uid) {
-    // FNV-1a 32-bit hash — better avalanche effect than a Horner polynomial,
-    // reducing practical collision probability across similar-looking UIDs.
-    // 8-digit IDs (10M–99M space): ~50% collision probability at ~9,500 users.
-    var h = 0x811c9dc5;
-    for (final c in uid.codeUnits) {
-      h ^= c;
-      h = (h * 0x01000193) & 0xFFFFFFFF;
-    }
-    return (10000000 + (h % 90000000)).toString();
-  }
-
   Stream<Map<String, dynamic>?> watchUser(String uid) {
     return _users.doc(uid).snapshots().map((doc) => doc.data());
   }
@@ -62,14 +50,6 @@ class UserRepository {
       'billingEmail': '',
       'phoneNumber': '',
       'mailingAddress': '',
-      'walletId': walletIdFromUid(user.uid),
-      'walletBalance': 0.0,
-      'walletAutoTopUpEnabled': false,
-      'walletAutoTopUpAmount': 0.0,
-      'walletAutoTopUpFrequency': 'weekly',
-      'walletAutoTopUpWeekday': DateTime.monday,
-      'walletAutoTopUpDayOfMonth': 1,
-      'walletAutoTopUpNextRunAt': null,
       'pushkaAmount': 0.0,
       'pushkaGoal': defaultGoalForCurrency('USD'),
       'presetAmount': 1.00,
@@ -103,36 +83,9 @@ class UserRepository {
     if (!doc.exists) {
       await createUserDocument(user: user, displayName: displayName);
     } else {
-      final data = doc.data() ?? const <String, dynamic>{};
-      final patch = <String, dynamic>{
+      await _users.doc(user.uid).set({
         'uid': user.uid,
         'lastLoginAt': FieldValue.serverTimestamp(),
-      };
-      final existingWalletId = (data['walletId'] as String?)?.trim();
-      if (existingWalletId == null || existingWalletId.isEmpty) {
-        patch['walletId'] = walletIdFromUid(user.uid);
-      }
-      if (data['walletBalance'] == null || data['walletBalance'] is! num) {
-        patch['walletBalance'] = 0.0;
-      }
-      if (data['walletAutoTopUpEnabled'] == null || data['walletAutoTopUpEnabled'] is! bool) {
-        patch['walletAutoTopUpEnabled'] = false;
-      }
-      if (data['walletAutoTopUpAmount'] == null || data['walletAutoTopUpAmount'] is! num) {
-        patch['walletAutoTopUpAmount'] = 0.0;
-      }
-      final existingFrequency = (data['walletAutoTopUpFrequency'] as String?)?.trim();
-      if (existingFrequency == null || existingFrequency.isEmpty) {
-        patch['walletAutoTopUpFrequency'] = 'weekly';
-      }
-      if (data['walletAutoTopUpWeekday'] == null || data['walletAutoTopUpWeekday'] is! num) {
-        patch['walletAutoTopUpWeekday'] = DateTime.monday;
-      }
-      if (data['walletAutoTopUpDayOfMonth'] == null || data['walletAutoTopUpDayOfMonth'] is! num) {
-        patch['walletAutoTopUpDayOfMonth'] = 1;
-      }
-      await _users.doc(user.uid).set({
-        ...patch,
       }, SetOptions(merge: true));
     }
   }
@@ -210,13 +163,6 @@ class UserRepository {
     double? autoEmptyTopOffAmount,
     DateTime? autoEmptyNextRunAt,
     bool autoEmptyClearNextRunAt = false,
-    bool? walletAutoTopUpEnabled,
-    double? walletAutoTopUpAmount,
-    String? walletAutoTopUpFrequency,
-    int? walletAutoTopUpWeekday,
-    int? walletAutoTopUpDayOfMonth,
-    DateTime? walletAutoTopUpNextRunAt,
-    bool walletAutoTopUpClearNextRunAt = false,
   }) async {
     final data = <String, dynamic>{
       'uid': uid,
@@ -260,27 +206,6 @@ class UserRepository {
     }
     if (autoEmptyClearNextRunAt) {
       data['autoEmptyNextRunAt'] = null;
-    }
-    if (walletAutoTopUpEnabled != null) {
-      data['walletAutoTopUpEnabled'] = walletAutoTopUpEnabled;
-    }
-    if (walletAutoTopUpAmount != null) {
-      data['walletAutoTopUpAmount'] = walletAutoTopUpAmount;
-    }
-    if (walletAutoTopUpFrequency != null) {
-      data['walletAutoTopUpFrequency'] = walletAutoTopUpFrequency;
-    }
-    if (walletAutoTopUpWeekday != null) {
-      data['walletAutoTopUpWeekday'] = walletAutoTopUpWeekday;
-    }
-    if (walletAutoTopUpDayOfMonth != null) {
-      data['walletAutoTopUpDayOfMonth'] = walletAutoTopUpDayOfMonth;
-    }
-    if (walletAutoTopUpNextRunAt != null) {
-      data['walletAutoTopUpNextRunAt'] = Timestamp.fromDate(walletAutoTopUpNextRunAt);
-    }
-    if (walletAutoTopUpClearNextRunAt) {
-      data['walletAutoTopUpNextRunAt'] = null;
     }
 
     await _users.doc(uid).set(data, SetOptions(merge: true));

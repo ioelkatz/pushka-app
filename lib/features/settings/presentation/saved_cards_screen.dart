@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_stripe/flutter_stripe.dart';
 
 import '../../payments/stripe_service.dart';
+import '../../tenant/data/tenant_repository.dart';
 import '../../../core/l10n/s.dart';
 
 class SavedCardsScreen extends ConsumerStatefulWidget {
@@ -66,7 +67,9 @@ class _SavedCardsScreenState extends ConsumerState<SavedCardsScreen> {
     final tr = S.of(context);
     setState(() => _processing = true);
     try {
-      await StripeService.instance.setupCard();
+      await StripeService.instance.setupCard(
+        merchantDisplayName: ref.read(tenantConfigProvider).valueOrNull?.appName ?? 'Pushka',
+      );
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(tr.cardAdded)),

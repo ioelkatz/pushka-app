@@ -1,7 +1,6 @@
 enum TransactionType {
   tzedaka,
   pushkaEmpty,
-  walletFill,
 }
 
 enum PaymentMethod {

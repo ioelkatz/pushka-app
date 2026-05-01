@@ -23,11 +23,17 @@ Future<void> _performDeferredInit() async {
       ),
     );
   } else if (kReleaseMode) {
-    // Only activate App Check in release builds — debug provider requires
-    // manual token registration in Firebase Console.
     await FirebaseAppCheck.instance.activate(
       androidProvider: AndroidProvider.playIntegrity,
       appleProvider: AppleProvider.deviceCheck,
+    );
+  } else {
+    // Debug builds: backend enforces App Check, so we need the debug provider
+    // here too. The token is printed to logcat on first launch — register it
+    // at Firebase Console → App Check → <app> → Manage debug tokens.
+    await FirebaseAppCheck.instance.activate(
+      androidProvider: AndroidProvider.debug,
+      appleProvider: AppleProvider.debug,
     );
   }
 

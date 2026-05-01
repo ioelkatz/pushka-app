@@ -4,9 +4,10 @@ import 'package:go_router/go_router.dart';
 
 import '../../../app/theme/app_tokens.dart';
 import '../../../core/l10n/s.dart';
+import '../../tenant/data/tenant_repository.dart';
 import '../../users/presentation/user_profile_provider.dart';
 
-enum DrawerItem { pushka, wallet, reminders, history, settings, prayers, support, about }
+enum DrawerItem { pushka, reminders, history, settings, prayers, support, about }
 
 class AppDrawer extends ConsumerWidget {
   final DrawerItem current;
@@ -19,12 +20,15 @@ class AppDrawer extends ConsumerWidget {
     final blue = Theme.of(context).colorScheme.primary;
     final user = ref.watch(currentUserProvider);
     final profile = ref.watch(userProfileProvider).valueOrNull;
-    final displayName =
-        (profile?['displayName'] as String?)?.trim().isNotEmpty == true
-            ? (profile?['displayName'] as String)
-            : (user?.displayName?.trim().isNotEmpty == true
-                ? user!.displayName!
-                : tr.defaultUser);
+    final profileName = (profile?['displayName'] as String?)?.trim();
+    final authName = user?.displayName?.trim();
+    final displayName = (profileName != null && profileName.isNotEmpty)
+        ? profileName
+        : (authName != null && authName.isNotEmpty ? authName : tr.defaultUser);
+    final tenantConfig = ref.watch(tenantConfigProvider).valueOrNull;
+    final brandName = (tenantConfig?.appName.isNotEmpty == true)
+        ? tenantConfig!.appName
+        : 'Pushka';
     
     return Drawer(
       child: Column(
@@ -68,7 +72,7 @@ class AppDrawer extends ConsumerWidget {
                           ),
                           const SizedBox(height: 2),
                           Text(
-                            'Pushka',
+                            brandName,
                             style: TextStyle(
                               color: Colors.white.withValues(alpha: 0.75),
                               fontSize: 13,
@@ -90,7 +94,6 @@ class AppDrawer extends ConsumerWidget {
               padding: const EdgeInsets.symmetric(vertical: 8),
               children: [
                 _item(context, DrawerItem.pushka, tr.myPushka, '/', Icons.home, blue),
-                _item(context, DrawerItem.wallet, tr.wallet, '/wallet', Icons.account_balance_wallet, blue),
                 _item(context, DrawerItem.reminders, tr.reminders, '/reminders', Icons.notifications, blue),
                 _item(context, DrawerItem.history, tr.history, '/history', Icons.history, blue),
                 _item(context, DrawerItem.settings, tr.settings, '/settings', Icons.settings, blue),

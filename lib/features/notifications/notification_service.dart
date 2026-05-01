@@ -97,7 +97,7 @@ class NotificationService {
 
   // Only these routes may be opened via FCM — prevents deep-link injection.
   static const _allowedRoutes = {
-    '/', '/wallet', '/wallet/requests', '/history', '/reminders', '/settings',
+    '/', '/history', '/reminders', '/settings',
     '/prayers', '/support', '/about',
   };
 
@@ -111,8 +111,6 @@ class NotificationService {
     final type = data['type'] as String?;
     return switch (type) {
       'pushkaEmpty' => '/history',
-      'wallet_request' => '/wallet/requests',
-      'walletFill' || 'walletRequest' => '/wallet',
       'reminder' => '/',
       _ => null,
     };

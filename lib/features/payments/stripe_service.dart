@@ -16,6 +16,7 @@ class StripeService {
     required String currency,
     String? customerEmail,
     String purpose = 'donation',
+    String merchantDisplayName = 'Pushka',
   }) async {
     final callable = FirebaseFunctions.instance.httpsCallable(
       'createPaymentIntent',
@@ -42,7 +43,7 @@ class StripeService {
     await Stripe.instance.initPaymentSheet(
       paymentSheetParameters: SetupPaymentSheetParameters(
         paymentIntentClientSecret: clientSecret,
-        merchantDisplayName: 'Pushka',
+        merchantDisplayName: merchantDisplayName,
         allowsDelayedPaymentMethods: false,
       ),
     );
@@ -73,7 +74,7 @@ class StripeService {
 
   /// Opens the Stripe SetupIntent sheet so the user can save a card for
   /// future off-session charges. Returns the SetupIntent ID on success.
-  Future<String> setupCard() async {
+  Future<String> setupCard({String merchantDisplayName = 'Pushka'}) async {
     final callable = FirebaseFunctions.instance.httpsCallable('createSetupIntent');
     HttpsCallableResult result;
     try {
@@ -92,7 +93,7 @@ class StripeService {
     await Stripe.instance.initPaymentSheet(
       paymentSheetParameters: SetupPaymentSheetParameters(
         setupIntentClientSecret: clientSecret,
-        merchantDisplayName: 'Pushka',
+        merchantDisplayName: merchantDisplayName,
         allowsDelayedPaymentMethods: false,
       ),
     );

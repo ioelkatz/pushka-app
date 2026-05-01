@@ -22,6 +22,7 @@ import '../../history/data/transaction_repository.dart';
 import '../../history/domain/transaction.dart';
 import '../../payments/stripe_service.dart';
 import '../../feedback/feedback_service.dart';
+import '../../tenant/data/tenant_repository.dart';
 import '../../users/data/user_repository.dart';
 import '../../users/presentation/user_profile_provider.dart';
 import '../../../config/stripe_config.dart';
@@ -201,6 +202,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
         currency: currency,
         customerEmail: ref.read(currentUserProvider)?.email,
         purpose: 'pushka_empty',
+        merchantDisplayName: ref.read(tenantConfigProvider).valueOrNull?.appName ?? 'Pushka',
       );
 
       await AnalyticsService.instance.logPushkaEmpty(amountToEmpty);
@@ -314,6 +316,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
         currency: currency,
         customerEmail: ref.read(currentUserProvider)?.email,
         purpose: 'donation',
+        merchantDisplayName: ref.read(tenantConfigProvider).valueOrNull?.appName ?? 'Pushka',
       );
 
       await AnalyticsService.instance.logDonation(donationAmount, currency);
@@ -355,6 +358,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
         currency: currency,
         customerEmail: ref.read(currentUserProvider)?.email,
         purpose: 'donation',
+        merchantDisplayName: ref.read(tenantConfigProvider).valueOrNull?.appName ?? 'Pushka',
       );
 
       await AnalyticsService.instance.logDonation(donationAmount, currency);

@@ -7,6 +7,8 @@ import 'package:sign_in_with_apple/sign_in_with_apple.dart';
 import '../../analytics/analytics_service.dart';
 import '../../users/data/user_repository.dart';
 import '../../notifications/notification_service.dart';
+import '../../tenant/data/tenant_repository.dart';
+import '../../../app/router.dart' show invalidateTenantCache;
 import '../../../core/hive_cache.dart';
 import 'auth_state_provider.dart';
 
@@ -98,10 +100,14 @@ class AuthController {
         } catch (_) {}
       }
     } finally {
-      // Always clear local cache even if other sign-out steps fail.
+      // Always clear caches that key off the previous uid, even if other
+      // sign-out steps failed. Without this, signing in as a different user
+      // briefly serves the previous tenant's branding/route decisions.
       if (uid != null) {
         await HiveCache.instance.clearUser(uid);
       }
+      invalidateTenantCache();
+      _ref.invalidate(tenantConfigProvider);
     }
   }
 

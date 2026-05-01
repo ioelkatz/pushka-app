@@ -6,7 +6,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:local_auth/local_auth.dart';
-import 'package:mobile_scanner/mobile_scanner.dart';
 
 import '../../auth/providers/auth_controller.dart';
 import '../../users/data/user_repository.dart';
@@ -126,9 +125,10 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       });
     }
 
+    final authDisplayName = user?.displayName?.trim();
     final userName = getProfileString('displayName') ??
-        (user?.displayName?.trim().isNotEmpty == true
-            ? user!.displayName!
+        (authDisplayName != null && authDisplayName.isNotEmpty
+            ? authDisplayName
             : tr.defaultUser);
     final userEmail = user?.email ?? tr.noEmail;
     final billingEmail = getProfileString('billingEmail') ?? '-';
@@ -1711,9 +1711,17 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   ) async {
     final password = ctrl.text.trim();
     if (password.isEmpty) { setSS(() => setError(tr.enterYourPassword)); return; }
+    final email = user.email;
+    if (email == null || email.isEmpty) {
+      // Apple Sign-In hides the email after the first sign-in, so reauth via
+      // EmailAuthProvider.credential is not possible. Surface a clear error
+      // instead of crashing on the null-bang.
+      setSS(() => setError(tr.reAuthFailed));
+      return;
+    }
     setSS(() { setLoading(true); setError(null); });
     try {
-      final credential = EmailAuthProvider.credential(email: user.email!, password: password);
+      final credential = EmailAuthProvider.credential(email: email, password: password);
       await user.reauthenticateWithCredential(credential);
       if (ctx.mounted) Navigator.pop(ctx, true);
     } on FirebaseAuthException catch (e) {
@@ -2234,94 +2242,3 @@ class _ThemeToggleState extends State<_ThemeToggle> with SingleTickerProviderSta
   }
 }
 
-class _SettingsQrScannerScreen extends StatefulWidget {
-  const _SettingsQrScannerScreen();
-
-  @override
-  State<_SettingsQrScannerScreen> createState() => _SettingsQrScannerScreenState();
-}
-
-class _SettingsQrScannerScreenState extends State<_SettingsQrScannerScreen> {
-  bool _handled = false;
-  bool _torchOn = false;
-  late final MobileScannerController _controller;
-
-  @override
-  void initState() {
-    super.initState();
-    _controller = MobileScannerController();
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  // Use the same strict 8-digit rule as the manual-entry normalizer elsewhere.
-  String _normalizeWalletId(String raw) {
-    final value = raw.trim().replaceAll(RegExp(r'\s'), '');
-    final match = RegExp(r'\b(\d{8})\b').firstMatch(value);
-    return match?.group(1) ?? '';
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(S.of(context).scanQrCode),
-      ),
-      body: Stack(
-        children: [
-          MobileScanner(
-            controller: _controller,
-            onDetect: (capture) {
-              if (_handled) return;
-              final raw = capture.barcodes.isNotEmpty ? capture.barcodes.first.rawValue : null;
-              if (raw == null || raw.trim().isEmpty) return;
-              final normalized = _normalizeWalletId(raw);
-              if (normalized.isEmpty) return;
-              _handled = true;
-              Navigator.of(context).pop(normalized);
-            },
-          ),
-          Center(
-            child: Container(
-              width: 260,
-              height: 260,
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(2),
-                border: Border.all(color: Colors.white, width: 2),
-              ),
-            ),
-          ),
-          Positioned.fill(
-            child: Center(
-              child: Container(
-                width: 260,
-                height: 2,
-                color: const Color(0xFFE84324),
-              ),
-            ),
-          ),
-          Positioned(
-            left: 0,
-            right: 0,
-            bottom: 24,
-            child: IconButton(
-              onPressed: () {
-                _controller.toggleTorch();
-                setState(() => _torchOn = !_torchOn);
-              },
-              iconSize: 28,
-              icon: Icon(
-                _torchOn ? Icons.flash_on_rounded : Icons.flash_off_rounded,
-                color: Colors.white,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
