@@ -3201,6 +3201,43 @@ exports.createTenantSubscription = onCall(
 );
 
 // ---------------------------------------------------------------------------
+// cancelTenantSubscription — super_admin cancels Stripe Billing subscription
+// ---------------------------------------------------------------------------
+exports.cancelTenantSubscription = onCall(
+  { secrets: [stripeSecret], enforceAppCheck: false },
+  async (request) => {
+    if (!callerIsSuperAdmin(request)) {
+      throw new HttpsError("permission-denied", "Solo el super administrador.");
+    }
+
+    const { tenantId } = request.data ?? {};
+    if (!tenantId) throw new HttpsError("invalid-argument", "tenantId requerido.");
+
+    const tenantSnap = await db.collection("tenants").doc(tenantId).get();
+    if (!tenantSnap.exists) throw new HttpsError("not-found", "Tenant no encontrado.");
+
+    const tenantData = tenantSnap.data();
+    const subscriptionId = tenantData.stripeSubscriptionId;
+
+    if (!subscriptionId) {
+      throw new HttpsError("failed-precondition", "El tenant no tiene suscripción activa.");
+    }
+
+    const stripe = require("stripe")(stripeSecret.value());
+
+    // Cancel at period end so the tenant keeps access until the billing cycle ends
+    await stripe.subscriptions.update(subscriptionId, { cancel_at_period_end: true });
+
+    await db.collection("tenants").doc(tenantId).update({
+      paymentStatus: "canceling",
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+
+    return { success: true };
+  }
+);
+
+// ---------------------------------------------------------------------------
 // Stripe Billing Webhook — invoice.payment_succeeded / invoice.payment_failed
 // ---------------------------------------------------------------------------
 exports.stripeBillingWebhook = onRequest(
