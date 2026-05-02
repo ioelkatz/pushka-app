@@ -4,6 +4,7 @@ import 'package:firebase_app_check/firebase_app_check.dart';
 import 'package:flutter_stripe/flutter_stripe.dart';
 
 import '../features/notifications/notification_service.dart';
+import '../features/deep_links/deep_link_service.dart';
 import '../config/stripe_config.dart';
 import '../features/feedback/feedback_service.dart';
 import 'router.dart' show initNotificationNavigation;
@@ -55,5 +56,17 @@ Future<void> _performDeferredInit() async {
   }
 
   await FeedbackService.instance.init();
+
+  // Deep links: must initialize BEFORE initNotificationNavigation so that the
+  // setter wiring (which assigns onNavigate to GoRouter) flushes any pending
+  // route the cold-start handler may have already buffered.
+  if (!kIsWeb) {
+    try {
+      await DeepLinkService.instance.initialize();
+    } catch (e) {
+      debugPrint('appDeferredInit: DeepLinkService.initialize failed: $e');
+    }
+  }
+
   if (!kIsWeb) initNotificationNavigation();
 }

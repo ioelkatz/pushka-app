@@ -1,6 +1,7 @@
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/hive_cache.dart';
 import '../../auth/providers/auth_state_provider.dart';
 import '../domain/tenant_config.dart';
 import '../domain/tenant_summary.dart';
@@ -69,11 +70,61 @@ final tenantRepositoryProvider = Provider<TenantRepository>((ref) {
   return const TenantRepository();
 });
 
-/// Async provider that loads the current user's tenant config.
-/// Returns null if user has no tenant yet or is not logged in.
-/// Throws [TenantSuspendedException] if the tenant is suspended.
-final tenantConfigProvider = FutureProvider<TenantConfig?>((ref) async {
+/// Streams the current user's tenant config, yielding cached data first
+/// (if any) so the UI renders branded immediately on cold-start, then a
+/// fresh value from the backend.
+///
+/// - Returns null if the user has no tenant yet or is not logged in.
+/// - Throws [TenantSuspendedException] if the live config reports suspended.
+/// - Writes the fresh config back to HiveCache so the next cold-start has a
+///   warm cache. Failures during the network fetch fall back to the cached
+///   value so an offline user still sees their org's branding instead of
+///   a blank/error screen.
+final tenantConfigProvider = StreamProvider<TenantConfig?>((ref) async* {
   final user = ref.watch(authStateChangesProvider).valueOrNull;
-  if (user == null) return null;
-  return ref.read(tenantRepositoryProvider).loadConfig();
+  if (user == null) {
+    yield null;
+    return;
+  }
+
+  // 1. Yield cached value first (if any) so consumers paint immediately.
+  TenantConfig? cached;
+  final cachedRecord = HiveCache.instance.loadTenantConfig(user.uid);
+  if (cachedRecord != null) {
+    try {
+      cached = TenantConfig.fromMap(cachedRecord.tenantId, cachedRecord.config);
+      yield cached;
+    } catch (_) {
+      // Corrupted cache shape — ignore and fall through to network fetch.
+    }
+  }
+
+  // 2. Fetch fresh from backend.
+  TenantConfig? fresh;
+  try {
+    fresh = await ref.read(tenantRepositoryProvider).loadConfig();
+  } catch (e) {
+    // Suspension is a real signal — surface it so the listener redirects.
+    if (e is TenantSuspendedException) rethrow;
+    // Network/Cloud Functions failure: keep showing the cached value so the
+    // user isn't bricked offline. Do NOT yield (the cached value is already
+    // the most recent emission).
+    if (cached != null) return;
+    rethrow; // No cache, no network — let the AsyncValue.error propagate.
+  }
+
+  // 3. Persist fresh value to cache, then yield it.
+  if (fresh != null) {
+    try {
+      await HiveCache.instance.saveTenantConfig(
+        user.uid,
+        fresh.tenantId,
+        fresh.toMap(),
+      );
+    } catch (_) {
+      // Cache-write failure is non-critical; the user still gets the fresh
+      // config from this emission, just no warm cache for next cold-start.
+    }
+  }
+  yield fresh;
 });

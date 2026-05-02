@@ -52,6 +52,27 @@ class TenantConfig {
     );
   }
 
+  /// Round-trippable with [TenantConfig.fromMap]. Used by HiveCache to persist
+  /// the last-known tenant config so the app can render branding immediately
+  /// on cold-start before the network call completes.
+  Map<String, dynamic> toMap() {
+    return {
+      'name': name,
+      'appName': appName,
+      'showPoweredBy': showPoweredBy,
+      if (welcomeText != null) 'welcomeText': welcomeText,
+      if (primaryColor != null) 'primaryColor': _formatColor(primaryColor!),
+      if (secondaryColor != null) 'secondaryColor': _formatColor(secondaryColor!),
+      if (logoUrl != null) 'logoUrl': logoUrl,
+      if (defaultLanguage != null) 'defaultLanguage': defaultLanguage,
+      if (defaultCurrency != null) 'defaultCurrency': defaultCurrency,
+      if (defaultCountry != null) 'defaultCountry': defaultCountry,
+      if (contactEmail != null) 'contactEmail': contactEmail,
+      if (privacyPolicyUrl != null) 'privacyPolicyUrl': privacyPolicyUrl,
+      if (termsUrl != null) 'termsUrl': termsUrl,
+    };
+  }
+
   static Color? _parseColor(String? hex) {
     if (hex == null || hex.isEmpty) return null;
     final clean = hex.replaceFirst('#', '');
@@ -65,5 +86,14 @@ class TenantConfig {
     } catch (_) {
       return null;
     }
+  }
+
+  static String _formatColor(Color c) {
+    // Convert ARGB 32-bit int to "#RRGGBB" — matches what the backend stores
+    // (alpha channel is implied to be 0xFF and dropped on the wire).
+    final r = ((c.r * 255.0).round() & 0xff).toRadixString(16).padLeft(2, '0');
+    final g = ((c.g * 255.0).round() & 0xff).toRadixString(16).padLeft(2, '0');
+    final b = ((c.b * 255.0).round() & 0xff).toRadixString(16).padLeft(2, '0');
+    return '#$r$g$b';
   }
 }

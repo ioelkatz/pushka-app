@@ -68,6 +68,7 @@ dependencies:
   hive_flutter: ^1.1.0
   image_picker: ^1.1.2
   firebase_storage: ^12.3.5
+  app_links: ^6.4.0
 
 
 dev_dependencies:
