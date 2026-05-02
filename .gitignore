@@ -48,7 +48,11 @@ app.*.map.json
 /android/app/release
 
 # Secrets & credentials - NEVER commit these
-lib/firebase_options.dart
+# Note: lib/firebase_options.dart (the env-picker wrapper) IS committed —
+# it just imports the per-env files below and chooses based on --dart-define=ENV.
+# The per-env Firebase configs are per-dev — generate with flutterfire configure.
+lib/firebase_options_dev.dart
+lib/firebase_options_prod.dart
 android/app/google-services.json
 ios/Runner/GoogleService-Info.plist
 macos/Runner/GoogleService-Info.plist

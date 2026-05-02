@@ -30,6 +30,7 @@ import '../features/prayers/presentation/prayers_screen.dart';
 import '../features/support/presentation/support_screen.dart';
 import '../features/about/presentation/about_screen.dart';
 import '../features/notifications/notification_service.dart';
+import '../features/deep_links/deep_link_service.dart';
 import '../core/l10n/s.dart';
 
 final _auth = FirebaseAuth.instance;
@@ -169,6 +170,12 @@ final router = GoRouter(
 /// Wire notification taps → GoRouter navigation. Call once after Flutter init.
 void initNotificationNavigation() {
   NotificationService.instance.onNavigate = (route) {
+    router.go(route);
+  };
+  // Same handler for `pushka://...` deep links — both flows funnel through
+  // the same allowed-route whitelist on their respective services, so a
+  // single navigation sink is fine.
+  DeepLinkService.instance.onNavigate = (route) {
     router.go(route);
   };
 }

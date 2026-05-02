@@ -85,6 +85,17 @@ class AuthController {
   Future<void> signOut() async {
     final uid = _auth.currentUser?.uid;
     try {
+      // CRITICAL: revoke this device's FCM token from Firestore *before*
+      // FirebaseAuth.signOut(). After signOut() the auth context is gone and
+      // Firestore rules reject the delete (`isOwner(uid)` fails), leaving a
+      // stale token doc that keeps pushing to this device for the prev user.
+      if (!kIsWeb && uid != null) {
+        try {
+          await NotificationService.instance.revokeFcmTokenForUser(uid);
+        } catch (e) {
+          debugPrint('AuthController.signOut: FCM revoke failed: $e');
+        }
+      }
       if (!kIsWeb) {
         try {
           await GoogleSignIn().signOut();
@@ -94,11 +105,6 @@ class AuthController {
       try {
         await AnalyticsService.instance.setUserId(null);
       } catch (_) {}
-      if (!kIsWeb) {
-        try {
-          await NotificationService.instance.stopTokenRefresh();
-        } catch (_) {}
-      }
     } finally {
       // Always clear caches that key off the previous uid, even if other
       // sign-out steps failed. Without this, signing in as a different user

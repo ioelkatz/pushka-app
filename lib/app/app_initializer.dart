@@ -4,6 +4,7 @@ import 'package:firebase_app_check/firebase_app_check.dart';
 import 'package:flutter_stripe/flutter_stripe.dart';
 
 import '../features/notifications/notification_service.dart';
+import '../features/deep_links/deep_link_service.dart';
 import '../config/stripe_config.dart';
 import '../features/feedback/feedback_service.dart';
 import '../core/deep_link_handler.dart';
@@ -56,7 +57,24 @@ Future<void> _performDeferredInit() async {
   }
 
   await FeedbackService.instance.init();
+
+  // Two parallel deep-link surfaces (different concerns, same `app_links` package):
+  //  - DeepLinkService (mine): static `pushka://<route>` whitelist for
+  //    /history, /reminders, /settings, /prayers, /support, /about. Buffer +
+  //    flush, so a cold-start link delivered before GoRouter is mounted is
+  //    replayed once initNotificationNavigation sets the onNavigate sink.
+  //  - startDeepLinkListener (Ioel): `/join/<slug>` for tenant join links,
+  //    incl. https://pushka-app-ioel.web.app/join/<slug>. Slug-only callback
+  //    pushed straight to GoRouter.
+  // Both subscribe to the same uriLinkStream — each handler ignores URIs the
+  // other handles, so no double-navigation. DeepLinkService.initialize() must
+  // run BEFORE initNotificationNavigation so the buffer flushes correctly.
   if (!kIsWeb) {
+    try {
+      await DeepLinkService.instance.initialize();
+    } catch (e) {
+      debugPrint('appDeferredInit: DeepLinkService.initialize failed: $e');
+    }
     initNotificationNavigation();
     startDeepLinkListener((slug) {
       router.go('/join/$slug');

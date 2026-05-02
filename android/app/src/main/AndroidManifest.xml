@@ -34,7 +34,9 @@
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
-            <!-- Custom scheme deep links: pushka:///... -->
+            <!-- Deep links: pushka:///, /history, /reminders, /settings,
+                 /prayers, /support, /about, /join/:slug. Whitelist enforced
+                 client-side in DeepLinkService. -->
             <intent-filter android:autoVerify="false">
                 <action android:name="android.intent.action.VIEW"/>
                 <category android:name="android.intent.category.DEFAULT"/>

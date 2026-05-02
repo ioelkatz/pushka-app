@@ -56,7 +56,9 @@ class HiveCache {
 
   Future<void> clearUser(String uid) async {
     if (!_initialized) return;
-    // Remove all keys prefixed with uid (covers all tenants)
+    // Remove all keys prefixed with uid — covers per-tenant pushka state
+    // (`${uid}_${tenantId}_…`), the tenant-config cache (`${uid}_tenant_id`,
+    // `${uid}_tenant_config`), and any future per-uid keys.
     final keys = _box!.keys.where((k) => k is String && k.startsWith('${uid}_')).toList();
     await _box!.deleteAll(keys);
   }
@@ -65,6 +67,48 @@ class HiveCache {
     if (!_initialized) return;
     await _box!.delete(_tenantKey(uid, tenantId, _keyPushkaAmount));
     await _box!.delete(_tenantKey(uid, tenantId, _keyPushkaGoal));
+  }
+
+  // ---------------------------------------------------------------------------
+  // Tenant config (per-uid — branding, currency, locale)
+  //
+  // Cached so the app can render the correct tenant branding on cold-start
+  // before the network call returns. Without this, users on slow/no networks
+  // see the generic "Pushka" branding for several seconds before their
+  // chabad-house's name and colors appear.
+  // ---------------------------------------------------------------------------
+
+  static const _keyTenantId = 'tenant_id';
+  static const _keyTenantConfig = 'tenant_config';
+
+  Future<void> saveTenantConfig(
+    String uid,
+    String tenantId,
+    Map<String, dynamic> configMap,
+  ) async {
+    if (!_initialized) return;
+    await _box!.put('${uid}_$_keyTenantId', tenantId);
+    // Hive stores Map<String, dynamic> as Map<dynamic, dynamic> — that's fine,
+    // we re-cast on load. We also strip null values up front so the round-trip
+    // through Hive doesn't introduce unexpected nulls into Map keys.
+    final clean = <String, dynamic>{
+      for (final e in configMap.entries)
+        if (e.value != null) e.key: e.value,
+    };
+    await _box!.put('${uid}_$_keyTenantConfig', clean);
+  }
+
+  /// Returns (tenantId, configMap) or null if there is no cache for this uid.
+  ({String tenantId, Map<String, dynamic> config})? loadTenantConfig(String uid) {
+    if (!_initialized) return null;
+    final tenantId = _box!.get('${uid}_$_keyTenantId');
+    final raw = _box!.get('${uid}_$_keyTenantConfig');
+    if (tenantId is! String || raw is! Map) return null;
+    final config = <String, dynamic>{};
+    raw.forEach((k, v) {
+      if (k is String) config[k] = v;
+    });
+    return (tenantId: tenantId, config: config);
   }
 
   // ---------------------------------------------------------------------------

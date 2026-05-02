@@ -1,12 +1,14 @@
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
-class TenantSuspendedScreen extends StatelessWidget {
+import '../../auth/providers/auth_controller.dart';
+
+class TenantSuspendedScreen extends ConsumerWidget {
   const TenantSuspendedScreen({super.key});
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final cs = Theme.of(context).colorScheme;
     final tt = Theme.of(context).textTheme;
 
@@ -35,7 +37,7 @@ class TenantSuspendedScreen extends StatelessWidget {
               const SizedBox(height: 40),
               OutlinedButton(
                 onPressed: () async {
-                  await FirebaseAuth.instance.signOut();
+                  await ref.read(authControllerProvider).signOut();
                   if (context.mounted) context.go('/login');
                 },
                 child: const Text('Cerrar sesión'),
