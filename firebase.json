@@ -1,1 +1,29 @@
-{"functions":{"source":"functions"},"firestore":{"rules":"firestore.rules"},"storage":{"rules":"storage.rules"},"flutter":{"platforms":{"android":{"default":{"projectId":"pushka-app-ioel","appId":"1:846580817724:android:d1d1fc1eb5773e9198c839","fileOutput":"android/app/google-services.json"}},"dart":{"lib/firebase_options.dart":{"projectId":"pushka-app-ioel","configurations":{"android":"1:846580817724:android:d1d1fc1eb5773e9198c839"}}}}}}
+{
+  "functions": {"source": "functions"},
+  "firestore": {"rules": "firestore.rules"},
+  "storage": {"rules": "storage.rules"},
+  "hosting": {
+    "site": "pushka-app-ioel",
+    "public": "public",
+    "ignore": ["firebase.json", "**/.*", "**/node_modules/**"]
+  },
+  "flutter": {
+    "platforms": {
+      "android": {
+        "default": {
+          "projectId": "pushka-app-ioel",
+          "appId": "1:846580817724:android:d1d1fc1eb5773e9198c839",
+          "fileOutput": "android/app/google-services.json"
+        }
+      },
+      "dart": {
+        "lib/firebase_options.dart": {
+          "projectId": "pushka-app-ioel",
+          "configurations": {
+            "android": "1:846580817724:android:d1d1fc1eb5773e9198c839"
+          }
+        }
+      }
+    }
+  }
+}

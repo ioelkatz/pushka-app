@@ -10,20 +10,34 @@ class AppTheme {
   /// If [primaryColor] is null, falls back to [AppTokens.primaryBlue].
   static ({ThemeData light, ThemeData dark}) fromTenantColors({
     Color? primaryColor,
+    Color? secondaryColor,
   }) {
     final effectivePrimary = primaryColor ?? AppTokens.primaryBlue;
-    // For dark mode, use a lighter version of the tenant color
     final effectiveDark = Color.lerp(effectivePrimary, Colors.white, 0.3) ?? AppTokens.skyBlue;
 
     final lightBase = light();
     final darkBase = dark();
 
+    var lightCS = lightBase.colorScheme.copyWith(
+      primary: effectivePrimary,
+      onPrimary: Colors.white,
+    );
+    if (secondaryColor != null) {
+      lightCS = lightCS.copyWith(secondary: secondaryColor, onSecondary: Colors.white);
+    }
+
+    var darkCS = darkBase.colorScheme.copyWith(
+      primary: effectiveDark,
+      onPrimary: Colors.white,
+    );
+    if (secondaryColor != null) {
+      final darkSecondary = Color.lerp(secondaryColor, Colors.white, 0.2) ?? secondaryColor;
+      darkCS = darkCS.copyWith(secondary: darkSecondary, onSecondary: Colors.white);
+    }
+
     return (
       light: lightBase.copyWith(
-        colorScheme: lightBase.colorScheme.copyWith(
-          primary: effectivePrimary,
-          onPrimary: Colors.white,
-        ),
+        colorScheme: lightCS,
         elevatedButtonTheme: ElevatedButtonThemeData(
           style: ElevatedButton.styleFrom(
             backgroundColor: effectivePrimary,
@@ -37,12 +51,7 @@ class AppTheme {
           ),
         ),
       ),
-      dark: darkBase.copyWith(
-        colorScheme: darkBase.colorScheme.copyWith(
-          primary: effectiveDark,
-          onPrimary: Colors.white,
-        ),
-      ),
+      dark: darkBase.copyWith(colorScheme: darkCS),
     );
   }
 

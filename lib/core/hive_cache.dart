@@ -21,42 +21,52 @@ class HiveCache {
   }
 
   // ---------------------------------------------------------------------------
-  // Pushka amount
+  // Pushka amount and goal — scoped per user + tenant
   // ---------------------------------------------------------------------------
 
   static const _keyPushkaAmount = 'pushka_amount';
   static const _keyPushkaGoal = 'pushka_goal';
 
-  Future<void> savePushkaAmount(String uid, double amount) async {
+  String _tenantKey(String uid, String tenantId, String suffix) =>
+      '${uid}_${tenantId}_$suffix';
+
+  Future<void> savePushkaAmount(String uid, String tenantId, double amount) async {
     if (!_initialized) return;
-    await _box!.put('${uid}_$_keyPushkaAmount', amount);
+    await _box!.put(_tenantKey(uid, tenantId, _keyPushkaAmount), amount);
   }
 
-  double? loadPushkaAmount(String uid) {
+  double? loadPushkaAmount(String uid, String tenantId) {
     if (!_initialized) return null;
-    final v = _box!.get('${uid}_$_keyPushkaAmount');
+    final v = _box!.get(_tenantKey(uid, tenantId, _keyPushkaAmount));
     if (v is num) return v.toDouble();
     return null;
   }
 
-  Future<void> savePushkaGoal(String uid, double goal) async {
+  Future<void> savePushkaGoal(String uid, String tenantId, double goal) async {
     if (!_initialized) return;
-    await _box!.put('${uid}_$_keyPushkaGoal', goal);
+    await _box!.put(_tenantKey(uid, tenantId, _keyPushkaGoal), goal);
   }
 
-  double? loadPushkaGoal(String uid) {
+  double? loadPushkaGoal(String uid, String tenantId) {
     if (!_initialized) return null;
-    final v = _box!.get('${uid}_$_keyPushkaGoal');
+    final v = _box!.get(_tenantKey(uid, tenantId, _keyPushkaGoal));
     if (v is num) return v.toDouble();
     return null;
   }
 
   Future<void> clearUser(String uid) async {
     if (!_initialized) return;
-    await _box!.delete('${uid}_$_keyPushkaAmount');
-    await _box!.delete('${uid}_$_keyPushkaGoal');
-    await _box!.delete('${uid}_$_keyTenantId');
-    await _box!.delete('${uid}_$_keyTenantConfig');
+    // Remove all keys prefixed with uid — covers per-tenant pushka state
+    // (`${uid}_${tenantId}_…`), the tenant-config cache (`${uid}_tenant_id`,
+    // `${uid}_tenant_config`), and any future per-uid keys.
+    final keys = _box!.keys.where((k) => k is String && k.startsWith('${uid}_')).toList();
+    await _box!.deleteAll(keys);
+  }
+
+  Future<void> clearTenant(String uid, String tenantId) async {
+    if (!_initialized) return;
+    await _box!.delete(_tenantKey(uid, tenantId, _keyPushkaAmount));
+    await _box!.delete(_tenantKey(uid, tenantId, _keyPushkaGoal));
   }
 
   // ---------------------------------------------------------------------------

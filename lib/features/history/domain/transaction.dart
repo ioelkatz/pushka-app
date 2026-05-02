@@ -26,6 +26,7 @@ class Transaction {
   final PaymentMethod paymentMethod;
   final PaymentStatus status;
   final String currencyCode;
+  final String? tenantId;
 
   Transaction({
     required this.id,
@@ -36,6 +37,7 @@ class Transaction {
     this.paymentMethod = PaymentMethod.card,
     this.status = PaymentStatus.completed,
     this.currencyCode = 'USD',
+    this.tenantId,
   });
 
   bool get isPending => status == PaymentStatus.pending;

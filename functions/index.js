@@ -460,20 +460,31 @@ exports.createPaymentIntent = onCall(
   }
 
   // Load user's tenant to route payment via Stripe Connect.
-  // Also: refuse if an auto-empty cron run is currently mid-charge for this
-  // user. Without this guard, a manual "Vaciar Pushka" tap can race against
-  // the cron and double-charge the same balance. The lock is short-lived
-  // (released by the cron in <30s on success/failure; TTL 10min on crash).
   const userSnap = await db.collection("users").doc(request.auth.uid).get();
   const userData = userSnap.exists ? (userSnap.data() ?? {}) : {};
-  const _autoLockAt = userData._autoEmptyChargeLockAt?.toMillis?.() ?? null;
-  if (_autoLockAt && (Date.now() - _autoLockAt) < (10 * 60 * 1000)) {
-    throw new HttpsError(
-      "aborted",
-      "Tu Pushka se está vaciando automáticamente en este momento. Esperá unos segundos y volvé a intentar.",
-    );
-  }
   const tenantId = userData.tenantId ?? null;
+
+  // Refuse if an auto-empty cron run is currently mid-charge for this
+  // (uid, tenantId). Without this guard, a manual "Vaciar Pushka" tap can
+  // race against the cron and double-charge the same balance. The lock now
+  // lives on the per-tenant `tenantState/{tenantId}` doc — a user belonging
+  // to two chabads can have one tenant locked while donating to the other.
+  // The lock is short-lived (released by the cron in <30s on success/failure;
+  // TTL 10min on crash, applied by the cron's stale-lock check).
+  if (tenantId) {
+    const stateSnap = await db.collection("users").doc(request.auth.uid)
+      .collection("tenantState").doc(tenantId).get();
+    if (stateSnap.exists) {
+      const _autoLockAt = stateSnap.data()?._autoEmptyChargeLockAt?.toMillis?.() ?? null;
+      if (_autoLockAt && (Date.now() - _autoLockAt) < (10 * 60 * 1000)) {
+        throw new HttpsError(
+          "aborted",
+          "Tu Pushka se está vaciando automáticamente en este momento. Esperá unos segundos y volvé a intentar.",
+        );
+      }
+    }
+  }
+
   let tenantConnectAccountId = null;
   let tenantCommissionRate = 0;
   let tenantStatus = null;
@@ -1473,13 +1484,22 @@ function computeNextErevRoshChodesh(baseDate) {
 }
 
 // --- Pushka Auto Empty (scheduled) ---
-// Stale in-flight lock TTL — if a previous run crashed between step 1 and step 3,
-// the lock will be considered abandoned after this period and the user becomes
-// eligible again. Tuned generously to outlast any realistic Stripe retry window.
+// Reads from the `users/{uid}/tenantState/{tenantId}` subcollection so
+// schedule + balance are per-organisation (a user belonging to two chabads
+// gets two independent auto-empty cycles). Stripe credentials
+// (stripeCustomerId, stripeDefaultPaymentMethodId, currencyCode, isBlocked)
+// remain on the user doc. Requires a collection-group index on:
+//   tenantState fields: autoEmptyNextRunAt ASC
+
+// Stale in-flight lock TTL — if a previous run crashed between the eligibility
+// transaction and the success-finalize transaction, the lock is considered
+// abandoned after this and the (uid, tenantId) pair becomes eligible again.
+// Tuned generously to outlast any realistic Stripe retry window.
 const AUTO_EMPTY_LOCK_TTL_MS = 10 * 60 * 1000; // 10 min
 
-// Short retry interval when a charge fails. Avoids the previous bug where a
-// single failure silently skipped the entire monthly billing cycle.
+// Short retry interval when a charge fails (decline, suspended tenant, blocked
+// user, Connect not active). Without this, advancing the schedule before the
+// charge meant a single failure silently skipped the entire monthly cycle.
 const AUTO_EMPTY_RETRY_AFTER_FAILURE_HOURS = 24;
 
 exports.processPushkaAutoEmpty = onSchedule(
@@ -1500,16 +1520,18 @@ exports.processPushkaAutoEmpty = onSchedule(
     }
 
     const nowTs = admin.firestore.Timestamp.now();
-    // Larger batch (was 150) — with the in-flight lock + maxInstances:1, a
-    // longer-running batch is safer than partial backlog accumulation.
-    const dueUsers = await db
-      .collection("users")
+
+    // Per-tenant rows due. Limit 200: each iteration may issue a Stripe call
+    // (1-2s) plus 2 Firestore transactions; 200 stays comfortably under the
+    // function's timeout budget when paired with maxInstances:1.
+    const dueStates = await db
+      .collectionGroup("tenantState")
       .where("autoEmptyNextRunAt", "<=", nowTs)
-      .limit(500)
+      .limit(200)
       .get();
 
-    if (dueUsers.empty) {
-      console.info("processPushkaAutoEmpty: no_due_users");
+    if (dueStates.empty) {
+      console.info("processPushkaAutoEmpty: no_due_states");
       return;
     }
 
@@ -1518,85 +1540,79 @@ exports.processPushkaAutoEmpty = onSchedule(
     let skipped = 0;
     const stripe = require("stripe")(stripeSecret.value(), { timeout: 15000 });
 
-    for (const doc of dueUsers.docs) {
-      const userRef = doc.ref;
-      const uid = doc.id;
+    for (const stateDoc of dueStates.docs) {
+      const stateRef = stateDoc.ref;
+      const stateDataRaw = stateDoc.data() || {};
+      const uid = stateDataRaw.uid;
+      const tenantId = stateDataRaw.tenantId;
 
-      // Per-user state captured inside the eligibility transaction and used in
-      // the charge + finalization steps.
+      if (!uid || !tenantId) {
+        console.warn("processPushkaAutoEmpty: missing uid/tenantId in state doc", { path: stateDoc.ref.path });
+        continue;
+      }
+
+      const userRef = db.collection("users").doc(uid);
+
+      // Per-iteration plan captured inside the eligibility transaction and
+      // used in the charge + finalization steps.
       let plan = null;
 
       try {
         // ===== Step 1: Eligibility transaction =====
-        // Atomically verify the user is due, not blocked, in an active tenant,
-        // has funds + a saved card; then claim an in-flight lock so a
-        // concurrent manual "Vaciar Pushka" or a delayed-cron retry cannot
-        // double-charge.
-        // CRITICAL: schedule is NOT advanced here. Advancement happens in
-        // step 3 (success) or step 4 (failure with short retry) so a Stripe
-        // failure cannot silently skip the next billing cycle.
+        // Atomically verify (uid, tenantId) is due, tenant is active, user
+        // not blocked, balance + saved card present; then claim an in-flight
+        // lock on the stateRef so concurrent manual "Vaciar Pushka" or a
+        // delayed-cron retry cannot double-charge the same (uid, tenantId).
+        // CRITICAL: schedule is NOT advanced here. It advances in the success
+        // path (normal next date) or failure path (+24h retry). This was the
+        // root cause of the bug where a single decline silently skipped the
+        // entire monthly billing cycle.
         await db.runTransaction(async (tx) => {
-          const snap = await tx.get(userRef);
-          if (!snap.exists) return;
+          const [stateSnap, userSnap, tenantSnap] = await Promise.all([
+            tx.get(stateRef),
+            tx.get(userRef),
+            tx.get(db.collection("tenants").doc(tenantId)),
+          ]);
+          if (!stateSnap.exists || !userSnap.exists) return;
 
-          const data = snap.data() || {};
-          const freq = data.autoEmptyFrequency || "manual";
-          if (freq === "manual") {
-            // Stale "manual" with a leftover next-run timestamp — clear it so
-            // the user does not match the due-users query forever.
-            tx.set(userRef, {
+          const state = stateSnap.data() || {};
+          const userData = userSnap.data() || {};
+          const tenantData = tenantSnap.exists ? (tenantSnap.data() || {}) : null;
+
+          const freq = state.autoEmptyFrequency || "manual";
+          if (freq === "manual") return;
+
+          const nextRun = state.autoEmptyNextRunAt;
+          if (!nextRun || nextRun.toMillis() > Date.now()) return;
+
+          // Already-running guard. Lock is per-(uid, tenantId): a user with two
+          // tenants can have both auto-empties running simultaneously — only
+          // double-runs for the SAME pair are blocked. Stale locks (older than
+          // TTL) are treated as abandoned and overwritten.
+          const lockAt = state._autoEmptyChargeLockAt?.toMillis?.() ?? null;
+          if (lockAt && (Date.now() - lockAt) < AUTO_EMPTY_LOCK_TTL_MS) {
+            console.info("processPushkaAutoEmpty: skip_locked", { uid, tenantId, lockAgeMs: Date.now() - lockAt });
+            return;
+          }
+
+          // Tenant doc must exist and not be suspended. createPaymentIntent
+          // enforces both for the interactive flow; the cron must too. A
+          // missing tenant means the org was deleted out from under the user
+          // — clear the schedule entirely so the row stops appearing in the
+          // due-states query (the user will be redirected to /tenant-setup
+          // by the orphan-healing path in getTenantConfig).
+          if (!tenantData) {
+            console.warn("processPushkaAutoEmpty: tenant_missing", { uid, tenantId });
+            tx.set(stateRef, {
               autoEmptyNextRunAt: null,
               updatedAt: admin.firestore.FieldValue.serverTimestamp(),
             }, { merge: true });
             return;
           }
-
-          const nextRun = data.autoEmptyNextRunAt;
-          if (!nextRun || nextRun.toMillis() > Date.now()) return;
-
-          // Already-running guard. If the lock is stale (older than TTL),
-          // treat it as abandoned and proceed.
-          const lockAt = data._autoEmptyChargeLockAt?.toMillis?.() ?? null;
-          if (lockAt && (Date.now() - lockAt) < AUTO_EMPTY_LOCK_TTL_MS) {
-            console.info("processPushkaAutoEmpty: skip_locked", { uid, lockAgeMs: Date.now() - lockAt });
-            return;
-          }
-
-          // Tenant + block guards. createPaymentIntent enforces these for the
-          // interactive flow; the cron must enforce them too.
-          const tenantId = String(data.tenantId || "").trim();
-          let tenantData = null;
-          if (tenantId) {
-            const tenantSnap = await tx.get(db.collection("tenants").doc(tenantId));
-            if (!tenantSnap.exists) {
-              console.warn("processPushkaAutoEmpty: tenant_missing", { uid, tenantId });
-              tx.set(userRef, {
-                autoEmptyNextRunAt: null,
-                updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-              }, { merge: true });
-              return;
-            }
-            tenantData = tenantSnap.data() || {};
-            if (tenantData.status === "suspended") {
-              // Tenant is suspended — never charge. Push the schedule out a
-              // day so we re-check tomorrow without spamming.
-              tx.set(userRef, {
-                autoEmptyNextRunAt: admin.firestore.Timestamp.fromDate(
-                  new Date(Date.now() + AUTO_EMPTY_RETRY_AFTER_FAILURE_HOURS * 3600 * 1000),
-                ),
-                updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-              }, { merge: true });
-              return;
-            }
-          }
-
-          // User block guard.
-          const adminDataSnap = await tx.get(db.collection("adminData").doc(uid));
-          if (adminDataSnap.exists && adminDataSnap.data()?.isBlocked === true) {
-            console.warn("processPushkaAutoEmpty: user_blocked", { uid });
-            // Same gentle re-check: do not charge, but do not advance the
-            // normal schedule either — try again in 24h.
-            tx.set(userRef, {
+          if (tenantData.status === "suspended") {
+            // Suspended → never charge. Push the schedule out 24h so we
+            // re-check tomorrow without spamming Stripe.
+            tx.set(stateRef, {
               autoEmptyNextRunAt: admin.firestore.Timestamp.fromDate(
                 new Date(Date.now() + AUTO_EMPTY_RETRY_AFTER_FAILURE_HOURS * 3600 * 1000),
               ),
@@ -1605,12 +1621,27 @@ exports.processPushkaAutoEmpty = onSchedule(
             return;
           }
 
-          const currentAmount = Number(data.pushkaAmount || 0);
-          const minBalance = 5;
-          const weekday = Number(data.autoEmptyWeekday || 1);
-          const dayOfMonth = Number(data.autoEmptyDayOfMonth || 1);
+          // User block guard. Same gentle re-check as suspended tenant: do
+          // not charge, do not advance the normal cycle, just defer 24h.
+          if (userData.isBlocked === true) {
+            console.warn("processPushkaAutoEmpty: user_blocked", { uid, tenantId });
+            tx.set(stateRef, {
+              autoEmptyNextRunAt: admin.firestore.Timestamp.fromDate(
+                new Date(Date.now() + AUTO_EMPTY_RETRY_AFTER_FAILURE_HOURS * 3600 * 1000),
+              ),
+              updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            }, { merge: true });
+            return;
+          }
 
-          // Compute the NORMAL next run date for use in step 3 (success).
+          const currentAmount = Number(state.pushkaAmount || 0);
+          const minBalance = 5;
+          const weekday = Number(state.autoEmptyWeekday || 1);
+          const dayOfMonth = Number(state.autoEmptyDayOfMonth || 1);
+
+          // Compute the NORMAL next-run date for use in the success path
+          // (and the no-card / unsupported-currency / below-min cases that
+          // are not actual failures, just "skip this cycle and move on").
           let normalNextDate;
           if (freq === "erev_rosh_chodesh") {
             normalNextDate = computeNextErevRoshChodesh(new Date());
@@ -1620,77 +1651,68 @@ exports.processPushkaAutoEmpty = onSchedule(
             });
           }
 
-          // Below-minimum: advance schedule normally without charging.
-          if (currentAmount < minBalance) {
-            tx.set(userRef, {
+          // Helper: advance schedule normally without charging.
+          const advanceNormalOnly = () => {
+            tx.set(stateRef, {
               autoEmptyNextRunAt: admin.firestore.Timestamp.fromDate(normalNextDate),
               updatedAt: admin.firestore.FieldValue.serverTimestamp(),
             }, { merge: true });
-            return;
-          }
+          };
 
-          const customerId = String(data.stripeCustomerId || "").trim();
-          const pmId = String(data.stripeDefaultPaymentMethodId || "").trim();
+          if (currentAmount < minBalance) { advanceNormalOnly(); return; }
+
+          const customerId = String(userData.stripeCustomerId || "").trim();
+          const pmId = String(userData.stripeDefaultPaymentMethodId || "").trim();
           if (!customerId || !pmId) {
-            // No saved card — advance schedule normally; user will get a card
-            // some other time and the next cycle will catch them.
-            console.warn("processPushkaAutoEmpty: no_saved_card", { uid });
-            tx.set(userRef, {
-              autoEmptyNextRunAt: admin.firestore.Timestamp.fromDate(normalNextDate),
-              updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-            }, { merge: true });
+            console.warn("processPushkaAutoEmpty: no_saved_card", { uid, tenantId });
+            advanceNormalOnly();
             return;
           }
 
-          const topOffEnabled = data.autoEmptyTopOffEnabled === true;
-          const topOffAmount = topOffEnabled ? Number(data.autoEmptyTopOffAmount || 0) : 0;
+          const topOffEnabled = state.autoEmptyTopOffEnabled === true;
+          const topOffAmount = topOffEnabled ? Number(state.autoEmptyTopOffAmount || 0) : 0;
           const newPushkaAmount = topOffEnabled && topOffAmount > 0 ? topOffAmount : 0;
 
-          const rawCurrency = String(data.currencyCode || "usd").toLowerCase().trim();
+          const rawCurrency = String(userData.currencyCode || "usd").toLowerCase().trim();
           if (!SUPPORTED_CURRENCIES.has(rawCurrency)) {
-            console.warn("processPushkaAutoEmpty: unsupported_currency", { uid, rawCurrency });
-            tx.set(userRef, {
-              autoEmptyNextRunAt: admin.firestore.Timestamp.fromDate(normalNextDate),
+            console.warn("processPushkaAutoEmpty: unsupported_currency", { uid, tenantId, rawCurrency });
+            advanceNormalOnly();
+            return;
+          }
+
+          // Stripe Connect routing — same logic as createPaymentIntent. If
+          // the tenant has an active Connect account, donations MUST go to
+          // it (otherwise the platform pockets it). If status is set but not
+          // "active", refuse to charge — admin must reconnect Stripe.
+          let tenantConnectAccountId = null;
+          let tenantCommissionRate = 0;
+          const connectStatus = tenantData.stripeConnectStatus;
+          const connectAccountId = tenantData.stripeConnectAccountId;
+          if (connectStatus === "active" && connectAccountId) {
+            tenantConnectAccountId = connectAccountId;
+            tenantCommissionRate = typeof tenantData.commissionRate === "number"
+              ? tenantData.commissionRate
+              : 0.03;
+          } else if (connectAccountId && connectStatus !== "active") {
+            console.warn("processPushkaAutoEmpty: connect_not_active", {
+              uid, tenantId, connectStatus,
+            });
+            tx.set(stateRef, {
+              autoEmptyNextRunAt: admin.firestore.Timestamp.fromDate(
+                new Date(Date.now() + AUTO_EMPTY_RETRY_AFTER_FAILURE_HOURS * 3600 * 1000),
+              ),
               updatedAt: admin.firestore.FieldValue.serverTimestamp(),
             }, { merge: true });
             return;
           }
-
-          // Stripe Connect routing — same logic as createPaymentIntent. If the
-          // tenant has an active Connect account, the donation MUST go to it
-          // (otherwise the platform pockets it instead of the org). If status
-          // is set but not "active", refuse to charge — admin must reconnect.
-          let tenantConnectAccountId = null;
-          let tenantCommissionRate = 0;
-          if (tenantData) {
-            const connectStatus = tenantData.stripeConnectStatus;
-            const connectAccountId = tenantData.stripeConnectAccountId;
-            if (connectStatus === "active" && connectAccountId) {
-              tenantConnectAccountId = connectAccountId;
-              tenantCommissionRate = typeof tenantData.commissionRate === "number"
-                ? tenantData.commissionRate
-                : 0.03;
-            } else if (connectAccountId && connectStatus !== "active") {
-              console.warn("processPushkaAutoEmpty: connect_not_active", {
-                uid, tenantId, connectStatus,
-              });
-              tx.set(userRef, {
-                autoEmptyNextRunAt: admin.firestore.Timestamp.fromDate(
-                  new Date(Date.now() + AUTO_EMPTY_RETRY_AFTER_FAILURE_HOURS * 3600 * 1000),
-                ),
-                updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-              }, { merge: true });
-              return;
-            }
-            // connectAccountId == null && status != active → tenant never set
-            // up Connect → fall through to platform charge (legacy behavior
-            // for tenants in onboarding).
-          }
+          // connectAccountId == null && status != active → tenant never set
+          // up Connect → fall through to platform charge (legacy behavior
+          // for tenants in onboarding).
 
           // Capture the in-flight lock + the original due timestamp (used as
           // the Stripe idempotency key so a retry produces the same PI).
           const runTs = nextRun.toMillis();
-          tx.set(userRef, {
+          tx.set(stateRef, {
             _autoEmptyChargeLockAt: admin.firestore.FieldValue.serverTimestamp(),
             updatedAt: admin.firestore.FieldValue.serverTimestamp(),
           }, { merge: true });
@@ -1702,7 +1724,7 @@ exports.processPushkaAutoEmpty = onSchedule(
             pmId,
             newPushkaAmount,
             normalNextDate,
-            tenantId: tenantId || null,
+            tenantId,
             tenantConnectAccountId,
             tenantCommissionRate,
             nextRunDateKey: String(runTs),
@@ -1719,10 +1741,10 @@ exports.processPushkaAutoEmpty = onSchedule(
         const minCents = minAmountForCurrency(plan.currency);
         if (amountCents < minCents) {
           console.warn("processPushkaAutoEmpty: amount_below_stripe_minimum", {
-            uid, amountCents, minCents,
+            uid, tenantId: plan.tenantId, amountCents, minCents,
           });
           // Below minimum after lock — release lock, advance schedule normally.
-          await userRef.set({
+          await stateRef.set({
             _autoEmptyChargeLockAt: admin.firestore.FieldValue.delete(),
             autoEmptyNextRunAt: admin.firestore.Timestamp.fromDate(plan.normalNextDate),
             updatedAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -1731,7 +1753,7 @@ exports.processPushkaAutoEmpty = onSchedule(
           continue;
         }
 
-        const idempotencyKey = `pushka_auto_empty_${uid}_${plan.nextRunDateKey}`;
+        const idempotencyKey = `pushka_auto_empty_${uid}_${plan.tenantId}_${plan.nextRunDateKey}`;
         const piParams = {
           amount: amountCents,
           currency: plan.currency,
@@ -1739,21 +1761,21 @@ exports.processPushkaAutoEmpty = onSchedule(
           payment_method: plan.pmId,
           off_session: true,
           confirm: true,
-          // Restrict to card so off-session charges never land on async methods
-          // (BNPL/SEPA/ACH) that settle days later and cannot be charged
-          // off-session anyway.
+          // Restrict to card so off-session charges never land on async
+          // methods (BNPL/SEPA/ACH) that settle days later and cannot be
+          // charged off-session anyway.
           payment_method_types: ["card"],
           error_on_requires_action: true,
           metadata: {
             uid,
             source: "pushka",
             purpose: "pushka_auto_empty",
-            ...(plan.tenantId ? { tenantId: plan.tenantId } : {}),
+            tenantId: plan.tenantId,
           },
         };
         if (plan.tenantConnectAccountId) {
-          // Clamp app-fee defensively so a misconfigured commissionRate cannot
-          // produce application_fee_amount >= amount (Stripe would reject).
+          // Clamp app-fee defensively so a misconfigured commissionRate
+          // cannot produce application_fee_amount >= amount (Stripe rejects).
           const rawFee = Math.floor(amountCents * plan.tenantCommissionRate);
           const safeFee = Math.max(1, Math.min(rawFee, amountCents - 1));
           piParams.application_fee_amount = safeFee;
@@ -1765,16 +1787,13 @@ exports.processPushkaAutoEmpty = onSchedule(
           paymentIntent = await stripe.paymentIntents.create(piParams, { idempotencyKey });
         } catch (stripeErr) {
           console.error("processPushkaAutoEmpty: stripe_charge_failed", {
-            uid,
+            uid, tenantId: plan.tenantId,
             error: String(stripeErr?.message || stripeErr),
             code: stripeErr?.code,
           });
 
-          // ===== Step 4 (failure path): release lock + short retry =====
-          // Was: schedule advanced in step 1 → a single decline silently
-          // skipped the whole monthly cycle. Now: short retry in 24h with
-          // a counter the admin can monitor.
-          await userRef.set({
+          // ===== Failure path: release lock + 24h retry on stateRef =====
+          await stateRef.set({
             _autoEmptyChargeLockAt: admin.firestore.FieldValue.delete(),
             autoEmptyNextRunAt: admin.firestore.Timestamp.fromDate(
               new Date(Date.now() + AUTO_EMPTY_RETRY_AFTER_FAILURE_HOURS * 3600 * 1000),
@@ -1796,7 +1815,7 @@ exports.processPushkaAutoEmpty = onSchedule(
           };
           await sendToUser(uid, {
             notification: { title: failTitles[failLang], body: failBodies[failLang] },
-            data: { type: "pushkaAutoEmptyFailed" },
+            data: { type: "pushkaAutoEmptyFailed", tenantId: plan.tenantId },
           }).catch(() => {});
           failed += 1;
           continue;
@@ -1804,10 +1823,10 @@ exports.processPushkaAutoEmpty = onSchedule(
 
         if (paymentIntent.status !== "succeeded") {
           console.warn("processPushkaAutoEmpty: payment_not_succeeded", {
-            uid, status: paymentIntent.status,
+            uid, tenantId: plan.tenantId, status: paymentIntent.status,
           });
           // Same release+retry as the failure path.
-          await userRef.set({
+          await stateRef.set({
             _autoEmptyChargeLockAt: admin.firestore.FieldValue.delete(),
             autoEmptyNextRunAt: admin.firestore.Timestamp.fromDate(
               new Date(Date.now() + AUTO_EMPTY_RETRY_AFTER_FAILURE_HOURS * 3600 * 1000),
@@ -1822,6 +1841,9 @@ exports.processPushkaAutoEmpty = onSchedule(
         }
 
         // ===== Step 3 (success path): release lock, advance schedule, reset =====
+        // pushkaAmount + schedule + lock + failure-tracking go on stateRef
+        // (per-tenant). Transaction doc goes on userRef/transactions with the
+        // tenantId field so analytics can group/filter by org.
         const emptiedAmount = plan.amount;
         const emptyPiId = paymentIntent.id;
         const emptyRates = await getExchangeRates(null);
@@ -1829,7 +1851,7 @@ exports.processPushkaAutoEmpty = onSchedule(
 
         try {
           await db.runTransaction(async (tx) => {
-            tx.set(userRef, {
+            tx.set(stateRef, {
               pushkaAmount: plan.newPushkaAmount,
               _autoEmptyChargeLockAt: admin.firestore.FieldValue.delete(),
               autoEmptyNextRunAt: admin.firestore.Timestamp.fromDate(plan.normalNextDate),
@@ -1842,8 +1864,8 @@ exports.processPushkaAutoEmpty = onSchedule(
               type: "pushkaEmpty",
               amount: emptiedAmount,
               currencyCode: plan.currency.toUpperCase(),
+              tenantId: plan.tenantId,
               ...emptySnap,
-              ...(plan.tenantId ? { tenantId: plan.tenantId } : {}),
               description: "Vaciado automático de Pushka",
               paymentMethod: "auto_card",
               status: "completed",
@@ -1852,12 +1874,12 @@ exports.processPushkaAutoEmpty = onSchedule(
             });
           });
         } catch (step3Err) {
-          // Stripe charge succeeded but local finalize failed. Lock stays set
-          // until TTL expires (10 min) — that's intentional so a retry of this
-          // function does not double-charge while the doc is in an inconsistent
-          // state. The PI id is logged for manual recovery.
+          // Stripe charge succeeded but local finalize failed. Lock stays
+          // set until TTL expires (10 min) — that's intentional so a retry
+          // of this function does not double-charge while the doc is in an
+          // inconsistent state. The PI id is logged for manual recovery.
           console.error("processPushkaAutoEmpty: step3_finalize_failed_after_charge", {
-            uid,
+            uid, tenantId: plan.tenantId,
             paymentIntentId: emptyPiId,
             amount: emptiedAmount,
             error: String(step3Err?.message || step3Err),
@@ -1866,7 +1888,7 @@ exports.processPushkaAutoEmpty = onSchedule(
           continue;
         }
 
-        // Step 5: notify success (best-effort, never blocks)
+        // Step 4: notify success (best-effort, never blocks)
         try {
           const emptyLang = await getUserLanguage(uid);
           const emptySym = currencySymbol(plan.currency);
@@ -1880,23 +1902,24 @@ exports.processPushkaAutoEmpty = onSchedule(
           };
           await sendToUser(uid, {
             notification: { title: emptyTitles[emptyLang], body: emptyBodies[emptyLang] },
-            data: { type: "pushkaEmpty", amount: String(emptiedAmount) },
+            data: { type: "pushkaEmpty", amount: String(emptiedAmount), tenantId: plan.tenantId },
           }).catch(() => {});
         } catch (notifErr) {
           console.warn("processPushkaAutoEmpty: notification_failed", {
-            uid, error: String(notifErr?.message || notifErr),
+            uid, tenantId: plan.tenantId, error: String(notifErr?.message || notifErr),
           });
         }
 
         processed += 1;
       } catch (err) {
         failed += 1;
-        console.error("processPushkaAutoEmpty: user_failed", {
-          uid, error: String(err?.message || err),
+        console.error("processPushkaAutoEmpty: state_failed", {
+          uid, tenantId, path: stateDoc.ref.path, error: String(err?.message || err),
         });
-        // Best-effort lock release on unexpected error.
+        // Best-effort lock release on unexpected error. Lock TTLs out anyway,
+        // but releasing eagerly lets the next cron run pick it up sooner.
         try {
-          await userRef.set({
+          await stateRef.set({
             _autoEmptyChargeLockAt: admin.firestore.FieldValue.delete(),
             updatedAt: admin.firestore.FieldValue.serverTimestamp(),
           }, { merge: true });
@@ -2064,6 +2087,18 @@ async function getExchangeRates(dateStr) {
     console.error("getExchangeRates: unexpected error, using fallback", String(err?.message || err));
     return FALLBACK_RATES;
   }
+}
+
+/**
+ * Returns the default pushka goal for a given ISO 4217 currency code (uppercase).
+ * Values mirror the Flutter UserRepository.defaultGoalForCurrency constants.
+ */
+function defaultGoalForCurrency(currency) {
+  const goals = {
+    EUR: 180, GBP: 180, CAD: 180, ILS: 770,
+    MXN: 1800, BRL: 770, ARS: 180000, CLP: 180000, COP: 770000,
+  };
+  return goals[String(currency || "USD").toUpperCase()] ?? 180;
 }
 
 /**
@@ -2298,7 +2333,7 @@ exports.getAdminStats = onCall(
   async (request) => {
     const callerUid = request.auth?.uid;
     if (!callerUid) throw new HttpsError("unauthenticated", "Debes estar autenticado.");
-    await enforceRateLimit(callerUid, "getAdminStats", 30, 3600);
+    await enforceRateLimit(callerUid, "getAdminStats", 60, 3600);
 
     const callerClaims = request.auth?.token ?? {};
     const isSuper = callerIsSuperAdmin(request);
@@ -2626,10 +2661,16 @@ exports.getFailedPayments = onCall(
       new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
     );
 
-    const snap = await db.collection("_stripeWebhookEvents")
-      .where("status", "==", "failed")
-      .where("createdAt", ">=", since)
-      .get();
+    let snap;
+    try {
+      snap = await db.collection("_stripeWebhookEvents")
+        .where("status", "==", "failed")
+        .where("createdAt", ">=", since)
+        .get();
+    } catch (_) {
+      // Collection doesn't exist or missing composite index — return empty
+      return [];
+    }
 
     let failed = snap.docs
       .map((d) => {
@@ -2739,6 +2780,195 @@ exports.setUserBlocked = onCall(
 );
 
 // ===========================================================================
+// MULTI-MEMBERSHIP — join / switch / leave
+// ===========================================================================
+
+// ---------------------------------------------------------------------------
+// joinTenant — adds the caller to a tenant's membership list.
+// Idempotent: calling it twice with the same tenantId is a no-op.
+// On first join: sets tenantId (active) and creates tenantState doc with
+// defaults (migrating pushka state if this is the user's first tenant).
+// ---------------------------------------------------------------------------
+exports.joinTenant = onCall(
+  { enforceAppCheck: true },
+  async (request) => {
+    if (!request.auth?.uid) throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
+    await enforceRateLimit(request.auth.uid, "joinTenant", 10, 3600);
+
+    const uid = request.auth.uid;
+    const tenantId = String(request.data?.tenantId || "").trim();
+    if (!tenantId) throw new HttpsError("invalid-argument", "tenantId requerido.");
+
+    // Validate tenant exists and is active
+    const tenantSnap = await db.collection("tenants").doc(tenantId).get();
+    if (!tenantSnap.exists) throw new HttpsError("not-found", "Organización no encontrada.");
+    const tenantData = tenantSnap.data();
+    if (!["active", "trial", "grace_period"].includes(tenantData.status)) {
+      throw new HttpsError("failed-precondition", "Esta organización no está disponible.");
+    }
+
+    const userRef = db.collection("users").doc(uid);
+    const stateRef = userRef.collection("tenantState").doc(tenantId);
+
+    await db.runTransaction(async (tx) => {
+      const userSnap = await tx.get(userRef);
+      const stateSnap = await tx.get(stateRef);
+      if (!userSnap.exists) throw new HttpsError("not-found", "Usuario no encontrado.");
+
+      const userData = userSnap.data();
+      const existing = userData.tenantIds || (userData.tenantId ? [userData.tenantId] : []);
+      const isFirst = !userData.tenantId;
+
+      // Idempotent — already a member
+      if (existing.includes(tenantId) && !isFirst) {
+        // Ensure tenantId (active) is set if somehow missing
+        if (!userData.tenantId) {
+          tx.set(userRef, {
+            tenantId,
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          }, { merge: true });
+        }
+        return;
+      }
+
+      const newTenantIds = [...new Set([...existing, tenantId])];
+      const patch = {
+        tenantIds: newTenantIds,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      };
+      // First org ever: set as active tenant; apply tenant defaults if present
+      if (isFirst) {
+        patch.tenantId = tenantId;
+        if (tenantData.defaultLanguage && !userData.language) {
+          patch.language = tenantData.defaultLanguage;
+        }
+        if (tenantData.defaultCurrency && !userData.currencyCode) {
+          patch.currencyCode = String(tenantData.defaultCurrency).toUpperCase();
+        }
+      }
+      tx.set(userRef, patch, { merge: true });
+
+      // Create tenantState doc if it doesn't exist yet
+      if (!stateSnap.exists) {
+        const currency = String(userData.currencyCode || tenantData.defaultCurrency || "USD").toUpperCase();
+        tx.set(stateRef, {
+          uid,
+          tenantId,
+          tenantName: tenantData.name || "",
+          tenantAppName: tenantData.appName || tenantData.name || "Pushka",
+          tenantLogoUrl: tenantData.logoUrl || null,
+          tenantPrimaryColor: tenantData.primaryColor || null,
+          // First org: migrate existing pushka state; subsequent orgs start fresh
+          pushkaAmount: isFirst ? Number(userData.pushkaAmount || 0) : 0,
+          pushkaGoal: isFirst
+            ? Number(userData.pushkaGoal || defaultGoalForCurrency(currency))
+            : defaultGoalForCurrency(currency),
+          presetAmount: isFirst ? Number(userData.presetAmount || 1.0) : 1.0,
+          presetAmounts: isFirst && Array.isArray(userData.presetAmounts)
+            ? userData.presetAmounts : [],
+          streakCount: isFirst ? Number(userData.streakCount || 0) : 0,
+          lastStreakDate: isFirst ? (userData.lastStreakDate || null) : null,
+          autoEmptyFrequency: "manual",
+          autoEmptyWeekday: null,
+          autoEmptyDayOfMonth: null,
+          autoEmptyTopOffEnabled: false,
+          autoEmptyTopOffAmount: null,
+          autoEmptyNextRunAt: null,
+          createdAt: admin.firestore.FieldValue.serverTimestamp(),
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+        // If this was the first tenant, clear autoEmptyNextRunAt on user doc
+        // so the legacy scheduler no longer processes this user.
+        if (isFirst) {
+          tx.set(userRef, { autoEmptyNextRunAt: null }, { merge: true });
+        }
+      }
+    });
+
+    return { success: true, tenantId };
+  }
+);
+
+// ---------------------------------------------------------------------------
+// switchTenant — changes the caller's active tenant (tenantId field).
+// The target tenantId must already be in the caller's tenantIds array.
+// ---------------------------------------------------------------------------
+exports.switchTenant = onCall(
+  { enforceAppCheck: true },
+  async (request) => {
+    if (!request.auth?.uid) throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
+    await enforceRateLimit(request.auth.uid, "switchTenant", 30, 3600);
+
+    const uid = request.auth.uid;
+    const tenantId = String(request.data?.tenantId || "").trim();
+    if (!tenantId) throw new HttpsError("invalid-argument", "tenantId requerido.");
+
+    const userRef = db.collection("users").doc(uid);
+    const userSnap = await userRef.get();
+    if (!userSnap.exists) throw new HttpsError("not-found", "Usuario no encontrado.");
+
+    const userData = userSnap.data();
+    const tenantIds = userData.tenantIds || (userData.tenantId ? [userData.tenantId] : []);
+
+    if (!tenantIds.includes(tenantId)) {
+      throw new HttpsError("permission-denied", "No eres miembro de esa organización.");
+    }
+
+    await userRef.set({
+      tenantId,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    }, { merge: true });
+
+    return { success: true, tenantId };
+  }
+);
+
+// ---------------------------------------------------------------------------
+// leaveTenant — removes the caller from a tenant's membership list.
+// If the tenant being left is the active one, falls back to the first
+// remaining tenant (or clears tenantId if none remain).
+// ---------------------------------------------------------------------------
+exports.leaveTenant = onCall(
+  { enforceAppCheck: true },
+  async (request) => {
+    if (!request.auth?.uid) throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
+    await enforceRateLimit(request.auth.uid, "leaveTenant", 10, 3600);
+
+    const uid = request.auth.uid;
+    const tenantId = String(request.data?.tenantId || "").trim();
+    if (!tenantId) throw new HttpsError("invalid-argument", "tenantId requerido.");
+
+    const userRef = db.collection("users").doc(uid);
+
+    await db.runTransaction(async (tx) => {
+      const userSnap = await tx.get(userRef);
+      if (!userSnap.exists) throw new HttpsError("not-found", "Usuario no encontrado.");
+
+      const userData = userSnap.data();
+      const existing = userData.tenantIds || (userData.tenantId ? [userData.tenantId] : []);
+      const newTenantIds = existing.filter((t) => t !== tenantId);
+      const currentTenantId = userData.tenantId;
+
+      const patch = {
+        tenantIds: newTenantIds,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      };
+      // If leaving the active tenant, switch to the first remaining
+      if (currentTenantId === tenantId) {
+        if (newTenantIds.length > 0) {
+          patch.tenantId = newTenantIds[0];
+        } else {
+          patch.tenantId = admin.firestore.FieldValue.delete();
+        }
+      }
+      tx.set(userRef, patch, { merge: true });
+    });
+
+    return { success: true };
+  }
+);
+
+// ===========================================================================
 // MULTI-TENANT — Tenant management functions
 // ===========================================================================
 
@@ -2810,24 +3040,24 @@ exports.createTenant = onCall(
 
       // Branding
       appName: String(appName || name).trim(),
-      welcomeText: String(welcomeText || "").trim(),
-      primaryColor: String(primaryColor || "#E8A87C").trim(),
-      secondaryColor: String(secondaryColor || "#D4A843").trim(),
-      logoUrl: String(logoUrl || "").trim(),
+      welcomeText: String(welcomeText || "").trim() || null,
+      primaryColor: /^#[0-9A-Fa-f]{6}$/.test(String(primaryColor || "")) ? String(primaryColor).trim() : "#E8A87C",
+      secondaryColor: /^#[0-9A-Fa-f]{6}$/.test(String(secondaryColor || "")) ? String(secondaryColor).trim() : "#D4A843",
+      logoUrl: String(logoUrl || "").trim() || null,
       showPoweredBy: true,
 
       // Localization
       defaultLanguage: String(defaultLanguage || "es"),
       defaultCurrency: String(defaultCurrency || "USD").toUpperCase(),
-      defaultCountry: String(defaultCountry || "").trim(),
+      defaultCountry: String(defaultCountry || "").trim() || null,
 
       // Legal / Contact
-      contactEmail: String(contactEmail || adminEmail).trim(),
-      contactPhone: String(contactPhone || "").trim(),
-      privacyPolicyUrl: String(privacyPolicyUrl || "").trim(),
-      termsUrl: String(termsUrl || "").trim(),
-      city: String(city || "").trim(),
-      country: String(country || "").trim(),
+      contactEmail: String(contactEmail || adminEmail).trim() || null,
+      contactPhone: String(contactPhone || "").trim() || null,
+      privacyPolicyUrl: String(privacyPolicyUrl || "").trim() || null,
+      termsUrl: String(termsUrl || "").trim() || null,
+      city: String(city || "").trim() || null,
+      country: String(country || "").trim() || null,
 
       // Stripe Connect — set later via OAuth
       stripeConnectAccountId: null,
@@ -2922,39 +3152,105 @@ exports.createTenant = onCall(
 );
 
 // ---------------------------------------------------------------------------
-// updateTenant — super_admin only
+// getTenantBranding — super_admin (any tenant) or tenant_admin (own tenant)
+// ---------------------------------------------------------------------------
+exports.getTenantBranding = onCall(
+  { enforceAppCheck: false },
+  async (request) => {
+    const callerClaims = request.auth?.token ?? {};
+    const isSuper = callerClaims.role === "super_admin" || callerClaims.admin === true;
+    const isTenantAdmin = callerClaims.role === "tenant_admin";
+    if (!isSuper && !isTenantAdmin) {
+      throw new HttpsError("permission-denied", "Acceso denegado.");
+    }
+
+    const tenantId = isSuper
+      ? (request.data?.tenantId ?? null)
+      : callerClaims.tenantId;
+
+    if (!tenantId) throw new HttpsError("invalid-argument", "tenantId requerido.");
+
+    const snap = await db.collection("tenants").doc(tenantId).get();
+    if (!snap.exists) throw new HttpsError("not-found", "Tenant no encontrado.");
+
+    const data = snap.data();
+    const fields = [
+      "name", "slug", "appName", "welcomeText",
+      "primaryColor", "secondaryColor", "logoUrl", "showPoweredBy",
+      "defaultLanguage", "defaultCurrency", "defaultCountry",
+      "contactEmail", "contactPhone", "privacyPolicyUrl", "termsUrl",
+      "city", "country",
+    ];
+    const branding = { tenantId: snap.id };
+    for (const f of fields) {
+      if (data[f] !== undefined) branding[f] = data[f];
+    }
+    return branding;
+  }
+);
+
+// ---------------------------------------------------------------------------
+// updateTenant — super_admin (all fields) or tenant_admin (branding only)
 // ---------------------------------------------------------------------------
 exports.updateTenant = onCall(
   { enforceAppCheck: false },
   async (request) => {
-    if (!callerIsSuperAdmin(request)) {
-      throw new HttpsError("permission-denied", "Solo el super administrador puede editar tenants.");
+    const callerClaims = request.auth?.token ?? {};
+    const isSuper = callerClaims.role === "super_admin" || callerClaims.admin === true;
+    const isTenantAdmin = callerClaims.role === "tenant_admin";
+    if (!isSuper && !isTenantAdmin) {
+      throw new HttpsError("permission-denied", "Acceso denegado.");
     }
 
     const { tenantId, ...updates } = request.data ?? {};
     if (!tenantId) throw new HttpsError("invalid-argument", "tenantId requerido.");
 
+    // Tenant admin can only edit their own tenant
+    if (isTenantAdmin && callerClaims.tenantId !== tenantId) {
+      throw new HttpsError("permission-denied", "Solo podés editar tu propia organización.");
+    }
+
     const tenantRef = db.collection("tenants").doc(tenantId);
     const snap = await tenantRef.get();
     if (!snap.exists) throw new HttpsError("not-found", "Tenant no encontrado.");
 
-    // Allowed fields that super_admin can update
-    const allowed = [
-      "name", "appName", "welcomeText",
+    // Super admin: all fields. Tenant admin: branding only.
+    const brandingFields = [
+      "appName", "welcomeText",
       "primaryColor", "secondaryColor", "logoUrl", "showPoweredBy",
       "defaultLanguage", "defaultCurrency", "defaultCountry",
       "contactEmail", "contactPhone", "privacyPolicyUrl", "termsUrl",
-      "city", "country", "status",
-      "commissionRate", "planPrice",
+      "city", "country",
+    ];
+    const superOnlyFields = [
+      "name", "status", "commissionRate", "planPrice",
       "stripeConnectAccountId", "stripeConnectStatus",
       "stripeSubscriptionId", "stripeCustomerId", "paymentStatus",
       "billingNextDue", "gracePeriodEndsAt", "billingCycleStart",
       "adminEmail", "adminUid",
     ];
+    const allowed = isSuper ? [...brandingFields, ...superOnlyFields] : brandingFields;
+
+    // Fields where empty string means "not set" — store null instead of ""
+    const nullableStringFields = new Set([
+      "logoUrl", "welcomeText", "contactEmail", "contactPhone",
+      "privacyPolicyUrl", "termsUrl", "defaultCountry", "city", "country",
+    ]);
+
+    // Hex color fields — must be exactly #rrggbb
+    const hexColorFields = new Set(["primaryColor", "secondaryColor"]);
+    const hexRe = /^#[0-9A-Fa-f]{6}$/;
 
     const patch = { updatedAt: admin.firestore.FieldValue.serverTimestamp() };
     for (const key of allowed) {
-      if (key in updates) patch[key] = updates[key];
+      if (!(key in updates)) continue;
+      let val = updates[key];
+      if (typeof val === "string") {
+        val = val.trim();
+        if (nullableStringFields.has(key) && val === "") val = null;
+        if (hexColorFields.has(key) && !hexRe.test(val)) continue; // skip invalid hex
+      }
+      patch[key] = val;
     }
 
     if (updates.slug) {
@@ -3087,7 +3383,10 @@ exports.listDiscoverableTenants = onCall(
 );
 
 // ---------------------------------------------------------------------------
-// getTenantConfig — authenticated, returns branding for the user's own tenant
+// getTenantConfig — authenticated, returns branding for the user's own tenant.
+// Also performs a lazy migration: users with a legacy single `tenantId` field
+// get `tenantIds: [tenantId]` written and a `tenantState/{tenantId}` doc created
+// the first time they open the app after the multi-membership rollout.
 // ---------------------------------------------------------------------------
 exports.getTenantConfig = onCall(
   { enforceAppCheck: false },
@@ -3096,14 +3395,76 @@ exports.getTenantConfig = onCall(
       throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
     }
 
-    const userRef = db.collection("users").doc(request.auth.uid);
+    const uid = request.auth.uid;
+    const userRef = db.collection("users").doc(uid);
     const userSnap = await userRef.get();
     if (!userSnap.exists) throw new HttpsError("not-found", "Usuario no encontrado.");
 
-    const tenantId = userSnap.data()?.tenantId;
+    const userData = userSnap.data();
+    const tenantId = userData?.tenantId;
+
+    // ── Lazy migration ──────────────────────────────────────────────────────
+    // User has a legacy `tenantId` but the new `tenantIds` array hasn't been
+    // written yet (first launch after multi-membership rollout).
+    if (tenantId && !userData.tenantIds) {
+      try {
+        const tenantDocSnap = await db.collection("tenants").doc(tenantId).get();
+        const tenantData = tenantDocSnap.exists ? tenantDocSnap.data() : {};
+        const stateRef = db.collection("users").doc(uid)
+          .collection("tenantState").doc(tenantId);
+        const stateSnap = await stateRef.get();
+        const currency = String(userData.currencyCode || "USD").toUpperCase();
+
+        const batch = db.batch();
+        // Set tenantIds on the user doc
+        batch.set(
+          db.collection("users").doc(uid),
+          { tenantIds: [tenantId], updatedAt: admin.firestore.FieldValue.serverTimestamp() },
+          { merge: true },
+        );
+        // Create tenantState doc if it doesn't exist yet
+        if (!stateSnap.exists) {
+          batch.set(stateRef, {
+            uid,
+            tenantId,
+            tenantName: tenantData.name || "",
+            tenantAppName: tenantData.appName || tenantData.name || "Pushka",
+            tenantLogoUrl: tenantData.logoUrl || null,
+            tenantPrimaryColor: tenantData.primaryColor || null,
+            pushkaAmount: Number(userData.pushkaAmount || 0),
+            pushkaGoal: Number(userData.pushkaGoal || defaultGoalForCurrency(currency)),
+            presetAmount: Number(userData.presetAmount || 1.0),
+            presetAmounts: Array.isArray(userData.presetAmounts) ? userData.presetAmounts : [],
+            streakCount: Number(userData.streakCount || 0),
+            lastStreakDate: userData.lastStreakDate || null,
+            autoEmptyFrequency: userData.autoEmptyFrequency || "manual",
+            autoEmptyWeekday: userData.autoEmptyWeekday ?? null,
+            autoEmptyDayOfMonth: userData.autoEmptyDayOfMonth ?? null,
+            autoEmptyTopOffEnabled: userData.autoEmptyTopOffEnabled || false,
+            autoEmptyTopOffAmount: userData.autoEmptyTopOffAmount ?? null,
+            // Clear autoEmptyNextRunAt on user doc below — tenantState is now authoritative.
+            // Copy the schedule so the tenantState-based scheduler picks it up.
+            autoEmptyNextRunAt: userData.autoEmptyNextRunAt || null,
+            createdAt: admin.firestore.FieldValue.serverTimestamp(),
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          });
+          // Nullify autoEmptyNextRunAt on user doc so the legacy scheduler skips it.
+          batch.set(
+            db.collection("users").doc(uid),
+            { autoEmptyNextRunAt: null, updatedAt: admin.firestore.FieldValue.serverTimestamp() },
+            { merge: true },
+          );
+        }
+        await batch.commit();
+      } catch (migErr) {
+        console.warn("getTenantConfig: lazy migration failed", {
+          uid, error: String(migErr?.message || migErr),
+        });
+      }
+    }
+
     if (!tenantId) {
-      // User has no tenant yet — return null config
-      return { tenantId: null, config: null };
+      return { tenantId: null, config: null, tenantIds: [] };
     }
 
     const tenantSnap = await db.collection("tenants").doc(tenantId).get();
@@ -3118,30 +3479,35 @@ exports.getTenantConfig = onCall(
       try {
         await userRef.update({
           tenantId: admin.firestore.FieldValue.delete(),
+          tenantIds: admin.firestore.FieldValue.arrayRemove(tenantId),
           updatedAt: admin.firestore.FieldValue.serverTimestamp(),
         });
         // Strip tenant-scoped role claims so they don't survive re-onboarding
         // (a deleted-tenant tenant_admin shouldn't keep claims pointing at the
         // dead tenantId). Read the actual customClaims from Auth — request.auth
         // .token also includes standard JWT fields that we must not echo back.
-        const authUser = await admin.auth().getUser(request.auth.uid);
+        const authUser = await admin.auth().getUser(uid);
         const existing = authUser.customClaims ?? {};
         if (existing.tenantId === tenantId || existing.role === "tenant_admin" || existing.role === "tenant_collaborator") {
           const { tenantId: _stripTenant, role: _stripRole, ...keep } = existing;
-          await admin.auth().setCustomUserClaims(request.auth.uid, keep);
+          await admin.auth().setCustomUserClaims(uid, keep);
         }
       } catch (e) {
-        console.error("getTenantConfig: failed to heal orphaned tenantId", { uid: request.auth.uid, tenantId, err: e?.message });
+        console.error("getTenantConfig: failed to heal orphaned tenantId", { uid, tenantId, err: e?.message });
       }
-      console.warn("getTenantConfig: orphaned tenantId cleared", { uid: request.auth.uid, tenantId });
-      return { tenantId: null, config: null };
+      console.warn("getTenantConfig: orphaned tenantId cleared", { uid, tenantId });
+      // Return the post-heal state (tenantIds without the dead one) so the
+      // client picker doesn't try to switch to an org that no longer exists.
+      const remaining = (userData.tenantIds || []).filter((id) => id !== tenantId);
+      return { tenantId: null, config: null, tenantIds: remaining };
     }
 
     const data = tenantSnap.data();
+    const tenantIds = userData.tenantIds || [tenantId];
 
     // If tenant is suspended, the app should show a "service unavailable" screen
     if (data.status === "suspended") {
-      return { tenantId, config: null, suspended: true };
+      return { tenantId, config: null, suspended: true, tenantIds };
     }
 
     const config = {};
@@ -3149,7 +3515,7 @@ exports.getTenantConfig = onCall(
       if (data[field] !== undefined) config[field] = data[field];
     }
 
-    return { tenantId, config };
+    return { tenantId, config, tenantIds };
   }
 );
 
@@ -3315,7 +3681,7 @@ exports.handleStripeConnectOAuth = onRequest(
 // ===========================================================================
 
 const SUPER_ADMIN_NOTIFICATION_EMAIL = "ioelkatz@gmail.com";
-const SENDGRID_FROM = "noreply@pushkaapp.com";
+const SENDGRID_FROM = "ioelkatz@gmail.com";
 
 // ---------------------------------------------------------------------------
 // sendEmail — internal helper using SendGrid
@@ -3426,6 +3792,43 @@ exports.createTenantSubscription = onCall(
 
     const clientSecret = subscription.latest_invoice?.payment_intent?.client_secret ?? null;
     return { subscriptionId: subscription.id, clientSecret };
+  }
+);
+
+// ---------------------------------------------------------------------------
+// cancelTenantSubscription — super_admin cancels Stripe Billing subscription
+// ---------------------------------------------------------------------------
+exports.cancelTenantSubscription = onCall(
+  { secrets: [stripeSecret], enforceAppCheck: false },
+  async (request) => {
+    if (!callerIsSuperAdmin(request)) {
+      throw new HttpsError("permission-denied", "Solo el super administrador.");
+    }
+
+    const { tenantId } = request.data ?? {};
+    if (!tenantId) throw new HttpsError("invalid-argument", "tenantId requerido.");
+
+    const tenantSnap = await db.collection("tenants").doc(tenantId).get();
+    if (!tenantSnap.exists) throw new HttpsError("not-found", "Tenant no encontrado.");
+
+    const tenantData = tenantSnap.data();
+    const subscriptionId = tenantData.stripeSubscriptionId;
+
+    if (!subscriptionId) {
+      throw new HttpsError("failed-precondition", "El tenant no tiene suscripción activa.");
+    }
+
+    const stripe = require("stripe")(stripeSecret.value());
+
+    // Cancel at period end so the tenant keeps access until the billing cycle ends
+    await stripe.subscriptions.update(subscriptionId, { cancel_at_period_end: true });
+
+    await db.collection("tenants").doc(tenantId).update({
+      paymentStatus: "canceling",
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+
+    return { success: true };
   }
 );
 
@@ -3643,3 +4046,26 @@ exports.checkGracePeriods = onSchedule(
     }
   }
 );
+
+// ---------------------------------------------------------------------------
+// Android App Links verification — serves /.well-known/assetlinks.json
+// Reachable at https://pushka-app-ioel.web.app/.well-known/assetlinks.json
+// ---------------------------------------------------------------------------
+exports.assetlinks = onRequest({ cors: true }, (req, res) => {
+  // SHA-256 certificate fingerprints for both prod and dev release keystores.
+  // Add debug keystores here during development if needed.
+  const assetLinks = [
+    {
+      relation: ["delegate_permission/common.handle_all_urls"],
+      target: {
+        namespace: "android_app",
+        package_name: "com.pushka.app",
+        sha256_cert_fingerprints: [
+          "12:71:ED:79:A4:BF:E9:6C:84:C3:F7:7A:29:7C:EE:17:76:89:83:7C:1E:E1:B8:F3:1A:3D:EB:16:A4:26:D1:45",
+        ],
+      },
+    },
+  ];
+  res.set("Cache-Control", "no-store");
+  res.json(assetLinks);
+});

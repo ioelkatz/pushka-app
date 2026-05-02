@@ -11,9 +11,12 @@ import '../../auth/providers/auth_controller.dart';
 import '../../users/data/user_repository.dart';
 import '../../users/presentation/user_profile_provider.dart';
 import '../../tenant/data/tenant_repository.dart';
+import '../../tenant/domain/tenant_config.dart';
 import '../../../core/format_utils.dart';
 import '../../../core/l10n/locale_provider.dart';
 import 'package:go_router/go_router.dart';
+
+import 'package:url_launcher/url_launcher.dart';
 
 import 'auto_empty_screen.dart';
 import '../../../core/l10n/s.dart';
@@ -64,6 +67,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
     final user = ref.watch(currentUserProvider);
     final userProfile = ref.watch(userProfileProvider).valueOrNull;
+    final tenantState = ref.watch(tenantStateProvider).valueOrNull;
     final tenantConfig = ref.watch(tenantConfigProvider).valueOrNull;
 
     String? getProfileString(String key) {
@@ -73,9 +77,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       return value;
     }
 
-    double? getProfileDouble(String key) {
-      if (userProfile == null) return null;
-      final value = userProfile[key];
+    double? getTenantDouble(String key) {
+      final value = tenantState?[key];
       if (value is num) return value.toDouble();
       return null;
     }
@@ -87,12 +90,12 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       return null;
     }
 
-    if (!_loadedProfile && userProfile != null) {
+    if (!_loadedProfile && userProfile != null && tenantState != null) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
         setState(() {
-          pushkaGoal = getProfileDouble('pushkaGoal') ?? pushkaGoal;
-          final preset = getProfileDouble('presetAmount');
+          pushkaGoal = getTenantDouble('pushkaGoal') ?? pushkaGoal;
+          final preset = getTenantDouble('presetAmount');
           if (preset != null) {
             selectedPreset = preset.toStringAsFixed(2);
           }
@@ -158,8 +161,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           // PRESET AMOUNTS
           _buildLabel(tr.presetAmount),
           const SizedBox(height: 8),
-          _buildCurrentPresets(userProfile, blue, onTap: () {
-            final rawPresets = userProfile?['presetAmounts'];
+          _buildCurrentPresets(tenantState, blue, onTap: () {
+            final rawPresets = tenantState?['presetAmounts'];
             final List<double> current;
             if (rawPresets is List && rawPresets.length >= 3) {
               final c = rawPresets.whereType<num>().map((e) => e.toDouble()).toList();
@@ -175,7 +178,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           _buildLabel(tr.emptyPushkaSetting),
           const SizedBox(height: 6),
           _buildActionButton(
-            switch (getProfileString('autoEmptyFrequency') ?? 'manual') {
+            switch ((tenantState?['autoEmptyFrequency'] as String?) ?? 'manual') {
               'weekly'           => tr.freqWeekly,
               'monthly'          => tr.freqMonthly,
               'erev_rosh_chodesh'=> tr.freqErevRosh,
@@ -407,6 +410,49 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             color: Theme.of(context).colorScheme.surfaceContainerHighest,
           ),
           const SizedBox(height: 22),
+
+          // ORG INFO Section — visible only when tenant has info to show
+          if (tenantConfig != null && _hasOrgInfo(tenantConfig)) ...[
+            _buildSectionTitle(tenantConfig.appName),
+            const SizedBox(height: 12),
+            if (tenantConfig.welcomeText != null && tenantConfig.welcomeText!.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 12),
+                child: Text(
+                  tenantConfig.welcomeText!,
+                  style: TextStyle(
+                    fontSize: 14,
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    height: 1.5,
+                  ),
+                ),
+              ),
+            if (tenantConfig.contactEmail != null)
+              _buildOrgLink(
+                icon: Icons.email_outlined,
+                label: tenantConfig.contactEmail!,
+                onTap: () => _launchUrl('mailto:${tenantConfig.contactEmail}'),
+              ),
+            if (tenantConfig.privacyPolicyUrl != null)
+              _buildOrgLink(
+                icon: Icons.privacy_tip_outlined,
+                label: 'Política de privacidad',
+                onTap: () => _launchUrl(tenantConfig.privacyPolicyUrl!),
+              ),
+            if (tenantConfig.termsUrl != null)
+              _buildOrgLink(
+                icon: Icons.description_outlined,
+                label: 'Términos y condiciones',
+                onTap: () => _launchUrl(tenantConfig.termsUrl!),
+              ),
+            const SizedBox(height: 16),
+            Container(
+              height: 5,
+              width: double.infinity,
+              color: Theme.of(context).colorScheme.surfaceContainerHighest,
+            ),
+            const SizedBox(height: 22),
+          ],
 
           // MANAGE ACCOUNT Section
           _buildSectionTitle(tr.manageAccount),
@@ -755,6 +801,48 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         selectedBackgroundColor: cs.primary,
         selectedForegroundColor: cs.onPrimary,
         foregroundColor: cs.onSurface,
+      ),
+    );
+  }
+
+  bool _hasOrgInfo(TenantConfig tenantConfig) {
+    return (tenantConfig.welcomeText != null && tenantConfig.welcomeText!.isNotEmpty) ||
+        tenantConfig.contactEmail != null ||
+        tenantConfig.privacyPolicyUrl != null ||
+        tenantConfig.termsUrl != null;
+  }
+
+  Future<void> _launchUrl(String url) async {
+    final uri = Uri.tryParse(url);
+    if (uri == null) return;
+    if (await canLaunchUrl(uri)) {
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+    }
+  }
+
+  Widget _buildOrgLink({required IconData icon, required String label, required VoidCallback onTap}) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(8),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 10),
+        child: Row(
+          children: [
+            Icon(icon, size: 18, color: Theme.of(context).colorScheme.primary),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                label,
+                style: TextStyle(
+                  fontSize: 15,
+                  color: Theme.of(context).colorScheme.primary,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ),
+            Icon(Icons.open_in_new, size: 14, color: Theme.of(context).colorScheme.onSurfaceVariant),
+          ],
+        ),
       ),
     );
   }
@@ -1301,21 +1389,43 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     String? currencyCode,
   }) async {
     if (user == null) return;
-    await ref.read(userRepositoryProvider).updateSettings(
-      uid: user.uid,
-      pushkaGoal: pushkaGoal,
-      presetAmount: presetAmount,
-      presetAmounts: presetAmounts,
-      soundEnabled: soundEnabled,
-      coinJingleEnabled: coinJingleEnabled,
-      vibrationEnabled: vibrationEnabled,
-      ambientEnabled: ambientEnabled,
-      partialPaymentsEnabled: partialPaymentsEnabled,
-      additionalPaymentOptionsEnabled: additionalPaymentOptionsEnabled,
-      biometricAuthenticationEnabled: biometricAuthenticationEnabled,
-      currencyCountry: currencyCountry,
-      currencyCode: currencyCode,
-    );
+    final repo = ref.read(userRepositoryProvider);
+    final tenantId = ref.read(userProfileProvider).valueOrNull?['tenantId'] as String?;
+    final futures = <Future<void>>[];
+
+    // Per-tenant settings → tenantState subcollection
+    if (tenantId != null && tenantId.isNotEmpty &&
+        (pushkaGoal != null || presetAmount != null || presetAmounts != null)) {
+      futures.add(repo.updateTenantState(
+        uid: user.uid,
+        tenantId: tenantId,
+        pushkaGoal: pushkaGoal,
+        presetAmount: presetAmount,
+        presetAmounts: presetAmounts,
+      ));
+    }
+
+    // User-level settings → root user doc
+    if (soundEnabled != null || coinJingleEnabled != null ||
+        vibrationEnabled != null || ambientEnabled != null ||
+        partialPaymentsEnabled != null || additionalPaymentOptionsEnabled != null ||
+        biometricAuthenticationEnabled != null ||
+        currencyCountry != null || currencyCode != null) {
+      futures.add(repo.updateSettings(
+        uid: user.uid,
+        soundEnabled: soundEnabled,
+        coinJingleEnabled: coinJingleEnabled,
+        vibrationEnabled: vibrationEnabled,
+        ambientEnabled: ambientEnabled,
+        partialPaymentsEnabled: partialPaymentsEnabled,
+        additionalPaymentOptionsEnabled: additionalPaymentOptionsEnabled,
+        biometricAuthenticationEnabled: biometricAuthenticationEnabled,
+        currencyCountry: currencyCountry,
+        currencyCode: currencyCode,
+      ));
+    }
+
+    await Future.wait(futures);
   }
 
   /// Fire-and-forget wrapper for toggle switches. Logs errors silently.
@@ -1865,8 +1975,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       pushkaGoal = newGoal;
     });
     final uid = user?.uid;
-    if (uid != null) {
-      ref.read(userRepositoryProvider).updatePushkaAmount(uid: uid, amount: 0)
+    final tenantId = ref.read(userProfileProvider).valueOrNull?['tenantId'] as String?;
+    if (uid != null && tenantId != null && tenantId.isNotEmpty) {
+      ref.read(userRepositoryProvider).updatePushkaAmount(uid: uid, tenantId: tenantId, amount: 0)
           .catchError((Object e) => debugPrint('resetPushkaAmount error: $e'));
     }
     _updateSettings(

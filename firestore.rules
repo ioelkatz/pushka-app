@@ -84,6 +84,68 @@ service cloud.firestore {
       return !request.resource.data.diff(resource.data).affectedKeys().hasAny(['isBlocked']);
     }
 
+    // tenantIds and the immutable tenantId (after first set) are managed exclusively
+    // by the joinTenant / leaveTenant / switchTenant Cloud Functions (Admin SDK).
+    // Clients may not write these fields directly.
+    function hasNoMembershipFieldsWritten() {
+      return !request.resource.data.diff(resource.data).affectedKeys()
+               .hasAny(['tenantIds']);
+    }
+
+    function validTenantStateDoc(uid, tenantId) {
+      return request.resource.data.keys().hasOnly([
+            'uid', 'tenantId',
+            'tenantName', 'tenantAppName', 'tenantLogoUrl', 'tenantPrimaryColor',
+            'pushkaAmount', 'pushkaGoal',
+            'presetAmount', 'presetAmounts',
+            'streakCount', 'lastStreakDate',
+            'autoEmptyFrequency', 'autoEmptyWeekday', 'autoEmptyDayOfMonth',
+            'autoEmptyTopOffEnabled', 'autoEmptyTopOffAmount', 'autoEmptyNextRunAt',
+            'createdAt', 'updatedAt'
+          ]) &&
+          request.resource.data.uid == uid &&
+          request.resource.data.tenantId == tenantId &&
+          (!('pushkaAmount' in request.resource.data) ||
+              (request.resource.data.pushkaAmount is number &&
+                  request.resource.data.pushkaAmount >= 0 &&
+                  request.resource.data.pushkaAmount <= 100000)) &&
+          (!('pushkaGoal' in request.resource.data) ||
+              (request.resource.data.pushkaGoal is number &&
+                  request.resource.data.pushkaGoal > 0 &&
+                  request.resource.data.pushkaGoal <= 100000)) &&
+          (!('presetAmount' in request.resource.data) ||
+              (request.resource.data.presetAmount is number &&
+                  request.resource.data.presetAmount > 0)) &&
+          (!('presetAmounts' in request.resource.data) ||
+              (request.resource.data.presetAmounts is list &&
+                  request.resource.data.presetAmounts.size() <= 5)) &&
+          (!('streakCount' in request.resource.data) ||
+              (request.resource.data.streakCount is int &&
+                  request.resource.data.streakCount >= 0)) &&
+          (!('autoEmptyFrequency' in request.resource.data) ||
+              (request.resource.data.autoEmptyFrequency is string &&
+                  validFrequency(request.resource.data.autoEmptyFrequency))) &&
+          (!('autoEmptyWeekday' in request.resource.data) ||
+              request.resource.data.autoEmptyWeekday == null ||
+              (request.resource.data.autoEmptyWeekday is int &&
+                  request.resource.data.autoEmptyWeekday >= 1 &&
+                  request.resource.data.autoEmptyWeekday <= 7)) &&
+          (!('autoEmptyDayOfMonth' in request.resource.data) ||
+              request.resource.data.autoEmptyDayOfMonth == null ||
+              (request.resource.data.autoEmptyDayOfMonth is int &&
+                  request.resource.data.autoEmptyDayOfMonth >= 1 &&
+                  request.resource.data.autoEmptyDayOfMonth <= 31)) &&
+          (!('autoEmptyTopOffEnabled' in request.resource.data) ||
+              request.resource.data.autoEmptyTopOffEnabled is bool) &&
+          (!('autoEmptyTopOffAmount' in request.resource.data) ||
+              request.resource.data.autoEmptyTopOffAmount == null ||
+              (request.resource.data.autoEmptyTopOffAmount is number &&
+                  request.resource.data.autoEmptyTopOffAmount >= 0)) &&
+          (!('autoEmptyNextRunAt' in request.resource.data) ||
+              request.resource.data.autoEmptyNextRunAt is timestamp ||
+              request.resource.data.autoEmptyNextRunAt == null);
+    }
+
     function validUserDoc(uid) {
       // hasOnly includes Stripe fields and isBlocked so that on UPDATE, pre-existing
       // CF-written fields in the resulting document don't fail the check.
@@ -129,7 +191,8 @@ service cloud.firestore {
             'stripeDefaultPaymentMethodBrand',
             'stripeCustomerIdPending',
             'isBlocked',
-            'tenantId'
+            'tenantId',
+            'tenantIds'
           ]) &&
           request.resource.data.uid is string &&
           request.resource.data.uid == uid &&
@@ -256,9 +319,10 @@ service cloud.firestore {
           (!('currencyCode' in request.resource.data) ||
               (request.resource.data.currencyCode is string &&
                   request.resource.data.currencyCode.size() == 3)) &&
-          // Optional tenantId — when present, must match the user's own tenantId
-          // (read from the parent users/{uid} doc) so users can't tag a tx as
-          // belonging to a different tenant for accounting purposes.
+          // Optional tenantId — when present, must match the user's active tenant
+          // (users/{uid}.tenantId, which equals currentTenantId after switchTenant).
+          // This prevents a user from tagging a donation as belonging to a tenant
+          // they are not currently operating in.
           (!('tenantId' in request.resource.data) ||
               (request.resource.data.tenantId is string &&
                   request.resource.data.tenantId == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.tenantId));
@@ -360,7 +424,8 @@ service cloud.firestore {
     }
 
     match /adminData/{uid} {
-      allow read, write: if isAdmin();
+      allow read: if isAdmin() || isTenantMember();
+      allow write: if isAdmin();
     }
 
     match /users/{uid} {
@@ -380,14 +445,25 @@ service cloud.firestore {
           validUserDoc(uid) &&
           hasNoStripeFieldsWritten() &&
           isBlockedNotChanged() &&
-          // tenantId is immutable once set — prevents tenant-hopping attacks.
-          // When first being set, must reference an existing tenant.
+          // tenantIds is managed exclusively by CFs (joinTenant/leaveTenant/switchTenant).
+          hasNoMembershipFieldsWritten() &&
+          // tenantId is immutable once set from the client — CFs can update it
+          // via Admin SDK (used by switchTenant). Prevents direct tenant-hopping.
           (
             !('tenantId' in resource.data)
               ? validTenantIdField()
               : request.resource.data.tenantId == resource.data.tenantId
           );
       allow delete: if false;
+
+      // Per-tenant state: pushka balance, goal, streak, auto-empty schedule.
+      // Clients may read/write their own tenantState docs; CFs write via Admin SDK.
+      match /tenantState/{tenantStateId} {
+        allow read: if isOwner(uid);
+        allow create: if isOwner(uid) && validTenantStateDoc(uid, tenantStateId);
+        allow update: if isOwner(uid) && validTenantStateDoc(uid, tenantStateId);
+        allow delete: if false;
+      }
 
       match /transactions/{transactionId} {
         allow read: if isOwner(uid) || isAdmin();
