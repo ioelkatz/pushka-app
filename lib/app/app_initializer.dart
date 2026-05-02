@@ -6,7 +6,8 @@ import 'package:flutter_stripe/flutter_stripe.dart';
 import '../features/notifications/notification_service.dart';
 import '../config/stripe_config.dart';
 import '../features/feedback/feedback_service.dart';
-import 'router.dart' show initNotificationNavigation;
+import '../core/deep_link_handler.dart';
+import 'router.dart' show initNotificationNavigation, router;
 
 /// Deferred initialization future — started in main(), awaited in splash.
 late final Future<void> appDeferredInit;
@@ -55,5 +56,10 @@ Future<void> _performDeferredInit() async {
   }
 
   await FeedbackService.instance.init();
-  if (!kIsWeb) initNotificationNavigation();
+  if (!kIsWeb) {
+    initNotificationNavigation();
+    startDeepLinkListener((slug) {
+      router.go('/join/$slug');
+    });
+  }
 }

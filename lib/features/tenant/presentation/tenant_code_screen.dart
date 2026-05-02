@@ -1,13 +1,10 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../app/theme/app_tokens.dart';
 import '../../../app/router.dart';
-import '../../../core/l10n/locale_provider.dart';
 import '../data/tenant_repository.dart';
 import '../domain/tenant_config.dart';
 import '../domain/tenant_summary.dart';
@@ -38,17 +35,11 @@ class _TenantCodeScreenState extends ConsumerState<TenantCodeScreen> {
   Future<void> _joinTenant(String tenantId) async {
     setState(() => _joining = true);
     try {
-      final uid = FirebaseAuth.instance.currentUser?.uid;
-      if (uid == null) throw Exception('Not logged in');
-
-      await FirebaseFirestore.instance.collection('users').doc(uid).set(
-        {'tenantId': tenantId, 'uid': uid},
-        SetOptions(merge: true),
-      );
-
+      await ref.read(tenantRepositoryProvider).joinTenant(tenantId);
       ref.invalidate(tenantConfigProvider);
+      ref.invalidate(tenantStateProvider);
+      ref.invalidate(userTenantSummariesProvider);
       invalidateTenantCache();
-
       if (mounted) context.go('/');
     } catch (_) {
       if (mounted) {
@@ -155,7 +146,7 @@ class _TenantCodeScreenState extends ConsumerState<TenantCodeScreen> {
                     }
                     return SliverList.separated(
                       itemCount: filtered.length,
-                      separatorBuilder: (_, __) => const Divider(
+                      separatorBuilder: (_, _) => const Divider(
                         height: 1,
                         thickness: 1,
                         color: AppTokens.border,
@@ -350,7 +341,7 @@ class _Logo extends StatelessWidget {
           ? Image.network(
               tenant.logoUrl!,
               fit: BoxFit.cover,
-              errorBuilder: (_, __, ___) => _LogoFallback(name: tenant.name, size: size),
+              errorBuilder: (_, _, _) => _LogoFallback(name: tenant.name, size: size),
             )
           : _LogoFallback(name: tenant.name, size: size),
     );
@@ -540,57 +531,6 @@ class _InviteCodeSheetState extends ConsumerState<_InviteCodeSheet> {
     }
   }
 
-  Future<void> _confirm() async {
-    final config = _preview;
-    if (config == null) return;
-
-    setState(() { _loading = true; _error = null; });
-
-    try {
-      final uid = FirebaseAuth.instance.currentUser?.uid;
-      if (uid == null) throw Exception('Not logged in');
-
-      final docRef = FirebaseFirestore.instance.collection('users').doc(uid);
-
-      // Read current doc to avoid overwriting user-defined preferences
-      final currentSnap = await docRef.get();
-      final current = currentSnap.data() ?? {};
-
-      final Map<String, dynamic> updateData = {
-        'tenantId': config.tenantId,
-        'uid': uid,
-      };
-      // Apply tenant defaults only for fields the user hasn't set yet
-      if (config.defaultLanguage != null && current['language'] == null) {
-        updateData['language'] = config.defaultLanguage;
-      }
-      if (config.defaultCurrency != null && current['currencyCode'] == null) {
-        updateData['currencyCode'] = config.defaultCurrency;
-      }
-      if (config.defaultCountry != null && current['currencyCountry'] == null) {
-        updateData['currencyCountry'] = config.defaultCountry;
-      }
-
-      await docRef.set(updateData, SetOptions(merge: true));
-
-      // Apply language locally if it was set as a default
-      if (updateData.containsKey('language')) {
-        ref.read(localeProvider.notifier).syncFromRemote(config.defaultLanguage!);
-      }
-
-      // Invalidate tenant config so app.dart reloads with new branding
-      ref.invalidate(tenantConfigProvider);
-      // Clear router cache so the next redirect check re-reads from Firestore
-      invalidateTenantCache();
-
-      if (mounted) context.go('/');
-    } catch (e) {
-      setState(() { _error = 'No se pudo guardar la organización. Intentá de nuevo.'; });
-    } finally {
-      if (mounted) setState(() { _loading = false; });
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     final tt = Theme.of(context).textTheme;
@@ -677,8 +617,10 @@ class _InviteCodeSheetState extends ConsumerState<_InviteCodeSheet> {
                       ? null
                       : () async {
                           setState(() => _loading = true);
+                          final nav = Navigator.of(context);
                           await widget.onJoin(_preview!.tenantId);
-                          if (mounted) Navigator.of(context).pop();
+                          if (!mounted) return;
+                          nav.pop();
                         },
                   child: const Text('Unirme'),
                 ),

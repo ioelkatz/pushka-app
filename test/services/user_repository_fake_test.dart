@@ -196,22 +196,28 @@ void main() {
   });
 
   group('UserRepository.updatePushkaAmount', () {
+    const tenantId = 'tenant123';
+
     setUp(() async {
       await repo.createUserDocument(user: mockUser, displayName: null);
     });
 
-    test('writes new amount', () async {
-      await repo.updatePushkaAmount(uid: mockUser.uid, amount: 42.5);
+    test('writes new amount to tenantState', () async {
+      await repo.updatePushkaAmount(uid: mockUser.uid, tenantId: tenantId, amount: 42.5);
 
-      final data = (await fakeFirestore.collection('users').doc(mockUser.uid).get()).data()!;
+      final data = (await fakeFirestore
+          .collection('users').doc(mockUser.uid)
+          .collection('tenantState').doc(tenantId).get()).data()!;
       expect(data['pushkaAmount'], 42.5);
     });
 
-    test('overwrites previous amount', () async {
-      await repo.updatePushkaAmount(uid: mockUser.uid, amount: 10.0);
-      await repo.updatePushkaAmount(uid: mockUser.uid, amount: 99.99);
+    test('overwrites previous amount in tenantState', () async {
+      await repo.updatePushkaAmount(uid: mockUser.uid, tenantId: tenantId, amount: 10.0);
+      await repo.updatePushkaAmount(uid: mockUser.uid, tenantId: tenantId, amount: 99.99);
 
-      final data = (await fakeFirestore.collection('users').doc(mockUser.uid).get()).data()!;
+      final data = (await fakeFirestore
+          .collection('users').doc(mockUser.uid)
+          .collection('tenantState').doc(tenantId).get()).data()!;
       expect(data['pushkaAmount'], 99.99);
     });
   });

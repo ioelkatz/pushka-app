@@ -7,6 +7,8 @@ import '../domain/transaction.dart';
 final userTransactionsProvider = StreamProvider<List<Transaction>>((ref) {
   final user = ref.watch(currentUserProvider);
   if (user == null) return Stream.value(<Transaction>[]);
+  final profile = ref.watch(userProfileProvider).valueOrNull;
+  final tenantId = profile?['tenantId'] as String?;
   final repository = ref.watch(transactionRepositoryProvider);
-  return repository.watchTransactions(user.uid);
+  return repository.watchTransactions(user.uid, tenantId: tenantId);
 });

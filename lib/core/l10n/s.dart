@@ -958,6 +958,13 @@ class S {
   String get navSupport => _t('Soporte', 'Support', 'Assistance', 'תמיכה');
 
   // ---------------------------------------------------------------------------
+  // ACCOUNT SWITCHER
+  // ---------------------------------------------------------------------------
+
+  String get myOrganizations => _t('Mis organizaciones', 'My organizations', 'Mes organisations', 'הארגונים שלי');
+  String get addOrganization => _t('Agregar organización', 'Add organization', 'Ajouter une organisation', 'הוסף ארגון');
+
+  // ---------------------------------------------------------------------------
   // QR WALLET DIALOG
   // ---------------------------------------------------------------------------
 
