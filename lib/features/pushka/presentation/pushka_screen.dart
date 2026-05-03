@@ -818,20 +818,23 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                           child: Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
-                              Text(
-                                S.of(context).streakDays,
-                                style: const TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.w800,
-                                  letterSpacing: 0.2,
-                                  shadows: [
-                                    Shadow(
-                                      color: Color(0x33000000),
-                                      blurRadius: 3,
-                                      offset: Offset(0, 1),
-                                    ),
-                                  ],
+                              Flexible(
+                                child: Text(
+                                  S.of(context).streakDays,
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.w800,
+                                    letterSpacing: 0.2,
+                                    shadows: [
+                                      Shadow(
+                                        color: Color(0x33000000),
+                                        blurRadius: 3,
+                                        offset: Offset(0, 1),
+                                      ),
+                                    ],
+                                  ),
+                                  overflow: TextOverflow.ellipsis,
                                 ),
                               ),
                               const SizedBox(width: 6),
@@ -866,19 +869,22 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                                 ],
                                 _holidayIcon(holiday.nameEs, size: 34),
                                 const SizedBox(width: 8),
-                                Text(
-                                  holiday.localizedName(S.of(context)),
-                                  style: const TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 15,
-                                    fontWeight: FontWeight.w800,
-                                    shadows: [
-                                      Shadow(
-                                        color: Color(0x33000000),
-                                        blurRadius: 3,
-                                        offset: Offset(0, 1),
-                                      ),
-                                    ],
+                                Flexible(
+                                  child: Text(
+                                    holiday.localizedName(S.of(context)),
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 15,
+                                      fontWeight: FontWeight.w800,
+                                      shadows: [
+                                        Shadow(
+                                          color: Color(0x33000000),
+                                          blurRadius: 3,
+                                          offset: Offset(0, 1),
+                                        ),
+                                      ],
+                                    ),
+                                    overflow: TextOverflow.ellipsis,
                                   ),
                                 ),
                                 const SizedBox(width: 6),
@@ -921,13 +927,13 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
   (Color, Color) _streakColors(int count) {
     final day = ((count - 1) % 7) + 1;
     return switch (day) {
-      1 => (const Color(0xFFFFD54F), const Color(0xFFFFC107)),
-      2 => (const Color(0xFFFF7043), const Color(0xFFE53935)),
-      3 => (const Color(0xFF42A5F5), const Color(0xFF1E88E5)),
-      4 => (const Color(0xFF66BB6A), const Color(0xFF43A047)),
-      5 => (const Color(0xFFAB47BC), const Color(0xFF8E24AA)),
-      6 => (const Color(0xFF26C6DA), const Color(0xFF00ACC1)),
-      _ => (const Color(0xFF5C6BC0), const Color(0xFF3949AB)),
+      1 => (const Color(0xFFFFE040), const Color(0xFFE8720C)),
+      2 => (const Color(0xFFFF7070), const Color(0xFFB71C1C)),
+      3 => (const Color(0xFF64B5F6), const Color(0xFF1565C0)),
+      4 => (const Color(0xFF81C784), const Color(0xFF2E7D32)),
+      5 => (const Color(0xFFCE93D8), const Color(0xFF6A1B9A)),
+      6 => (const Color(0xFF4DD0E1), const Color(0xFF00695C)),
+      _ => (const Color(0xFF9FA8DA), const Color(0xFF1A237E)),
     };
   }
 
@@ -2475,23 +2481,18 @@ class _HexBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    const double size = 58.0;
+    const double size = 50.0;
     return SizedBox(
       width: size,
       height: size,
       child: Stack(
         alignment: Alignment.center,
         children: [
-          ClipRect(
-            child: OverflowBox(
-              alignment: Alignment.center,
-              maxWidth: double.infinity,
-              child: Image.asset(
-                'assets/icons/gem_badge.png',
-                height: size,
-                fit: BoxFit.fitHeight,
-              ),
-            ),
+          Image.asset(
+            'assets/icons/gem_badge.png',
+            width: size,
+            height: size,
+            fit: BoxFit.contain,
           ),
           Text(
             '$count',
