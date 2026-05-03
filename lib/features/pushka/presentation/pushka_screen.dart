@@ -871,7 +871,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                               ),
                               // Content centered in the 50px holiday zone on the right
                               padding: EdgeInsetsDirectional.fromSTEB(
-                                hasStreak ? pillW - 90 + 8 : 20.0,
+                                hasStreak ? pillW - 120 + 8 : 20.0,
                                 0, 4, 0),
                               alignment: Alignment.centerLeft,
                               child: Row(
@@ -907,7 +907,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                         Positioned(
                           left: 0, top: 0, bottom: 0,
                           child: SizedBox(
-                            width: pillW - 90,
+                            width: pillW - 120,
                             child: Container(
                               padding: const EdgeInsetsDirectional.fromSTEB(50, 0, 20, 0),
                               decoration: BoxDecoration(
