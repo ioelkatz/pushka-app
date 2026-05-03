@@ -814,7 +814,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                             child: Container(
                               decoration: const BoxDecoration(
                                 gradient: LinearGradient(
-                                  colors: [Color(0xFFC07D1A), Color(0xFF7A4A00)],
+                                  colors: [Color(0xFF6B3800), Color(0xFF3A1A00)],
                                   begin: Alignment.centerLeft,
                                   end: Alignment.centerRight,
                                 ),
@@ -894,10 +894,15 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                                     ],
                                   ),
                                 ),
-                                // White arc border that traces the right rounded cap
+                                // Arc border that traces the right rounded cap
                                 Positioned.fill(
                                   child: CustomPaint(
-                                    painter: _StreakRightCapBorder(radius: h / 2),
+                                    painter: _StreakRightCapBorder(
+                                      radius: h / 2,
+                                      color: Theme.of(context).brightness == Brightness.dark
+                                          ? const Color(0xFF0F172A)
+                                          : Colors.white,
+                                    ),
                                   ),
                                 ),
                               ],
@@ -2500,11 +2505,19 @@ class _HexBadge extends StatelessWidget {
       child: Stack(
         alignment: Alignment.center,
         children: [
-          Image.asset(
-            'assets/icons/gem_badge.png',
-            width: size,
-            height: size,
-            fit: BoxFit.contain,
+          ShaderMask(
+            blendMode: BlendMode.modulate,
+            shaderCallback: (bounds) => LinearGradient(
+              colors: [color1, color2],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+            ).createShader(bounds),
+            child: Image.asset(
+              'assets/icons/gem_badge.png',
+              width: size,
+              height: size,
+              fit: BoxFit.contain,
+            ),
           ),
           Transform.translate(
             offset: const Offset(0, -1.5),
@@ -2529,12 +2542,13 @@ class _HexBadge extends StatelessWidget {
 
 class _StreakRightCapBorder extends CustomPainter {
   final double radius;
-  const _StreakRightCapBorder({required this.radius});
+  final Color color;
+  const _StreakRightCapBorder({required this.radius, required this.color});
 
   @override
   void paint(Canvas canvas, Size size) {
     final paint = Paint()
-      ..color = Colors.white
+      ..color = color
       ..style = PaintingStyle.stroke
       ..strokeWidth = 1.5
       ..strokeCap = StrokeCap.round;
@@ -2554,6 +2568,6 @@ class _StreakRightCapBorder extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(_StreakRightCapBorder old) => old.radius != radius;
+  bool shouldRepaint(_StreakRightCapBorder old) => old.radius != radius || old.color != color;
 }
 
