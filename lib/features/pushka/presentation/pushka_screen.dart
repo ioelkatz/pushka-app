@@ -777,13 +777,14 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
     const double h = 40.0;
     const double badgeSize = 50.0;
     final double pillW = MediaQuery.of(context).size.width - 16;
+    // Estimated streak section width (left pad + content + right pad)
+    const double streakContentPad = 165.0;
 
     return Container(
       margin: const EdgeInsets.only(bottom: 4),
       child: Stack(
         clipBehavior: Clip.none,
         children: [
-          // Pill: SizedBox forces tight width so Expanded/Positioned.fill work
           SizedBox(
             width: pillW,
             child: Container(
@@ -797,31 +798,36 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                   height: h,
                   child: Stack(
                     children: [
-                      // Row fills full tight space — no overflow possible
-                      Positioned.fill(
-                        child: Row(
-                          children: [
-                            if (hasStreak)
-                              Container(
-                                padding: const EdgeInsetsDirectional.fromSTEB(62, 0, 16, 0),
-                                decoration: BoxDecoration(
-                                  gradient: LinearGradient(
-                                    colors: [sc.$1, sc.$2],
-                                    begin: Alignment.centerLeft,
-                                    end: Alignment.centerRight,
-                                  ),
+                      // Holiday: fills entire pill background
+                      if (hasHoliday)
+                        Positioned.fill(
+                          child: GestureDetector(
+                            onTap: () { if (_isProcessing) return; _showHolidayDonationDialog(holiday); },
+                            child: Container(
+                              decoration: const BoxDecoration(
+                                gradient: LinearGradient(
+                                  colors: [Color(0xFFC07D1A), Color(0xFF7A4A00)],
+                                  begin: Alignment.centerLeft,
+                                  end: Alignment.centerRight,
                                 ),
-                                alignment: Alignment.center,
-                                child: Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    Text(
-                                      S.of(context).streakDays,
+                              ),
+                              // Content offset so it starts after the streak rounded cap
+                              padding: EdgeInsetsDirectional.fromSTEB(
+                                hasStreak ? streakContentPad + 8 : 20.0,
+                                0, 12, 0),
+                              alignment: Alignment.centerLeft,
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  _holidayIcon(holiday.nameEs, size: 26),
+                                  const SizedBox(width: 8),
+                                  Flexible(
+                                    child: Text(
+                                      holiday.localizedName(S.of(context)),
                                       style: const TextStyle(
                                         color: Colors.white,
-                                        fontSize: 16,
+                                        fontSize: 15,
                                         fontWeight: FontWeight.w800,
-                                        letterSpacing: 0.2,
                                         shadows: [
                                           Shadow(
                                             color: Color(0x33000000),
@@ -830,61 +836,59 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                                           ),
                                         ],
                                       ),
+                                      overflow: TextOverflow.ellipsis,
                                     ),
-                                    const SizedBox(width: 6),
-                                    const Icon(Icons.local_fire_department, color: Colors.white, size: 18),
-                                  ],
-                                ),
+                                  ),
+                                  const SizedBox(width: 6),
+                                  const Icon(Icons.chevron_right, color: Colors.white, size: 18),
+                                ],
                               ),
-                            if (hasHoliday)
-                              Expanded(
-                                child: GestureDetector(
-                                  onTap: () { if (_isProcessing) return; _showHolidayDonationDialog(holiday); },
-                                  child: Container(
-                                    padding: EdgeInsets.symmetric(horizontal: hasStreak ? 12.0 : 20.0),
-                                    decoration: const BoxDecoration(
-                                      gradient: LinearGradient(
-                                        colors: [Color(0xFFC07D1A), Color(0xFF7A4A00)],
-                                        begin: Alignment.centerLeft,
-                                        end: Alignment.centerRight,
-                                      ),
-                                    ),
-                                    alignment: Alignment.center,
-                                    child: Row(
-                                      mainAxisSize: MainAxisSize.min,
-                                      children: [
-                                        if (hasStreak) const SizedBox(width: 4),
-                                        _holidayIcon(holiday.nameEs, size: 28),
-                                        const SizedBox(width: 8),
-                                        Flexible(
-                                          child: Text(
-                                            holiday.localizedName(S.of(context)),
-                                            style: const TextStyle(
-                                              color: Colors.white,
-                                              fontSize: 15,
-                                              fontWeight: FontWeight.w800,
-                                              shadows: [
-                                                Shadow(
-                                                  color: Color(0x33000000),
-                                                  blurRadius: 3,
-                                                  offset: Offset(0, 1),
-                                                ),
-                                              ],
-                                            ),
-                                            overflow: TextOverflow.ellipsis,
-                                          ),
+                            ),
+                          ),
+                        ),
+                      // Streak: fully rounded pill on top, right cap "bites" into holiday
+                      if (hasStreak)
+                        Positioned(
+                          left: 0, top: 0, bottom: 0,
+                          child: IntrinsicWidth(
+                            child: Container(
+                              padding: const EdgeInsetsDirectional.fromSTEB(62, 0, 24, 0),
+                              decoration: BoxDecoration(
+                                gradient: LinearGradient(
+                                  colors: [sc.$1, sc.$2],
+                                  begin: Alignment.centerLeft,
+                                  end: Alignment.centerRight,
+                                ),
+                                borderRadius: BorderRadius.circular(h / 2),
+                              ),
+                              alignment: Alignment.center,
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Text(
+                                    S.of(context).streakDays,
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 16,
+                                      fontWeight: FontWeight.w800,
+                                      letterSpacing: 0.2,
+                                      shadows: [
+                                        Shadow(
+                                          color: Color(0x33000000),
+                                          blurRadius: 3,
+                                          offset: Offset(0, 1),
                                         ),
-                                        const SizedBox(width: 6),
-                                        const Icon(Icons.chevron_right, color: Colors.white, size: 18),
                                       ],
                                     ),
                                   ),
-                                ),
+                                  const SizedBox(width: 6),
+                                  const Icon(Icons.local_fire_department, color: Colors.white, size: 18),
+                                ],
                               ),
-                          ],
+                            ),
+                          ),
                         ),
-                      ),
-                      // Glass sheen
+                      // Glass sheen over everything
                       Positioned.fill(
                         child: IgnorePointer(
                           child: DecoratedBox(
@@ -904,7 +908,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
               ),
             ),
           ),
-          // Gem badge — centered on pill's left rounded end
+          // Gem badge
           if (hasStreak)
             PositionedDirectional(
               start: 5,
