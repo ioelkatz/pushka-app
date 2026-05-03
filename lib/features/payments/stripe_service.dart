@@ -78,25 +78,34 @@ class StripeService {
       throw const StripeServiceException('no-client-secret');
     }
 
-    // customerId + ephemeralKeySecret unlock the saved-card list inside
-    // PaymentSheet. Backend returns null for ephemeralKey if Stripe
-    // rejected the apiVersion or the key call failed — in that case we
-    // still init the sheet for new-card entry only.
+    // customerId + (customerSessionClientSecret OR ephemeralKeySecret)
+    // unlock the saved-card list inside PaymentSheet. Prefer Customer
+    // Sessions (the new Stripe API) when present — the legacy ephemeralKey
+    // path was observed to silently filter out some saved cards (a user
+    // with Visa default + MC only saw MC in the picker). Sessions declare
+    // explicit feature flags (save/remove/redisplay) so the SDK shows
+    // every PaymentMethod the customer has attached. EphemeralKey is kept
+    // as fallback for transient session-creation failures.
     final customerId = result.data['customerId'] as String?;
+    final customerSessionClientSecret =
+        result.data['customerSessionClientSecret'] as String?;
     final ephemeralKeySecret = result.data['ephemeralKeySecret'] as String?;
-    final hasCustomerSession = customerId != null &&
-        customerId.isNotEmpty &&
-        ephemeralKeySecret != null &&
-        ephemeralKeySecret.isNotEmpty;
+    final hasCustomerContext = customerId != null && customerId.isNotEmpty;
 
     await Stripe.instance.initPaymentSheet(
       paymentSheetParameters: SetupPaymentSheetParameters(
         paymentIntentClientSecret: clientSecret,
         merchantDisplayName: merchantDisplayName,
         allowsDelayedPaymentMethods: false,
-        customerId: hasCustomerSession ? customerId : null,
-        customerEphemeralKeySecret:
-            hasCustomerSession ? ephemeralKeySecret : null,
+        customerId: hasCustomerContext ? customerId : null,
+        customerSessionClientSecret: hasCustomerContext
+            ? customerSessionClientSecret
+            : null,
+        customerEphemeralKeySecret: hasCustomerContext &&
+                (customerSessionClientSecret == null ||
+                    customerSessionClientSecret.isEmpty)
+            ? ephemeralKeySecret
+            : null,
         applePay: _applePayConfig,
         googlePay: _googlePayConfigFor(currency),
       ),
@@ -149,10 +158,17 @@ class StripeService {
         setupIntentClientSecret: clientSecret,
         merchantDisplayName: merchantDisplayName,
         allowsDelayedPaymentMethods: false,
-        applePay: _applePayConfig,
-        // SetupIntent has no currency context; default to platform primary
-        // (USD) which Google Pay requires for setup-mode card capture.
-        googlePay: _googlePayConfigFor('USD'),
+        // Suppress wallets entirely on the SAVE-CARD flow:
+        //   - applePay/googlePay configs omitted (no wallet auth save here)
+        //   - Link disabled via linkDisplay: never (otherwise Stripe surfaces
+        //     a "Pay with Link" CTA at the Account level even when the
+        //     SetupIntent declares payment_method_types: ['card'] —
+        //     paymentMethodOrder is just ordering, not an allowlist)
+        // Result: the sheet shows only the card form when the user taps
+        // "Agregar tarjeta", matching the user's intent (save, not pay).
+        linkDisplayParams: const LinkDisplayParams(
+          linkDisplay: LinkDisplay.never,
+        ),
       ),
     );
 

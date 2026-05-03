@@ -617,6 +617,99 @@ exports.createPaymentIntent = onCall(
     }
   }
 
+  // Proactively dedupe the customer's saved PaymentMethods BEFORE the
+  // PaymentSheet queries them. Same fingerprint-based logic as listSavedCards.
+  try {
+    const customer = await stripe.customers.retrieve(customerId);
+    const defaultPmId = customer && !customer.deleted
+      ? customer.invoice_settings?.default_payment_method || null
+      : null;
+    const pmList = await stripe.paymentMethods.list({
+      customer: customerId,
+      type: "card",
+      limit: 100,
+    });
+    // Always-on inventory log so we can see what PaymentSheet WILL receive.
+    console.info("createPaymentIntent: customer PM inventory", {
+      uid: request.auth.uid,
+      customerId,
+      defaultPmId,
+      pmCount: pmList.data.length,
+      pms: pmList.data.map((pm) => ({
+        id: pm.id,
+        brand: pm.card?.brand,
+        last4: pm.card?.last4,
+        fp: pm.card?.fingerprint,
+        created: pm.created,
+        allowRedisplay: pm.allow_redisplay,
+      })),
+    });
+
+    // Normalize `allow_redisplay` to 'always' on every saved PM. PaymentSheet
+    // (Stripe Mobile SDK) HIDES PaymentMethods whose allow_redisplay is
+    // 'limited' or 'unspecified' from the Saved section — even when listed
+    // via Customer Sessions / ephemeralKeys. Cards saved via legacy flows or
+    // attached before the field existed default to 'unspecified', producing
+    // the bug "el customer tiene 2 tarjetas pero PaymentSheet muestra 1".
+    // Best-effort batch update; failures don't block the PI.
+    const needsRedisplayFix = pmList.data.filter(
+      (pm) => pm.allow_redisplay !== "always",
+    );
+    if (needsRedisplayFix.length > 0) {
+      console.info("createPaymentIntent: normalizing allow_redisplay", {
+        uid: request.auth.uid,
+        customerId,
+        count: needsRedisplayFix.length,
+      });
+      await Promise.all(needsRedisplayFix.map((pm) =>
+        stripe.paymentMethods.update(pm.id, { allow_redisplay: "always" })
+          .catch((updateErr) => {
+            console.warn("createPaymentIntent: allow_redisplay update failed", {
+              uid: request.auth.uid,
+              paymentMethodId: pm.id,
+              errorMessage: updateErr?.message,
+            });
+          }),
+      ));
+    }
+    const groups = new Map();
+    for (const pm of pmList.data) {
+      const fp = pm.card?.fingerprint;
+      if (!fp) continue;
+      const existing = groups.get(fp) || [];
+      existing.push(pm);
+      groups.set(fp, existing);
+    }
+    const detachIds = [];
+    for (const group of groups.values()) {
+      if (group.length <= 1) continue;
+      const winner = group.find((pm) => pm.id === defaultPmId) ||
+        group.slice().sort((a, b) => (b.created || 0) - (a.created || 0))[0];
+      for (const pm of group) {
+        if (pm.id !== winner.id) detachIds.push(pm.id);
+      }
+    }
+    if (detachIds.length > 0) {
+      console.info("createPaymentIntent: dedupe before sheet", {
+        uid: request.auth.uid,
+        customerId,
+        detachCount: detachIds.length,
+      });
+      await Promise.all(detachIds.map((pmId) =>
+        stripe.paymentMethods.detach(pmId).catch((err) => {
+          console.warn("createPaymentIntent: detach failed", {
+            uid: request.auth.uid, customerId, paymentMethodId: pmId, errorMessage: err?.message,
+          });
+        }),
+      ));
+    }
+  } catch (dedupeErr) {
+    console.warn("createPaymentIntent: dedupe pass failed (non-fatal)", {
+      uid: request.auth.uid, customerId,
+      errorMessage: dedupeErr?.message,
+    });
+  }
+
   let paymentIntent;
   try {
     paymentIntent = await stripe.paymentIntents.create({
@@ -624,10 +717,21 @@ exports.createPaymentIntent = onCall(
       currency,
       customer: customerId,
       receipt_email: customerEmail || undefined,
-      // Save card by default so future donations can pick it from the
-      // sheet without re-entering. setup_future_usage='off_session'
-      // also enables the card for the auto-empty cron path.
-      setup_future_usage: "off_session",
+      // NOTE: `setup_future_usage: 'off_session'` was previously set here so
+      // donation cards would auto-save for the auto-empty cron. But Stripe's
+      // PaymentSheet FILTERS the customer's saved PaymentMethods to only
+      // those compatible with off-session reuse when this flag is set,
+      // hiding any card that hasn't been confirmed for off-session usage —
+      // some test cards (and any real card that hasn't passed 3DS for
+      // off-session yet) get silently omitted from the picker. The user-
+      // visible bug was "Donar muestra solo 1 tarjeta cuando tengo varias".
+      //
+      // Cards saved via the dedicated Saved Cards flow (createSetupIntent
+      // with usage='off_session') are already off-session-ready, so the
+      // auto-empty cron path keeps working. The tradeoff: a card entered
+      // INLINE during a one-off donation no longer auto-saves for the
+      // cron — the user must save it explicitly via the Saved Cards
+      // screen if they want it usable for auto-empty.
       // Card-family only (avoids BNPL and ACH/SEPA which have async/reversible
       // settlement that our pushka-amount logic does not model). Apple Pay
       // and Google Pay are wallet-wrapped cards — Stripe surfaces them
@@ -664,33 +768,65 @@ exports.createPaymentIntent = onCall(
     throw new HttpsError("internal", userMessage);
   }
 
-  // Generate a customer ephemeral key for the mobile PaymentSheet so it
-  // can list the user's saved cards. The apiVersion must match what the
-  // Stripe mobile SDK expects; '2024-06-20' is a stable choice that
-  // works with current flutter_stripe.
+  // Customer Sessions (Stripe's modern replacement for ephemeral keys)
+  // unlock the saved-cards list inside PaymentSheet AND let us declare the
+  // payment_method_save / payment_method_remove features so the SDK doesn't
+  // hide cards based on inferred constraints. With plain ephemeralKeys the
+  // SDK was filtering some saved cards out of the picker (observed on
+  // production: a customer with Visa default + MC saw only MC). The new
+  // CustomerSession.client_secret is consumed by PaymentSheet via the
+  // `customerSessionClientSecret` parameter.
+  //
+  // We still emit the legacy ephemeralKey as a fallback for the off-chance
+  // a future Stripe SDK version regresses Session support — the client
+  // prefers session > ephemeralKey when both are present.
+  let customerSessionClientSecret = null;
   let ephemeralKeySecret = null;
   try {
-    const ephemeralKey = await stripe.ephemeralKeys.create(
-      { customer: customerId },
-      { apiVersion: "2024-06-20" },
-    );
-    ephemeralKeySecret = ephemeralKey.secret;
-  } catch (ekErr) {
-    // Non-fatal: the payment can still proceed without saved-card listing,
-    // the user just enters card details fresh as before. Log so we can
-    // diagnose if this becomes a chronic issue.
-    console.warn("createPaymentIntent: ephemeral key creation failed", {
+    const session = await stripe.customerSessions.create({
+      customer: customerId,
+      components: {
+        mobile_payment_element: {
+          enabled: true,
+          features: {
+            payment_method_save: "enabled",
+            payment_method_remove: "enabled",
+            payment_method_redisplay: "enabled",
+            payment_method_allow_redisplay_filters: ["always", "limited", "unspecified"],
+          },
+        },
+      },
+    });
+    customerSessionClientSecret = session.client_secret;
+  } catch (csErr) {
+    console.warn("createPaymentIntent: customer session creation failed", {
       uid: request.auth.uid,
       tenantId: tenantId || null,
       customerId,
-      errorType: ekErr?.type,
-      errorMessage: ekErr?.message,
+      errorType: csErr?.type,
+      errorMessage: csErr?.message,
     });
+    // Fall back to legacy ephemeralKey path so saved cards still surface
+    // (just with the old SDK-side filtering quirk).
+    try {
+      const ephemeralKey = await stripe.ephemeralKeys.create(
+        { customer: customerId },
+        { apiVersion: "2024-06-20" },
+      );
+      ephemeralKeySecret = ephemeralKey.secret;
+    } catch (ekErr) {
+      console.warn("createPaymentIntent: ephemeral key creation also failed", {
+        uid: request.auth.uid,
+        customerId,
+        errorMessage: ekErr?.message,
+      });
+    }
   }
 
   return {
     clientSecret: paymentIntent.client_secret,
     customerId,
+    customerSessionClientSecret,
     ephemeralKeySecret,
   };
 });
@@ -708,7 +844,7 @@ exports.createSetupIntent = onCall(
     if (!stripeSecret.value()) {
       throw new HttpsError("failed-precondition", "Stripe no configurado.");
     }
-    await enforceRateLimit(request.auth.uid, "createSetupIntent", 5, 3600);
+    await enforceRateLimit(request.auth.uid, "createSetupIntent", 20, 3600);
 
     const uid = request.auth.uid;
     const stripe = require("stripe")(stripeSecret.value());
@@ -789,7 +925,7 @@ exports.listSavedCards = onCall(
       throw new HttpsError("failed-precondition", "Stripe no configurado.");
     }
     // 30 card-list calls per hour per user
-    await enforceRateLimit(request.auth.uid, "listSavedCards", 30, 3600);
+    await enforceRateLimit(request.auth.uid, "listSavedCards", 100, 3600);
 
     const uid = request.auth.uid;
     const userSnap = await db.collection("users").doc(uid).get();
@@ -885,10 +1021,54 @@ exports.listSavedCards = onCall(
       expMonth: pm.card?.exp_month || 0,
       expYear: pm.card?.exp_year || 0,
       isDefault: pm.id === defaultPmId,
+      // Optional user-set nickname (e.g. "BBVA"). Lives in pm.metadata.nickname
+      // so it's atomically attached/detached with the PaymentMethod itself —
+      // no separate Firestore subcollection to keep in sync.
+      nickname: pm.metadata?.nickname || null,
     }));
 
     return { cards, defaultPaymentMethodId: defaultPmId };
   }
+);
+
+// ---------------------------------------------------------------------------
+// setPaymentMethodNickname — caller assigns / clears a nickname on one of
+// their own saved PaymentMethods. Stored in pm.metadata.nickname.
+// ---------------------------------------------------------------------------
+exports.setPaymentMethodNickname = onCall(
+  { secrets: [stripeSecret], enforceAppCheck: true },
+  async (request) => {
+    if (!request.auth?.uid) {
+      throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
+    }
+    if (!stripeSecret.value()) {
+      throw new HttpsError("failed-precondition", "Stripe no configurado.");
+    }
+    await enforceRateLimit(request.auth.uid, "setPaymentMethodNickname", 30, 3600);
+
+    const pmId = String(request.data?.paymentMethodId || "").trim();
+    if (!pmId) throw new HttpsError("invalid-argument", "paymentMethodId requerido.");
+    // Empty string clears. Cap length so a malicious / careless input can't
+    // bloat metadata storage (Stripe enforces 500 chars per metadata value;
+    // we clamp tighter for sane display).
+    let nickname = String(request.data?.nickname || "").trim();
+    if (nickname.length > 60) nickname = nickname.substring(0, 60);
+
+    // Verify the PM belongs to the caller's customer before mutating.
+    const userSnap = await db.collection("users").doc(request.auth.uid).get();
+    const customerId = userSnap.data()?.stripeCustomerId || null;
+    if (!customerId) throw new HttpsError("not-found", "Stripe customer no encontrado.");
+    const stripe = require("stripe")(stripeSecret.value());
+    const pm = await stripe.paymentMethods.retrieve(pmId);
+    if (pm.customer !== customerId) {
+      throw new HttpsError("permission-denied", "Esa tarjeta no es tuya.");
+    }
+
+    await stripe.paymentMethods.update(pmId, {
+      metadata: { nickname: nickname || "" },
+    });
+    return { success: true, nickname: nickname || null };
+  },
 );
 
 // ---------------------------------------------------------------------------
@@ -952,28 +1132,54 @@ exports.deletePaymentMethod = onCall(
       // Race: already detached between retrieve and detach — success.
     }
 
-    // If deleted PM was the Stripe customer's invoice default, clear it there too.
-    // Otherwise future off-session charges that rely on invoice_settings.default_payment_method
-    // will fail because the PM is now detached.
+    // If deleted PM was the Stripe customer's invoice default, AUTO-PROMOTE
+    // a surviving PM to the new default in the same call. Without this the
+    // client had to wait for: detach (~500ms) → reload (~500-1500ms) →
+    // setDefault (~500ms), totalling 1.5-2.5s of perceived lag before the
+    // Settings preview switched to the remaining card. Doing it server-side
+    // collapses to a single round-trip and the user_doc stream pushes the
+    // new default fields to all listeners in one shot.
     const stripeCustomer = await stripe.customers.retrieve(customerId);
-    if (stripeCustomer.invoice_settings?.default_payment_method === pmId) {
-      await stripe.customers.update(customerId, {
-        invoice_settings: { default_payment_method: null },
+    const wasStripeDefault =
+      stripeCustomer.invoice_settings?.default_payment_method === pmId;
+    const wasFirestoreDefault =
+      (userSnap.data()?.stripeDefaultPaymentMethodId || null) === pmId;
+
+    let newDefault = null; // {id, brand, last4} or null when no replacement
+    if (wasStripeDefault || wasFirestoreDefault) {
+      // Only fetch the surviving list if we actually need to promote — most
+      // deletions are non-default cards, no need to spend a Stripe round-trip.
+      const survivors = await stripe.paymentMethods.list({
+        customer: customerId, type: "card", limit: 100,
       });
+      // Newest survivor by creation time; null if customer has no cards left.
+      const next = survivors.data
+        .slice()
+        .sort((a, b) => (b.created || 0) - (a.created || 0))[0] || null;
+
+      if (wasStripeDefault) {
+        await stripe.customers.update(customerId, {
+          invoice_settings: { default_payment_method: next?.id || null },
+        });
+      }
+      if (wasFirestoreDefault) {
+        await userRef.set({
+          stripeDefaultPaymentMethodId: next?.id || null,
+          stripeDefaultPaymentMethodLast4: next?.card?.last4 || null,
+          stripeDefaultPaymentMethodBrand: next?.card?.brand || null,
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        }, { merge: true });
+      }
+      if (next) {
+        newDefault = {
+          id: next.id,
+          brand: next.card?.brand || "card",
+          last4: next.card?.last4 || "****",
+        };
+      }
     }
 
-    // If deleted PM was the Firestore-cached default, clear it from Firestore
-    const defaultPmId = userSnap.data()?.stripeDefaultPaymentMethodId || null;
-    if (defaultPmId === pmId) {
-      await userRef.set({
-        stripeDefaultPaymentMethodId: null,
-        stripeDefaultPaymentMethodLast4: null,
-        stripeDefaultPaymentMethodBrand: null,
-        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-      }, { merge: true });
-    }
-
-    return { success: true };
+    return { success: true, newDefault };
   }
 );
 
@@ -2013,13 +2219,12 @@ exports.processPushkaAutoEmpty = onSchedule(
           }
 
           const currentAmount = Number(state.pushkaAmount || 0);
-          const minBalance = 5;
           const weekday = Number(state.autoEmptyWeekday || 1);
           const dayOfMonth = Number(state.autoEmptyDayOfMonth || 1);
 
           // Compute the NORMAL next-run date for use in the success path
-          // (and the no-card / unsupported-currency / below-min cases that
-          // are not actual failures, just "skip this cycle and move on").
+          // (and the no-card / unsupported-currency cases that are not
+          // actual failures, just "skip this cycle and move on").
           let normalNextDate;
           if (freq === "erev_rosh_chodesh") {
             normalNextDate = computeNextErevRoshChodesh(new Date());
@@ -2037,7 +2242,11 @@ exports.processPushkaAutoEmpty = onSchedule(
             }, { merge: true });
           };
 
-          if (currentAmount < minBalance) { advanceNormalOnly(); return; }
+          // Min-balance gate removed by product decision: previously the
+          // cron would skip the cycle if pushkaAmount < $5. Now even tiny
+          // balances get charged (the per-currency Stripe minimum check
+          // below still applies and will skip if BELOW Stripe's actual
+          // floor — e.g. $0.50 USD).
 
           const customerId = String(userData.stripeCustomerId || "").trim();
           const pmId = String(state.autoEmptyPaymentMethodId || userData.stripeDefaultPaymentMethodId || "").trim();
@@ -3221,6 +3430,45 @@ exports.setUserBlocked = onCall(
 // same email can be detected, and so legal/compliance has a retention record
 // (uid + deletedAt + reason) for the statutory period without the PII.
 // ---------------------------------------------------------------------------
+// TEMP DEBUG: caller inspects their own Stripe customer's payment-method
+// list as Stripe sees it right now. Used to diagnose discrepancies between
+// listSavedCards and PaymentSheet's saved-cards listing. Remove once the
+// off-session-cards bug is closed.
+exports.debugInspectCustomerPMs = onCall(
+  { secrets: [stripeSecret], enforceAppCheck: true },
+  async (request) => {
+    const uid = request.auth?.uid;
+    if (!uid) throw new HttpsError("unauthenticated", "auth requerido");
+    const userSnap = await db.collection("users").doc(uid).get();
+    const customerId = userSnap.data()?.stripeCustomerId || null;
+    if (!customerId) return { customerId: null, error: "no_customer" };
+    const stripe = require("stripe")(stripeSecret.value());
+    const customer = await stripe.customers.retrieve(customerId);
+    const defaultPmId = customer && !customer.deleted
+      ? customer.invoice_settings?.default_payment_method || null
+      : null;
+    const pmList = await stripe.paymentMethods.list({
+      customer: customerId, type: "card", limit: 100,
+    });
+    return {
+      customerId,
+      customerDeleted: customer && customer.deleted ? true : false,
+      defaultPmId,
+      pmCount: pmList.data.length,
+      pms: pmList.data.map((pm) => ({
+        id: pm.id,
+        brand: pm.card?.brand || null,
+        last4: pm.card?.last4 || null,
+        fingerprint: pm.card?.fingerprint || null,
+        expMonth: pm.card?.exp_month || null,
+        expYear: pm.card?.exp_year || null,
+        created: pm.created,
+        isDefault: pm.id === defaultPmId,
+      })),
+    };
+  },
+);
+
 exports.deleteAccount = onCall(
   { secrets: [stripeSecret], enforceAppCheck: true },
   async (request) => {

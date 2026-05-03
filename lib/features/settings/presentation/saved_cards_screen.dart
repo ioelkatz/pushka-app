@@ -1,9 +1,11 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_stripe/flutter_stripe.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 
+import '../../auth/providers/auth_state_provider.dart';
 import '../../payments/stripe_service.dart';
 import '../../tenant/data/tenant_repository.dart';
 import '../../../core/l10n/s.dart';
@@ -39,34 +41,51 @@ class _SavedCardsScreenState extends ConsumerState<SavedCardsScreen> {
       _loading = true;
       _error = null;
     });
-    try {
-      final callable = FirebaseFunctions.instance.httpsCallable('listSavedCards');
-      final result = await callable.call({});
-      if (!mounted) return;
-      final data = result.data as Map<dynamic, dynamic>;
-      final rawCards = data['cards'] as List<dynamic>? ?? [];
-      final cards = rawCards.map((c) => Map<String, dynamic>.from(c as Map)).toList();
-      final defaultId = data['defaultPaymentMethodId'] as String?;
+    // Cold-start of the listSavedCards CF (and a flaky cellular hop on the
+    // S23 we saw in logs as "Unable to resolve host firestore.googleapis.com")
+    // were producing intermittent "Error al cargar las tarjetas". Retry once
+    // with a short backoff before surfacing the failure to the user — covers
+    // both classes of transient failure without making the happy path slower.
+    final callable = FirebaseFunctions.instance.httpsCallable('listSavedCards');
+    Object? lastError;
+    for (var attempt = 0; attempt < 2; attempt++) {
+      try {
+        final result = await callable.call({});
+        if (!mounted) return;
+        final data = result.data as Map<dynamic, dynamic>;
+        final rawCards = data['cards'] as List<dynamic>? ?? [];
+        final cards = rawCards
+            .map((c) => Map<String, dynamic>.from(c as Map))
+            .toList();
+        final defaultId = data['defaultPaymentMethodId'] as String?;
 
-      setState(() {
-        _cards = cards;
-        _defaultPaymentMethodId = defaultId;
-        _loading = false;
-      });
+        setState(() {
+          _cards = cards;
+          _defaultPaymentMethodId = defaultId;
+          _loading = false;
+        });
 
-      if (autoSetDefault && defaultId == null && cards.isNotEmpty && mounted) {
-        await _setDefault(cards.first['id'] as String);
+        if (autoSetDefault && defaultId == null && cards.isNotEmpty && mounted) {
+          await _setDefault(cards.first['id'] as String);
+        }
+        return;
+      } catch (e) {
+        lastError = e;
+        if (attempt == 0 && mounted) {
+          // Brief backoff. 800ms is short enough that the user perceives a
+          // single "loading" spin, long enough for a CF cold-start container
+          // to finish booting and a flaky DNS resolver to retry.
+          await Future<void>.delayed(const Duration(milliseconds: 800));
+        }
       }
-    } catch (e) {
-      if (!mounted) return;
-      // Treat load errors as empty state — user can still add a card.
-      // Keep _error set so a subtle retry banner shows, but don't block the UI.
-      setState(() {
-        _cards = [];
-        _error = e.toString();
-        _loading = false;
-      });
     }
+    if (!mounted) return;
+    // Treat repeated load errors as empty state — user can still add a card.
+    setState(() {
+      _cards = [];
+      _error = lastError?.toString();
+      _loading = false;
+    });
   }
 
   Future<void> _addCard() async {
@@ -93,6 +112,16 @@ class _SavedCardsScreenState extends ConsumerState<SavedCardsScreen> {
           content: Text(isDuplicate ? tr.cardAlreadySaved : tr.cardAdded),
         ),
       );
+      // Offer the user the chance to set a nickname (e.g. "BBVA") on the
+      // newly-added card. Only prompt when the add was a NET-NEW card
+      // (skip on duplicate save where the dedupe kept the prior entry).
+      if (!isDuplicate && _cards.isNotEmpty && mounted) {
+        final newest = _cards.first; // Stripe returns newest-first
+        final newPmId = newest['id'] as String?;
+        if (newPmId != null) {
+          await _promptNickname(newPmId, initial: null);
+        }
+      }
     } on StripeException catch (e) {
       if (!mounted) return;
       if (e.error.code == FailureCode.Canceled) return;
@@ -146,36 +175,130 @@ class _SavedCardsScreenState extends ConsumerState<SavedCardsScreen> {
   Future<void> _deleteCard(String pmId) async {
     if (_processing) return;
     final tr = S.of(context);
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: Text(tr.confirmDeleteCard),
-        content: Text(tr.confirmDeleteCardBody),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: Text(tr.cancelBtn),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFFE05A4F),
-              foregroundColor: Colors.white,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+
+    // Pre-flight: is this card linked to any tenant's auto-empty schedule?
+    // If yes, the cron will silently fail to charge after deletion. Warn the
+    // user and clear the schedule (they'll need to pick another card or
+    // re-enable auto-empty later). The query stays scoped to the user's
+    // own tenantState subcollection — Firestore rules forbid cross-user reads.
+    final user = ref.read(firebaseAuthProvider).currentUser;
+    QuerySnapshot<Map<String, dynamic>>? linkedTenantStates;
+    if (user != null) {
+      try {
+        linkedTenantStates = await FirebaseFirestore.instance
+            .collection('users')
+            .doc(user.uid)
+            .collection('tenantState')
+            .where('autoEmptyPaymentMethodId', isEqualTo: pmId)
+            .get();
+      } catch (_) {
+        // Lookup failure → fall through to the standard delete dialog.
+        // Worst case: a linked auto-empty silently breaks until the user
+        // re-picks a card. Better than blocking the delete on a transient
+        // Firestore error.
+      }
+    }
+    final hasLinkedAutoEmpty =
+        (linkedTenantStates?.docs.isNotEmpty ?? false);
+
+    if (!mounted) return;
+    final bool confirmed;
+    if (hasLinkedAutoEmpty) {
+      final result = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          title: Text(tr.deleteCardLinkedAutoEmptyTitle),
+          content: Text(tr.deleteCardLinkedAutoEmptyBody),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: Text(tr.cancelBtn),
             ),
-            child: Text(tr.deleteConfirm),
-          ),
-        ],
-      ),
-    );
-    if (confirmed != true || !mounted) return;
+            ElevatedButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFFE05A4F),
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+              ),
+              child: Text(tr.deleteConfirm),
+            ),
+          ],
+        ),
+      );
+      confirmed = result == true;
+    } else {
+      if (!mounted) return;
+      final result = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          title: Text(tr.confirmDeleteCard),
+          content: Text(tr.confirmDeleteCardBody),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: Text(tr.cancelBtn),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFFE05A4F),
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+              ),
+              child: Text(tr.deleteConfirm),
+            ),
+          ],
+        ),
+      );
+      confirmed = result == true;
+    }
+    if (!confirmed || !mounted) return;
 
     setState(() => _processing = true);
     try {
+      // Clear the now-stale autoEmptyPaymentMethodId from any tenantState
+      // that referenced this card BEFORE deleting the PM. If we deleted
+      // first and the cron fired in the gap, it would attempt to charge a
+      // detached PM and fail loudly. Best-effort batch — even if some
+      // updates fail, the actual delete still proceeds.
+      if (hasLinkedAutoEmpty && linkedTenantStates != null) {
+        await Future.wait(linkedTenantStates.docs.map((d) =>
+          d.reference.set({
+            'autoEmptyPaymentMethodId': null,
+            'updatedAt': FieldValue.serverTimestamp(),
+          }, SetOptions(merge: true))));
+      }
+      // Optimistic UI: drop the card from the local list immediately so the
+      // user sees the deletion land instantly, instead of waiting for the
+      // round-trip + re-list. The CF still does the authoritative work.
+      setState(() {
+        _cards = _cards.where((c) => c['id'] != pmId).toList();
+        if (_defaultPaymentMethodId == pmId) {
+          // If the deleted card was the default, optimistically promote the
+          // first survivor — server will return the authoritative new default
+          // (`newDefault`) which we apply on response.
+          _defaultPaymentMethodId =
+              _cards.isNotEmpty ? _cards.first['id'] as String? : null;
+        }
+      });
       final callable = FirebaseFunctions.instance.httpsCallable('deletePaymentMethod');
-      await callable.call({'paymentMethodId': pmId});
+      // CF auto-promotes a survivor to default in the same call (server-side)
+      // and returns `newDefault` so the client doesn't need a second
+      // setDefaultPaymentMethod round-trip.
+      final result = await callable.call({'paymentMethodId': pmId});
       if (!mounted) return;
+      final newDefault = (result.data is Map)
+          ? (result.data as Map)['newDefault'] as Map<dynamic, dynamic>?
+          : null;
+      if (newDefault != null) {
+        setState(() {
+          _defaultPaymentMethodId = newDefault['id'] as String?;
+        });
+      }
+      // Skip the autoSetDefault round-trip — server already promoted.
       await _loadCards();
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -191,18 +314,6 @@ class _SavedCardsScreenState extends ConsumerState<SavedCardsScreen> {
     }
   }
 
-  String _brandLabel(String brand) {
-    const labels = {
-      'visa': 'Visa',
-      'mastercard': 'Mastercard',
-      'amex': 'Amex',
-      'discover': 'Discover',
-      'jcb': 'JCB',
-      'unionpay': 'UnionPay',
-      'dinersclub': 'Diners',
-    };
-    return labels[brand.toLowerCase()] ?? brand;
-  }
 
   // Brand-tinted gradient stops so each card visually matches its issuer
   // (Visa = navy/blue, Mastercard = red→orange, Amex = teal, etc.).
@@ -295,6 +406,19 @@ class _SavedCardsScreenState extends ConsumerState<SavedCardsScreen> {
     }
   }
 
+  String _brandLabel(String brand) {
+    const labels = {
+      'visa': 'Visa',
+      'mastercard': 'Mastercard',
+      'amex': 'Amex',
+      'discover': 'Discover',
+      'jcb': 'JCB',
+      'unionpay': 'UnionPay',
+      'dinersclub': 'Diners',
+    };
+    return labels[brand.toLowerCase()] ?? brand;
+  }
+
   Widget _buildCardTile({
     required String pmId,
     required String brand,
@@ -302,6 +426,7 @@ class _SavedCardsScreenState extends ConsumerState<SavedCardsScreen> {
     required int expMonth,
     required int expYear,
     required bool isDefault,
+    required String? nickname,
     required S tr,
   }) {
     final cs = Theme.of(context).colorScheme;
@@ -309,7 +434,7 @@ class _SavedCardsScreenState extends ConsumerState<SavedCardsScreen> {
     final yy = expYear.toString().padLeft(4, '0').substring(2);
 
     return InkWell(
-      onTap: () => _showCardActionsSheet(pmId, brand, last4, isDefault, tr),
+      onTap: () => _showCardActionsSheet(pmId, brand, last4, isDefault, nickname, tr),
       borderRadius: BorderRadius.circular(8),
       child: Padding(
       padding: const EdgeInsets.symmetric(vertical: 8),
@@ -350,14 +475,42 @@ class _SavedCardsScreenState extends ConsumerState<SavedCardsScreen> {
                       color: cs.onSurface,
                     ),
                     children: [
-                      TextSpan(text: _brandLabel(brand)),
-                      const TextSpan(text: '  ····'),
+                      TextSpan(text: '${_brandLabel(brand)} '),
+                      // Asterisks render against the cap-height in most
+                      // system fonts (not centered vertically), which makes
+                      // the "**** 4242" look top-heavy. Wrap them in a
+                      // WidgetSpan + Transform.translate to drop them ~3px
+                      // so they visually sit on the same midline as the
+                      // brand word and the last4 digits.
+                      WidgetSpan(
+                        alignment: PlaceholderAlignment.middle,
+                        child: Transform.translate(
+                          offset: const Offset(0, 3),
+                          child: Text(
+                            '****',
+                            style: TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w600,
+                              color: cs.onSurface,
+                              height: 1.0,
+                            ),
+                          ),
+                        ),
+                      ),
                       TextSpan(
-                        text: last4,
+                        text: ' $last4',
                         style: const TextStyle(
                           fontFeatures: [FontFeature.tabularFigures()],
                         ),
                       ),
+                      if (nickname != null && nickname.isNotEmpty)
+                        TextSpan(
+                          text: ' ($nickname)',
+                          style: TextStyle(
+                            fontWeight: FontWeight.w500,
+                            color: cs.onSurfaceVariant,
+                          ),
+                        ),
                     ],
                   ),
                 ),
@@ -388,6 +541,67 @@ class _SavedCardsScreenState extends ConsumerState<SavedCardsScreen> {
     );
   }
 
+  /// Prompt the user for a nickname (e.g. "BBVA", "Empresa") to display
+  /// alongside this card. Empty input clears any existing nickname.
+  Future<void> _promptNickname(String pmId, {required String? initial}) async {
+    final tr = S.of(context);
+    final ctrl = TextEditingController(text: initial ?? '');
+    final result = await showDialog<String?>(
+      context: context,
+      builder: (ctx) {
+        final cs = Theme.of(ctx).colorScheme;
+        return AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          title: Text(tr.cardNicknameTitle),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(tr.cardNicknameHint, style: TextStyle(color: cs.onSurfaceVariant, fontSize: 13)),
+              const SizedBox(height: 12),
+              TextField(
+                controller: ctrl,
+                autofocus: true,
+                maxLength: 60,
+                decoration: InputDecoration(
+                  hintText: tr.cardNicknamePlaceholder,
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            // Skip = close without saving (keeps current nickname unchanged).
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, null),
+              child: Text(tr.skip),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(ctx, ctrl.text.trim()),
+              child: Text(tr.save),
+            ),
+          ],
+        );
+      },
+    );
+    // Defer dispose: TextField might still be in tree mid-pop animation.
+    Future.delayed(const Duration(milliseconds: 400), () { ctrl.dispose(); });
+
+    if (result == null || !mounted) return;
+    try {
+      final callable = FirebaseFunctions.instance
+          .httpsCallable('setPaymentMethodNickname');
+      await callable.call({'paymentMethodId': pmId, 'nickname': result});
+      if (!mounted) return;
+      await _loadCards();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(S.of(context).errorLoadingCards)),
+      );
+    }
+  }
+
   // Bottom sheet with card actions (set as default + delete). Replaces
   // the old kebab popup so the row tap surface is bigger and the chevron
   // pattern matches the wallet-style reference.
@@ -396,6 +610,7 @@ class _SavedCardsScreenState extends ConsumerState<SavedCardsScreen> {
     String brand,
     String last4,
     bool isDefault,
+    String? currentNickname,
     S tr,
   ) {
     final cs = Theme.of(context).colorScheme;
@@ -424,7 +639,7 @@ class _SavedCardsScreenState extends ConsumerState<SavedCardsScreen> {
               child: Row(
                 children: [
                   Text(
-                    '${_brandLabel(brand)}  ···· $last4',
+                    '${_brandLabel(brand)} **** $last4',
                     style: TextStyle(
                       fontSize: 14,
                       fontWeight: FontWeight.w600,
@@ -443,6 +658,16 @@ class _SavedCardsScreenState extends ConsumerState<SavedCardsScreen> {
                   _setDefault(pmId);
                 },
               ),
+            ListTile(
+              leading: Icon(Icons.edit_outlined, color: cs.primary),
+              title: Text(currentNickname != null && currentNickname.isNotEmpty
+                  ? tr.cardNicknameEditAction
+                  : tr.cardNicknameAddAction),
+              onTap: () {
+                Navigator.pop(sheetCtx);
+                _promptNickname(pmId, initial: currentNickname);
+              },
+            ),
             ListTile(
               leading: const Icon(Icons.delete_outline, color: Colors.red),
               title: Text(
@@ -559,6 +784,7 @@ class _SavedCardsScreenState extends ConsumerState<SavedCardsScreen> {
                             final expMonth = (card['expMonth'] as num?)?.toInt() ?? 0;
                             final expYear = (card['expYear'] as num?)?.toInt() ?? 0;
                             final isDefault = pmId == _defaultPaymentMethodId;
+                            final nickname = card['nickname'] as String?;
                             return _buildCardTile(
                               pmId: pmId,
                               brand: brand,
@@ -566,6 +792,7 @@ class _SavedCardsScreenState extends ConsumerState<SavedCardsScreen> {
                               expMonth: expMonth,
                               expYear: expYear,
                               isDefault: isDefault,
+                              nickname: nickname,
                               tr: tr,
                             );
                           },

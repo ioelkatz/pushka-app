@@ -87,7 +87,10 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
           _dayOfMonth = (tenantState['autoEmptyDayOfMonth'] as num?)?.toInt() ?? 1;
           _topOffEnabled = (tenantState['autoEmptyTopOffEnabled'] as bool?) ?? false;
           _topOffAmount = (tenantState['autoEmptyTopOffAmount'] as num?)?.toDouble();
-          _amountController.text = _topOffAmount?.toStringAsFixed(0) ?? '';
+          // Field is now ALWAYS visible (disabled when toggle is off). Show
+          // the last saved amount if any, else default to "0" so the user
+          // sees a concrete starting value instead of an empty field.
+          _amountController.text = _topOffAmount?.toStringAsFixed(0) ?? '0';
           _selectedCardId = tenantState['autoEmptyPaymentMethodId'] as String?;
         });
         if (_frequency != 'manual') _loadCards();
@@ -229,7 +232,7 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
                   borderRadius: BorderRadius.circular(12),
                 ),
                 child: Text(
-                  '${tr.autoEmptyInfo}\n\n${tr.minBalanceInfo}',
+                  tr.autoEmptyInfo,
                   style: TextStyle(color: Theme.of(context).colorScheme.onSurface),
                 ),
               ),
@@ -304,26 +307,39 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
                 const SizedBox(height: 8),
                 Text(
                   tr.topOffDescription,
-                  style: TextStyle(color: Colors.grey.shade700),
+                  // Match the page's primary text color (theme onSurface =
+                  // white in dark mode, near-black in light mode) so this
+                  // hint reads with the same weight as the surrounding labels.
+                  // Was hardcoded grey.shade700 → invisible against the dark
+                  // background.
+                  style: TextStyle(
+                    color: Theme.of(context).colorScheme.onSurface,
+                  ),
                 ),
                 const SizedBox(height: 12),
-                if (_topOffEnabled)
-                  TextField(
-                    controller: _amountController,
-                    keyboardType:
-                        const TextInputType.numberWithOptions(decimal: true),
-                    decoration: InputDecoration(
-                      prefixText: '\$ ',
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(8),
-                      ),
+                // Always render the amount field — disabled when the toggle
+                // is off so the user can preview the configured amount but
+                // not edit it. Re-enabling the toggle puts focus back on
+                // editing without re-entering the amount from scratch.
+                TextField(
+                  controller: _amountController,
+                  enabled: _topOffEnabled,
+                  keyboardType:
+                      const TextInputType.numberWithOptions(decimal: true),
+                  decoration: InputDecoration(
+                    prefixText: '\$ ',
+                    filled: !_topOffEnabled,
+                    fillColor: Theme.of(context).colorScheme.surfaceContainerHighest,
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(8),
                     ),
-                    onChanged: (value) {
-                      final parsed =
-                          double.tryParse(value.replaceAll(',', '.'));
-                      _topOffAmount = parsed;
-                    },
                   ),
+                  onChanged: (value) {
+                    final parsed =
+                        double.tryParse(value.replaceAll(',', '.'));
+                    _topOffAmount = parsed;
+                  },
+                ),
                 const SizedBox(height: 24),
               ],
               Row(
@@ -613,22 +629,38 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
                   Container(
                     padding: const EdgeInsets.all(14),
                     decoration: BoxDecoration(
-                      color: const Color(0xFFFFF7ED),
+                      // Use the theme's elevated-surface color so the bullets
+                      // box reads as a subtle highlight in BOTH light and
+                      // dark mode. The previous hardcoded cream background
+                      // (#FFF7ED) was invisible in dark mode (light-on-light
+                      // text). Bullet text inherits onSurface, matching the
+                      // rest of the dialog body.
+                      color: Theme.of(ctx).colorScheme.surfaceContainerHighest,
                       borderRadius: BorderRadius.circular(10),
                       border: Border.all(
-                          color: const Color(0xFFFED7AA), width: 1),
+                        color: Theme.of(ctx).colorScheme.outlineVariant,
+                        width: 1,
+                      ),
                     ),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(tr.autoEmptyConsentBullet1,
-                            style: const TextStyle(fontSize: 13, height: 1.5)),
+                            style: TextStyle(
+                              fontSize: 13, height: 1.5,
+                              color: Theme.of(ctx).colorScheme.onSurface,
+                            )),
                         const SizedBox(height: 6),
-                        Text(tr.autoEmptyConsentBullet2,
-                            style: const TextStyle(fontSize: 13, height: 1.5)),
-                        const SizedBox(height: 6),
+                        // Bullet about "balance < $5" was removed — the
+                        // underlying skip-on-low-balance gate in
+                        // processPushkaAutoEmpty was deleted by product
+                        // decision; the user gets charged for any non-zero
+                        // amount above Stripe's per-currency floor.
                         Text(tr.autoEmptyConsentBullet3,
-                            style: const TextStyle(fontSize: 13, height: 1.5)),
+                            style: TextStyle(
+                              fontSize: 13, height: 1.5,
+                              color: Theme.of(ctx).colorScheme.onSurface,
+                            )),
                       ],
                     ),
                   ),
@@ -663,7 +695,7 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
                   child: Text(
                     tr.autoEmptyConsentCancel,
                     style: TextStyle(
-                        color: Colors.grey.shade600,
+                        color: Theme.of(ctx).colorScheme.onSurfaceVariant,
                         fontWeight: FontWeight.w500),
                   ),
                 ),

@@ -54,6 +54,31 @@ class S {
   String hello(String name) => _t('Hola $name', 'Hello $name', 'Bonjour $name', 'שלום $name');
   String get myPushka => _t('Mi Pushka', 'My Pushka', 'Ma Pushka', 'הפושקה שלי');
   String get wallet => _t('Billetera', 'Wallet', 'Portefeuille', 'ארנק');
+  String get cardNicknameTitle => _t('Apodo de la tarjeta', 'Card nickname', 'Surnom de la carte', 'כינוי לכרטיס');
+  String get cardNicknameHint => _t(
+    'Opcional — un nombre para diferenciar tus tarjetas (ej: BBVA, Empresa).',
+    'Optional — a name to tell your cards apart (e.g. BBVA, Work).',
+    "Facultatif — un nom pour distinguer vos cartes (ex. BBVA, Travail).",
+    'אופציונלי — שם להבחין בין הכרטיסים שלך (לדוגמה: BBVA, עבודה).',
+  );
+  String get cardNicknamePlaceholder => _t('BBVA', 'BBVA', 'BBVA', 'BBVA');
+  String get cardNicknameAddAction => _t('Agregar apodo', 'Add nickname', 'Ajouter un surnom', 'הוסף כינוי');
+  String get cardNicknameEditAction => _t('Editar apodo', 'Edit nickname', 'Modifier le surnom', 'ערוך כינוי');
+  String get skip => _t('Omitir', 'Skip', 'Ignorer', 'דלג');
+
+  String get deleteCardLinkedAutoEmptyTitle => _t(
+    'Esta tarjeta tiene vaciado automático activo',
+    'This card has auto-empty active',
+    'Cette carte a un vidage automatique actif',
+    'לכרטיס זה יש ריקון אוטומטי פעיל',
+  );
+  String get deleteCardLinkedAutoEmptyBody => _t(
+    'Si eliminás esta tarjeta, el vaciado automático que la usa se desactivará. Vas a tener que elegir otra tarjeta para reactivarlo. ¿Querés continuar?',
+    'If you delete this card, the auto-empty using it will be turned off. You will need to pick another card to re-enable it. Continue?',
+    'Si vous supprimez cette carte, le vidage automatique qui l\'utilise sera désactivé. Vous devrez choisir une autre carte pour le réactiver. Continuer ?',
+    'אם תמחק את הכרטיס, הריקון האוטומטי שמשתמש בו יושבת. תצטרך לבחור כרטיס אחר כדי להפעיל אותו מחדש. להמשיך?',
+  );
+
   String get cardAlreadySaved => _t(
     'Esa tarjeta ya estaba registrada.',
     'That card was already saved.',
@@ -748,12 +773,6 @@ class S {
     'Lorsqu\'il est activé, votre Pushka se videra automatiquement selon la fréquence choisie.',
     'כשמופעל, הפושקה שלך תתרוקן אוטומטית לפי התדירות שתבחר.',
   );
-  String get minBalanceInfo => _t(
-    'Si el saldo de tu Pushka es menor a \$5, el vaciado se pospondrá hasta el próximo ciclo.',
-    'If your Pushka balance is less than \$5, emptying will be postponed until the next cycle.',
-    'Si le solde de votre Pushka est inférieur à 5 \$, le vidage sera reporté au prochain cycle.',
-    'אם יתרת הפושקה נמוכה מ-\$5, הריקון יידחה למחזור הבא.',
-  );
   String get frequency => _t('Frecuencia', 'Frequency', 'Fréquence', 'תדירות');
   String get freqWeekly => _t('Semanal', 'Weekly', 'Hebdomadaire', 'שבועי');
   String get freqMonthly => _t('Mensual', 'Monthly', 'Mensuel', 'חודשי');
@@ -770,10 +789,10 @@ class S {
   String get notScheduled => _t('No programado', 'Not scheduled', 'Non programmé', 'לא מתוזמן');
   String get pushkaTopOff => _t('Relleno de Pushka', 'Pushka Top Off', 'Remplissage de la Pushka', 'השלמת פושקה');
   String get topOffDescription => _t(
-    'Si el saldo es muy bajo, lo completaremos al mínimo antes de vaciar.',
-    'If the balance is too low, we will top it off to the minimum before emptying.',
-    'Si le solde est trop bas, nous le compléterons au minimum avant de vider.',
-    'אם היתרה נמוכה מדי, נשלים אותה למינימום לפני הריקון.',
+    'El saldo se completará al mínimo antes de vaciar.',
+    'The balance will be topped off to the minimum before emptying.',
+    'Le solde sera complété au minimum avant le vidage.',
+    'היתרה תושלם למינימום לפני הריקון.',
   );
   String get settingsSaved => _t('Configuración guardada', 'Settings saved', 'Paramètres enregistrés', 'הגדרות נשמרו');
   String get saveError => _t('Error al guardar. Intenta nuevamente.', 'Error saving. Try again.', "Erreur d'enregistrement. Réessayez.", 'שגיאה בשמירה. נסה שוב.');
@@ -794,12 +813,6 @@ class S {
     '• The charge is for the exact amount accumulated in your Pushka.',
     '• Le débit correspond au montant exact accumulé dans votre Pushka.',
     '• החיוב הוא על הסכום המדויק שנצבר בפושקה שלך.',
-  );
-  String get autoEmptyConsentBullet2 => _t(
-    '• Si el saldo es menor a \$5, el vaciado se pospone al siguiente ciclo.',
-    '• If the balance is less than \$5, emptying is postponed to the next cycle.',
-    '• Si le solde est inférieur à 5 \$, le vidage est reporté au cycle suivant.',
-    '• אם היתרה נמוכה מ-\$5, הריקון נדחה למחזור הבא.',
   );
   String get autoEmptyConsentBullet3 => _t(
     '• Puedes cancelar o modificar esta configuración en cualquier momento.',
@@ -1075,6 +1088,15 @@ class S {
     'No saved card yet.\nAdd one to enable automatic emptying and refills.',
     "Aucune carte enregistrée.\nAjoutez-en une pour activer le vidage et la recharge automatiques.",
     'אין כרטיס שמור עדיין.\nהוסף אחד כדי להפעיל ריקון וטעינה אוטומטיים.',
+  );
+  /// Short variant for the Settings preview row — matches the visual weight
+  /// of sibling rows like "Vaciar Manualmente". The longer `noSavedCards`
+  /// stays for the auto-empty screen banner where context still matters.
+  String get noCardsShort => _t(
+    'No tienes ninguna tarjeta',
+    'You have no cards',
+    "Vous n'avez aucune carte",
+    'אין לך כרטיסים',
   );
   String get addCard => _t('Agregar tarjeta', 'Add card', 'Ajouter une carte', 'הוסף כרטיס');
   String get cardDefault => _t('Predeterminada', 'Default', 'Par défaut', 'ברירת מחדל');

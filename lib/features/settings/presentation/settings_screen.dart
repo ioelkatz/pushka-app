@@ -824,16 +824,50 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               ),
             const SizedBox(width: 12),
             Expanded(
-              child: Text(
-                hasCard
-                    ? '•••• $last4'
-                    : tr.noSavedCards.split('\n').first,
-                style: TextStyle(
-                  fontSize: 15,
-                  fontWeight: FontWeight.w600,
-                  color: cs.onSurface,
-                ),
-              ),
+              child: hasCard
+                  ? Text.rich(
+                      TextSpan(
+                        style: TextStyle(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w600,
+                          color: cs.onSurface,
+                        ),
+                        children: [
+                          TextSpan(text: '${cardBrandLabel(brand)} '),
+                          // Same WidgetSpan trick as saved_cards_screen — drop
+                          // the asterisks ~3px so they sit on the midline
+                          // instead of riding the cap-height (which makes
+                          // "**** 4242" look top-heavy in the system font).
+                          WidgetSpan(
+                            alignment: PlaceholderAlignment.middle,
+                            child: Transform.translate(
+                              offset: const Offset(0, 3),
+                              child: Text(
+                                '****',
+                                style: TextStyle(
+                                  fontSize: 15,
+                                  fontWeight: FontWeight.w600,
+                                  color: cs.onSurface,
+                                  height: 1.0,
+                                ),
+                              ),
+                            ),
+                          ),
+                          TextSpan(text: ' $last4'),
+                        ],
+                      ),
+                    )
+                  : Text(
+                      tr.noCardsShort,
+                      // Match the visual weight of sibling rows like
+                      // "Vaciar Manualmente" (built via _buildActionButton):
+                      // fontSize 16, fontWeight 500, color onSurface.
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w500,
+                        color: cs.onSurface,
+                      ),
+                    ),
             ),
             Icon(Icons.chevron_right, color: cs.onSurfaceVariant),
           ],
