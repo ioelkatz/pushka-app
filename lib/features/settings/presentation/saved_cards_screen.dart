@@ -297,7 +297,10 @@ class _SavedCardsScreenState extends ConsumerState<SavedCardsScreen> {
     final mm = expMonth.toString().padLeft(2, '0');
     final yy = expYear.toString().padLeft(4, '0').substring(2);
 
-    return Padding(
+    return InkWell(
+      onTap: () => _showCardActionsSheet(pmId, brand, last4, isDefault, tr),
+      borderRadius: BorderRadius.circular(8),
+      child: Padding(
       padding: const EdgeInsets.symmetric(vertical: 4),
       child: Row(
         children: [
@@ -360,37 +363,89 @@ class _SavedCardsScreenState extends ConsumerState<SavedCardsScreen> {
               ],
             ),
           ),
-          PopupMenuButton<String>(
-            icon: Icon(Icons.more_vert_rounded, color: cs.onSurfaceVariant),
-            onSelected: (value) {
-              if (value == 'default') _setDefault(pmId);
-              if (value == 'delete') _deleteCard(pmId);
-            },
-            itemBuilder: (_) => [
-              if (!isDefault)
-                PopupMenuItem(
-                  value: 'default',
-                  child: Row(
-                    children: [
-                      const Icon(Icons.star_outline, size: 18),
-                      const SizedBox(width: 8),
-                      Text(tr.setAsDefault),
-                    ],
-                  ),
-                ),
-              PopupMenuItem(
-                value: 'delete',
-                child: Row(
-                  children: [
-                    const Icon(Icons.delete_outline, size: 18, color: Colors.red),
-                    const SizedBox(width: 8),
-                    Text(tr.deleteCard, style: const TextStyle(color: Colors.red)),
-                  ],
-                ),
-              ),
-            ],
+          Padding(
+            padding: const EdgeInsets.only(right: 4, left: 8),
+            child: Icon(
+              Icons.chevron_right_rounded,
+              color: cs.onSurfaceVariant,
+              size: 22,
+            ),
           ),
         ],
+      ),
+    ),
+    );
+  }
+
+  // Bottom sheet with card actions (set as default + delete). Replaces
+  // the old kebab popup so the row tap surface is bigger and the chevron
+  // pattern matches the wallet-style reference.
+  void _showCardActionsSheet(
+    String pmId,
+    String brand,
+    String last4,
+    bool isDefault,
+    S tr,
+  ) {
+    final cs = Theme.of(context).colorScheme;
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: cs.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (sheetCtx) => SafeArea(
+        top: false,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const SizedBox(height: 8),
+            Container(
+              width: 36,
+              height: 4,
+              decoration: BoxDecoration(
+                color: cs.outlineVariant,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 14, 20, 6),
+              child: Row(
+                children: [
+                  Text(
+                    '${_brandLabel(brand)}  ···· $last4',
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                      color: cs.onSurfaceVariant,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            if (!isDefault)
+              ListTile(
+                leading: Icon(Icons.star_outline, color: cs.primary),
+                title: Text(tr.setAsDefault),
+                onTap: () {
+                  Navigator.pop(sheetCtx);
+                  _setDefault(pmId);
+                },
+              ),
+            ListTile(
+              leading: const Icon(Icons.delete_outline, color: Colors.red),
+              title: Text(
+                tr.deleteCard,
+                style: const TextStyle(color: Colors.red),
+              ),
+              onTap: () {
+                Navigator.pop(sheetCtx);
+                _deleteCard(pmId);
+              },
+            ),
+            const SizedBox(height: 8),
+          ],
+        ),
       ),
     );
   }
