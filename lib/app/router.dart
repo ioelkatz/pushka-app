@@ -418,6 +418,13 @@ DrawerItem _drawerItemFromLocation(String loc) {
 
 // --- Page transition helpers ---
 
+// Same durations as the original — what changes is that the OUTGOING page
+// also fades out via `secondaryAnimation`. Previously only the incoming
+// page faded in while the outgoing page stayed at 100% opacity underneath,
+// so during the partial-opacity window the old layout showed through and
+// looked like the previous content "lingered" longer than it should.
+// Now it's a true crossfade: as the new page reaches X% opacity, the old
+// page is at (100-X)%.
 CustomTransitionPage<void> _fadePage(GoRouterState state, Widget child) {
   return CustomTransitionPage<void>(
     key: state.pageKey,
@@ -427,7 +434,12 @@ CustomTransitionPage<void> _fadePage(GoRouterState state, Widget child) {
     transitionsBuilder: (context, animation, secondaryAnimation, child) {
       return FadeTransition(
         opacity: CurvedAnimation(parent: animation, curve: Curves.easeOut),
-        child: child,
+        child: FadeTransition(
+          opacity: ReverseAnimation(
+            CurvedAnimation(parent: secondaryAnimation, curve: Curves.easeIn),
+          ),
+          child: child,
+        ),
       );
     },
   );
@@ -446,7 +458,12 @@ CustomTransitionPage<void> _slidePage(GoRouterState state, Widget child) {
       ).animate(CurvedAnimation(parent: animation, curve: Curves.easeOutCubic));
       return FadeTransition(
         opacity: CurvedAnimation(parent: animation, curve: Curves.easeOut),
-        child: SlideTransition(position: slide, child: child),
+        child: FadeTransition(
+          opacity: ReverseAnimation(
+            CurvedAnimation(parent: secondaryAnimation, curve: Curves.easeIn),
+          ),
+          child: SlideTransition(position: slide, child: child),
+        ),
       );
     },
   );
