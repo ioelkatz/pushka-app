@@ -272,6 +272,7 @@ class S {
   // ---------------------------------------------------------------------------
 
   String get holidayMaotJitim => _t("Ma'ot Jitim", "Ma'ot Chitim", "Ma'ot 'Hitim", "מעות חיטים");
+  String get holidayPesaj => _t('Pésaj', 'Pesach', "Pessa'h", 'פסח');
   String get holidayMaotJitimDesc => _t(
     'Fondos para los necesitados de Israel para sus necesidades de Pésaj',
     'Funds for the needy of Israel for their Passover needs',
@@ -286,6 +287,7 @@ class S {
     'אנו חוגגים את מתן התורה. תרמו צדקה לכבוד החג',
   );
   String get holidayRoshHashana => _t('Rosh Hashaná', 'Rosh Hashanah', 'Roch Hachana', 'ראש השנה');
+  String get holidayRoshHashanaBanner => _t('R. Hashaná', 'R. Hashanah', 'R. Hachana', 'ר. השנה');
   String get holidayRoshHashanaDesc => _t(
     'Año Nuevo judío. Comienza el año con tzedaká y buenas acciones',
     'Jewish New Year. Start the year with tzedakah and good deeds',

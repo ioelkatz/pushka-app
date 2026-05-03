@@ -630,10 +630,26 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                         final activeHoliday = _HolidayInfo.getActiveHoliday();
             final bool isFull = pushkaGoal > 0 && pushkaAmount >= pushkaGoal;
 
+            // ── DEBUG OVERRIDES (borrar al terminar pruebas) ──────────────
+            // debugStreak: null = real, 0 = sin racha, 1-7 = día específico
+            // debugHoliday: true = mostrar, false = ocultar
+            // debugHolidayKey: null = festividad real, o uno de:
+            //   'maotJitim' | 'shavuot' | 'roshHashana' | 'yomKippur'
+            //   'sucot' | 'januca' | 'purim'
+            const int? debugStreak = 3;
+            const bool debugHoliday = true;
+            const String? debugHolidayKey = 'roshHashana';
+            // ─────────────────────────────────────────────────────────────
+            final int bannerStreak = debugStreak ?? _streakCount;
+            final _HolidayInfo? bannerHoliday = !debugHoliday ? null
+                : (debugHolidayKey != null
+                    ? _HolidayInfo(nameEs: switch (debugHolidayKey) { 'maotJitim' => 'Pesaj', 'shavuot' => 'Shavuot', 'roshHashana' => 'Rosh Hashaná', 'yomKippur' => 'Yom Kipur', 'sucot' => 'Sucot', 'januca' => 'Janucá', 'purim' => 'Purim', _ => debugHolidayKey }, descriptionEs: '', key: debugHolidayKey, presetAmounts: const [], startDate: DateTime.now(), showDaysBefore: 0)
+                    : activeHoliday);
+
             final content = Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-            _buildCombinedBanner(_streakCount, activeHoliday),
+            _buildCombinedBanner(bannerStreak, bannerHoliday),
 
             SizedBox(height: topGap),
 
@@ -838,8 +854,9 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
     const double h = 38.0;
     const double badgeSize = 34.0;
     final double pillW = MediaQuery.of(context).size.width - 32;
-    final double streakW = pillW - 120;
-    const double holidayW = 120.0;
+    final bool isEn = Localizations.localeOf(context).languageCode == 'en';
+    final double streakW = pillW - (holiday?.key == 'roshHashana' ? (isEn ? 130 : 125) : 120);
+    const double holidayW = 168.0;
 
     // Both together: full pill. Solo: the individual width, centered.
     final bool both = hasStreak && hasHoliday;
@@ -863,9 +880,11 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                     child: GestureDetector(
                       onTap: () { if (_isProcessing) return; _showHolidayDonationDialog(holiday); },
                       child: Container(
-                        decoration: const BoxDecoration(
+                        decoration: BoxDecoration(
                           gradient: LinearGradient(
-                            colors: [Color(0xFF6B3800), Color(0xFF3A1A00)],
+                            colors: holiday.key == 'roshHashana'
+                                ? const [Color(0xFFDCDCE8), Color(0xFF9898A8)]
+                                : const [Color(0xFF6B3800), Color(0xFF3A1A00)],
                             begin: Alignment.centerLeft,
                             end: Alignment.centerRight,
                           ),
@@ -874,20 +893,20 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                         // Alone: content centered within the 120px pill.
                         padding: both
                             ? EdgeInsetsDirectional.fromSTEB(streakW, 0, 12, 0)
-                            : const EdgeInsets.only(left: 0, right: 20),
+                            : const EdgeInsets.only(right: 8),
                         alignment: Alignment.center,
                         child: Row(
                           mainAxisSize: MainAxisSize.min,
                           children: [
                             _holidayIcon(holiday.nameEs, size: 26),
-                            const SizedBox(width: 6),
+                            const SizedBox(width: 10),
                             Text(
-                              holiday.localizedName(S.of(context)),
-                              style: const TextStyle(
+                              holiday.localizedBannerName(S.of(context)),
+                              style: TextStyle(
                                 color: Colors.white,
-                                fontSize: 15,
+                                fontSize: holiday.key == 'roshHashana' && both ? 13.0 : 15.0,
                                 fontWeight: FontWeight.w800,
-                                shadows: [
+                                shadows: const [
                                   Shadow(
                                     color: Color(0x33000000),
                                     blurRadius: 3,
@@ -1005,9 +1024,9 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
     if (lower.contains('shavuot')) {
       asset = 'assets/icons/shavuot.png';
     } else if (lower.contains('pesaj') || lower.contains('jitim') || lower.contains('ma\u0027ot')) {
-      emoji = '🫓';
+      asset = 'assets/icons/pesaj.png';
     } else if (lower.contains('rosh')) {
-      emoji = '🍎';
+      asset = 'assets/icons/rosh_hashana.png';
     } else if (lower.contains('kipur')) {
       emoji = '🕊️';
     } else if (lower.contains('sucot')) {
@@ -2466,7 +2485,7 @@ class _HolidayInfo {
   });
 
   String localizedName(S tr) => switch (key) {
-    'maotJitim' => tr.holidayMaotJitim,
+    'maotJitim' => tr.holidayPesaj,
     'shavuot' => tr.holidayShavuot,
     'roshHashana' => tr.holidayRoshHashana,
     'yomKippur' => tr.holidayYomKippur,
@@ -2474,6 +2493,11 @@ class _HolidayInfo {
     'januca' => tr.holidayJanuca,
     'purim' => tr.holidayPurim,
     _ => nameEs,
+  };
+
+  String localizedBannerName(S tr) => switch (key) {
+    'roshHashana' => tr.holidayRoshHashanaBanner,
+    _ => localizedName(tr),
   };
 
   String localizedDescription(S tr) => switch (key) {
@@ -2599,11 +2623,19 @@ class _HexBadge extends StatelessWidget {
               begin: Alignment.topLeft,
               end: Alignment.bottomRight,
             ).createShader(bounds),
-            child: Image.asset(
-              'assets/icons/gem_badge.png',
-              width: size,
-              height: size,
-              fit: BoxFit.contain,
+            child: ColorFiltered(
+              colorFilter: const ColorFilter.matrix([
+                0.2126, 0.7152, 0.0722, 0, 0,
+                0.2126, 0.7152, 0.0722, 0, 0,
+                0.2126, 0.7152, 0.0722, 0, 0,
+                0,      0,      0,      1, 0,
+              ]),
+              child: Image.asset(
+                'assets/icons/gem_badge.png',
+                width: size,
+                height: size,
+                fit: BoxFit.contain,
+              ),
             ),
           ),
           Transform.translate(
