@@ -1107,6 +1107,18 @@ class S {
     'אני מסכים ומפעיל',
   );
 
+  // Tenant picker / join screen — strings used by tenant_code_screen.
+  String get tenantJoinFailed => _t(
+    'No se pudo unirte a la organización. Intentá de nuevo.',
+    "Couldn't join the organization. Please try again.",
+    "Impossible de rejoindre l'organisation. Veuillez réessayer.",
+    'לא הצלחנו להצטרף לארגון. נסה שוב.',
+  );
+  String get tenantEnterCode => _t('Ingresar código', 'Enter code', 'Saisir le code', 'הזן קוד');
+  String get tenantJoin => _t('Unirme', 'Join', 'Rejoindre', 'הצטרף');
+  String get tenantSearch => _t('Buscar', 'Search', 'Rechercher', 'חפש');
+  String get tenantCancel => _t('Cancelar', 'Cancel', 'Annuler', 'ביטול');
+
   String get appShareText => _t(
     'He estado usando esta increíble app Pushka de Tzedaká. ¡Funciona igual que una pushka real! Con solo un toque puedes "poner una moneda" y cuando estés listo, "vaciarla" para hacer una donación.\n\nToda la Tzedaká va directamente a Colel Chabad, que hace una labor increíble ayudando a los pobres en Israel.\n\nMírala aquí: https://pushkapp.cc/share',
     'I\'ve been using this amazing Tzedakah Pushka app. It works just like a real pushka! With one tap you can "drop a coin" and when ready, "empty it" to make a donation.\n\nAll Tzedakah goes directly to Colel Chabad, doing incredible work helping the poor in Israel.\n\nCheck it out: https://pushkapp.cc/share',

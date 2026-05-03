@@ -44,8 +44,8 @@ class _TenantCodeScreenState extends ConsumerState<TenantCodeScreen> {
     } catch (_) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('No se pudo unirte a la organización. Intentá de nuevo.'),
+          SnackBar(
+            content: Text(S.of(context).tenantJoinFailed),
           ),
         );
       }
@@ -181,7 +181,7 @@ class _TenantCodeScreenState extends ConsumerState<TenantCodeScreen> {
                         const SizedBox(height: AppTokens.spaceSm),
                         TextButton(
                           onPressed: _joining ? null : _openCodeSheet,
-                          child: const Text('Ingresar código'),
+                          child: Text(S.of(context).tenantEnterCode),
                         ),
                       ],
                     ),
@@ -412,7 +412,7 @@ class _ErrorBlock extends StatelessWidget {
           style: tt.bodyMedium?.copyWith(color: AppTokens.mutedText),
         ),
         const SizedBox(height: AppTokens.spaceLg),
-        OutlinedButton(onPressed: onRetry, child: const Text('Reintentar')),
+        OutlinedButton(onPressed: onRetry, child: Text(S.of(context).retry)),
       ],
     );
   }
@@ -475,13 +475,13 @@ class _JoinConfirmSheet extends StatelessWidget {
               height: AppTokens.buttonHeight,
               child: ElevatedButton(
                 onPressed: () => Navigator.of(context).pop(true),
-                child: const Text('Unirme'),
+                child: Text(S.of(context).tenantJoin),
               ),
             ),
             const SizedBox(height: AppTokens.spaceSm),
             TextButton(
               onPressed: () => Navigator.of(context).pop(false),
-              child: const Text('Cancelar'),
+              child: Text(S.of(context).tenantCancel),
             ),
           ],
         ),
@@ -604,7 +604,7 @@ class _InviteCodeSheetState extends ConsumerState<_InviteCodeSheet> {
                           width: 20, height: 20,
                           child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
                         )
-                      : const Text('Buscar'),
+                      : Text(S.of(context).tenantSearch),
                 ),
               )
             else ...[
@@ -622,7 +622,7 @@ class _InviteCodeSheetState extends ConsumerState<_InviteCodeSheet> {
                           if (!mounted) return;
                           nav.pop();
                         },
-                  child: const Text('Unirme'),
+                  child: Text(S.of(context).tenantJoin),
                 ),
               ),
             ],
