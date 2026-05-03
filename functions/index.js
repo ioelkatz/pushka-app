@@ -3237,6 +3237,76 @@ exports.createTenant = onCall(
 );
 
 // ---------------------------------------------------------------------------
+// backfillTenantSlugs — one-shot super_admin operation: ensure every
+// existing tenant has a corresponding `_tenantSlugs/{slug}` lock doc.
+//
+// Tenants created before the slug-lock collection was introduced don't
+// have entries in `_tenantSlugs/`. Without this backfill, a malicious
+// `createTenant` call with the same slug would succeed (the lock check
+// passes because the slug doc doesn't exist for the old tenant). Run
+// this once per environment before allowing new createTenant traffic.
+//
+// Idempotent: skips slugs whose lock doc already exists for the same
+// tenantId. Logs and returns a summary {scanned, created, skipped,
+// conflicts} so the operator can verify.
+// ---------------------------------------------------------------------------
+exports.backfillTenantSlugs = onCall(
+  { enforceAppCheck: false },
+  async (request) => {
+    if (!callerIsSuperAdmin(request)) {
+      throw new HttpsError("permission-denied", "Solo super_admin.");
+    }
+
+    const tenantsSnap = await db.collection("tenants").get();
+    let scanned = 0;
+    let created = 0;
+    let skipped = 0;
+    const conflicts = [];
+    const skippedNoSlug = [];
+
+    for (const tenantDoc of tenantsSnap.docs) {
+      scanned += 1;
+      const tenantId = tenantDoc.id;
+      const slugRaw = String(tenantDoc.data()?.slug || "").trim();
+      if (!slugRaw) {
+        skippedNoSlug.push(tenantId);
+        continue;
+      }
+      const slug = normalizeSlug(slugRaw);
+      const slugRef = db.collection("_tenantSlugs").doc(slug);
+      const existing = await slugRef.get();
+      if (existing.exists) {
+        const ownerTenantId = existing.data()?.tenantId;
+        if (ownerTenantId === tenantId) {
+          skipped += 1;
+        } else {
+          // Slug doc exists but points at a DIFFERENT tenant — surface
+          // for manual review; do not overwrite.
+          conflicts.push({ slug, tenantId, ownerTenantId });
+        }
+        continue;
+      }
+      await slugRef.create({
+        tenantId,
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        backfilled: true,
+      });
+      created += 1;
+    }
+
+    const summary = {
+      scanned,
+      created,
+      skippedAlreadyExists: skipped,
+      skippedNoSlug,
+      conflicts,
+    };
+    console.info("backfillTenantSlugs: completed", summary);
+    return summary;
+  },
+);
+
+// ---------------------------------------------------------------------------
 // getTenantBranding — super_admin (any tenant) or tenant_admin (own tenant)
 // ---------------------------------------------------------------------------
 exports.getTenantBranding = onCall(

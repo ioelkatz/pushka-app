@@ -127,26 +127,25 @@ add a trailing newline. This bit us hard once; don't repeat the mistake.
   `Stripe.instance`. To see the sheet in Spanish, the device's system language
   must be Spanish. Most LATAM/IL users will already have this; not a blocker.
 
-## Pending TODOs (low priority — not blocking)
+## Operational tasks
 
-These were left from the wallet-removal + audit work and are safe to defer:
-
-- **`pushka_screen.dart` `TextEditingController` leaks**: 5 dialogs
-  (`_donateNow`, `_otherAmount`, `_showHolidayDonationDialog`,
-  `_showCustomGoalDialog`, `_showTzedakahSettingsDialog`) create controllers
-  in function scope without `dispose()`. Wrap each in a `StatefulWidget` sheet.
-- **`_processAlternativePayment` race**: local `setState` reduces pushkaAmount
-  *before* the Firestore write succeeds. If the user closes the app between
-  the two, the local reduction is lost. Make the Firestore write succeed first.
-- **Wallet l10n strings**: ~50 orphan getters in `lib/core/l10n/s.dart` were
-  left in place (dead but harmless). Remove in a future cleanup PR.
-- **`tenant_code_screen.dart`**: hard-coded Spanish strings in the picker UI.
-  Move to `s.dart` so the picker localizes for FR/EN/HE users.
-- **Backfill `_tenantSlugs`**: prod (`pushka-app-ioel`) tenants created before
-  the slug-lock collection was introduced don't have entries in
-  `_tenantSlugs/{slug}`. Without backfill, a malicious `createTenant` with
-  the same slug would succeed. Run a one-shot backfill before the next
-  `createTenant` is allowed in prod.
+- **Run `backfillTenantSlugs` once per prod environment**: the
+  `_tenantSlugs/{slug}` lock collection was introduced after some tenants
+  already existed in `pushka-app-ioel`, so those legacy tenants don't have
+  lock entries. Until the backfill runs, a malicious `createTenant` could
+  duplicate one of those slugs (no lock = no rejection). The function is
+  idempotent and super_admin-only. Run from a logged-in super_admin account:
+  ```
+  // Browser console on console.firebase.google.com (signed in as super_admin):
+  firebase.functions().httpsCallable('backfillTenantSlugs')().then(r => console.log(r.data));
+  // OR via the Flutter app (one-off):
+  await FirebaseFunctions.instance.httpsCallable('backfillTenantSlugs').call();
+  ```
+  Returns `{ scanned, created, skippedAlreadyExists, skippedNoSlug, conflicts }`.
+  Watch for `conflicts` — those are slugs whose lock points at a different
+  tenantId than expected (manual review needed). Already deployed + verified
+  in `pushka-app-ioel-test`. Run in prod (`pushka-app-ioel`) before the next
+  `createTenant` call there.
 
 ## For Claude (both Alans)
 
