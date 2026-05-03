@@ -1,5 +1,4 @@
 ﻿import 'dart:async';
-import 'dart:math' show pi, asin;
 import '../../../core/hive_cache.dart';
 import 'jewish_confetti.dart';
 import '../../../core/format_utils.dart';
@@ -821,7 +820,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                               ),
                               // Content offset so it starts after the streak rounded cap
                               padding: EdgeInsetsDirectional.fromSTEB(
-                                hasStreak ? streakContentPad + 42 : 20.0,
+                                hasStreak ? streakContentPad + 54 : 20.0,
                                 0, 12, 0),
                               alignment: Alignment.centerLeft,
                               child: Row(
@@ -894,14 +893,18 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                                     ],
                                   ),
                                 ),
-                                // Arc border that traces the right rounded cap
+                                // Separator: 1.5px line clipped by pill shape → closes perfectly
                                 Positioned.fill(
-                                  child: CustomPaint(
-                                    painter: _StreakRightCapBorder(
-                                      radius: h / 2,
-                                      color: Theme.of(context).brightness == Brightness.dark
-                                          ? const Color(0xFF0F172A)
-                                          : Colors.white,
+                                  child: ClipRRect(
+                                    borderRadius: BorderRadius.circular(h / 2),
+                                    child: Align(
+                                      alignment: Alignment.centerRight,
+                                      child: Container(
+                                        width: 1.5,
+                                        color: Theme.of(context).brightness == Brightness.dark
+                                            ? const Color(0xFF0F172A)
+                                            : Colors.white,
+                                      ),
                                     ),
                                   ),
                                 ),
@@ -2540,34 +2543,4 @@ class _HexBadge extends StatelessWidget {
   }
 }
 
-class _StreakRightCapBorder extends CustomPainter {
-  final double radius;
-  final Color color;
-  const _StreakRightCapBorder({required this.radius, required this.color});
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final paint = Paint()
-      ..color = color
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.5
-      ..strokeCap = StrokeCap.round;
-
-    // The right cap is a semicircle: center at (width - radius, radius), r = radius
-    final cx = size.width - radius;
-    final cy = size.height / 2;
-    // Inset 2px from top and bottom of the arc
-    final inset = asin((2.0).clamp(0, radius) / radius);
-    canvas.drawArc(
-      Rect.fromCircle(center: Offset(cx, cy), radius: radius),
-      -pi / 2 + inset,       // start 2px below top
-      pi - 2 * inset,        // sweep minus 2px on each end
-      false,
-      paint,
-    );
-  }
-
-  @override
-  bool shouldRepaint(_StreakRightCapBorder old) => old.radius != radius || old.color != color;
-}
 
