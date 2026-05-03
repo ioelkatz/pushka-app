@@ -1,4 +1,4 @@
-import 'dart:async';
+﻿import 'dart:async';
 import 'dart:math' as math;
 import '../../../core/hive_cache.dart';
 import 'jewish_confetti.dart';
@@ -572,12 +572,8 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
               children: [
             Row(
               mainAxisAlignment: MainAxisAlignment.center,
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.center,
               children: [
-                if (_streakCount > 0) _buildStreakBanner(AppTokens.cardSilver, AppTokens.primaryBlue),
-                if (_streakCount > 0 && activeHoliday != null) const SizedBox(width: 8),
-                if (activeHoliday != null) _buildHolidayBanner(activeHoliday),
+                _buildCombinedBanner(_streakCount, activeHoliday),
               ],
             ),
 
@@ -757,10 +753,15 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
     );
   }
 
-  Widget _buildStreakBanner(Color bgColor, Color brandBlue) {
-    if (_streakCount <= 0) return const SizedBox.shrink();
+  Widget _buildCombinedBanner(int streakCount, _HolidayInfo? holiday) {
+    final hasStreak = streakCount > 0;
+    final hasHoliday = holiday != null;
+    if (!hasStreak && !hasHoliday) return const SizedBox.shrink();
 
-    final colors = _streakColors(_streakCount);
+    final sc = hasStreak
+        ? _streakColors(streakCount)
+        : (const Color(0xFFFFD54F), const Color(0xFFFFC107));
+    const double h = 36.0;
 
     return Container(
       margin: const EdgeInsets.only(bottom: 4),
@@ -768,57 +769,123 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
         clipBehavior: Clip.none,
         children: [
           Container(
-            margin: const EdgeInsetsDirectional.only(start: 18),
-            padding: const EdgeInsetsDirectional.fromSTEB(28, 8, 16, 8),
+            margin: EdgeInsetsDirectional.only(start: hasStreak ? 18.0 : 0.0),
             decoration: BoxDecoration(
-              gradient: LinearGradient(
-                colors: [colors.$1, colors.$2],
-                begin: AlignmentDirectional.centerStart,
-                end: AlignmentDirectional.centerEnd,
-              ),
-              borderRadius: const BorderRadius.only(
-                topRight: Radius.circular(20),
-                bottomRight: Radius.circular(20),
-                topLeft: Radius.circular(4),
-                bottomLeft: Radius.circular(4),
-              ),
+              borderRadius: BorderRadius.circular(h / 2),
               boxShadow: [
                 BoxShadow(
-                  color: colors.$2.withValues(alpha: 0.3),
-                  blurRadius: 8,
-                  offset: const Offset(0, 3),
+                  color: sc.$2.withValues(alpha: 0.4),
+                  blurRadius: 10,
+                  offset: const Offset(0, 4),
                 ),
               ],
             ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  S.of(context).streakDays,
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 14,
-                    fontWeight: FontWeight.w700,
-                    letterSpacing: 0.3,
-                    shadows: [
-                      Shadow(
-                        color: Colors.black.withValues(alpha: 0.15),
-                        blurRadius: 2,
-                        offset: const Offset(0, 1),
-                      ),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(h / 2),
+              child: Stack(
+                children: [
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (hasStreak)
+                        Container(
+                          height: h,
+                          padding: const EdgeInsetsDirectional.fromSTEB(28, 0, 14, 0),
+                          decoration: BoxDecoration(
+                            gradient: LinearGradient(colors: [sc.$1, sc.$2]),
+                          ),
+                          alignment: Alignment.center,
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(
+                                S.of(context).streakDays,
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w700,
+                                  letterSpacing: 0.3,
+                                  shadows: [
+                                    Shadow(
+                                      color: Color(0x26000000),
+                                      blurRadius: 2,
+                                      offset: Offset(0, 1),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              const SizedBox(width: 5),
+                              const Icon(Icons.local_fire_department, color: Colors.white, size: 16),
+                            ],
+                          ),
+                        ),
+                      if (hasHoliday)
+                        GestureDetector(
+                          onTap: () { if (_isProcessing) return; _showHolidayDonationDialog(holiday); },
+                          child: Container(
+                            height: h,
+                            padding: EdgeInsets.symmetric(horizontal: hasStreak ? 10.0 : 16.0),
+                            decoration: const BoxDecoration(
+                              gradient: LinearGradient(
+                                colors: [Color(0xFFBF7A1E), Color(0xFF7A4A00)],
+                              ),
+                            ),
+                            alignment: Alignment.center,
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                if (hasStreak) ...[
+                                  Container(
+                                    width: 1,
+                                    height: 18,
+                                    color: const Color(0x4DFFFFFF),
+                                  ),
+                                  const SizedBox(width: 10),
+                                ],
+                                Text(
+                                  _holidayEmoji(holiday.nameEs),
+                                  style: const TextStyle(fontSize: 15),
+                                ),
+                                const SizedBox(width: 6),
+                                Text(
+                                  holiday.localizedName(S.of(context)),
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                                const SizedBox(width: 4),
+                                const Icon(Icons.chevron_right, color: Colors.white, size: 16),
+                              ],
+                            ),
+                          ),
+                        ),
                     ],
                   ),
-                ),
-                const SizedBox(width: 6),
-                const Icon(Icons.local_fire_department, color: Colors.white, size: 16),
-              ],
+                  Positioned.fill(
+                    child: IgnorePointer(
+                      child: DecoratedBox(
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(
+                            begin: Alignment.topCenter,
+                            end: const Alignment(0, 0.2),
+                            colors: const [Color(0x38FFFFFF), Color(0x00FFFFFF)],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
-          PositionedDirectional(
-            start: 0,
-            top: -2,
-            child: _HexBadge(count: _streakCount, color1: colors.$1, color2: colors.$2),
-          ),
+          if (hasStreak)
+            PositionedDirectional(
+              start: 0,
+              top: -2,
+              child: _HexBadge(count: streakCount, color1: sc.$1, color2: sc.$2),
+            ),
         ],
       ),
     );
@@ -836,60 +903,17 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
       _ => (const Color(0xFF5C6BC0), const Color(0xFF3949AB)),
     };
   }
+
   String _holidayEmoji(String name) {
     final lower = name.toLowerCase();
-    if (lower.contains('pesaj') || lower.contains('jitim') || lower.contains('ma\u0027ot')) return '\uD83E\uDED3\uD83E\uDED3';
-    if (lower.contains('shavuot')) return '\uD83C\uDF3E';
-    if (lower.contains('rosh')) return '\uD83C\uDF4E\uD83C\uDF6F';
-    if (lower.contains('kipur')) return '\uD83D\uDD4A\uFE0F';
-    if (lower.contains('sucot')) return '\uD83C\uDF34';
-    if (lower.contains('januc')) return '\uD83D\uDD6F\uFE0F';
-    if (lower.contains('purim')) return '\uD83C\uDF89';
-    return '\u2728';
-  }
-
-  Widget _buildHolidayBanner(_HolidayInfo holiday) {
-    final emoji = _holidayEmoji(holiday.nameEs);
-    return GestureDetector(
-      onTap: () { if (_isProcessing) return; _showHolidayDonationDialog(holiday); },
-      child: Container(
-        height: 34,
-        padding: const EdgeInsets.symmetric(horizontal: 12),
-        decoration: BoxDecoration(
-          gradient: const LinearGradient(
-            colors: [Color(0xFFE8912D), Color(0xFFD4790A)],
-          ),
-          borderRadius: BorderRadius.circular(20),
-          boxShadow: [
-            BoxShadow(
-              color: const Color(0xFFE8912D).withValues(alpha: 0.25),
-              blurRadius: 6,
-              offset: const Offset(0, 2),
-            ),
-          ],
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(emoji, style: const TextStyle(fontSize: 15)),
-            const SizedBox(width: 8),
-            Flexible(
-              child: Text(
-                holiday.localizedName(S.of(context)),
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 13,
-                  fontWeight: FontWeight.w700,
-                ),
-                overflow: TextOverflow.ellipsis,
-              ),
-            ),
-            const SizedBox(width: 6),
-            const Icon(Icons.chevron_right, color: Colors.white, size: 18),
-          ],
-        ),
-      ),
-    );
+    if (lower.contains('pesaj') || lower.contains('jitim') || lower.contains('ma\u0027ot')) return '🫓';
+    if (lower.contains('shavuot')) return '🌾';
+    if (lower.contains('rosh')) return '🍎';
+    if (lower.contains('kipur')) return '🕊️';
+    if (lower.contains('sucot')) return '🌴';
+    if (lower.contains('januc')) return '🕯️';
+    if (lower.contains('purim')) return '🎉';
+    return '✨';
   }
   Future<void> _showHolidayDonationDialog(_HolidayInfo holiday) async {
     final amountCtrl = TextEditingController();
