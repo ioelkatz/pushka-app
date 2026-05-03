@@ -225,137 +225,111 @@ class _SavedCardsScreenState extends ConsumerState<SavedCardsScreen> {
     required bool isDefault,
     required S tr,
   }) {
-    final gradient = _brandGradient(brand);
+    final cs = Theme.of(context).colorScheme;
+    final accent = _brandGradient(brand).$1; // single brand color, no gradient
     final mm = expMonth.toString().padLeft(2, '0');
     final yy = expYear.toString().padLeft(4, '0').substring(2);
     return Container(
       decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(16),
-        gradient: LinearGradient(
-          colors: [gradient.$1, gradient.$2],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
+        color: cs.surface,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: isDefault ? accent : cs.outlineVariant,
+          width: isDefault ? 1.4 : 1,
         ),
-        boxShadow: [
-          BoxShadow(
-            color: gradient.$1.withValues(alpha: 0.30),
-            blurRadius: 14,
-            offset: const Offset(0, 6),
-          ),
-        ],
       ),
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(18, 16, 8, 16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Top row: brand label + default pill + actions menu
-            Row(
-              children: [
-                Text(
-                  _brandLabel(brand).toUpperCase(),
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 13,
-                    fontWeight: FontWeight.w800,
-                    letterSpacing: 1.4,
-                  ),
-                ),
-                const SizedBox(width: 10),
-                if (isDefault)
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                    decoration: BoxDecoration(
-                      color: Colors.white.withValues(alpha: 0.22),
-                      borderRadius: BorderRadius.circular(20),
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        const Icon(Icons.star_rounded, size: 12, color: Colors.white),
-                        const SizedBox(width: 4),
-                        Text(
-                          tr.cardDefault,
-                          style: const TextStyle(
-                            fontSize: 10.5,
-                            color: Colors.white,
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                const Spacer(),
-                PopupMenuButton<String>(
-                  icon: const Icon(Icons.more_vert_rounded, color: Colors.white),
-                  onSelected: (value) {
-                    if (value == 'default') _setDefault(pmId);
-                    if (value == 'delete') _deleteCard(pmId);
-                  },
-                  itemBuilder: (_) => [
-                    if (!isDefault)
-                      PopupMenuItem(
-                        value: 'default',
-                        child: Row(
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(12),
+        child: IntrinsicHeight(
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              // Brand-colored vertical accent bar — the only color touch
+              Container(width: 4, color: accent),
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(14, 14, 4, 14),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisSize: MainAxisSize.min,
                           children: [
-                            const Icon(Icons.star_outline, size: 18),
-                            const SizedBox(width: 8),
-                            Text(tr.setAsDefault),
+                            Row(
+                              children: [
+                                Text(
+                                  _brandLabel(brand),
+                                  style: TextStyle(
+                                    fontSize: 15,
+                                    fontWeight: FontWeight.w600,
+                                    color: cs.onSurface,
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                Text(
+                                  '•••• $last4',
+                                  style: TextStyle(
+                                    fontSize: 15,
+                                    fontWeight: FontWeight.w500,
+                                    color: cs.onSurface,
+                                    fontFeatures: const [FontFeature.tabularFigures()],
+                                  ),
+                                ),
+                                if (isDefault) ...[
+                                  const SizedBox(width: 8),
+                                  Icon(Icons.check_circle, size: 14, color: accent),
+                                ],
+                              ],
+                            ),
+                            const SizedBox(height: 3),
+                            Text(
+                              '$mm/$yy',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: cs.onSurfaceVariant,
+                                fontFeatures: const [FontFeature.tabularFigures()],
+                              ),
+                            ),
                           ],
                         ),
                       ),
-                    PopupMenuItem(
-                      value: 'delete',
-                      child: Row(
-                        children: [
-                          const Icon(Icons.delete_outline, size: 18, color: Colors.red),
-                          const SizedBox(width: 8),
-                          Text(tr.deleteCard, style: const TextStyle(color: Colors.red)),
+                      PopupMenuButton<String>(
+                        icon: Icon(Icons.more_vert_rounded, color: cs.onSurfaceVariant),
+                        onSelected: (value) {
+                          if (value == 'default') _setDefault(pmId);
+                          if (value == 'delete') _deleteCard(pmId);
+                        },
+                        itemBuilder: (_) => [
+                          if (!isDefault)
+                            PopupMenuItem(
+                              value: 'default',
+                              child: Row(
+                                children: [
+                                  const Icon(Icons.star_outline, size: 18),
+                                  const SizedBox(width: 8),
+                                  Text(tr.setAsDefault),
+                                ],
+                              ),
+                            ),
+                          PopupMenuItem(
+                            value: 'delete',
+                            child: Row(
+                              children: [
+                                const Icon(Icons.delete_outline, size: 18, color: Colors.red),
+                                const SizedBox(width: 8),
+                                Text(tr.deleteCard, style: const TextStyle(color: Colors.red)),
+                              ],
+                            ),
+                          ),
                         ],
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
-              ],
-            ),
-            const SizedBox(height: 18),
-            // Middle: masked PAN
-            Text(
-              '••••  ••••  ••••  $last4',
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 19,
-                fontWeight: FontWeight.w600,
-                letterSpacing: 1.6,
-                fontFeatures: [FontFeature.tabularFigures()],
               ),
-            ),
-            const SizedBox(height: 14),
-            // Bottom row: expiry
-            Row(
-              children: [
-                Text(
-                  'EXP',
-                  style: TextStyle(
-                    color: Colors.white.withValues(alpha: 0.65),
-                    fontSize: 9,
-                    fontWeight: FontWeight.w700,
-                    letterSpacing: 1.0,
-                  ),
-                ),
-                const SizedBox(width: 6),
-                Text(
-                  '$mm/$yy',
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 13,
-                    fontWeight: FontWeight.w700,
-                    fontFeatures: [FontFeature.tabularFigures()],
-                  ),
-                ),
-              ],
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
