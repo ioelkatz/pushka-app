@@ -584,14 +584,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
             final content = Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-            SizedBox(
-              height: 46,
-              child: OverflowBox(
-                maxWidth: MediaQuery.of(context).size.width,
-                alignment: Alignment.center,
-                child: _buildCombinedBanner(_streakCount, activeHoliday),
-              ),
-            ),
+            _buildCombinedBanner(_streakCount, activeHoliday),
 
             SizedBox(height: topGap),
 
@@ -795,7 +788,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
         : (const Color(0xFFFFD54F), const Color(0xFFFFC107));
     const double h = 38.0;
     const double badgeSize = 34.0;
-    final double pillW = MediaQuery.of(context).size.width - 16;
+    final double pillW = MediaQuery.of(context).size.width - 32;
     // Estimated streak section width (left pad + content + right pad)
     const double streakContentPad = 165.0;
 
@@ -831,7 +824,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                               ),
                               // Content offset so it starts after the streak rounded cap
                               padding: EdgeInsetsDirectional.fromSTEB(
-                                hasStreak ? streakContentPad + 54 : 20.0,
+                                hasStreak ? streakContentPad + 68 : 20.0,
                                 0, 4, 0),
                               alignment: Alignment.centerLeft,
                               child: Row(
@@ -870,7 +863,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                             child: Stack(
                               children: [
                                 Container(
-                                  padding: const EdgeInsetsDirectional.fromSTEB(30, 0, 14, 0),
+                                  padding: const EdgeInsetsDirectional.fromSTEB(30, 0, 28, 0),
                                   decoration: BoxDecoration(
                                     gradient: LinearGradient(
                                       colors: [sc.$1, sc.$2],
