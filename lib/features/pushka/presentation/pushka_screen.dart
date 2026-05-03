@@ -838,105 +838,105 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
     const double h = 38.0;
     const double badgeSize = 34.0;
     final double pillW = MediaQuery.of(context).size.width - 32;
+    final double streakW = pillW - 120;
+    const double holidayW = 120.0;
 
-    return Container(
-      margin: const EdgeInsets.only(bottom: 4),
-      child: Stack(
-        clipBehavior: Clip.none,
-        children: [
-          SizedBox(
-            width: pillW,
-            child: Container(
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(h / 2),
-              ),
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(h / 2),
-                child: SizedBox(
-                  height: h,
-                  child: Stack(
-                    children: [
-                      // Holiday: fills entire pill background
-                      if (hasHoliday)
-                        Positioned.fill(
-                          child: GestureDetector(
-                            onTap: () { if (_isProcessing) return; _showHolidayDonationDialog(holiday); },
-                            child: Container(
-                              decoration: const BoxDecoration(
-                                gradient: LinearGradient(
-                                  colors: [Color(0xFF6B3800), Color(0xFF3A1A00)],
-                                  begin: Alignment.centerLeft,
-                                  end: Alignment.centerRight,
-                                ),
-                              ),
-                              // Content centered in the 50px holiday zone on the right
-                              padding: EdgeInsetsDirectional.fromSTEB(
-                                hasStreak ? pillW - 120 + 8 : 20.0,
-                                0, 4, 0),
-                              alignment: Alignment.centerLeft,
-                              child: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  _holidayIcon(holiday.nameEs, size: 26),
-                                  const SizedBox(width: 8),
-                                  Flexible(
-                                    child: Text(
-                                      holiday.localizedName(S.of(context)),
-                                      style: const TextStyle(
-                                        color: Colors.white,
-                                        fontSize: 15,
-                                        fontWeight: FontWeight.w800,
-                                        shadows: [
-                                          Shadow(
-                                            color: Color(0x33000000),
-                                            blurRadius: 3,
-                                            offset: Offset(0, 1),
-                                          ),
-                                        ],
-                                      ),
-                                      overflow: TextOverflow.ellipsis,
-                                    ),
+    // Both together: full pill. Solo: the individual width, centered.
+    final bool both = hasStreak && hasHoliday;
+    final double containerW = both ? pillW : (hasStreak ? streakW : holidayW);
+
+    final pill = SizedBox(
+      width: containerW,
+      child: Container(
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(h / 2),
+        ),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(h / 2),
+          child: SizedBox(
+            height: h,
+            child: Stack(
+              children: [
+                // Holiday: fills entire pill background
+                if (hasHoliday)
+                  Positioned.fill(
+                    child: GestureDetector(
+                      onTap: () { if (_isProcessing) return; _showHolidayDonationDialog(holiday); },
+                      child: Container(
+                        decoration: const BoxDecoration(
+                          gradient: LinearGradient(
+                            colors: [Color(0xFF6B3800), Color(0xFF3A1A00)],
+                            begin: Alignment.centerLeft,
+                            end: Alignment.centerRight,
+                          ),
+                        ),
+                        // Combined: content pushed to the right 120px zone.
+                        // Alone: content centered within the 120px pill.
+                        padding: both
+                            ? EdgeInsetsDirectional.fromSTEB(streakW + 8, 0, 4, 0)
+                            : const EdgeInsets.symmetric(horizontal: 8),
+                        alignment: Alignment.center,
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            _holidayIcon(holiday.nameEs, size: 26),
+                            const SizedBox(width: 6),
+                            Text(
+                              holiday.localizedName(S.of(context)),
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 15,
+                                fontWeight: FontWeight.w800,
+                                shadows: [
+                                  Shadow(
+                                    color: Color(0x33000000),
+                                    blurRadius: 3,
+                                    offset: Offset(0, 1),
                                   ),
                                 ],
                               ),
+                              overflow: TextOverflow.ellipsis,
                             ),
-                          ),
+                          ],
                         ),
-                      // Streak: fills all but the last 50px (holiday zone on the right)
-                      if (hasStreak)
-                        Positioned(
-                          left: 0, top: 0, bottom: 0,
-                          child: SizedBox(
-                            width: pillW - 120,
-                            child: Container(
-                              padding: const EdgeInsetsDirectional.fromSTEB(50, 0, 20, 0),
-                              decoration: BoxDecoration(
-                                gradient: LinearGradient(
-                                  colors: [sc.$1, sc.$2],
-                                  begin: Alignment.centerLeft,
-                                  end: Alignment.centerRight,
-                                ),
-                                borderRadius: BorderRadius.circular(h / 2),
+                      ),
+                    ),
+                  ),
+                // Streak: combined → fills all but 120px; alone → fills full pill
+                if (hasStreak)
+                  Positioned(
+                    left: 0, top: 0, bottom: 0,
+                    child: SizedBox(
+                      width: both ? streakW : containerW,
+                      child: Container(
+                        padding: const EdgeInsetsDirectional.fromSTEB(50, 0, 20, 0),
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(
+                            colors: [sc.$1, sc.$2],
+                            begin: Alignment.centerLeft,
+                            end: Alignment.centerRight,
+                          ),
+                          borderRadius: BorderRadius.circular(h / 2),
+                        ),
+                        alignment: Alignment.center,
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              S.of(context).streakDays,
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 16,
+                                fontWeight: FontWeight.w800,
+                                letterSpacing: 0.2,
+                                shadows: [
+                                  Shadow(
+                                    color: Color(0x33000000),
+                                    blurRadius: 3,
+                                    offset: Offset(0, 1),
+                                  ),
+                                ],
                               ),
-                              alignment: Alignment.center,
-                              child: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Text(
-                                    S.of(context).streakDays,
-                                    style: const TextStyle(
-                                      color: Colors.white,
-                                      fontSize: 16,
-                                      fontWeight: FontWeight.w800,
-                                      letterSpacing: 0.2,
-                                      shadows: [
-                                        Shadow(
-                                          color: Color(0x33000000),
-                                          blurRadius: 3,
-                                          offset: Offset(0, 1),
-                                        ),
-                                      ],
-                                    ),
                                   ),
                                   const SizedBox(width: 6),
                                   const Icon(Icons.local_fire_department, color: Colors.white, size: 18),
@@ -959,21 +959,29 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                           ),
                         ),
                       ),
-                    ],
-                  ),
-                ),
-              ),
+              ],
             ),
           ),
-          // Gem badge
-          if (hasStreak)
-            PositionedDirectional(
-              start: 4,
-              top: -(badgeSize - h) / 2,
-              child: _HexBadge(count: streakCount, color1: sc.$1, color2: sc.$2),
-            ),
-        ],
+        ),
       ),
+    );
+
+    final Widget stack = Stack(
+      clipBehavior: Clip.none,
+      children: [
+        pill,
+        if (hasStreak)
+          PositionedDirectional(
+            start: 4,
+            top: -(badgeSize - h) / 2,
+            child: _HexBadge(count: streakCount, color1: sc.$1, color2: sc.$2),
+          ),
+      ],
+    );
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 4),
+      child: both ? stack : Align(alignment: Alignment.center, child: stack),
     );
   }
 
