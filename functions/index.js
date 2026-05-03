@@ -1983,7 +1983,7 @@ exports.processPushkaAutoEmpty = onSchedule(
           if (currentAmount < minBalance) { advanceNormalOnly(); return; }
 
           const customerId = String(userData.stripeCustomerId || "").trim();
-          const pmId = String(userData.stripeDefaultPaymentMethodId || "").trim();
+          const pmId = String(state.autoEmptyPaymentMethodId || userData.stripeDefaultPaymentMethodId || "").trim();
           if (!customerId || !pmId) {
             console.warn("processPushkaAutoEmpty: no_saved_card", { uid, tenantId });
             advanceNormalOnly();

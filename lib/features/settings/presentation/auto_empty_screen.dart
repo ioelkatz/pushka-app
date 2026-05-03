@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 
 import '../../users/data/user_repository.dart';
 import '../../users/presentation/user_profile_provider.dart';
@@ -28,10 +29,34 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
   bool _topOffEnabled = false;
   double? _topOffAmount;
 
+  // Saved cards for the card picker
+  List<Map<String, dynamic>> _cards = [];
+  bool _loadingCards = false;
+  String? _selectedCardId;  // null = use current default
+
   @override
   void dispose() {
     _amountController.dispose();
     super.dispose();
+  }
+
+  Future<void> _loadCards() async {
+    if (_loadingCards) return;
+    setState(() => _loadingCards = true);
+    try {
+      final callable = FirebaseFunctions.instance.httpsCallable('listSavedCards');
+      final result = await callable.call({});
+      if (!mounted) return;
+      final data = result.data as Map<dynamic, dynamic>;
+      final rawCards = data['cards'] as List<dynamic>? ?? [];
+      setState(() {
+        _cards = rawCards.map((c) => Map<String, dynamic>.from(c as Map)).toList();
+      });
+    } catch (_) {
+      // Si falla la carga de tarjetas, el selector simplemente no aparece.
+    } finally {
+      if (mounted) setState(() => _loadingCards = false);
+    }
   }
 
   @override
@@ -51,7 +76,7 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
     final needsCardWarning = _frequency != 'manual' && !hasSavedCard;
 
     if (!_loaded && tenantState != null) {
-      _loaded = true; // set synchronously so subsequent rebuilds never enqueue a second callback
+      _loaded = true;
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
         setState(() {
@@ -59,11 +84,12 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
           _savedFrequency = _frequency;
           _weekday = (tenantState['autoEmptyWeekday'] as num?)?.toInt() ?? DateTime.monday;
           _dayOfMonth = (tenantState['autoEmptyDayOfMonth'] as num?)?.toInt() ?? 1;
-          _topOffEnabled =
-              (tenantState['autoEmptyTopOffEnabled'] as bool?) ?? false;
+          _topOffEnabled = (tenantState['autoEmptyTopOffEnabled'] as bool?) ?? false;
           _topOffAmount = (tenantState['autoEmptyTopOffAmount'] as num?)?.toDouble();
           _amountController.text = _topOffAmount?.toStringAsFixed(0) ?? '';
+          _selectedCardId = tenantState['autoEmptyPaymentMethodId'] as String?;
         });
+        if (_frequency != 'manual') _loadCards();
       });
     }
 
@@ -110,6 +136,7 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
                 ],
                 onChanged: (value) {
                   if (value == null) return;
+                  final wasManual = _frequency == 'manual';
                   setState(() {
                     _frequency = value;
                     if (_frequency == 'weekly') {
@@ -121,6 +148,9 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
                     _amountController.text =
                         _topOffAmount?.toStringAsFixed(0) ?? '';
                   });
+                  if (wasManual && value != 'manual' && _cards.isEmpty) {
+                    _loadCards();
+                  }
                 },
               ),
               const SizedBox(height: 16),
@@ -225,6 +255,20 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
                   _dayOfMonth.toString(),
                   _showMonthlyDialog,
                 ),
+                const SizedBox(height: 20),
+              ],
+              if (_frequency != 'manual' && (_loadingCards || _cards.isNotEmpty)) ...[
+                Text(
+                  tr.cardForAutoEmpty,
+                  style: const TextStyle(fontWeight: FontWeight.w600),
+                ),
+                const SizedBox(height: 8),
+                _loadingCards
+                    ? const Center(child: Padding(
+                        padding: EdgeInsets.symmetric(vertical: 12),
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      ))
+                    : _buildCardSelector(tr),
                 const SizedBox(height: 20),
               ],
               if (_frequency != 'manual') ...[
@@ -370,6 +414,79 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
         ),
       ),
     );
+  }
+
+  Widget _buildCardSelector(S tr) {
+    final cs = Theme.of(context).colorScheme;
+    return Column(
+      children: _cards.map((card) {
+        final pmId = card['id'] as String;
+        final brand = (card['brand'] as String? ?? 'card').toLowerCase();
+        final last4 = card['last4'] as String? ?? '****';
+        final isSelected = _selectedCardId == pmId ||
+            (_selectedCardId == null && card['isDefault'] == true);
+        return InkWell(
+          onTap: () => setState(() => _selectedCardId = pmId),
+          borderRadius: BorderRadius.circular(8),
+          child: Container(
+            margin: const EdgeInsets.only(bottom: 8),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(
+                color: isSelected ? cs.primary : cs.outlineVariant,
+                width: isSelected ? 2 : 1,
+              ),
+            ),
+            child: Row(
+              children: [
+                Icon(
+                  isSelected ? Icons.radio_button_checked : Icons.radio_button_off,
+                  color: isSelected ? cs.primary : cs.outlineVariant,
+                  size: 20,
+                ),
+                const SizedBox(width: 10),
+                Text(
+                  '${_brandLabel(brand)}  ···· $last4',
+                  style: TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w500,
+                    color: cs.onSurface,
+                  ),
+                ),
+                if (card['isDefault'] == true) ...[
+                  const SizedBox(width: 8),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: cs.primaryContainer,
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                    child: Text(
+                      tr.cardDefault,
+                      style: TextStyle(fontSize: 11, color: cs.onPrimaryContainer, fontWeight: FontWeight.w600),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        );
+      }).toList(),
+    );
+  }
+
+  String _brandLabel(String brand) {
+    const labels = {
+      'visa': 'Visa',
+      'mastercard': 'Mastercard',
+      'amex': 'Amex',
+      'discover': 'Discover',
+      'jcb': 'JCB',
+      'unionpay': 'UnionPay',
+      'dinersclub': 'Diners',
+    };
+    return labels[brand] ?? brand;
   }
 
   Widget _buildSelectTile(String value, VoidCallback onTap) {
@@ -583,6 +700,8 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
           _frequency == 'manual' ? null : (_topOffAmount ?? 0),
       autoEmptyNextRunAt: nextRunAt,
       autoEmptyClearNextRunAt: _frequency == 'manual',
+      autoEmptyPaymentMethodId: _frequency != 'manual' ? _selectedCardId : null,
+      autoEmptyClearPaymentMethodId: _frequency == 'manual',
     );
   }
 

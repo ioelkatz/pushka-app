@@ -789,6 +789,7 @@ class S {
     'אני מסכים ומפעיל',
   );
   String get autoEmptyConsentCancel => _t('Cancelar', 'Cancel', 'Annuler', 'ביטול');
+  String get cardForAutoEmpty => _t('Tarjeta para el cobro automático', 'Card for automatic charge', 'Carte pour le prélèvement automatique', 'כרטיס לחיוב אוטומטי');
   String get dayMonFull => _t('Lunes', 'Monday', 'Lundi', 'שני');
   String get dayTueFull => _t('Martes', 'Tuesday', 'Mardi', 'שלישי');
   String get dayWedFull => _t('Miércoles', 'Wednesday', 'Mercredi', 'רביעי');

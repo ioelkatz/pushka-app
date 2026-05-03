@@ -170,6 +170,8 @@ class UserRepository {
     double? autoEmptyTopOffAmount,
     DateTime? autoEmptyNextRunAt,
     bool autoEmptyClearNextRunAt = false,
+    String? autoEmptyPaymentMethodId,
+    bool autoEmptyClearPaymentMethodId = false,
   }) async {
     final data = <String, dynamic>{
       'uid': uid,
@@ -192,6 +194,8 @@ class UserRepository {
       data['autoEmptyNextRunAt'] = Timestamp.fromDate(autoEmptyNextRunAt);
     }
     if (autoEmptyClearNextRunAt) data['autoEmptyNextRunAt'] = null;
+    if (autoEmptyPaymentMethodId != null) data['autoEmptyPaymentMethodId'] = autoEmptyPaymentMethodId;
+    if (autoEmptyClearPaymentMethodId) data['autoEmptyPaymentMethodId'] = null;
     await _tenantState(uid).doc(tenantId).set(data, SetOptions(merge: true));
   }
 
