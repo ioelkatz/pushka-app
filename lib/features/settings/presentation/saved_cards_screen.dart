@@ -220,7 +220,7 @@ class _SavedCardsScreenState extends ConsumerState<SavedCardsScreen> {
               style: ElevatedButton.styleFrom(
                 backgroundColor: const Color(0xFFE05A4F),
                 foregroundColor: Colors.white,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
               ),
               child: Text(tr.deleteConfirm),
             ),
@@ -246,7 +246,7 @@ class _SavedCardsScreenState extends ConsumerState<SavedCardsScreen> {
               style: ElevatedButton.styleFrom(
                 backgroundColor: const Color(0xFFE05A4F),
                 foregroundColor: Colors.white,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
               ),
               child: Text(tr.deleteConfirm),
             ),
@@ -435,7 +435,7 @@ class _SavedCardsScreenState extends ConsumerState<SavedCardsScreen> {
 
     return InkWell(
       onTap: () => _showCardActionsSheet(pmId, brand, last4, isDefault, nickname, tr),
-      borderRadius: BorderRadius.circular(8),
+      borderRadius: BorderRadius.circular(12),
       child: Padding(
       padding: const EdgeInsets.symmetric(vertical: 8),
       child: Row(

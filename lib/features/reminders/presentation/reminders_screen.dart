@@ -37,11 +37,16 @@ class _RemindersScreenState extends ConsumerState<RemindersScreen> {
                     );
                   }
 
+                  // ListView.separated with a transparent SizedBox spacer so
+                  // each reminder reads as its own outlined card, matching
+                  // the Settings + Wallet visual language. Replaces the old
+                  // edge-to-edge Divider list which felt visually inconsistent
+                  // with the rest of the app.
                   return ListView.separated(
                     padding: const EdgeInsets.symmetric(
-                        horizontal: 18, vertical: 12),
+                        horizontal: 20, vertical: 16),
                     itemCount: reminders.length,
-                    separatorBuilder: (context, i) => const Divider(height: 1, thickness: 1),
+                    separatorBuilder: (context, i) => const SizedBox(height: 12),
                     itemBuilder: (context, index) {
                       final reminder = reminders[index];
                       return Dismissible(
@@ -50,7 +55,10 @@ class _RemindersScreenState extends ConsumerState<RemindersScreen> {
                         background: Container(
                           alignment: AlignmentDirectional.centerEnd,
                           padding: const EdgeInsetsDirectional.only(end: 20),
-                          color: Colors.red.shade50,
+                          decoration: BoxDecoration(
+                            color: Colors.red.shade50,
+                            borderRadius: BorderRadius.circular(12),
+                          ),
                           child: Icon(Icons.delete_outline,
                               color: Colors.red.shade400),
                         ),
@@ -140,18 +148,27 @@ class _RemindersScreenState extends ConsumerState<RemindersScreen> {
     required VoidCallback onEdit,
   }) {
     final tr = S.of(context);
+    final cs = Theme.of(context).colorScheme;
     final subtitle = reminder.subtitleFor(tr);
     final subtitle2 = reminder.subtitleSecondaryFor(tr);
 
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 4),
-      child: Row(
-        children: [
-          Expanded(
-            child: InkWell(
-              onTap: onEdit,
-              child: Padding(
-                padding: const EdgeInsets.symmetric(vertical: 16),
+    // Outlined surface container — same recipe as Settings' _buildActionButton
+    // and Wallet's _ActionRow, so the three screens share one visual language.
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onEdit,
+        borderRadius: BorderRadius.circular(12),
+        child: Container(
+          padding: const EdgeInsets.fromLTRB(16, 12, 8, 12),
+          decoration: BoxDecoration(
+            color: cs.surface,
+            border: Border.all(color: cs.outline),
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Row(
+            children: [
+              Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
@@ -160,7 +177,7 @@ class _RemindersScreenState extends ConsumerState<RemindersScreen> {
                       style: TextStyle(
                         fontSize: 16,
                         fontWeight: FontWeight.w700,
-                        color: Theme.of(context).colorScheme.onSurface,
+                        color: cs.onSurface,
                       ),
                     ),
                     const SizedBox(height: 4),
@@ -169,7 +186,7 @@ class _RemindersScreenState extends ConsumerState<RemindersScreen> {
                       style: TextStyle(
                         fontSize: 14,
                         fontWeight: FontWeight.w400,
-                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                        color: cs.onSurfaceVariant,
                       ),
                     ),
                     if (subtitle2 != null) ...[
@@ -179,20 +196,20 @@ class _RemindersScreenState extends ConsumerState<RemindersScreen> {
                         style: TextStyle(
                           fontSize: 14,
                           fontWeight: FontWeight.w400,
-                          color: Theme.of(context).colorScheme.onSurfaceVariant,
+                          color: cs.onSurfaceVariant,
                         ),
                       ),
                     ],
                   ],
                 ),
               ),
-            ),
+              Switch(
+                value: reminder.isEnabled,
+                onChanged: onToggle,
+              ),
+            ],
           ),
-          Switch(
-            value: reminder.isEnabled,
-            onChanged: onToggle,
-          ),
-        ],
+        ),
       ),
     );
   }

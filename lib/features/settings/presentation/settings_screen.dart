@@ -20,6 +20,7 @@ import 'package:go_router/go_router.dart';
 
 import 'package:url_launcher/url_launcher.dart';
 
+import 'auto_empty_action_row.dart';
 import 'auto_empty_screen.dart';
 import 'card_brand_box.dart';
 import '../../../core/l10n/s.dart';
@@ -178,13 +179,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           // EMPTY PUSHKA
           _buildLabel(tr.emptyPushkaSetting),
           const SizedBox(height: 6),
-          _buildActionButton(
-            switch ((tenantState?['autoEmptyFrequency'] as String?) ?? 'manual') {
-              'weekly'           => tr.freqWeekly,
-              'monthly'          => tr.freqMonthly,
-              'erev_rosh_chodesh'=> tr.freqErevRosh,
-              _                  => tr.manualEmpty,
-            },
+          AutoEmptyActionRow(
             onTap: () {
               Navigator.of(context, rootNavigator: true).push(
                 MaterialPageRoute(builder: (_) => const AutoEmptyScreen()),
@@ -485,7 +480,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 side: BorderSide(color: red, width: 2),
                 padding: const EdgeInsets.symmetric(vertical: 14),
                 shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(8),
+                  borderRadius: BorderRadius.circular(12),
                 ),
               ),
               child: Text(
@@ -799,13 +794,13 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
     return InkWell(
       onTap: () => context.go('/settings/saved-cards'),
-      borderRadius: BorderRadius.circular(8),
+      borderRadius: BorderRadius.circular(12),
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
         decoration: BoxDecoration(
           color: cs.surface,
           border: Border.all(color: cs.outline),
-          borderRadius: BorderRadius.circular(8),
+          borderRadius: BorderRadius.circular(12),
         ),
         child: Row(
           children: [
@@ -828,16 +823,12 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   ? Text.rich(
                       TextSpan(
                         style: TextStyle(
-                          fontSize: 15,
-                          fontWeight: FontWeight.w600,
+                          fontSize: 16,
+                          fontWeight: FontWeight.w500,
                           color: cs.onSurface,
                         ),
                         children: [
                           TextSpan(text: '${cardBrandLabel(brand)} '),
-                          // Same WidgetSpan trick as saved_cards_screen — drop
-                          // the asterisks ~3px so they sit on the midline
-                          // instead of riding the cap-height (which makes
-                          // "**** 4242" look top-heavy in the system font).
                           WidgetSpan(
                             alignment: PlaceholderAlignment.middle,
                             child: Transform.translate(
@@ -845,8 +836,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                               child: Text(
                                 '****',
                                 style: TextStyle(
-                                  fontSize: 15,
-                                  fontWeight: FontWeight.w600,
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w500,
                                   color: cs.onSurface,
                                   height: 1.0,
                                 ),
@@ -922,7 +913,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   Widget _buildOrgLink({required IconData icon, required String label, required VoidCallback onTap}) {
     return InkWell(
       onTap: onTap,
-      borderRadius: BorderRadius.circular(8),
+      borderRadius: BorderRadius.circular(12),
       child: Padding(
         padding: const EdgeInsets.symmetric(vertical: 10),
         child: Row(
@@ -982,7 +973,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         decoration: BoxDecoration(
           color: Theme.of(context).colorScheme.surface,
           border: Border.all(color: Theme.of(context).colorScheme.outline),
-          borderRadius: BorderRadius.circular(8),
+          borderRadius: BorderRadius.circular(12),
         ),
         child: Text(
           value,
@@ -1021,7 +1012,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 decoration: BoxDecoration(
                   color: Theme.of(context).colorScheme.surface,
                   border: Border.all(color: Theme.of(context).colorScheme.outline),
-                  borderRadius: BorderRadius.circular(8),
+                  borderRadius: BorderRadius.circular(12),
                 ),
                 alignment: Alignment.center,
                 child: Text(
@@ -1048,7 +1039,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         decoration: BoxDecoration(
           color: Theme.of(context).colorScheme.surface,
           border: Border.all(color: Theme.of(context).colorScheme.outline),
-          borderRadius: BorderRadius.circular(8),
+          borderRadius: BorderRadius.circular(12),
         ),
         child: Row(
           children: [
@@ -1081,7 +1072,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         decoration: BoxDecoration(
           color: Theme.of(context).colorScheme.surface,
           border: Border.all(color: Theme.of(context).colorScheme.outline),
-          borderRadius: BorderRadius.circular(8),
+          borderRadius: BorderRadius.circular(12),
         ),
         child: Row(
           children: [
@@ -1137,7 +1128,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       decoration: BoxDecoration(
         color: Theme.of(context).colorScheme.surface,
         border: Border.all(color: Theme.of(context).colorScheme.outline),
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(12),
       ),
       child: DropdownButtonFormField<String>(
         initialValue: currentLocale.languageCode,
@@ -1266,7 +1257,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
   Widget _buildEditableField(String label, String value, {required VoidCallback onEdit}) {
     return InkWell(
-      borderRadius: BorderRadius.circular(8),
+      borderRadius: BorderRadius.circular(12),
       onTap: onEdit,
       child: Padding(
         padding: const EdgeInsets.symmetric(vertical: 2),
@@ -1336,7 +1327,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
       decoration: BoxDecoration(
         color: cs.primary.withValues(alpha: 0.1),
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(12),
       ),
       child: Row(mainAxisSize: MainAxisSize.min, children: [
         Icon(icon, size: 16, color: cs.primary),

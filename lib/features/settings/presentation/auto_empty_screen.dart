@@ -124,7 +124,7 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
               DropdownButtonFormField<String>(initialValue: _frequency,
                 decoration: InputDecoration(
                   border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(8),
+                    borderRadius: BorderRadius.circular(12),
                   ),
                   contentPadding:
                       const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
@@ -331,7 +331,7 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
                     filled: !_topOffEnabled,
                     fillColor: Theme.of(context).colorScheme.surfaceContainerHighest,
                     border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(8),
+                      borderRadius: BorderRadius.circular(12),
                     ),
                   ),
                   onChanged: (value) {
@@ -444,12 +444,12 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
             (_selectedCardId == null && card['isDefault'] == true);
         return InkWell(
           onTap: () => setState(() => _selectedCardId = pmId),
-          borderRadius: BorderRadius.circular(8),
+          borderRadius: BorderRadius.circular(12),
           child: Container(
             margin: const EdgeInsets.only(bottom: 8),
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
             decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(8),
+              borderRadius: BorderRadius.circular(12),
               border: Border.all(
                 color: isSelected ? cs.primary : cs.outlineVariant,
                 width: isSelected ? 2 : 1,
@@ -501,7 +501,7 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
         decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(8),
+          borderRadius: BorderRadius.circular(12),
           border: Border.all(color: Colors.grey.shade300),
         ),
         child: Row(

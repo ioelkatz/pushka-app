@@ -98,6 +98,35 @@ class S {
     'Appuyez pour ajouter une carte',
     'הקש להוספת כרטיס',
   );
+  String get walletAutoEmptyActiveTitle => _t(
+    'Vaciado automático',
+    'Auto-empty',
+    'Vidage automatique',
+    'ריקון אוטומטי',
+  );
+  String get walletAutoEmptyInactiveTitle => _t(
+    'Activar vaciado automático',
+    'Enable auto-empty',
+    'Activer le vidage automatique',
+    'הפעלת ריקון אוטומטי',
+  );
+  String get walletAutoEmptyInactiveSubtitle => _t(
+    'Programá vaciados recurrentes con una tarjeta guardada.',
+    'Schedule recurring empties with a saved card.',
+    'Planifiez des vidages récurrents avec une carte enregistrée.',
+    'תזמן ריקון חוזר עם כרטיס שמור.',
+  );
+  String get walletLastDonationTitle => _t(
+    'Última donación',
+    'Last donation',
+    'Dernier don',
+    'התרומה האחרונה',
+  );
+  String get today => _t('Hoy', 'Today', 'Aujourd\'hui', 'היום');
+  String get yesterday => _t('Ayer', 'Yesterday', 'Hier', 'אתמול');
+  String get tomorrow => _t('Mañana', 'Tomorrow', 'Demain', 'מחר');
+  String daysAgo(int n) => _t('Hace $n días', '$n days ago', 'Il y a $n jours', 'לפני $n ימים');
+
   String get walletSavedCardsSubtitle => _t(
     'Tus tarjetas guardadas para donar y vaciar pushka.',
     'Your saved cards for donating and emptying pushka.',
@@ -1082,7 +1111,7 @@ class S {
   // SAVED CARDS
   // ---------------------------------------------------------------------------
 
-  String get savedCards => _t('Tarjeta guardada', 'Saved card', 'Carte enregistrée', 'כרטיס שמור');
+  String get savedCards => _t('Tarjetas guardadas', 'Saved cards', 'Cartes enregistrées', 'כרטיסים שמורים');
   String get myCards => _t('Mis tarjetas', 'My cards', 'Mes cartes', 'הכרטיסים שלי');
   String get noCardsYet => _t('Sin tarjetas guardadas', 'No saved cards', 'Aucune carte enregistrée', 'אין כרטיסים שמורים');
   String get noSavedCards => _t(
