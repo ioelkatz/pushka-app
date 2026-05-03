@@ -573,7 +573,8 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
             final content = Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-            Align(
+            OverflowBox(
+              maxWidth: MediaQuery.of(context).size.width,
               alignment: Alignment.center,
               child: _buildCombinedBanner(_streakCount, activeHoliday),
             ),
