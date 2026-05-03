@@ -570,8 +570,16 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
             final content = Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-            Center(child: _buildStreakBanner(AppTokens.cardSilver, AppTokens.primaryBlue)),
-            if (activeHoliday != null) Center(child: _buildHolidayBanner(activeHoliday)),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                if (_streakCount > 0) _buildStreakBanner(AppTokens.cardSilver, AppTokens.primaryBlue),
+                if (_streakCount > 0 && activeHoliday != null) const SizedBox(width: 8),
+                if (activeHoliday != null) _buildHolidayBanner(activeHoliday),
+              ],
+            ),
 
             SizedBox(height: topGap),
 
@@ -755,7 +763,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
     final colors = _streakColors(_streakCount);
 
     return Container(
-      margin: const EdgeInsets.only(bottom: 6),
+      margin: const EdgeInsets.only(bottom: 4),
       child: Stack(
         clipBehavior: Clip.none,
         children: [
@@ -845,7 +853,6 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
     return GestureDetector(
       onTap: () { if (_isProcessing) return; _showHolidayDonationDialog(holiday); },
       child: Container(
-        margin: const EdgeInsets.only(top: 6),
         height: 34,
         padding: const EdgeInsets.symmetric(horizontal: 12),
         decoration: BoxDecoration(

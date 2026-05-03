@@ -8,7 +8,7 @@ final themeModeProvider =
   final initial = switch (saved) {
     'light'  => ThemeMode.light,
     'dark'   => ThemeMode.dark,
-    _        => ThemeMode.system,
+    _        => ThemeMode.light,
   };
   return ThemeModeNotifier(initial);
 });
