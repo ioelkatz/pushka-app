@@ -278,7 +278,6 @@ class S {
   String get enterAmount => _t('Ingresa monto', 'Enter amount', 'Entrez le montant', 'הכנס סכום');
   String get addToBalance => _t('Agregar al saldo', 'Add to balance', 'Ajouter au solde', 'הוסף ליתרה');
   String fundsAdded(String amount) => _t('Fondos agregados: $amount', 'Funds added: $amount', 'Fonds ajoutés : $amount', 'כספים נוספו: $amount');
-  String walletIdCopied(String id) => _t('ID de billetera copiado: $id', 'Wallet ID copied: $id', 'ID du portefeuille copié : $id', 'מזהה הארנק הועתק: $id');
   String get setFundsSubtitle => _t(
     'Aparta fondos ahora para vaciar tu Pushka después',
     'Set aside funds now to empty your Pushka later',
@@ -286,14 +285,6 @@ class S {
     'הפרש כספים עכשיו לריקון הפושקה מאוחר יותר',
   );
   String get learnMore => _t('Aprender más', 'Learn more', 'En savoir plus', 'למידע נוסף');
-  String get walletInfoTitle => _t('¿Cómo funciona la billetera?', 'How does the wallet work?', 'Comment fonctionne le portefeuille ?', 'איך עובד הארנק?');
-  String get walletInfoBody => _t(
-    'La billetera Pushka te permite:\n\n• Cargar fondos con tarjeta de crédito.\n• Vaciar tu Pushka física instantáneamente.\n• Enviar o solicitar donaciones a familiares y amigos.\n• Programar recargas automáticas.',
-    'The Pushka wallet allows you to:\n\n• Load funds securely with a credit card.\n• Empty your physical Pushka instantly.\n• Send or request donations to family and friends.\n• Schedule automatic top-ups.',
-    'Le portefeuille Pushka vous permet de :\n\n• Charger des fonds par carte de crédit.\n• Vider votre Pushka physique instantanément.\n• Envoyer ou recevoir des dons.\n• Programmer des recharges automatiques.',
-    'ארנק הפושקה מאפשר לך:\n\n• לטעון כספים בכרטיס אשראי.\n• לרוקן את הפושקה הפיזית מיידית.\n• לשלוח או לבקש תרומות ממשפחה וחברים.\n• לתזמן טעינות אוטומטיות.',
-  );
-  String get yourWalletId => _t('Tu ID de billetera', 'Your wallet ID', 'Votre ID de portefeuille', 'מזהה הארנק שלך');
   String get balanceLabel => _t('SALDO', 'BALANCE', 'SOLDE', 'יתרה');
   String get addFundsBtn => _t('+ Agregar fondos', '+ Add funds', '+ Ajouter des fonds', '+ הוסף כספים');
   String get sendRequest => _t('Enviar / Solicitar entre billeteras', 'Send / Request between wallets', 'Envoyer / Demander entre portefeuilles', 'שלח / בקש בין ארנקים');
@@ -821,7 +812,6 @@ class S {
     "Sélectionnez un contact pour envoyer ou demander de l'argent.",
     'בחר קשר לשליחה או בקשת כסף.',
   );
-  String get invalidWalletId => _t('Ingresa un ID de billetera válido', 'Enter a valid wallet ID', 'Entrez un ID de portefeuille valide', 'הכנס מזהה ארנק תקין');
   String get contactAdded => _t('Contacto agregado', 'Contact added', 'Contact ajouté', 'קשר נוסף');
   String get verification => _t('Verificación', 'Verification', 'Vérification', 'אימות');
   String get verificationBody => _t(
@@ -830,9 +820,6 @@ class S {
     "Pour envoyer ou demander de la tsédaka, vérifiez d'abord le contact :\n• Scannez leur ID de portefeuille (en haut à droite de cet écran), ou\n• Entrez le code à 8 chiffres qu'ils vous partagent.",
     'כדי לשלוח או לבקש צדקה, אמת קודם את הקשר:\n• סרוק את מזהה הארנק שלו (למעלה מימין במסך זה), או\n• הכנס את הקוד בן 8 הספרות שהוא שיתף איתך.',
   );
-  String get scanWalletId => _t('Escanear ID de billetera', 'Scan wallet ID', "Scanner l'ID du portefeuille", 'סרוק מזהה ארנק');
-  String get enterWalletId => _t('Ingresar ID de billetera', 'Enter wallet ID', "Entrer l'ID du portefeuille", 'הכנס מזהה ארנק');
-  String get writeWalletId => _t('Escribe ID de billetera', 'Write wallet ID', "Écrivez l'ID du portefeuille", 'כתוב מזהה ארנק');
   String get addNewContact => _t('+ AGREGAR NUEVO CONTACTO', '+ ADD NEW CONTACT', '+ AJOUTER UN NOUVEAU CONTACT', '+ הוסף קשר חדש');
   String get yourContacts => _t('TUS CONTACTOS', 'YOUR CONTACTS', 'VOS CONTACTS', 'הקשרים שלך');
   String get signInForContacts => _t('Inicia sesión para ver tus contactos', 'Sign in to see your contacts', 'Connectez-vous pour voir vos contacts', 'התחבר כדי לראות את הקשרים שלך');
@@ -844,8 +831,6 @@ class S {
   String get request => _t('SOLICITAR', 'REQUEST', 'DEMANDER', 'בקש');
   String sent(String amount, String id) => _t('Enviado $amount a $id', 'Sent $amount to $id', 'Envoyé $amount à $id', 'נשלח $amount ל-$id');
   String requestSent(String amount) => _t('Solicitud de $amount enviada', 'Request for $amount sent', 'Demande de $amount envoyée', 'בקשה של $amount נשלחה');
-  String get walletNotFound => _t('Billetera no encontrada', 'Wallet not found', 'Portefeuille introuvable', 'ארנק לא נמצא');
-  String get walletUserNotFound => _t('No existe ningún usuario con ese código', 'No user found with that code', 'Aucun utilisateur trouvé avec ce code', 'לא נמצא משתמש עם הקוד הזה');
   String get insufficientFunds => _t('Fondos insuficientes', 'Insufficient funds', 'Fonds insuffisants', 'יתרה לא מספיקה');
   String get couldNotTransfer => _t('No se pudo completar la transferencia', 'Could not complete the transfer', 'Impossible de compléter le transfert', 'לא ניתן להשלים את ההעברה');
   String get couldNotSendRequest => _t('No se pudo enviar la solicitud', 'Could not send the request', 'Impossible d\'envoyer la demande', 'לא ניתן לשלוח את הבקשה');
@@ -857,7 +842,6 @@ class S {
   // WALLET REQUESTS
   // ---------------------------------------------------------------------------
 
-  String get walletRequests => _t('Solicitudes', 'Requests', 'Demandes', 'בקשות');
   String get pendingRequests => _t('Solicitudes pendientes', 'Pending requests', 'Demandes en attente', 'בקשות ממתינות');
   String get noPendingRequests => _t('No tienes solicitudes pendientes', 'No pending requests', 'Aucune demande en attente', 'אין בקשות ממתינות');
   String requestFrom(String walletId) => _t('Solicitud de $walletId', 'Request from $walletId', 'Demande de $walletId', 'בקשה מ-$walletId');
@@ -1070,44 +1054,6 @@ class S {
   // AUTO REFILL CONSENT
   // ---------------------------------------------------------------------------
 
-  String get autoRefillConsentTitle => _t(
-    'Autorización de Recarga Automática',
-    'Automatic Refill Authorization',
-    'Autorisation de recharge automatique',
-    'אישור טעינה אוטומטית',
-  );
-  String get autoRefillConsentBody => _t(
-    'Al activar la recarga automática, Pushka cargará tu tarjeta guardada según la frecuencia elegida para agregar fondos a tu billetera.\n\nEsto constituye una autorización de cobro periódico. Puedes cancelarlo en cualquier momento desde esta misma pantalla.',
-    'By activating automatic refill, Pushka will charge your saved card according to the chosen frequency to add funds to your wallet.\n\nThis constitutes authorization for periodic charges. You can cancel at any time from this screen.',
-    'En activant la recharge automatique, Pushka débitera votre carte enregistrée selon la fréquence choisie pour ajouter des fonds à votre portefeuille.\n\nCela constitue une autorisation de prélèvement périodique. Vous pouvez l\'annuler à tout moment depuis cet écran.',
-    'בהפעלת הטעינה האוטומטית, Pushka תחייב את הכרטיס השמור שלך לפי התדירות שנבחרה כדי להוסיף כספים לארנק שלך.\n\nזהו אישור לחיובים תקופתיים. ניתן לבטל בכל עת מהמסך הזה.',
-  );
-  String get autoRefillConsentBullet1 => _t(
-    '• El cobro se realiza por el monto exacto que configuraste.',
-    '• The charge is for the exact amount you configured.',
-    '• Le débit correspond au montant exact que vous avez configuré.',
-    '• החיוב הוא על הסכום המדויק שהגדרת.',
-  );
-  String get autoRefillConsentBullet2 => _t(
-    '• Los fondos se acreditan de inmediato en tu billetera.',
-    '• Funds are credited immediately to your wallet.',
-    '• Les fonds sont crédités immédiatement sur votre portefeuille.',
-    '• הכספים מוזכים מיידית לארנק שלך.',
-  );
-  String get autoRefillConsentBullet3 => _t(
-    '• Puedes cancelar o modificar esta configuración en cualquier momento.',
-    '• You can cancel or modify this setting at any time.',
-    '• Vous pouvez annuler ou modifier ce paramètre à tout moment.',
-    '• ניתן לבטל או לשנות הגדרה זו בכל עת.',
-  );
-  String get autoRefillConsentAccept => _t(
-    'Acepto y Activo',
-    'I Accept and Activate',
-    'J\'accepte et j\'active',
-    'אני מסכים ומפעיל',
-  );
-
-  // Tenant picker / join screen — strings used by tenant_code_screen.
   String get tenantJoinFailed => _t(
     'No se pudo unirte a la organización. Intentá de nuevo.',
     "Couldn't join the organization. Please try again.",
