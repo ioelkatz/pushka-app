@@ -259,15 +259,34 @@ class _SavedCardsScreenState extends ConsumerState<SavedCardsScreen> {
   Widget _brandLogoFor(String brand) {
     switch (brand.toLowerCase()) {
       case 'visa':
-        return const Text(
-          'VISA',
-          style: TextStyle(
-            color: Colors.white,
-            fontSize: 13,
-            fontWeight: FontWeight.w900,
-            fontStyle: FontStyle.italic,
-            letterSpacing: 0.5,
-          ),
+        // Visa wordmark — approximates the real logo: tightly-spaced,
+        // ultra-bold italic, with the characteristic small yellow accent
+        // bar above the "I" stem (echoing Visa's brand gold). Not pixel-
+        // perfect against the licensed mark but visually unmistakable.
+        return Stack(
+          alignment: Alignment.center,
+          children: [
+            const Text(
+              'VISA',
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 14,
+                fontWeight: FontWeight.w900,
+                fontStyle: FontStyle.italic,
+                letterSpacing: -0.2,
+                height: 1.0,
+              ),
+            ),
+            Positioned(
+              bottom: 1,
+              left: 0,
+              right: 0,
+              child: Container(
+                height: 1.6,
+                color: const Color(0xFFF7B600),
+              ),
+            ),
+          ],
         );
       case 'mastercard':
         return SvgPicture.string(_svgMastercard, width: 24, height: 16);
@@ -323,17 +342,22 @@ class _SavedCardsScreenState extends ConsumerState<SavedCardsScreen> {
       padding: const EdgeInsets.symmetric(vertical: 4),
       child: Row(
         children: [
-          // Brand logo box — bg color matches the brand identity (Visa
-          // navy, Mastercard black, Amex blue, etc.) with the iconic
-          // brand mark inside. Mastercard renders as the real two-circle
-          // multicolor SVG; Visa as the white italic wordmark; others as
-          // a simplified white wordmark.
+          // Brand logo box — bg matches the brand identity (Visa navy,
+          // Mastercard black, etc.) with the iconic mark inside. The
+          // 1px outline is invisible in light mode (subtle line over the
+          // dark box bg) but separates the box from the surrounding
+          // surface in dark mode where Mastercard's near-black bg would
+          // otherwise blend into the screen.
           Container(
             width: 40,
             height: 28,
             decoration: BoxDecoration(
               color: _brandBg(brand),
               borderRadius: BorderRadius.circular(6),
+              border: Border.all(
+                color: cs.outline.withValues(alpha: 0.25),
+                width: 1,
+              ),
             ),
             alignment: Alignment.center,
             child: _brandLogoFor(brand),
@@ -369,8 +393,8 @@ class _SavedCardsScreenState extends ConsumerState<SavedCardsScreen> {
                   isDefault ? '${tr.cardDefault}  ·  $mm/$yy' : '$mm/$yy',
                   style: TextStyle(
                     fontSize: 12.5,
-                    color: isDefault ? accent : cs.onSurfaceVariant,
-                    fontWeight: isDefault ? FontWeight.w500 : FontWeight.w400,
+                    color: cs.onSurfaceVariant,
+                    fontWeight: FontWeight.w400,
                     fontFeatures: const [FontFeature.tabularFigures()],
                   ),
                 ),
