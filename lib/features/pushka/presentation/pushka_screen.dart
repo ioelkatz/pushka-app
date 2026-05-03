@@ -2593,7 +2593,7 @@ class _StreakRightCapBorder extends CustomPainter {
     final paint = Paint()
       ..color = color
       ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.5
+      ..strokeWidth = 1.0
       ..strokeCap = StrokeCap.round;
     final cx = size.width - radius;
     final cy = size.height / 2;
