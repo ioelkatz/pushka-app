@@ -303,27 +303,6 @@ class _SavedCardsScreenState extends ConsumerState<SavedCardsScreen> {
     }
   }
 
-  (Color, Color) _brandGradient(String brand) {
-    switch (brand.toLowerCase()) {
-      case 'visa':
-        return (const Color(0xFF1A1F71), const Color(0xFF2B3A9C));
-      case 'mastercard':
-        return (const Color(0xFFEB001B), const Color(0xFFF79E1B));
-      case 'amex':
-        return (const Color(0xFF016FD0), const Color(0xFF26A6E2));
-      case 'discover':
-        return (const Color(0xFFFF6000), const Color(0xFFFFA040));
-      case 'jcb':
-        return (const Color(0xFF0E4C92), const Color(0xFF7E1F23));
-      case 'unionpay':
-        return (const Color(0xFFD32027), const Color(0xFF005B9A));
-      case 'dinersclub':
-        return (const Color(0xFF0079BE), const Color(0xFF003B6F));
-      default:
-        return (const Color(0xFF374151), const Color(0xFF6B7280));
-    }
-  }
-
   Widget _buildCardTile({
     required String pmId,
     required String brand,
