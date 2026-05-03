@@ -779,7 +779,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
         ? _streakColors(streakCount)
         : (const Color(0xFFFFD54F), const Color(0xFFFFC107));
     const double h = 38.0;
-    const double badgeSize = 44.0;
+    const double badgeSize = 34.0;
     final double pillW = MediaQuery.of(context).size.width - 16;
     // Estimated streak section width (left pad + content + right pad)
     const double streakContentPad = 165.0;
@@ -2489,7 +2489,7 @@ class _HexBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    const double size = 44.0;
+    const double size = 34.0;
     return SizedBox(
       width: size,
       height: size,
