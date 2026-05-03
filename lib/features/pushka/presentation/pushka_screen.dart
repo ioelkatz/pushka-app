@@ -552,7 +552,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
 
     return SafeArea(
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 2, 16, 10),
+        padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
         child: LayoutBuilder(
           builder: (context, constraints) {
             final isCompact = constraints.maxHeight < 560;
@@ -573,10 +573,13 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
             final content = Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-            OverflowBox(
-              maxWidth: MediaQuery.of(context).size.width,
-              alignment: Alignment.center,
-              child: _buildCombinedBanner(_streakCount, activeHoliday),
+            SizedBox(
+              height: 46,
+              child: OverflowBox(
+                maxWidth: MediaQuery.of(context).size.width,
+                alignment: Alignment.center,
+                child: _buildCombinedBanner(_streakCount, activeHoliday),
+              ),
             ),
 
             SizedBox(height: topGap),
