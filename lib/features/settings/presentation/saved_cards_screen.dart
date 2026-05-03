@@ -301,7 +301,7 @@ class _SavedCardsScreenState extends ConsumerState<SavedCardsScreen> {
       onTap: () => _showCardActionsSheet(pmId, brand, last4, isDefault, tr),
       borderRadius: BorderRadius.circular(8),
       child: Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4),
+      padding: const EdgeInsets.symmetric(vertical: 8),
       child: Row(
         children: [
           // Brand logo box — bg matches the brand identity (Visa navy,
@@ -531,10 +531,14 @@ class _SavedCardsScreenState extends ConsumerState<SavedCardsScreen> {
                       : ListView.separated(
                           padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
                           itemCount: _cards.length,
+                          // Lighter divider + more vertical breathing room
+                          // between cards per the wallet reference.
                           separatorBuilder: (_, _) => Divider(
-                            height: 1,
+                            height: 18,
                             thickness: 1,
-                            color: Theme.of(context).colorScheme.outlineVariant,
+                            color: Theme.of(context).brightness == Brightness.dark
+                                ? Colors.white.withValues(alpha: 0.08)
+                                : Colors.grey.shade200,
                           ),
                           itemBuilder: (context, index) {
                             final card = _cards[index];
