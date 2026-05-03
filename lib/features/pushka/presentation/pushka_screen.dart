@@ -557,7 +557,10 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
             final isCompact = constraints.maxHeight < 560;
             final availableForImage = constraints.maxHeight - 260;
             final imageHeight = availableForImage.clamp(220.0, 440.0);
-            final topGap = isCompact ? 4.0 : 8.0;
+            // Bumped from 4/8 → 16/24: with the AppBar already minimal
+            // and the streak banner above, the "¡Llénala!" title was
+            // sitting too close to the top, looked cramped.
+            final topGap = isCompact ? 16.0 : 24.0;
             final titleSize = isCompact ? 20.0 : 24.0;
             final subtitleSize = isCompact ? 14.0 : 16.0;
             final titleBottomGap = isCompact ? 6.0 : 10.0;

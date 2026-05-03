@@ -2,6 +2,7 @@ import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_stripe/flutter_stripe.dart';
+import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 
 import '../../payments/stripe_service.dart';
 import '../../tenant/data/tenant_repository.dart';
@@ -195,6 +196,27 @@ class _SavedCardsScreenState extends ConsumerState<SavedCardsScreen> {
   // Brand-tinted gradient stops so each card visually matches its issuer
   // (Visa = navy/blue, Mastercard = red→orange, Amex = teal, etc.).
   // Returns (top-left color, bottom-right color).
+  // FontAwesome brand icon for the small logo box (null for unrecognized
+  // brands → falls back to a plain credit card icon).
+  IconData _brandFaIcon(String brand) {
+    switch (brand.toLowerCase()) {
+      case 'visa':
+        return FontAwesomeIcons.ccVisa;
+      case 'mastercard':
+        return FontAwesomeIcons.ccMastercard;
+      case 'amex':
+        return FontAwesomeIcons.ccAmex;
+      case 'discover':
+        return FontAwesomeIcons.ccDiscover;
+      case 'jcb':
+        return FontAwesomeIcons.ccJcb;
+      case 'dinersclub':
+        return FontAwesomeIcons.ccDinersClub;
+      default:
+        return FontAwesomeIcons.creditCard;
+    }
+  }
+
   (Color, Color) _brandGradient(String brand) {
     switch (brand.toLowerCase()) {
       case 'visa':
@@ -234,24 +256,22 @@ class _SavedCardsScreenState extends ConsumerState<SavedCardsScreen> {
       padding: const EdgeInsets.symmetric(vertical: 4),
       child: Row(
         children: [
-          // Brand logo box — small tinted square with the brand initial
+          // Brand logo box — white background with the actual brand logo
+          // (FontAwesome cc* icons). Falls back to a generic credit card
+          // for unrecognized brands.
           Container(
-            width: 38,
-            height: 38,
+            width: 44,
+            height: 30,
             decoration: BoxDecoration(
-              color: accent.withValues(alpha: 0.12),
-              borderRadius: BorderRadius.circular(8),
+              color: cs.surface,
+              borderRadius: BorderRadius.circular(6),
+              border: Border.all(color: cs.outlineVariant, width: 1),
             ),
             alignment: Alignment.center,
-            child: Text(
-              _brandLabel(brand).isNotEmpty
-                  ? _brandLabel(brand)[0].toUpperCase()
-                  : '•',
-              style: TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.w800,
-                color: accent,
-              ),
+            child: FaIcon(
+              _brandFaIcon(brand),
+              size: 22,
+              color: accent,
             ),
           ),
           const SizedBox(width: 12),
