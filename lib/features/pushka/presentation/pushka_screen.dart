@@ -776,8 +776,8 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
     final sc = hasStreak
         ? _streakColors(streakCount)
         : (const Color(0xFFFFD54F), const Color(0xFFFFC107));
-    const double h = 50.0;
-    const double badgeSize = 58.0;
+    const double h = 40.0;
+    const double badgeSize = 50.0;
 
     return Container(
       margin: const EdgeInsets.only(bottom: 4),
