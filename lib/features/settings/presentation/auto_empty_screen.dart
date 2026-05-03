@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../users/data/user_repository.dart';
 import '../../users/presentation/user_profile_provider.dart';
@@ -37,8 +38,17 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
   Widget build(BuildContext context) {
     final tr = S.of(context);
     final user = ref.watch(currentUserProvider);
-    ref.watch(userProfileProvider); // keep alive for tenantId reads
+    final profile = ref.watch(userProfileProvider).valueOrNull;
     final tenantState = ref.watch(tenantStateProvider).valueOrNull;
+
+    // Without a saved card the cron's `processPushkaAutoEmpty` hits the
+    // no_saved_card branch and silently advances the schedule each cycle —
+    // the user thinks they're set up but no money ever moves. Surface the
+    // requirement BEFORE save: inline banner + hard block in the save path.
+    final hasSavedCard = ((profile?['stripeDefaultPaymentMethodId'] as String?) ?? '')
+        .trim()
+        .isNotEmpty;
+    final needsCardWarning = _frequency != 'manual' && !hasSavedCard;
 
     if (!_loaded && tenantState != null) {
       _loaded = true; // set synchronously so subsequent rebuilds never enqueue a second callback
@@ -114,6 +124,64 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
                 },
               ),
               const SizedBox(height: 16),
+              if (needsCardWarning) ...[
+                Container(
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFFFF7ED),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: const Color(0xFFFED7AA), width: 1),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          const Icon(Icons.credit_card_off_rounded,
+                              color: Color(0xFFB45309), size: 20),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Text(
+                              tr.noCardsYet,
+                              style: const TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w700,
+                                color: Color(0xFF92400E),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        tr.noSavedCards,
+                        style: const TextStyle(
+                          fontSize: 13,
+                          color: Color(0xFF92400E),
+                          height: 1.45,
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: TextButton.icon(
+                          style: TextButton.styleFrom(
+                            foregroundColor: const Color(0xFFB45309),
+                            padding: const EdgeInsets.symmetric(horizontal: 0),
+                          ),
+                          icon: const Icon(Icons.add_card_rounded, size: 18),
+                          label: Text(
+                            tr.addCard,
+                            style: const TextStyle(fontWeight: FontWeight.w700),
+                          ),
+                          onPressed: () => context.go('/settings/saved-cards'),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 16),
+              ],
               Container(
                 padding: const EdgeInsets.all(14),
                 decoration: BoxDecoration(
@@ -225,6 +293,15 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
                       onPressed: user == null || _saving
                           ? null
                           : () async {
+                              // Hard block: enabling a non-manual schedule with no
+                              // saved card creates a "configured but broken" state
+                              // — the cron silently skips every cycle and the user
+                              // never finds out. Surface a dialog with a CTA to
+                              // /settings/saved-cards before any save attempt.
+                              if (needsCardWarning) {
+                                await _showAddCardRequiredDialog();
+                                return;
+                              }
                               if (_frequency != 'manual' &&
                                   _topOffEnabled &&
                                   (_topOffAmount == null || _topOffAmount! <= 0)) {
@@ -306,6 +383,69 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
             const Icon(Icons.keyboard_arrow_down, color: Colors.grey),
           ],
         ),
+      ),
+    );
+  }
+
+  /// Shown when the user tries to save a non-manual schedule but has no
+  /// `stripeDefaultPaymentMethodId`. The cron would silently skip every cycle
+  /// — surface this hard before save, with a one-tap path to add the card.
+  Future<void> _showAddCardRequiredDialog() async {
+    final tr = S.of(context);
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final accent = isDark
+        ? Theme.of(context).colorScheme.primary
+        : const Color(0xFFE05A4F);
+
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: Row(
+          children: [
+            Icon(Icons.credit_card_off_rounded, color: accent, size: 22),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                tr.noCardsYet,
+                style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
+              ),
+            ),
+          ],
+        ),
+        content: Text(
+          tr.noSavedCards,
+          style: const TextStyle(fontSize: 14, height: 1.5),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: Text(
+              tr.cancelBtn,
+              style: TextStyle(color: Colors.grey.shade600),
+            ),
+          ),
+          ElevatedButton.icon(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: accent,
+              foregroundColor: Colors.white,
+              padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10),
+              ),
+            ),
+            icon: const Icon(Icons.add_card_rounded, size: 18),
+            label: Text(
+              tr.addCard,
+              style: const TextStyle(fontWeight: FontWeight.w700),
+            ),
+            onPressed: () {
+              Navigator.pop(ctx);
+              if (!mounted) return;
+              context.go('/settings/saved-cards');
+            },
+          ),
+        ],
       ),
     );
   }
