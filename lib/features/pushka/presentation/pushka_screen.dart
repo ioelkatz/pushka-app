@@ -856,7 +856,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                             child: Stack(
                               children: [
                                 Container(
-                                  padding: const EdgeInsetsDirectional.fromSTEB(50, 0, 14, 0),
+                                  padding: const EdgeInsetsDirectional.fromSTEB(46, 0, 14, 0),
                                   decoration: BoxDecoration(
                                     gradient: LinearGradient(
                                       colors: [sc.$1, sc.$2],
@@ -924,7 +924,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
           if (hasStreak)
             PositionedDirectional(
               start: 9,
-              top: -(badgeSize - h) / 2 - 1,
+              top: -(badgeSize - h) / 2,
               child: _HexBadge(count: streakCount, color1: sc.$1, color2: sc.$2),
             ),
         ],
@@ -2502,16 +2502,19 @@ class _HexBadge extends StatelessWidget {
             height: size,
             fit: BoxFit.contain,
           ),
-          Text(
-            '$count',
-            style: const TextStyle(
-              fontSize: 16,
-              fontWeight: FontWeight.w900,
-              color: Colors.white,
-              height: 1,
-              shadows: [
-                Shadow(color: Color(0x99000000), blurRadius: 6, offset: Offset(0, 2)),
-              ],
+          Transform.translate(
+            offset: const Offset(0, -1.5),
+            child: Text(
+              '$count',
+              style: const TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.w900,
+                color: Colors.white,
+                height: 1,
+                shadows: [
+                  Shadow(color: Color(0x99000000), blurRadius: 6, offset: Offset(0, 2)),
+                ],
+              ),
             ),
           ),
         ],
