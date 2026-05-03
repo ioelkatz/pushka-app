@@ -40,11 +40,25 @@ class StripeService {
       throw const StripeServiceException('no-client-secret');
     }
 
+    // customerId + ephemeralKeySecret unlock the saved-card list inside
+    // PaymentSheet. Backend returns null for ephemeralKey if Stripe
+    // rejected the apiVersion or the key call failed — in that case we
+    // still init the sheet for new-card entry only.
+    final customerId = result.data['customerId'] as String?;
+    final ephemeralKeySecret = result.data['ephemeralKeySecret'] as String?;
+    final hasCustomerSession = customerId != null &&
+        customerId.isNotEmpty &&
+        ephemeralKeySecret != null &&
+        ephemeralKeySecret.isNotEmpty;
+
     await Stripe.instance.initPaymentSheet(
       paymentSheetParameters: SetupPaymentSheetParameters(
         paymentIntentClientSecret: clientSecret,
         merchantDisplayName: merchantDisplayName,
         allowsDelayedPaymentMethods: false,
+        customerId: hasCustomerSession ? customerId : null,
+        customerEphemeralKeySecret:
+            hasCustomerSession ? ephemeralKeySecret : null,
       ),
     );
 

@@ -574,13 +574,60 @@ exports.createPaymentIntent = onCall(
     connectParams.transfer_data = { destination: tenantConnectAccountId };
   }
 
+  const stripe = require("stripe")(stripeSecret.value(), { timeout: 15000 });
+
+  // Resolve (or create) the user's Stripe customer so the PaymentSheet
+  // can show their saved cards. Same get-or-create pattern as
+  // createSetupIntent: a Firestore sentinel inside a transaction
+  // prevents two concurrent calls from each spawning a separate Stripe
+  // customer for the same uid.
+  let customerId = String(userData.stripeCustomerId || "").trim() || null;
+  if (!customerId) {
+    const userRef = db.collection("users").doc(request.auth.uid);
+    await db.runTransaction(async (tx) => {
+      const fresh = await tx.get(userRef);
+      const freshId = String(fresh.data()?.stripeCustomerId || "").trim();
+      if (freshId) {
+        customerId = freshId;
+        return;
+      }
+      tx.set(userRef, {
+        stripeCustomerIdPending: true,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      }, { merge: true });
+    });
+    if (!customerId) {
+      try {
+        const customer = await stripe.customers.create({
+          email: customerEmail || undefined,
+          metadata: { uid: request.auth.uid },
+        }, { idempotencyKey: `customer_create_${request.auth.uid}` });
+        customerId = customer.id;
+        await userRef.set({
+          stripeCustomerId: customerId,
+          stripeCustomerIdPending: admin.firestore.FieldValue.delete(),
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        }, { merge: true });
+      } catch (stripeErr) {
+        await userRef.set({
+          stripeCustomerIdPending: admin.firestore.FieldValue.delete(),
+        }, { merge: true }).catch(() => {});
+        throw stripeErr;
+      }
+    }
+  }
+
   let paymentIntent;
   try {
-    const stripe = require("stripe")(stripeSecret.value(), { timeout: 15000 });
     paymentIntent = await stripe.paymentIntents.create({
       amount,
       currency,
+      customer: customerId,
       receipt_email: customerEmail || undefined,
+      // Save card by default so future donations can pick it from the
+      // sheet without re-entering. setup_future_usage='off_session'
+      // also enables the card for the auto-empty cron path.
+      setup_future_usage: "off_session",
       // Restrict to card to avoid surfacing BNPL (Affirm/Klarna/Afterpay) and
       // bank debits (SEPA/ACH). These have radically different settlement
       // timing — ACH can be reversed up to 60 days later via dispute,
@@ -615,7 +662,33 @@ exports.createPaymentIntent = onCall(
     throw new HttpsError("internal", userMessage);
   }
 
-  return { clientSecret: paymentIntent.client_secret };
+  // Generate a customer ephemeral key for the mobile PaymentSheet so it
+  // can list the user's saved cards. The apiVersion must match what the
+  // Stripe mobile SDK expects; '2024-06-20' is a stable choice that
+  // works with current flutter_stripe.
+  let ephemeralKeySecret = null;
+  try {
+    const ephemeralKey = await stripe.ephemeralKeys.create(
+      { customer: customerId },
+      { apiVersion: "2024-06-20" },
+    );
+    ephemeralKeySecret = ephemeralKey.secret;
+  } catch (ekErr) {
+    // Non-fatal: the payment can still proceed without saved-card listing,
+    // the user just enters card details fresh as before. Log so we can
+    // diagnose if this becomes a chronic issue.
+    console.warn("createPaymentIntent: ephemeral key creation failed", {
+      uid: request.auth.uid,
+      errorType: ekErr?.type,
+      errorMessage: ekErr?.message,
+    });
+  }
+
+  return {
+    clientSecret: paymentIntent.client_secret,
+    customerId,
+    ephemeralKeySecret,
+  };
 });
 
 // ---------------------------------------------------------------------------
