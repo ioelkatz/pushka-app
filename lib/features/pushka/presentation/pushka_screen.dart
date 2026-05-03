@@ -903,8 +903,8 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
           ),
           if (hasStreak)
             PositionedDirectional(
-              start: 2,
-              top: -(badgeSize - h) / 2 - 3,
+              start: 5,
+              top: -(badgeSize - h) / 2 - 1,
               child: _HexBadge(count: streakCount, color1: sc.$1, color2: sc.$2),
             ),
         ],
