@@ -1,5 +1,5 @@
 ﻿import 'dart:async';
-import 'dart:math' show pi;
+import 'dart:math' show pi, asin;
 import '../../../core/hive_cache.dart';
 import 'jewish_confetti.dart';
 import '../../../core/format_utils.dart';
@@ -2542,10 +2542,12 @@ class _StreakRightCapBorder extends CustomPainter {
     // The right cap is a semicircle: center at (width - radius, radius), r = radius
     final cx = size.width - radius;
     final cy = size.height / 2;
+    // Inset 2px from top and bottom of the arc
+    final inset = asin((2.0).clamp(0, radius) / radius);
     canvas.drawArc(
       Rect.fromCircle(center: Offset(cx, cy), radius: radius),
-      -pi / 2, // start at top
-      pi,      // sweep 180° clockwise → traces right semicircle
+      -pi / 2 + inset,       // start 2px below top
+      pi - 2 * inset,        // sweep minus 2px on each end
       false,
       paint,
     );
