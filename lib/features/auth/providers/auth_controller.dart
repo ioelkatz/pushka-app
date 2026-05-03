@@ -1,4 +1,5 @@
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_crashlytics/firebase_crashlytics.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_sign_in/google_sign_in.dart';
@@ -19,6 +20,18 @@ class AuthController {
 
   FirebaseAuth get _auth => _ref.read(firebaseAuthProvider);
   UserRepository get _userRepository => _ref.read(userRepositoryProvider);
+
+  void _recordNonFatal(Object e, StackTrace st, {required String op, String? uid}) {
+    try {
+      FirebaseCrashlytics.instance.recordError(
+        e,
+        st,
+        reason: 'auth_controller:$op',
+        information: [if (uid != null) 'uid=$uid'],
+        fatal: false,
+      );
+    } catch (_) {}
+  }
 
   Future<void> signIn({
     required String email,
@@ -92,19 +105,24 @@ class AuthController {
       if (!kIsWeb && uid != null) {
         try {
           await NotificationService.instance.revokeFcmTokenForUser(uid);
-        } catch (e) {
+        } catch (e, st) {
           debugPrint('AuthController.signOut: FCM revoke failed: $e');
+          _recordNonFatal(e, st, op: 'signOut.revokeFcmToken', uid: uid);
         }
       }
       if (!kIsWeb) {
         try {
           await GoogleSignIn().signOut();
-        } catch (_) {}
+        } catch (e, st) {
+          _recordNonFatal(e, st, op: 'signOut.googleSignOut', uid: uid);
+        }
       }
       await _auth.signOut();
       try {
         await AnalyticsService.instance.setUserId(null);
-      } catch (_) {}
+      } catch (e, st) {
+        _recordNonFatal(e, st, op: 'signOut.clearAnalyticsUid', uid: uid);
+      }
     } finally {
       // Always clear caches that key off the previous uid, even if other
       // sign-out steps failed. Without this, signing in as a different user

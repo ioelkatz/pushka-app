@@ -48,6 +48,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   String selectedFlag = '🇺🇸';
   bool _loadedProfile = false;
   bool _uploadingPhoto = false;
+  bool _avatarLoadFailed = false;
 
   String _currencySymbol(String code) {
     const symbols = {
@@ -541,10 +542,21 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           CircleAvatar(
             radius: 26,
             backgroundColor: blue.withValues(alpha: 0.12),
-            backgroundImage: (photoURL != null && photoURL.isNotEmpty)
+            // Use foregroundImage so errorListener actually fires; backgroundImage
+            // silently swallows network errors and leaves an empty avatar with no
+            // letter fallback. Combine with onForegroundImageError to swap to
+            // initial-letter mode if the URL 404s or the network fails.
+            foregroundImage: (photoURL != null && photoURL.isNotEmpty && !_avatarLoadFailed)
                 ? NetworkImage(photoURL)
                 : null,
-            child: (photoURL == null || photoURL.isEmpty)
+            onForegroundImageError: (photoURL != null && photoURL.isNotEmpty)
+                ? (_, _) {
+                    if (mounted && !_avatarLoadFailed) {
+                      setState(() => _avatarLoadFailed = true);
+                    }
+                  }
+                : null,
+            child: (photoURL == null || photoURL.isEmpty || _avatarLoadFailed)
                 ? Text(
                     name.isNotEmpty ? name[0].toUpperCase() : '?',
                     style: TextStyle(
@@ -809,10 +821,11 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   Widget _buildPushkaStyleSelector(WidgetRef ref) {
     final style = ref.watch(pushkaStyleProvider);
     final cs = Theme.of(context).colorScheme;
+    final tr = S.of(context);
     return SegmentedButton<PushkaStyle>(
-      segments: const [
-        ButtonSegment(value: PushkaStyle.classic, label: Text('Pushka')),
-        ButtonSegment(value: PushkaStyle.building770, label: Text('Edificio 770')),
+      segments: [
+        ButtonSegment(value: PushkaStyle.classic, label: Text(tr.pushkaStyleClassic)),
+        ButtonSegment(value: PushkaStyle.building770, label: Text(tr.pushkaStyleBuilding770)),
       ],
       selected: {style},
       onSelectionChanged: (selection) {

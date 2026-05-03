@@ -13,6 +13,7 @@ import '../../../core/l10n/s.dart';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
+import 'package:firebase_crashlytics/firebase_crashlytics.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../analytics/analytics_service.dart';
@@ -47,8 +48,15 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
   List<double> _presetAmounts = [];
   bool _loadedRemote = false;
   bool _isProcessing = false;
-  DateTime? _localWriteAt;
   int _streakCount = 0;
+  // Wall-clock-independent monotonic timer for the "recent local write"
+  // window. Using DateTime.now() makes a system clock change (manual or NTP)
+  // mis-classify a stale snapshot as recent (or vice versa).
+  final Stopwatch _localWriteStopwatch = Stopwatch();
+  // Identity of the last tenantState snapshot we synced to local state.
+  // Lets us short-circuit the rebuild→sync→setState→rebuild loop that
+  // happens when addPostFrameCallback runs in build() on every tick.
+  Object? _lastSyncedTenantState;
 
   @override
   void initState() {
@@ -77,6 +85,27 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
   void _triggerCelebration() {
     _confettiController.play();
     FeedbackService.instance.playSuccess();
+  }
+
+  // Centralized non-fatal error reporter so caught exceptions in this screen
+  // surface in production Crashlytics with uid/tenantId context.
+  void _reportError(Object error, StackTrace st, {required String op}) {
+    final uid = ref.read(currentUserProvider)?.uid;
+    final tenantId = ref.read(userProfileProvider).valueOrNull?['tenantId'] as String?;
+    try {
+      FirebaseCrashlytics.instance.recordError(
+        error,
+        st,
+        reason: 'pushka_screen:$op',
+        information: [
+          if (uid != null) 'uid=$uid',
+          if (tenantId != null) 'tenantId=$tenantId',
+        ],
+        fatal: false,
+      );
+    } catch (_) {
+      // Crashlytics may be unavailable on some platforms — never throw from here.
+    }
   }
 
   Future<void> _updateStreak() async {
@@ -123,7 +152,9 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
         streakCount: _streakCount,
         lastStreakDate: today,
       );
-    } catch (_) {}
+    } catch (e, st) {
+      _reportError(e, st, op: 'updateStreak');
+    }
   }
   Future<void> addAmount(double amount) async {
     // Prevent adding to a full pushka (already reached goal).
@@ -231,7 +262,8 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
               : tr.pushkaEmptied,
         )),
       );
-    } catch (error) {
+    } catch (error, st) {
+      _reportError(error, st, op: 'emptyPushka');
       if (!mounted) return;
       _showError(_donationErrorMessage(error, tr));
     } finally {
@@ -506,62 +538,64 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
     final remoteAmount = tenantState?['pushkaAmount'];
     final remotePresets = tenantState?['presetAmounts'];
 
-    if (tenantState != null) {
+    if (tenantState != null && !identical(tenantState, _lastSyncedTenantState)) {
+      // Guard with identity check on the snapshot map so this only runs
+      // when Riverpod hands us a NEW tenantState — not on every unrelated
+      // rebuild (preset tap, animation tick). Without this, the
+      // addPostFrameCallback was being re-enqueued on every build, and the
+      // setState() inside re-triggered build → infinite micro-rebuilds.
+      _lastSyncedTenantState = tenantState;
       final uid = ref.read(currentUserProvider)?.uid;
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
-        setState(() {
-          // Sync local pushkaAmount with the remote tenantState snapshot,
-          // EXCEPT during the recent-write window: stream snapshots that
-          // pre-date our own write would otherwise revert the optimistic
-          // setState. Previously this code special-cased "always accept
-          // lower remote" to handle external corrections (e.g. cron-side
-          // empty), but that rule couldn't distinguish a real lower
-          // correction from a stale pre-write snapshot — so a quick
-          // preset-tap had a ~50% chance of visually reverting to 0
-          // depending on which Firestore snapshot arrived first.
-          //
-          // 4-second window comfortably outlasts the round-trip for the
-          // write + echo. Any genuine external correction (cron, admin)
-          // syncs as soon as the window expires.
-          if (remoteAmount is num) {
-            final remote = remoteAmount.toDouble();
-            final recentWrite = _localWriteAt != null &&
-                DateTime.now().difference(_localWriteAt!).inSeconds < 4;
-            if (!recentWrite && remote != pushkaAmount) {
-              pushkaAmount = remote;
-              if (uid != null && tenantId != null) {
-                HiveCache.instance.savePushkaAmount(uid, tenantId, pushkaAmount);
-              }
+        bool changed = false;
+        // Sync local pushkaAmount with the remote tenantState snapshot,
+        // EXCEPT during the recent-write window: stream snapshots that
+        // pre-date our own write would otherwise revert the optimistic
+        // setState. 4-second window comfortably outlasts write+echo.
+        // Stopwatch is monotonic (no system-clock-jump risk).
+        if (remoteAmount is num) {
+          final remote = remoteAmount.toDouble();
+          final recentWrite = _localWriteStopwatch.isRunning &&
+              _localWriteStopwatch.elapsed.inSeconds < 4;
+          if (!recentWrite && remote != pushkaAmount) {
+            pushkaAmount = remote;
+            changed = true;
+            if (uid != null && tenantId != null) {
+              HiveCache.instance.savePushkaAmount(uid, tenantId, pushkaAmount);
             }
           }
-          if (!_loadedRemote) {
-            if (remoteGoal is num) {
-              pushkaGoal = remoteGoal.toDouble();
-              if (uid != null && tenantId != null) {
-                HiveCache.instance.savePushkaGoal(uid, tenantId, pushkaGoal);
-              }
-            }
-            if (remotePresets is List && remotePresets.length == 3) {
-              try {
-                _presetAmounts = remotePresets.whereType<num>().map((e) => e.toDouble()).toList();
-                if (_presetAmounts.length != 3) _presetAmounts = [];
-              } catch (_) {
-                _presetAmounts = [];
-              }
-            }
-            _loadedRemote = true;
-            _streakCount = (tenantState['streakCount'] as num?)?.toInt() ?? 0;
-            if (userProfile != null) {
-              FeedbackService.instance.updatePreferences(
-                sound: (userProfile['soundEnabled'] as bool?) ?? true,
-                coinJingle: (userProfile['coinJingleEnabled'] as bool?) ?? true,
-                vibration: (userProfile['vibrationEnabled'] as bool?) ?? true,
-                ambient: (userProfile['ambientEnabled'] as bool?) ?? false,
-              );
+        }
+        if (!_loadedRemote) {
+          if (remoteGoal is num) {
+            pushkaGoal = remoteGoal.toDouble();
+            changed = true;
+            if (uid != null && tenantId != null) {
+              HiveCache.instance.savePushkaGoal(uid, tenantId, pushkaGoal);
             }
           }
-        });
+          if (remotePresets is List && remotePresets.length == 3) {
+            try {
+              _presetAmounts = remotePresets.whereType<num>().map((e) => e.toDouble()).toList();
+              if (_presetAmounts.length != 3) _presetAmounts = [];
+              changed = true;
+            } catch (_) {
+              _presetAmounts = [];
+            }
+          }
+          _loadedRemote = true;
+          _streakCount = (tenantState['streakCount'] as num?)?.toInt() ?? 0;
+          changed = true;
+          if (userProfile != null) {
+            FeedbackService.instance.updatePreferences(
+              sound: (userProfile['soundEnabled'] as bool?) ?? true,
+              coinJingle: (userProfile['coinJingleEnabled'] as bool?) ?? true,
+              vibration: (userProfile['vibrationEnabled'] as bool?) ?? true,
+              ambient: (userProfile['ambientEnabled'] as bool?) ?? false,
+            );
+          }
+        }
+        if (changed) setState(() {});
       });
     }
 
@@ -1175,6 +1209,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                           if (value != null && value > 0) Navigator.pop(ctx, value);
                         },
                         decoration: InputDecoration(
+                          labelText: S.of(context).amount,
                           hintText: S.of(context).amountHint, prefixText: '\$ ', errorText: error,
                           border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
                         ),
@@ -1270,7 +1305,9 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
     }
     final tenantId = ref.read(userProfileProvider).valueOrNull?['tenantId'] as String?;
     if (tenantId == null || tenantId.isEmpty) return;
-    _localWriteAt = DateTime.now();
+    _localWriteStopwatch
+      ..reset()
+      ..start();
     // overrideAmount lets the caller persist the new value BEFORE
     // touching local pushkaAmount — the persist-then-setState order
     // closes a race where the app is killed between the optimistic
@@ -1884,6 +1921,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                                   keyboardType: const TextInputType.numberWithOptions(decimal: true),
                                   textInputAction: TextInputAction.done,
                                   decoration: InputDecoration(
+                                    labelText: S.of(context).amount,
                                     prefixText: '$symbol ',
                                     border: OutlineInputBorder(
                                       borderRadius: BorderRadius.circular(12),

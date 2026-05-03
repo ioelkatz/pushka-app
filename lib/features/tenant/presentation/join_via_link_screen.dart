@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../../app/router.dart';
 import '../../../app/theme/app_tokens.dart';
+import '../../../core/l10n/s.dart';
 import '../data/tenant_repository.dart';
 import '../domain/tenant_config.dart';
 
@@ -28,6 +29,7 @@ class _JoinViaLinkScreenState extends ConsumerState<JoinViaLinkScreen> {
 
   Future<void> _validate() async {
     setState(() => _state = const _Loading());
+    final tr = S.of(context);
     try {
       final config = await ref.read(tenantRepositoryProvider).validateSlug(widget.slug);
       if (!mounted) return;
@@ -36,16 +38,17 @@ class _JoinViaLinkScreenState extends ConsumerState<JoinViaLinkScreen> {
       if (!mounted) return;
       setState(() => _state = _Error(
         e.code == 'not-found'
-            ? 'El código "${ widget.slug }" no corresponde a ninguna organización.'
-            : 'No se pudo verificar el código. Intentá de nuevo.',
+            ? tr.tenantSlugNotFound(widget.slug)
+            : tr.tenantSlugVerifyError,
       ));
     } catch (_) {
       if (!mounted) return;
-      setState(() => _state = const _Error('No se pudo verificar el código. Intentá de nuevo.'));
+      setState(() => _state = _Error(tr.tenantSlugVerifyError));
     }
   }
 
   Future<void> _join(TenantConfig config) async {
+    final tr = S.of(context);
     setState(() => _state = const _Joining());
     try {
       await ref.read(tenantRepositoryProvider).joinTenant(config.tenantId);
@@ -59,7 +62,7 @@ class _JoinViaLinkScreenState extends ConsumerState<JoinViaLinkScreen> {
       if (!mounted) return;
       setState(() => _state = _Preview(config));
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('No se pudo unirte a la organización. Intentá de nuevo.')),
+        SnackBar(content: Text(tr.tenantJoinFailed)),
       );
     }
   }
@@ -67,6 +70,7 @@ class _JoinViaLinkScreenState extends ConsumerState<JoinViaLinkScreen> {
   @override
   Widget build(BuildContext context) {
     final tt = Theme.of(context).textTheme;
+    final tr = S.of(context);
     final s = _state;
 
     return Scaffold(
@@ -82,7 +86,7 @@ class _JoinViaLinkScreenState extends ConsumerState<JoinViaLinkScreen> {
                   children: [
                     const CircularProgressIndicator(),
                     const SizedBox(height: AppTokens.spaceLg),
-                    Text('Uniéndote...', style: tt.bodyMedium?.copyWith(color: AppTokens.mutedText)),
+                    Text(tr.tenantJoining, style: tt.bodyMedium?.copyWith(color: AppTokens.mutedText)),
                   ],
                 ),
               _Error(:final message) => Column(
@@ -96,11 +100,11 @@ class _JoinViaLinkScreenState extends ConsumerState<JoinViaLinkScreen> {
                       style: tt.bodyMedium?.copyWith(color: AppTokens.mutedText),
                     ),
                     const SizedBox(height: AppTokens.spaceXl),
-                    OutlinedButton(onPressed: _validate, child: const Text('Reintentar')),
+                    OutlinedButton(onPressed: _validate, child: Text(tr.retry)),
                     const SizedBox(height: AppTokens.spaceMd),
                     TextButton(
                       onPressed: () => context.go('/'),
-                      child: const Text('Ir al inicio'),
+                      child: Text(tr.goHome),
                     ),
                   ],
                 ),
@@ -131,13 +135,13 @@ class _JoinViaLinkScreenState extends ConsumerState<JoinViaLinkScreen> {
                       height: AppTokens.buttonHeight,
                       child: ElevatedButton(
                         onPressed: () => _join(config),
-                        child: const Text('Unirme'),
+                        child: Text(tr.tenantJoin),
                       ),
                     ),
                     const SizedBox(height: AppTokens.spaceSm),
                     TextButton(
                       onPressed: () => context.go('/'),
-                      child: const Text('Cancelar'),
+                      child: Text(tr.cancel),
                     ),
                   ],
                 ),

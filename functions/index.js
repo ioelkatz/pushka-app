@@ -1,6 +1,6 @@
 ﻿const admin = require("firebase-admin");
 const { onCall, onRequest, HttpsError } = require("firebase-functions/v2/https");
-const { onDocumentCreated } = require("firebase-functions/v2/firestore");
+const { onDocumentCreated, onDocumentUpdated } = require("firebase-functions/v2/firestore");
 const { onSchedule } = require("firebase-functions/v2/scheduler");
 const { defineSecret } = require("firebase-functions/params");
 
@@ -648,8 +648,10 @@ exports.createPaymentIntent = onCall(
   } catch (err) {
     console.error("createPaymentIntent: Stripe API error", {
       uid: request.auth.uid,
+      tenantId: tenantId || null,
       amount,
       currency,
+      purpose,
       errorType: err?.type,
       errorCode: err?.code,
       errorMessage: err?.message,
@@ -679,6 +681,8 @@ exports.createPaymentIntent = onCall(
     // diagnose if this becomes a chronic issue.
     console.warn("createPaymentIntent: ephemeral key creation failed", {
       uid: request.auth.uid,
+      tenantId: tenantId || null,
+      customerId,
       errorType: ekErr?.type,
       errorMessage: ekErr?.message,
     });
@@ -1032,6 +1036,15 @@ exports.stripeWebhook = onRequest(
         const txType = purpose === "pushka_empty" ? "pushkaEmpty" : "tzedaka";
         const txDesc = purpose === "pushka_empty" ? "Vaciado de Pushka (Stripe)" : "Donación Stripe";
         const txCurrency = String(intent.currency || "usd").toUpperCase();
+        // Resolve actual payment method from the charge (Apple Pay, Google Pay,
+        // SEPA, etc. all surface as "card" in PaymentMethod.type but the wallet
+        // identifier sits under card.wallet). Falls back to "card" so existing
+        // history rendering keeps working unchanged.
+        const charge0 = intent.charges?.data?.[0];
+        const pmDetails = charge0?.payment_method_details || {};
+        const pmType = pmDetails.type || (intent.payment_method_types?.[0]) || "card";
+        const wallet = pmDetails.card?.wallet?.type || null;
+        const txPaymentMethod = wallet || pmType;
         // tenantId comes from createPaymentIntent's metadata. Without it on
         // the tx doc, the multi-tenant history query (`where tenantId == X`)
         // silently excludes the row and the user thinks the payment never
@@ -1041,6 +1054,17 @@ exports.stripeWebhook = onRequest(
         const txTenantId = intent.metadata?.tenantId
           ? String(intent.metadata.tenantId)
           : null;
+        if (!txTenantId) {
+          // Should never happen post-fix to createPaymentIntent (which always
+          // stamps tenantId in metadata). Log loud rather than silently writing
+          // a tenant-less tx that the multi-tenant history query will hide.
+          console.warn("stripeWebhook: tenantId missing on payment_intent metadata", {
+            uid,
+            purpose,
+            paymentIntentId: docId,
+            eventId: event.id,
+          });
+        }
         const txRates = await getExchangeRates(null);
         const txSnap = buildCurrencySnapshot(amount, txCurrency, txRates);
         await db
@@ -1055,7 +1079,7 @@ exports.stripeWebhook = onRequest(
             ...txSnap,
             ...(txTenantId ? { tenantId: txTenantId } : {}),
             description: txDesc,
-            paymentMethod: 'card',
+            paymentMethod: txPaymentMethod,
             status: 'completed',
             createdAt: admin.firestore.FieldValue.serverTimestamp(),
           });
@@ -1322,9 +1346,17 @@ exports.stripeWebhook = onRequest(
         error: String(err?.message || err || "unknown_error"),
       });
     } catch (finalizeErr) {
-      console.error("stripeWebhook: Failed to finalize failed event", finalizeErr?.message);
+      console.error("stripeWebhook: Failed to finalize failed event", {
+        eventId: event?.id,
+        eventType: event?.type,
+        finalizeErrorMessage: finalizeErr?.message,
+      });
     }
-    console.error("stripeWebhook: Processing failed", err?.message || err);
+    console.error("stripeWebhook: Processing failed", {
+      eventId: event?.id,
+      eventType: event?.type,
+      errorMessage: err?.message || String(err),
+    });
     res.status(500).send("Webhook processing failed.");
   }
 });
@@ -1463,6 +1495,67 @@ exports.cleanupOldStripeWebhookEvents = onSchedule(
     }
 
     console.info("cleanupOldStripeWebhookEvents: completed", { totalDeleted });
+  },
+);
+
+// ---------------------------------------------------------------------------
+// onTenantBrandingUpdated — propagate tenant rebrand to per-user tenantState
+// ---------------------------------------------------------------------------
+// tenantState/{tenantId} docs cache appName/logoUrl/primaryColor/name from the
+// parent tenant doc at join-time so the UI can render branding without an
+// extra read on every screen. Without this trigger, when an admin renames or
+// rebrands the tenant, all member sidebars/avatars stay frozen on the old
+// values until each user manually leaves and rejoins. This watches the four
+// denormalized fields and batch-updates every member's tenantState.
+exports.onTenantBrandingUpdated = onDocumentUpdated(
+  "tenants/{tenantId}",
+  async (event) => {
+    const before = event.data?.before?.data() || {};
+    const after = event.data?.after?.data() || {};
+    const tenantId = event.params.tenantId;
+
+    const denormalizedFields = ["name", "appName", "logoUrl", "primaryColor"];
+    const changes = {};
+    for (const f of denormalizedFields) {
+      if (before[f] !== after[f]) {
+        // Map tenant doc field → tenantState field naming.
+        const dest = f === "name"
+          ? "tenantName"
+          : f === "appName"
+            ? "tenantAppName"
+            : f === "logoUrl"
+              ? "tenantLogoUrl"
+              : "tenantPrimaryColor";
+        changes[dest] = after[f] ?? null;
+      }
+    }
+    if (Object.keys(changes).length === 0) return;
+
+    // Find every tenantState pointing at this tenant. Bounded by tenant size,
+    // never the global user table.
+    const stateSnap = await db
+      .collectionGroup("tenantState")
+      .where("tenantId", "==", tenantId)
+      .get();
+
+    if (stateSnap.empty) return;
+
+    // Firestore caps batch writes at 500. Chunk + flush.
+    const updates = { ...changes, updatedAt: admin.firestore.FieldValue.serverTimestamp() };
+    const docs = stateSnap.docs;
+    const CHUNK = 400;
+    for (let i = 0; i < docs.length; i += CHUNK) {
+      const batch = db.batch();
+      for (const d of docs.slice(i, i + CHUNK)) {
+        batch.set(d.ref, updates, { merge: true });
+      }
+      await batch.commit();
+    }
+    console.info("onTenantBrandingUpdated: synced tenantState docs", {
+      tenantId,
+      changed: Object.keys(changes),
+      affectedDocs: docs.length,
+    });
   },
 );
 
@@ -1872,9 +1965,14 @@ exports.processPushkaAutoEmpty = onSchedule(
           paymentIntent = await stripe.paymentIntents.create(piParams, { idempotencyKey });
         } catch (stripeErr) {
           console.error("processPushkaAutoEmpty: stripe_charge_failed", {
-            uid, tenantId: plan.tenantId,
+            uid,
+            tenantId: plan.tenantId,
+            idempotencyKey,
+            chargeId: stripeErr?.payment_intent?.latest_charge?.id || null,
+            paymentIntentId: stripeErr?.payment_intent?.id || null,
             error: String(stripeErr?.message || stripeErr),
             code: stripeErr?.code,
+            type: stripeErr?.type,
           });
 
           // ===== Failure path: release lock + 24h retry on stateRef =====
@@ -2217,6 +2315,23 @@ function callerIsSuperAdmin(request) {
   return claims.role === "super_admin" || (claims.admin === true && request.auth?.token?.email === SUPER_ADMIN_EMAIL);
 }
 
+// Fresh-claims variant: reads customClaims directly from Auth, bypassing the
+// 1h-stale ID token. Use for security-critical write paths (createTenant,
+// deleteTenant, suspendTenant, etc.) where a recently-demoted super_admin
+// must be rejected immediately, not after their token rotates.
+async function callerIsSuperAdminFresh(request) {
+  const uid = request.auth?.uid;
+  if (!uid) return false;
+  try {
+    const rec = await admin.auth().getUser(uid);
+    const claims = rec.customClaims || {};
+    return claims.role === "super_admin" ||
+      (claims.admin === true && rec.email === SUPER_ADMIN_EMAIL);
+  } catch (_) {
+    return false;
+  }
+}
+
 /**
  * Sets role claims for a user.
  * - role: "super_admin" | "tenant_admin" | "tenant_collaborator"
@@ -2224,7 +2339,7 @@ function callerIsSuperAdmin(request) {
  * - revoke: removes all admin claims
  */
 exports.setAdminClaim = onCall(
-  { enforceAppCheck: false },
+  { enforceAppCheck: true },
   async (request) => {
     const callerUid = request.auth?.uid;
     if (!callerUid) {
@@ -2235,9 +2350,13 @@ exports.setAdminClaim = onCall(
 
     const callerRecord = await admin.auth().getUser(callerUid);
     const callerClaims = callerRecord.customClaims || {};
-    // Use the centralized super-admin check — the legacy `admin: true` claim
-    // is only honored together with the canonical SUPER_ADMIN_EMAIL.
-    const callerIsSuper = callerIsSuperAdmin(request);
+    // SECURITY: verify against the FRESH customClaims from Auth, not the
+    // potentially-stale `request.auth.token`. A demoted super_admin would
+    // still hold their old token (1h TTL) until they sign in again — they
+    // must NOT be able to grant claims after demotion. We additionally
+    // anchor super_admin to the canonical email.
+    const callerIsSuper = callerClaims.role === "super_admin" ||
+      (callerClaims.admin === true && callerRecord.email === SUPER_ADMIN_EMAIL);
     const callerIsTenantAdmin = callerClaims.role === "tenant_admin";
 
     if (!callerIsSuper && !callerIsTenantAdmin) {
@@ -2335,7 +2454,7 @@ exports.setAdminClaim = onCall(
 // ---------------------------------------------------------------------------
 
 exports.listAdmins = onCall(
-  { enforceAppCheck: false },
+  { enforceAppCheck: true },
   async (request) => {
     const callerUid = request.auth?.uid;
     if (!callerUid) throw new HttpsError("unauthenticated", "Debes estar autenticado.");
@@ -2386,13 +2505,20 @@ exports.listAdmins = onCall(
       return { admins };
     }
 
-    // super_admin: needs the full list across all tenants. Paginate Auth.
+    // super_admin: needs the full list across all tenants. Paginate Auth with a hard cap.
     const allUsers = [];
     let pageToken;
+    let pages = 0;
+    const MAX_PAGES = 50; // 50 * 1000 = 50k users hard cap
     do {
       const listResult = await admin.auth().listUsers(1000, pageToken);
       allUsers.push(...listResult.users);
       pageToken = listResult.pageToken;
+      pages += 1;
+      if (pages >= MAX_PAGES) {
+        console.warn("listAdmins: hit MAX_PAGES cap; results truncated", { pages, totalSoFar: allUsers.length });
+        break;
+      }
     } while (pageToken);
 
     const admins = allUsers
@@ -2414,7 +2540,7 @@ exports.listAdmins = onCall(
 // ---------------------------------------------------------------------------
 
 exports.getAdminStats = onCall(
-  { enforceAppCheck: false },
+  { enforceAppCheck: true },
   async (request) => {
     const callerUid = request.auth?.uid;
     if (!callerUid) throw new HttpsError("unauthenticated", "Debes estar autenticado.");
@@ -2628,7 +2754,7 @@ exports.getAdminStats = onCall(
 // ---------------------------------------------------------------------------
 
 exports.getRecentTransactions = onCall(
-  { enforceAppCheck: false },
+  { enforceAppCheck: true },
   async (request) => {
     const callerUid = request.auth?.uid;
     if (!callerUid) throw new HttpsError("unauthenticated", "Debes estar autenticado.");
@@ -2654,21 +2780,24 @@ exports.getRecentTransactions = onCall(
       ? db.collection("users").where("tenantId", "==", filterTenantId)
       : db.collection("users");
 
-    // Use Firestore's index instead of fetch-all-then-sort. Without `.orderBy`
-    // + `.limit` here this query returned the ENTIRE transactions collection
-    // group on every dashboard render — OOM bomb at scale.
-    //
-    // Tenant filtering happens client-side in this function (after fetch)
-    // because tx docs don't carry tenantId. To still return ~200 items for
-    // a single-tenant view, over-fetch by a factor and post-filter. The
-    // requires a composite index on (createdAt desc) at the collection-group
-    // level — see firestore.indexes.json.
-    const FETCH_CAP = filterTenantId ? 2000 : 500;
-    const txSnap = await db
-      .collectionGroup("transactions")
-      .orderBy("createdAt", "desc")
-      .limit(FETCH_CAP)
-      .get();
+    // Use Firestore's index instead of fetch-all-then-sort. When filtering by
+    // tenant we can take advantage of the (tenantId ASC, createdAt DESC)
+    // collection-group composite index, dropping the read cost from O(2000)
+    // to O(200). Older legacy txs lacking tenantId are excluded (super_admin
+    // unfiltered view still sees them via the orderBy(createdAt) path).
+    const FETCH_CAP = 500;
+    const txSnap = filterTenantId
+      ? await db
+          .collectionGroup("transactions")
+          .where("tenantId", "==", filterTenantId)
+          .orderBy("createdAt", "desc")
+          .limit(FETCH_CAP)
+          .get()
+      : await db
+          .collectionGroup("transactions")
+          .orderBy("createdAt", "desc")
+          .limit(FETCH_CAP)
+          .get();
 
     const usersSnap = await usersQuery.get();
 
@@ -2678,7 +2807,10 @@ exports.getRecentTransactions = onCall(
       userMap[d.id] = { displayName: u.displayName || u.email || d.id, email: u.email || "" };
     });
 
-    // Only include transactions whose owner is in the userMap (respects tenant filter)
+    // Defense-in-depth: confirm tx owner exists in userMap when tenant-filtering.
+    // The query above already restricts via tenantId on the doc, so this
+    // tightens against legacy txs whose tenantId stamp drifted from the
+    // owner's current tenant.
     let txs = txSnap.docs
       .filter((d) => {
         const uid = d.ref.parent.parent?.id ?? "";
@@ -2729,7 +2861,7 @@ exports.getRecentTransactions = onCall(
 // ---------------------------------------------------------------------------
 
 exports.getFailedPayments = onCall(
-  { enforceAppCheck: false },
+  { enforceAppCheck: true },
   async (request) => {
     const callerClaims = request.auth?.token ?? {};
     const isSuper = callerIsSuperAdmin(request);
@@ -2803,7 +2935,7 @@ exports.getFailedPayments = onCall(
 // ---------------------------------------------------------------------------
 
 exports.setUserBlocked = onCall(
-  { enforceAppCheck: false },
+  { enforceAppCheck: true },
   async (request) => {
     const callerClaims = request.auth?.token ?? {};
     const isSuper = callerIsSuperAdmin(request);
@@ -3093,9 +3225,11 @@ function normalizeSlug(slug) {
 // createTenant — super_admin only
 // ---------------------------------------------------------------------------
 exports.createTenant = onCall(
-  { enforceAppCheck: false },
+  { enforceAppCheck: true },
   async (request) => {
-    if (!callerIsSuperAdmin(request)) {
+    // Fresh-claims check (not the stale ID token) — a recently-demoted
+    // super_admin must NOT be able to create tenants until they re-auth.
+    if (!(await callerIsSuperAdminFresh(request))) {
       throw new HttpsError("permission-denied", "Solo el super administrador puede crear tenants.");
     }
 
@@ -3251,9 +3385,9 @@ exports.createTenant = onCall(
 // conflicts} so the operator can verify.
 // ---------------------------------------------------------------------------
 exports.backfillTenantSlugs = onCall(
-  { enforceAppCheck: false },
+  { enforceAppCheck: true },
   async (request) => {
-    if (!callerIsSuperAdmin(request)) {
+    if (!(await callerIsSuperAdminFresh(request))) {
       throw new HttpsError("permission-denied", "Solo super_admin.");
     }
 
@@ -3310,7 +3444,7 @@ exports.backfillTenantSlugs = onCall(
 // getTenantBranding — super_admin (any tenant) or tenant_admin (own tenant)
 // ---------------------------------------------------------------------------
 exports.getTenantBranding = onCall(
-  { enforceAppCheck: false },
+  { enforceAppCheck: true },
   async (request) => {
     const callerClaims = request.auth?.token ?? {};
     const isSuper = callerClaims.role === "super_admin" || callerClaims.admin === true;
@@ -3348,7 +3482,7 @@ exports.getTenantBranding = onCall(
 // updateTenant — super_admin (all fields) or tenant_admin (branding only)
 // ---------------------------------------------------------------------------
 exports.updateTenant = onCall(
-  { enforceAppCheck: false },
+  { enforceAppCheck: true },
   async (request) => {
     const callerClaims = request.auth?.token ?? {};
     const isSuper = callerClaims.role === "super_admin" || callerClaims.admin === true;
@@ -3454,7 +3588,7 @@ exports.updateTenant = onCall(
 // getTenantBySlug — public (no auth required), for code validation in app
 // ---------------------------------------------------------------------------
 exports.getTenantBySlug = onCall(
-  { enforceAppCheck: false },
+  { enforceAppCheck: true },
   async (request) => {
     const slug = String(request.data?.slug || "")
       .toLowerCase()
@@ -3497,13 +3631,14 @@ const TENANT_DISCOVERABLE_FIELDS = [
 ];
 
 exports.listDiscoverableTenants = onCall(
-  { enforceAppCheck: false },
+  { enforceAppCheck: true },
   async (request) => {
     // 30 calls per IP per 5 min — generous for legit picker use, blocks scrapers.
     await enforceRateLimitByIp(request, "listDiscoverableTenants", 30, 300);
 
     const snap = await db.collection("tenants")
       .where("status", "in", ["active", "trial", "grace_period"])
+      .limit(500)
       .get();
 
     const tenants = [];
@@ -3544,7 +3679,7 @@ exports.listDiscoverableTenants = onCall(
 // the first time they open the app after the multi-membership rollout.
 // ---------------------------------------------------------------------------
 exports.getTenantConfig = onCall(
-  { enforceAppCheck: false },
+  { enforceAppCheck: true },
   async (request) => {
     if (!request.auth?.uid) {
       throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
@@ -3678,7 +3813,7 @@ exports.getTenantConfig = onCall(
 // listTenants — super_admin only, returns all tenants with summary stats
 // ---------------------------------------------------------------------------
 exports.listTenants = onCall(
-  { enforceAppCheck: false },
+  { enforceAppCheck: true },
   async (request) => {
     const callerUid = request.auth?.uid;
     if (!callerUid) throw new HttpsError("unauthenticated", "Debes estar autenticado.");
@@ -3688,7 +3823,7 @@ exports.listTenants = onCall(
       throw new HttpsError("permission-denied", "Solo el super administrador.");
     }
 
-    const snap = await db.collection("tenants").get();
+    const snap = await db.collection("tenants").orderBy("createdAt", "desc").limit(1000).get();
 
     const tenants = snap.docs.map((d) => {
       const data = d.data();
@@ -3719,7 +3854,7 @@ exports.listTenants = onCall(
 // createStripeConnectLink — super_admin or tenant_admin generates OAuth URL
 // ---------------------------------------------------------------------------
 exports.createStripeConnectLink = onCall(
-  { secrets: [stripeConnectClientId], enforceAppCheck: false },
+  { secrets: [stripeConnectClientId], enforceAppCheck: true },
   async (request) => {
     const callerUid = request.auth?.uid;
     if (!callerUid) throw new HttpsError("unauthenticated", "Debes estar autenticado.");
@@ -3841,15 +3976,27 @@ const SENDGRID_FROM = "ioelkatz@gmail.com";
 // ---------------------------------------------------------------------------
 // sendEmail — internal helper using SendGrid
 // ---------------------------------------------------------------------------
+// Redact email for logging — keep first char + domain so we can correlate
+// without spilling full PII into Cloud Logging.
+function _redactEmail(email) {
+  if (!email || typeof email !== "string") return "<missing>";
+  const at = email.indexOf("@");
+  if (at < 1) return "<invalid>";
+  const local = email.slice(0, at);
+  const domain = email.slice(at + 1);
+  const head = local.charAt(0);
+  return `${head}***@${domain}`;
+}
+
 async function sendEmail({ to, subject, html }) {
   const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
   if (!to || !emailRegex.test(to)) {
-    console.warn("sendEmail: invalid or missing recipient address, skipping:", to);
+    console.warn("sendEmail: invalid or missing recipient address, skipping:", _redactEmail(to));
     return;
   }
   const apiKey = sendgridApiKey.value();
   if (!apiKey || apiKey.startsWith("PLACEHOLDER")) {
-    console.warn("sendEmail: SENDGRID_API_KEY not set, skipping email to", to);
+    console.warn("sendEmail: SENDGRID_API_KEY not set, skipping email to", _redactEmail(to));
     return;
   }
   const fetch = (await import("node-fetch")).default;
@@ -3876,9 +4023,9 @@ async function sendEmail({ to, subject, html }) {
 // createTenantSubscription — super_admin creates Stripe Billing subscription
 // ---------------------------------------------------------------------------
 exports.createTenantSubscription = onCall(
-  { secrets: [stripeSecret], enforceAppCheck: false },
+  { secrets: [stripeSecret], enforceAppCheck: true },
   async (request) => {
-    if (!callerIsSuperAdmin(request)) {
+    if (!(await callerIsSuperAdminFresh(request))) {
       throw new HttpsError("permission-denied", "Solo el super administrador.");
     }
 
@@ -3954,9 +4101,9 @@ exports.createTenantSubscription = onCall(
 // cancelTenantSubscription — super_admin cancels Stripe Billing subscription
 // ---------------------------------------------------------------------------
 exports.cancelTenantSubscription = onCall(
-  { secrets: [stripeSecret], enforceAppCheck: false },
+  { secrets: [stripeSecret], enforceAppCheck: true },
   async (request) => {
-    if (!callerIsSuperAdmin(request)) {
+    if (!(await callerIsSuperAdminFresh(request))) {
       throw new HttpsError("permission-denied", "Solo el super administrador.");
     }
 

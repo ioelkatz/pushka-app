@@ -341,17 +341,18 @@ class SupportScreen extends StatelessWidget {
 
   Future<void> _launchSafe(BuildContext context, Uri uri,
       {LaunchMode mode = LaunchMode.platformDefault}) async {
+    final tr = S.of(context);
     try {
       final ok = await launchUrl(uri, mode: mode);
       if (!ok && context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Could not open the link.')),
+          SnackBar(content: Text(tr.couldNotOpenLink)),
         );
       }
     } on PlatformException catch (e) {
       if (context.mounted) {
         ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('Error: ${e.message}')));
+            .showSnackBar(SnackBar(content: Text(tr.errorWithMessage(e.message ?? ''))));
       }
     }
   }

@@ -19,6 +19,11 @@ class FeedbackService {
   bool vibrationEnabled = true;
   bool ambientEnabled = false;
 
+  // Held so we can cancel the previous onPlayerComplete listener before
+  // re-attaching when playSuccess() is called repeatedly. Without this,
+  // a user spamming the donate button would accumulate one listener per tap.
+  StreamSubscription<void>? _successCompleteSub;
+
   double _ambientVolume = 0.85;
   static const _ambientDuck   = 0.12;
   static const _ambientNormal = 0.85;
@@ -144,9 +149,11 @@ class FeedbackService {
     unawaited(_fadeAmbientTo(_ambientDuck));
     try {
       await _successPlayer.stop();
-      late StreamSubscription<void> sub;
-      sub = _successPlayer.onPlayerComplete.listen((_) {
-        sub.cancel();
+      // Cancel any prior listener so rapid repeats don't accumulate subs.
+      await _successCompleteSub?.cancel();
+      _successCompleteSub = _successPlayer.onPlayerComplete.listen((_) {
+        _successCompleteSub?.cancel();
+        _successCompleteSub = null;
         unawaited(_fadeAmbientTo(_ambientNormal));
       });
       await _successPlayer.play(AssetSource('sounds/success.wav'), volume: 1.0);
@@ -206,6 +213,8 @@ class FeedbackService {
   void dispose() {
     if (_disposed) return;
     _disposed = true;
+    _successCompleteSub?.cancel();
+    _successCompleteSub = null;
     _coinPlayer.dispose();
     _successPlayer.dispose();
     _billPlayer.dispose();

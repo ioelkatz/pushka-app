@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../../core/l10n/s.dart';
 import '../../auth/providers/auth_controller.dart';
 
 class TenantSuspendedScreen extends ConsumerWidget {
@@ -11,6 +12,7 @@ class TenantSuspendedScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final cs = Theme.of(context).colorScheme;
     final tt = Theme.of(context).textTheme;
+    final tr = S.of(context);
 
     return Scaffold(
       body: SafeArea(
@@ -23,14 +25,13 @@ class TenantSuspendedScreen extends ConsumerWidget {
               Icon(Icons.block_rounded, size: 72, color: cs.error),
               const SizedBox(height: 24),
               Text(
-                'Servicio no disponible',
+                tr.tenantSuspendedTitle,
                 style: tt.headlineSmall?.copyWith(fontWeight: FontWeight.w700),
                 textAlign: TextAlign.center,
               ),
               const SizedBox(height: 12),
               Text(
-                'El servicio de tu organización está temporalmente suspendido. '
-                'Contactá al administrador de tu organización para más información.',
+                tr.tenantSuspendedBody,
                 style: tt.bodyMedium?.copyWith(color: cs.onSurfaceVariant),
                 textAlign: TextAlign.center,
               ),
@@ -40,7 +41,7 @@ class TenantSuspendedScreen extends ConsumerWidget {
                   await ref.read(authControllerProvider).signOut();
                   if (context.mounted) context.go('/login');
                 },
-                child: const Text('Cerrar sesión'),
+                child: Text(tr.logout),
               ),
             ],
           ),

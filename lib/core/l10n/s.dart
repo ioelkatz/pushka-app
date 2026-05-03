@@ -1065,6 +1065,53 @@ class S {
   String get tenantSearch => _t('Buscar', 'Search', 'Rechercher', 'חפש');
   String get tenantCancel => _t('Cancelar', 'Cancel', 'Annuler', 'ביטול');
 
+  // ---------------------------------------------------------------------------
+  // TENANT SUSPENDED SCREEN
+  // ---------------------------------------------------------------------------
+  String get tenantSuspendedTitle => _t(
+    'Servicio no disponible',
+    'Service unavailable',
+    'Service indisponible',
+    'השירות אינו זמין',
+  );
+  String tenantSlugNotFound(String slug) => _t(
+    'El código "$slug" no corresponde a ninguna organización.',
+    'The code "$slug" does not match any organization.',
+    'Le code « $slug » ne correspond à aucune organisation.',
+    'הקוד "$slug" אינו משויך לארגון.',
+  );
+  String get tenantSlugVerifyError => _t(
+    'No se pudo verificar el código. Intentá de nuevo.',
+    'Could not verify the code. Please try again.',
+    "Impossible de vérifier le code. Veuillez réessayer.",
+    'לא ניתן לאמת את הקוד. נסה שוב.',
+  );
+  String get tenantJoining => _t('Uniéndote...', 'Joining...', 'Adhésion...', 'מצטרף...');
+  String get goHome => _t('Ir al inicio', 'Go home', "Aller à l'accueil", 'עבור לדף הבית');
+
+  String get pushkaStyleClassic => _t('Pushka', 'Pushka', 'Pushka', 'פושקה');
+  String get pushkaStyleBuilding770 => _t('Edificio 770', 'Building 770', 'Bâtiment 770', 'בניין 770');
+
+  String get couldNotOpenLink => _t(
+    'No se pudo abrir el enlace.',
+    'Could not open the link.',
+    "Impossible d'ouvrir le lien.",
+    'לא ניתן לפתוח את הקישור.',
+  );
+  String errorWithMessage(String msg) => _t(
+    'Error: $msg',
+    'Error: $msg',
+    'Erreur : $msg',
+    'שגיאה: $msg',
+  );
+
+  String get tenantSuspendedBody => _t(
+    'El servicio de tu organización está temporalmente suspendido. Contactá al administrador de tu organización para más información.',
+    "Your organization's service is temporarily suspended. Please contact your organization administrator for more information.",
+    "Le service de votre organisation est temporairement suspendu. Veuillez contacter l'administrateur de votre organisation pour plus d'informations.",
+    'שירות הארגון שלך מושעה זמנית. צור קשר עם מנהל הארגון לפרטים נוספים.',
+  );
+
   String get appShareText => _t(
     'He estado usando esta increíble app Pushka de Tzedaká. ¡Funciona igual que una pushka real! Con solo un toque puedes "poner una moneda" y cuando estés listo, "vaciarla" para hacer una donación.\n\nToda la Tzedaká va directamente a Colel Chabad, que hace una labor increíble ayudando a los pobres en Israel.\n\nMírala aquí: https://pushkapp.cc/share',
     'I\'ve been using this amazing Tzedakah Pushka app. It works just like a real pushka! With one tap you can "drop a coin" and when ready, "empty it" to make a donation.\n\nAll Tzedakah goes directly to Colel Chabad, doing incredible work helping the poor in Israel.\n\nCheck it out: https://pushkapp.cc/share',
