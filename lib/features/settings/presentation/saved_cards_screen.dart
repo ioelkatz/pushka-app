@@ -334,7 +334,6 @@ class _SavedCardsScreenState extends ConsumerState<SavedCardsScreen> {
     required S tr,
   }) {
     final cs = Theme.of(context).colorScheme;
-    final accent = _brandGradient(brand).$1;
     final mm = expMonth.toString().padLeft(2, '0');
     final yy = expYear.toString().padLeft(4, '0').substring(2);
 
