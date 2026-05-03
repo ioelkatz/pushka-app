@@ -564,8 +564,8 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
             final topGap = isCompact ? 16.0 : 24.0;
             final titleSize = isCompact ? 20.0 : 24.0;
             final subtitleSize = isCompact ? 14.0 : 16.0;
-            final titleBottomGap = isCompact ? 6.0 : 10.0;
-            final actionsTopGap = isCompact ? 6.0 : 10.0;
+            final titleBottomGap = isCompact ? 4.0 : 6.0;
+            final actionsTopGap = isCompact ? 4.0 : 6.0;
 
                         final activeHoliday = _HolidayInfo.getActiveHoliday();
             final bool isFull = pushkaGoal > 0 && pushkaAmount >= pushkaGoal;
