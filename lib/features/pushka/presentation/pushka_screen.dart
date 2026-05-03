@@ -263,7 +263,11 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
         )),
       );
     } catch (error, st) {
-      _reportError(error, st, op: 'emptyPushka');
+      // User-canceled flows aren't bugs — don't pollute Crashlytics with them.
+      final isUserCancel = error is StripeServiceException && error.code == 'canceled';
+      if (!isUserCancel) {
+        _reportError(error, st, op: 'emptyPushka');
+      }
       if (!mounted) return;
       _showError(_donationErrorMessage(error, tr));
     } finally {
