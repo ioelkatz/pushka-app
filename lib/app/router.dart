@@ -18,7 +18,6 @@ import '../features/splash/presentation/splash_screen.dart';
 import '../features/tenant/presentation/tenant_code_screen.dart';
 import '../features/tenant/presentation/tenant_suspended_screen.dart';
 import '../features/tenant/presentation/join_via_link_screen.dart';
-import '../features/tenant/data/tenant_repository.dart';
 import '../core/deep_link_handler.dart';
 
 import '../features/pushka/presentation/pushka_screen.dart';
@@ -180,7 +179,11 @@ void initNotificationNavigation() {
   };
 }
 
-/// AppBar for the main pushka screen — reads tenant appName from provider.
+/// AppBar for the home screen — fixed "Mi Pushka" title.
+/// Used to show the tenant's appName/logo + a multi-tenant switcher
+/// chevron, but the user wanted the tenant identity out of the home
+/// AppBar (it's still in the drawer header). The switcher now lives in
+/// the Settings screen via showAccountSwitcher().
 class _TenantMainAppBar extends ConsumerWidget implements PreferredSizeWidget {
   const _TenantMainAppBar();
 
@@ -190,41 +193,8 @@ class _TenantMainAppBar extends ConsumerWidget implements PreferredSizeWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final tr = S.of(context);
-    final tenantConfig = ref.watch(tenantConfigProvider).valueOrNull;
-    final summaries = ref.watch(userTenantSummariesProvider).valueOrNull ?? [];
-    final hasMultiple = summaries.length > 1;
-
-    final appName = (tenantConfig?.appName.isNotEmpty == true)
-        ? tenantConfig!.appName
-        : tr.navPushka;
-    final logoUrl = tenantConfig?.logoUrl;
-
-    Widget nameWidget = (logoUrl != null && logoUrl.isNotEmpty)
-        ? Image.network(
-            logoUrl,
-            height: 32,
-            fit: BoxFit.contain,
-            errorBuilder: (_, _, _) =>
-                Text(appName, style: const TextStyle(fontWeight: FontWeight.w600)),
-          )
-        : Text(appName, style: const TextStyle(fontWeight: FontWeight.w600));
-
-    final Widget titleWidget = hasMultiple
-        ? GestureDetector(
-            onTap: () => _showSwitcherSheet(context, ref, summaries),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                nameWidget,
-                const SizedBox(width: 4),
-                const Icon(Icons.expand_more_rounded, size: 20),
-              ],
-            ),
-          )
-        : nameWidget;
-
     return AppBar(
-      title: titleWidget,
+      title: Text(tr.myPushka, style: const TextStyle(fontWeight: FontWeight.w600)),
       centerTitle: true,
       actions: [
         IconButton(
@@ -232,7 +202,7 @@ class _TenantMainAppBar extends ConsumerWidget implements PreferredSizeWidget {
           onPressed: () async {
             try {
               await SharePlus.instance.share(
-                ShareParams(text: tr.appShareText, subject: appName),
+                ShareParams(text: tr.appShareText, subject: tr.myPushka),
               );
             } catch (e) {
               debugPrint('[router] share failed: $e');
@@ -240,138 +210,6 @@ class _TenantMainAppBar extends ConsumerWidget implements PreferredSizeWidget {
           },
         ),
       ],
-    );
-  }
-
-  void _showSwitcherSheet(BuildContext context, WidgetRef ref, List summaries) {
-    showModalBottomSheet<void>(
-      context: context,
-      backgroundColor: Colors.transparent,
-      builder: (_) => _AccountSwitcherSheet(ref: ref),
-    );
-  }
-}
-
-class _AccountSwitcherSheet extends ConsumerWidget {
-  const _AccountSwitcherSheet({required this.ref});
-
-  final WidgetRef ref;
-
-  @override
-  Widget build(BuildContext context, WidgetRef wRef) {
-    final tr = S.of(context);
-    final summaries = wRef.watch(userTenantSummariesProvider).valueOrNull ?? [];
-    final tenantConfig = wRef.watch(tenantConfigProvider).valueOrNull;
-    final activeTenantId = tenantConfig?.tenantId;
-    final tt = Theme.of(context).textTheme;
-
-    return Container(
-      decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.surface,
-        borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
-      child: SafeArea(
-        top: false,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              width: 36,
-              height: 4,
-              decoration: BoxDecoration(
-                color: Theme.of(context).colorScheme.outline,
-                borderRadius: BorderRadius.circular(2),
-              ),
-            ),
-            const SizedBox(height: 16),
-            Text(
-              tr.myOrganizations,
-              style: tt.titleMedium?.copyWith(fontWeight: FontWeight.w700),
-            ),
-            const SizedBox(height: 12),
-            ...summaries.map((s) {
-              final isActive = s.tenantId == activeTenantId;
-              return ListTile(
-                contentPadding: EdgeInsets.zero,
-                leading: _OrgAvatar(name: s.name, logoUrl: s.logoUrl),
-                title: Text(
-                  s.appName.isNotEmpty ? s.appName : s.name,
-                  style: tt.bodyMedium?.copyWith(
-                    fontWeight: isActive ? FontWeight.w700 : FontWeight.w500,
-                  ),
-                ),
-                trailing: isActive
-                    ? Icon(Icons.check_rounded,
-                        color: Theme.of(context).colorScheme.primary)
-                    : null,
-                onTap: isActive
-                    ? null
-                    : () async {
-                        Navigator.of(context).pop();
-                        await wRef
-                            .read(tenantRepositoryProvider)
-                            .switchTenant(s.tenantId);
-                        wRef.invalidate(tenantConfigProvider);
-                        wRef.invalidate(tenantStateProvider);
-                        invalidateTenantCache();
-                      },
-              );
-            }),
-            const Divider(),
-            ListTile(
-              contentPadding: EdgeInsets.zero,
-              leading: const CircleAvatar(
-                radius: 20,
-                child: Icon(Icons.add_rounded),
-              ),
-              title: Text(tr.addOrganization),
-              onTap: () {
-                Navigator.of(context).pop();
-                context.push('/tenant-setup');
-              },
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _OrgAvatar extends StatelessWidget {
-  const _OrgAvatar({required this.name, this.logoUrl});
-
-  final String name;
-  final String? logoUrl;
-
-  @override
-  Widget build(BuildContext context) {
-    final bg = Theme.of(context).colorScheme.primaryContainer;
-    return CircleAvatar(
-      radius: 20,
-      backgroundColor: bg,
-      child: logoUrl != null && logoUrl!.isNotEmpty
-          ? ClipOval(
-              child: Image.network(
-                logoUrl!,
-                width: 40,
-                height: 40,
-                fit: BoxFit.cover,
-                errorBuilder: (_, _, _) => _initial(context),
-              ),
-            )
-          : _initial(context),
-    );
-  }
-
-  Widget _initial(BuildContext context) {
-    final initial = name.isNotEmpty ? name[0].toUpperCase() : 'P';
-    return Text(
-      initial,
-      style: TextStyle(
-        color: Theme.of(context).colorScheme.onPrimaryContainer,
-        fontWeight: FontWeight.w700,
-      ),
     );
   }
 }

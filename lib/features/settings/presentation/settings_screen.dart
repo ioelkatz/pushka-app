@@ -12,6 +12,7 @@ import '../../users/data/user_repository.dart';
 import '../../users/presentation/user_profile_provider.dart';
 import '../../tenant/data/tenant_repository.dart';
 import '../../tenant/domain/tenant_config.dart';
+import '../../tenant/presentation/account_switcher_sheet.dart';
 import '../../../core/format_utils.dart';
 import '../../../core/l10n/locale_provider.dart';
 import 'package:go_router/go_router.dart';
@@ -198,6 +199,19 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           _buildActionButton(
             _savedCardLabel(userProfile, tr),
             onTap: () => context.go('/settings/saved-cards'),
+          ),
+          const SizedBox(height: 18),
+
+          // MULTI-TENANT ORGANIZATIONS
+          // Moved here from the home AppBar — the home screen now shows
+          // a fixed "Mi Pushka" title and the tenant switcher lives in
+          // Settings. Tap opens the same bottom sheet as before
+          // (active tenant + others + "add organization" CTA).
+          _buildLabel(tr.myOrganizations),
+          const SizedBox(height: 6),
+          _buildActionButton(
+            _activeOrgLabel(),
+            onTap: () => showAccountSwitcher(context),
           ),
           const SizedBox(height: 18),
 
@@ -783,6 +797,18 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       return '$brandLabel •••• $last4';
     }
     return tr.noSavedCards.split('\n').first;
+  }
+
+  String _activeOrgLabel() {
+    final tenantConfig = ref.watch(tenantConfigProvider).valueOrNull;
+    final summaries = ref.watch(userTenantSummariesProvider).valueOrNull ?? [];
+    final activeName = (tenantConfig?.appName.isNotEmpty == true)
+        ? tenantConfig!.appName
+        : tenantConfig?.name ?? '';
+    if (summaries.length > 1) {
+      return '$activeName (${summaries.length})';
+    }
+    return activeName;
   }
 
   Widget _buildPushkaStyleSelector(WidgetRef ref) {
