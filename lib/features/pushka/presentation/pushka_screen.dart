@@ -858,7 +858,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                             child: Stack(
                               children: [
                                 Container(
-                                  padding: const EdgeInsetsDirectional.fromSTEB(62, 0, 14, 0),
+                                  padding: const EdgeInsetsDirectional.fromSTEB(50, 0, 14, 0),
                                   decoration: BoxDecoration(
                                     gradient: LinearGradient(
                                       colors: [sc.$1, sc.$2],
