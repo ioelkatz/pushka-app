@@ -851,40 +851,51 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                         Positioned(
                           left: 0, top: 0, bottom: 0,
                           child: IntrinsicWidth(
-                            child: Container(
-                              padding: const EdgeInsetsDirectional.fromSTEB(62, 0, 24, 0),
-                              decoration: BoxDecoration(
-                                gradient: LinearGradient(
-                                  colors: [sc.$1, sc.$2],
-                                  begin: Alignment.centerLeft,
-                                  end: Alignment.centerRight,
-                                ),
-                                borderRadius: BorderRadius.circular(h / 2),
-                              ),
-                              alignment: Alignment.center,
-                              child: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Text(
-                                    S.of(context).streakDays,
-                                    style: const TextStyle(
-                                      color: Colors.white,
-                                      fontSize: 16,
-                                      fontWeight: FontWeight.w800,
-                                      letterSpacing: 0.2,
-                                      shadows: [
-                                        Shadow(
-                                          color: Color(0x33000000),
-                                          blurRadius: 3,
-                                          offset: Offset(0, 1),
-                                        ),
-                                      ],
+                            child: Stack(
+                              children: [
+                                Container(
+                                  padding: const EdgeInsetsDirectional.fromSTEB(62, 0, 14, 0),
+                                  decoration: BoxDecoration(
+                                    gradient: LinearGradient(
+                                      colors: [sc.$1, sc.$2],
+                                      begin: Alignment.centerLeft,
+                                      end: Alignment.centerRight,
                                     ),
+                                    borderRadius: BorderRadius.circular(h / 2),
                                   ),
-                                  const SizedBox(width: 6),
-                                  const Icon(Icons.local_fire_department, color: Colors.white, size: 18),
-                                ],
-                              ),
+                                  alignment: Alignment.center,
+                                  child: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Text(
+                                        S.of(context).streakDays,
+                                        style: const TextStyle(
+                                          color: Colors.white,
+                                          fontSize: 16,
+                                          fontWeight: FontWeight.w800,
+                                          letterSpacing: 0.2,
+                                          shadows: [
+                                            Shadow(
+                                              color: Color(0x33000000),
+                                              blurRadius: 3,
+                                              offset: Offset(0, 1),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                      const SizedBox(width: 6),
+                                      const Icon(Icons.local_fire_department, color: Colors.white, size: 18),
+                                    ],
+                                  ),
+                                ),
+                                // 1px white divider on the right cap only
+                                Positioned(
+                                  right: 0,
+                                  top: 5,
+                                  bottom: 5,
+                                  child: Container(width: 1, color: Colors.white54),
+                                ),
+                              ],
                             ),
                           ),
                         ),
