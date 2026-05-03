@@ -60,6 +60,10 @@ macos/Runner/GoogleService-Info.plist
 .env.local
 .env.production
 .env.*.local
+# Catch-all for any *.env file (dev.env, production.env, etc.) so per-env
+# secrets bundles can never accidentally get committed. .env.example is safe —
+# the leading dot means *.env doesn't match it.
+*.env
 *.keystore
 *.jks
 key.properties

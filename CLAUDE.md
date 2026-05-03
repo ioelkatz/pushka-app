@@ -60,7 +60,8 @@ These files are gitignored — each dev generates them locally and never commits
 | Dev Firebase config | `android/app/src/dev/google-services.json` | run `firebase apps:sdkconfig ANDROID <DEV_APP_ID> --project pushka-app-ioel-test > android/app/src/dev/google-services.json` |
 | Release keystore | `android/app/pushka-release-key.jks` | from secrets bundle |
 | Keystore properties | `android/key.properties` | from secrets bundle |
-| Env file | `production.env` | from secrets bundle (Stripe live key reference) |
+| Env file (prod) | `production.env` | from secrets bundle (`STRIPE_PUBLISHABLE_KEY=pk_live_...`) |
+| Env file (dev) | `dev.env` | ask Ioel for the Stripe test publishable key (`STRIPE_PUBLISHABLE_KEY=pk_test_...`) |
 | Prod Firebase opts | `lib/firebase_options_prod.dart` | run `flutterfire configure --project=pushka-app-ioel --platforms=android --out=lib/firebase_options_prod.dart` and rename `DefaultFirebaseOptions` → `ProdFirebaseOptions` |
 | Dev Firebase opts | `lib/firebase_options_dev.dart` | run `flutterfire configure --project=pushka-app-ioel-test --platforms=android --out=lib/firebase_options_dev.dart` and rename → `DevFirebaseOptions` |
 
