@@ -778,7 +778,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
         : (const Color(0xFFFFD54F), const Color(0xFFFFC107));
     const double h = 40.0;
     const double badgeSize = 50.0;
-    final double maxW = MediaQuery.of(context).size.width - 32;
+    final double maxW = MediaQuery.of(context).size.width - 16;
 
     return Container(
       margin: const EdgeInsets.only(bottom: 4),
