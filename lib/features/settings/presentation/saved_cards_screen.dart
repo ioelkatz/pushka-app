@@ -256,16 +256,18 @@ class _SavedCardsScreenState extends ConsumerState<SavedCardsScreen> {
       padding: const EdgeInsets.symmetric(vertical: 4),
       child: Row(
         children: [
-          // Brand logo box — white background with the actual brand logo
-          // (FontAwesome cc* icons). Falls back to a generic credit card
-          // for unrecognized brands.
+          // Brand logo box — dark rounded square with the brand icon in
+          // brand color (Mastercard red, Visa blue, etc.). Matches the
+          // wallet-style look in the user reference. FontAwesome's cc*
+          // icons are solid single-color glyphs, so the brand color comes
+          // from accent — the real multi-color logos require bundled SVG
+          // assets and could be a future polish.
           Container(
-            width: 44,
-            height: 30,
+            width: 38,
+            height: 38,
             decoration: BoxDecoration(
-              color: cs.surface,
-              borderRadius: BorderRadius.circular(6),
-              border: Border.all(color: cs.outlineVariant, width: 1),
+              color: const Color(0xFF111827),
+              borderRadius: BorderRadius.circular(9),
             ),
             alignment: Alignment.center,
             child: FaIcon(
