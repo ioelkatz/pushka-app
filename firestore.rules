@@ -113,6 +113,7 @@ service cloud.firestore {
             'streakCount', 'lastStreakDate',
             'autoEmptyFrequency', 'autoEmptyWeekday', 'autoEmptyDayOfMonth',
             'autoEmptyTopOffEnabled', 'autoEmptyTopOffAmount', 'autoEmptyNextRunAt',
+            'autoEmptyPaymentMethodId',
             'createdAt', 'updatedAt'
           ]) &&
           request.resource.data.uid == uid &&
@@ -155,7 +156,14 @@ service cloud.firestore {
                   request.resource.data.autoEmptyTopOffAmount >= 0)) &&
           (!('autoEmptyNextRunAt' in request.resource.data) ||
               request.resource.data.autoEmptyNextRunAt is timestamp ||
-              request.resource.data.autoEmptyNextRunAt == null);
+              request.resource.data.autoEmptyNextRunAt == null) &&
+          // autoEmptyPaymentMethodId: Stripe PaymentMethod ID picked by the
+          // user for the auto-empty cron charge. Null clears it (cron falls
+          // back to the user's stripeDefaultPaymentMethodId).
+          (!('autoEmptyPaymentMethodId' in request.resource.data) ||
+              request.resource.data.autoEmptyPaymentMethodId == null ||
+              (request.resource.data.autoEmptyPaymentMethodId is string &&
+                  request.resource.data.autoEmptyPaymentMethodId.size() <= 100));
     }
 
     function validUserDoc(uid) {

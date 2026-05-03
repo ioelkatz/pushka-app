@@ -21,6 +21,7 @@ import '../features/tenant/presentation/join_via_link_screen.dart';
 import '../core/deep_link_handler.dart';
 
 import '../features/pushka/presentation/pushka_screen.dart';
+import '../features/wallet/presentation/wallet_screen.dart';
 import '../features/reminders/presentation/reminders_screen.dart';
 import '../features/history/presentation/history_screen.dart';
 import '../features/settings/presentation/settings_screen.dart';
@@ -146,6 +147,16 @@ final router = GoRouter(
       },
       routes: [
         GoRoute(path: '/', pageBuilder: (context, state) => _fadePage(state, const PushkaScreen())),
+        GoRoute(
+          path: '/wallet',
+          pageBuilder: (context, state) => _slidePage(state, const WalletScreen()),
+          routes: [
+            GoRoute(
+              path: 'saved-cards',
+              pageBuilder: (context, state) => _slidePage(state, const SavedCardsScreen()),
+            ),
+          ],
+        ),
         GoRoute(path: '/reminders', pageBuilder: (context, state) => _slidePage(state, const RemindersScreen())),
         GoRoute(path: '/history', pageBuilder: (context, state) => _slidePage(state, const HistoryScreen())),
         GoRoute(
@@ -218,6 +229,18 @@ PreferredSizeWidget? _buildAppBar(BuildContext context, String location) {
   final tr = S.of(context);
   if (location == '/') {
     return const _TenantMainAppBar();
+  } else if (location == '/wallet') {
+    return AppBar(title: Text(tr.wallet), centerTitle: true);
+  } else if (location == '/wallet/saved-cards') {
+    final isRtl = Directionality.of(context) == TextDirection.rtl;
+    return AppBar(
+      title: Text(tr.savedCards),
+      centerTitle: true,
+      leading: IconButton(
+        icon: Icon(isRtl ? Icons.arrow_forward : Icons.arrow_back),
+        onPressed: () => context.go('/wallet'),
+      ),
+    );
   } else if (location == '/reminders') {
     return AppBar(title: Text(tr.navReminders), centerTitle: true);
   } else if (location == '/history') {
@@ -245,6 +268,7 @@ PreferredSizeWidget? _buildAppBar(BuildContext context, String location) {
 }
 
 DrawerItem _drawerItemFromLocation(String loc) {
+  if (loc.startsWith('/wallet')) return DrawerItem.wallet;
   if (loc.startsWith('/reminders')) return DrawerItem.reminders;
   if (loc.startsWith('/history')) return DrawerItem.history;
   if (loc.startsWith('/settings')) return DrawerItem.settings;

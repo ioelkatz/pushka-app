@@ -8,14 +8,12 @@ class FeedbackService {
   FeedbackService._();
   static final FeedbackService instance = FeedbackService._();
 
-  final AudioPlayer _coinPlayer = AudioPlayer();
   final AudioPlayer _successPlayer = AudioPlayer();
   final AudioPlayer _billPlayer = AudioPlayer();
   final AudioPlayer _ambientPlayer = AudioPlayer();
   bool _initialized = false;
 
   bool soundEnabled = true;
-  bool coinJingleEnabled = true;
   bool vibrationEnabled = true;
   bool ambientEnabled = false;
 
@@ -47,10 +45,8 @@ class FeedbackService {
           category: AVAudioSessionCategory.playback,
         ),
       ));
-      await _coinPlayer.setSource(AssetSource('sounds/coin.wav'));
       await _successPlayer.setSource(AssetSource('sounds/success.wav'));
       await _billPlayer.setSource(AssetSource('sounds/bill_flutter.wav'));
-      await _coinPlayer.setVolume(0.7);
       await _successPlayer.setVolume(1.0);
       await _billPlayer.setVolume(0.8);
       _initialized = true;
@@ -61,12 +57,10 @@ class FeedbackService {
 
   void updatePreferences({
     bool? sound,
-    bool? coinJingle,
     bool? vibration,
     bool? ambient,
   }) {
     if (sound != null) soundEnabled = sound;
-    if (coinJingle != null) coinJingleEnabled = coinJingle;
     if (vibration != null) vibrationEnabled = vibration;
     if (ambient != null && ambient != ambientEnabled) {
       ambientEnabled = ambient;
@@ -123,20 +117,6 @@ class FeedbackService {
     } catch (_) {}
   }
 
-  Future<void> playCoinDrop() async {
-    if (!coinJingleEnabled || kIsWeb) return;
-    if (vibrationEnabled) {
-      // Double-tap pattern: coin bounce feel
-      HapticFeedback.lightImpact();
-      unawaited(Future.delayed(const Duration(milliseconds: 80), HapticFeedback.lightImpact));
-    }
-    if (!soundEnabled) return;
-    try {
-      await _coinPlayer.stop();
-      await _coinPlayer.play(AssetSource('sounds/coin.wav'));
-    } catch (_) {}
-  }
-
   Future<void> playSuccess() async {
     if (!soundEnabled || kIsWeb) return;
     if (vibrationEnabled) {
@@ -144,7 +124,6 @@ class FeedbackService {
       unawaited(Future.delayed(const Duration(milliseconds: 100), HapticFeedback.mediumImpact));
       unawaited(Future.delayed(const Duration(milliseconds: 200), HapticFeedback.heavyImpact));
     }
-    try { await _coinPlayer.stop(); } catch (_) {}
     try { await _billPlayer.stop(); } catch (_) {}
     unawaited(_fadeAmbientTo(_ambientDuck));
     try {
@@ -215,7 +194,6 @@ class FeedbackService {
     _disposed = true;
     _successCompleteSub?.cancel();
     _successCompleteSub = null;
-    _coinPlayer.dispose();
     _successPlayer.dispose();
     _billPlayer.dispose();
     _ambientPlayer.dispose();

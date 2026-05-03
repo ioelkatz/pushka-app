@@ -7,8 +7,12 @@ class PushkaStyleNotifier extends StateNotifier<PushkaStyle> {
   PushkaStyleNotifier() : super(_load());
 
   static PushkaStyle _load() {
+    // Default to Building 770 (Chabad HQ visual) for new installs and any
+    // user that hasn't picked a style yet. Saved values still win — once
+    // the user explicitly selects 'pushka' (classic) we honor it.
     final saved = HiveCache.instance.loadPushkaStyle();
-    return saved == '770' ? PushkaStyle.building770 : PushkaStyle.classic;
+    if (saved == 'pushka') return PushkaStyle.classic;
+    return PushkaStyle.building770;
   }
 
   Future<void> setStyle(PushkaStyle style) async {

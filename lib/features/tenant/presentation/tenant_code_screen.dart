@@ -6,6 +6,7 @@ import 'package:go_router/go_router.dart';
 import '../../../app/theme/app_tokens.dart';
 import '../../../app/router.dart';
 import '../../../core/l10n/s.dart';
+import '../../users/presentation/user_profile_provider.dart';
 import '../data/tenant_repository.dart';
 import '../domain/tenant_config.dart';
 import '../domain/tenant_summary.dart';
@@ -36,10 +37,28 @@ class _TenantCodeScreenState extends ConsumerState<TenantCodeScreen> {
   Future<void> _joinTenant(String tenantId) async {
     setState(() => _joining = true);
     try {
-      await ref.read(tenantRepositoryProvider).joinTenant(tenantId);
+      final repo = ref.read(tenantRepositoryProvider);
+      await repo.joinTenant(tenantId);
+      // Auto-switch the active tenant to the one the user just joined.
+      // Without this, the user is added to `tenantIds` but the active
+      // `tenantId` stays on whatever tenant they were previously in — they
+      // would have to manually open the account switcher and pick the new
+      // org, which makes "join" feel like it didn't do anything from the
+      // home screen perspective. switchTenant is a no-op idempotent if the
+      // user is already active on this tenant (e.g. first-ever join makes
+      // it active automatically), so the extra call is safe.
+      try {
+        await repo.switchTenant(tenantId);
+      } catch (e) {
+        // Switch failure is non-fatal: the join succeeded, the user can
+        // switch manually from the account-switcher sheet. Log so we can
+        // diagnose if this becomes a chronic issue.
+        debugPrint('joinTenant: auto-switch to $tenantId failed: $e');
+      }
       ref.invalidate(tenantConfigProvider);
       ref.invalidate(tenantStateProvider);
       ref.invalidate(userTenantSummariesProvider);
+      ref.invalidate(userProfileProvider);
       invalidateTenantCache();
       if (mounted) context.go('/');
     } catch (_) {

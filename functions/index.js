@@ -821,7 +821,64 @@ exports.listSavedCards = onCall(
       limit: 100,
     });
 
-    const cards = pmList.data.map((pm) => ({
+    // Dedupe by Stripe's `card.fingerprint` — a stable hash of the underlying
+    // card number, scoped to the platform Stripe account. Two SetupIntents
+    // for the same card on the same customer create two PaymentMethod IDs
+    // but share the same fingerprint, so the user sees the card duplicated
+    // in the list. Keep the DEFAULT pm if one of the dupes is default;
+    // otherwise keep the most-recently-created. Detach the rest from the
+    // customer (best-effort: don't fail the list call if detach fails).
+    const byFingerprint = new Map();
+    for (const pm of pmList.data) {
+      const fp = pm.card?.fingerprint;
+      if (!fp) {
+        // Cards without fingerprint (rare — e.g. some non-card PMs labeled
+        // as card by network mismatch) — keep all distinct ids unmodified.
+        byFingerprint.set(`__nofp_${pm.id}`, [pm]);
+        continue;
+      }
+      const existing = byFingerprint.get(fp) || [];
+      existing.push(pm);
+      byFingerprint.set(fp, existing);
+    }
+
+    const keep = [];
+    const detachQueue = [];
+    for (const group of byFingerprint.values()) {
+      if (group.length === 1) {
+        keep.push(group[0]);
+        continue;
+      }
+      // Pick winner: default if present, else newest by `created` (unix sec).
+      const defaultInGroup = group.find((pm) => pm.id === defaultPmId);
+      const winner = defaultInGroup ||
+        group.slice().sort((a, b) => (b.created || 0) - (a.created || 0))[0];
+      keep.push(winner);
+      for (const loser of group) {
+        if (loser.id !== winner.id) detachQueue.push(loser);
+      }
+    }
+
+    // Best-effort dedupe cleanup. Each detach is independent — if one fails,
+    // the others still run; the user sees the deduped list either way.
+    if (detachQueue.length > 0) {
+      console.info("listSavedCards: deduping fingerprint dupes", {
+        uid, customerId,
+        kept: keep.length,
+        detaching: detachQueue.length,
+      });
+      await Promise.all(detachQueue.map((pm) =>
+        stripe.paymentMethods.detach(pm.id).catch((detachErr) => {
+          console.warn("listSavedCards: detach failed", {
+            uid, customerId,
+            paymentMethodId: pm.id,
+            errorMessage: detachErr?.message,
+          });
+        }),
+      ));
+    }
+
+    const cards = keep.map((pm) => ({
       id: pm.id,
       brand: pm.card?.brand || "card",
       last4: pm.card?.last4 || "****",

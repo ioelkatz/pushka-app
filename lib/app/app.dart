@@ -85,7 +85,6 @@ class _PushkaAppState extends ConsumerState<PushkaApp> with WidgetsBindingObserv
     // calls updatePreferences(ambient: ...) in its _loadedRemote block.
     FeedbackService.instance.updatePreferences(
       sound: (profile['soundEnabled'] as bool?) ?? true,
-      coinJingle: (profile['coinJingleEnabled'] as bool?) ?? true,
       vibration: (profile['vibrationEnabled'] as bool?) ?? true,
     );
   }
@@ -116,7 +115,6 @@ class _PushkaAppState extends ConsumerState<PushkaApp> with WidgetsBindingObserv
 
       FeedbackService.instance.updatePreferences(
         sound: (profile['soundEnabled'] as bool?) ?? true,
-        coinJingle: (profile['coinJingleEnabled'] as bool?) ?? true,
         vibration: (profile['vibrationEnabled'] as bool?) ?? true,
       );
     });

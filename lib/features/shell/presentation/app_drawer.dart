@@ -7,7 +7,7 @@ import '../../../core/l10n/s.dart';
 import '../../tenant/data/tenant_repository.dart';
 import '../../users/presentation/user_profile_provider.dart';
 
-enum DrawerItem { pushka, reminders, history, settings, prayers, support, about }
+enum DrawerItem { pushka, wallet, reminders, history, settings, prayers, support, about }
 
 class AppDrawer extends ConsumerWidget {
   final DrawerItem current;
@@ -94,6 +94,7 @@ class AppDrawer extends ConsumerWidget {
               padding: const EdgeInsets.symmetric(vertical: 8),
               children: [
                 _item(context, DrawerItem.pushka, tr.myPushka, '/', Icons.home, blue),
+                _item(context, DrawerItem.wallet, tr.wallet, '/wallet', Icons.account_balance_wallet, blue),
                 _item(context, DrawerItem.reminders, tr.reminders, '/reminders', Icons.notifications, blue),
                 _item(context, DrawerItem.history, tr.history, '/history', Icons.history, blue),
                 _item(context, DrawerItem.settings, tr.settings, '/settings', Icons.settings, blue),

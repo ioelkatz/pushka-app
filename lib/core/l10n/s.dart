@@ -53,6 +53,25 @@ class S {
 
   String hello(String name) => _t('Hola $name', 'Hello $name', 'Bonjour $name', 'שלום $name');
   String get myPushka => _t('Mi Pushka', 'My Pushka', 'Ma Pushka', 'הפושקה שלי');
+  String get wallet => _t('Billetera', 'Wallet', 'Portefeuille', 'ארנק');
+  String get defaultCardSubtitle => _t(
+    'Tarjeta predeterminada · tocá para administrar',
+    'Default card · tap to manage',
+    'Carte par défaut · appuyez pour gérer',
+    'כרטיס ברירת מחדל · הקש לניהול',
+  );
+  String get addCardSubtitle => _t(
+    'Tocá para agregar una tarjeta',
+    'Tap to add a card',
+    'Appuyez pour ajouter une carte',
+    'הקש להוספת כרטיס',
+  );
+  String get walletSavedCardsSubtitle => _t(
+    'Tus tarjetas guardadas para donar y vaciar pushka.',
+    'Your saved cards for donating and emptying pushka.',
+    "Vos cartes enregistrées pour faire des dons et vider la pushka.",
+    'הכרטיסים השמורים שלך לתרומות וריקון פושקה.',
+  );
   String get reminders => _t('Recordatorios', 'Reminders', 'Rappels', 'תזכורות');
   String get history => _t('Historial', 'History', 'Historique', 'היסטוריה');
   String get settings => _t('Configuración', 'Settings', 'Paramètres', 'הגדרות');
@@ -325,7 +344,6 @@ class S {
   String get langFrench => 'Français';
   String get langHebrew => 'עברית';
   String get sound => _t('SONIDO', 'SOUND', 'SON', 'צליל');
-  String get coinJingle => _t('SONIDO DE BILLETE', 'BILL SOUND', 'SON DE BILLET', 'צליל שטר');
   String get confettiSound => _t('SONIDO DE CONFETI', 'CONFETTI SOUND', 'SON DE CONFETTIS', 'צליל קונפטי');
   String get vibration => _t('VIBRACIÓN', 'VIBRATION', 'VIBRATION', 'רטט');
   String get ambientMusic => _t('MÚSICA AMBIENTAL', 'AMBIENT MUSIC', 'MUSIQUE AMBIANTE', 'מוזיקת רקע');

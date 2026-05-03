@@ -291,7 +291,6 @@ void main() {
         pushkaGoal: 7200.0,
         presetAmount: 18.0,
         soundEnabled: false,
-        coinJingleEnabled: false,
         vibrationEnabled: true,
         partialPaymentsEnabled: true,
         currencyCountry: 'Israel',

@@ -1,8 +1,6 @@
-import 'dart:convert';
 import 'dart:typed_data';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:share_plus/share_plus.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:country_picker/country_picker.dart';
 import 'package:flutter/material.dart';
@@ -23,6 +21,7 @@ import 'package:go_router/go_router.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import 'auto_empty_screen.dart';
+import 'card_brand_box.dart';
 import '../../../core/l10n/s.dart';
 import '../../feedback/feedback_service.dart';
 import '../../../core/pushka_style_provider.dart';
@@ -40,7 +39,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   double pushkaGoal = 3600.00;
   String selectedPreset = '1.00';
   bool soundEnabled = true;
-  bool coinJingleEnabled = true;
   bool vibrationEnabled = true;
   bool ambientEnabled = false;
   bool partialPaymentsEnabled = true;
@@ -105,8 +103,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             selectedPreset = preset.toStringAsFixed(2);
           }
           soundEnabled = getProfileBool('soundEnabled') ?? soundEnabled;
-          coinJingleEnabled =
-              getProfileBool('coinJingleEnabled') ?? coinJingleEnabled;
           vibrationEnabled =
               getProfileBool('vibrationEnabled') ?? vibrationEnabled;
           ambientEnabled =
@@ -200,10 +196,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           // SAVED CARD
           _buildLabel(tr.savedCards),
           const SizedBox(height: 6),
-          _buildActionButton(
-            _savedCardLabel(userProfile, tr),
-            onTap: () => context.go('/settings/saved-cards'),
-          ),
+          _buildSavedCardPreview(userProfile, tr),
           const SizedBox(height: 18),
 
           // MULTI-TENANT ORGANIZATIONS
@@ -262,17 +255,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             onChanged: (value) {
               setState(() => soundEnabled = value);
               _updateSettingsSilent(user, soundEnabled: value);
-            },
-          ),
-          const SizedBox(height: 18),
-
-          // COIN JINGLE
-          _buildToggleRow(
-            tr.coinJingle,
-            coinJingleEnabled,
-            onChanged: (value) {
-              setState(() => coinJingleEnabled = value);
-              _updateSettingsSilent(user, coinJingleEnabled: value);
             },
           ),
           const SizedBox(height: 18),
@@ -475,13 +457,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           // MANAGE ACCOUNT Section
           _buildSectionTitle(tr.manageAccount),
           const SizedBox(height: 12),
-          _buildManageAccountRow(
-            icon: Icons.download_outlined,
-            color: Theme.of(context).colorScheme.primary,
-            label: tr.exportMyData,
-            onTap: () => _exportUserData(),
-          ),
-          const SizedBox(height: 16),
           InkWell(
             onTap: () => _showDeleteAccountDialog(),
             child: Row(
@@ -811,14 +786,74 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     );
   }
 
-  String _savedCardLabel(Map<String, dynamic>? profile, S tr) {
+  /// Preview row for the user's default saved card. Renders the same
+  /// brand-box (Visa navy with logo, Mastercard interlocking circles, etc.)
+  /// as the dedicated saved-cards screen, so the settings glance matches
+  /// what the user sees inside. Falls back to a generic credit-card icon
+  /// + tr.noSavedCards label when the user has no default PaymentMethod.
+  Widget _buildSavedCardPreview(Map<String, dynamic>? profile, S tr) {
+    final cs = Theme.of(context).colorScheme;
     final brand = profile?['stripeDefaultPaymentMethodBrand'] as String?;
     final last4 = profile?['stripeDefaultPaymentMethodLast4'] as String?;
-    if (brand != null && brand.isNotEmpty && last4 != null && last4.isNotEmpty) {
-      final brandLabel = brand[0].toUpperCase() + brand.substring(1);
-      return '$brandLabel •••• $last4';
-    }
-    return tr.noSavedCards.split('\n').first;
+    final hasCard = brand != null && brand.isNotEmpty && last4 != null && last4.isNotEmpty;
+
+    return InkWell(
+      onTap: () => context.go('/settings/saved-cards'),
+      borderRadius: BorderRadius.circular(8),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        decoration: BoxDecoration(
+          color: cs.surface,
+          border: Border.all(color: cs.outline),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Row(
+          children: [
+            if (hasCard)
+              cardBrandBox(brand)
+            else
+              Container(
+                width: 40,
+                height: 28,
+                decoration: BoxDecoration(
+                  color: cs.surfaceContainerHighest,
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                alignment: Alignment.center,
+                child: Icon(Icons.credit_card, size: 18, color: cs.onSurfaceVariant),
+              ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    hasCard
+                        ? '${cardBrandLabel(brand)} •••• $last4'
+                        : tr.noSavedCards.split('\n').first,
+                    style: TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w600,
+                      color: cs.onSurface,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    hasCard ? tr.defaultCardSubtitle : tr.addCardSubtitle,
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: cs.onSurfaceVariant,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Icon(Icons.chevron_right, color: cs.onSurfaceVariant),
+          ],
+        ),
+      ),
+    );
   }
 
   String _activeOrgLabel() {
@@ -1423,7 +1458,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     double? presetAmount,
     List<double>? presetAmounts,
     bool? soundEnabled,
-    bool? coinJingleEnabled,
     bool? vibrationEnabled,
     bool? ambientEnabled,
     bool? partialPaymentsEnabled,
@@ -1450,7 +1484,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     }
 
     // User-level settings → root user doc
-    if (soundEnabled != null || coinJingleEnabled != null ||
+    if (soundEnabled != null ||
         vibrationEnabled != null || ambientEnabled != null ||
         partialPaymentsEnabled != null || additionalPaymentOptionsEnabled != null ||
         biometricAuthenticationEnabled != null ||
@@ -1458,7 +1492,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       futures.add(repo.updateSettings(
         uid: user.uid,
         soundEnabled: soundEnabled,
-        coinJingleEnabled: coinJingleEnabled,
         vibrationEnabled: vibrationEnabled,
         ambientEnabled: ambientEnabled,
         partialPaymentsEnabled: partialPaymentsEnabled,
@@ -1475,7 +1508,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   /// Fire-and-forget wrapper for toggle switches. Logs errors silently.
   void _updateSettingsSilent(User? user, {
     bool? soundEnabled,
-    bool? coinJingleEnabled,
     bool? vibrationEnabled,
     bool? ambientEnabled,
     bool? partialPaymentsEnabled,
@@ -1485,7 +1517,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     _updateSettings(
       user,
       soundEnabled: soundEnabled,
-      coinJingleEnabled: coinJingleEnabled,
       vibrationEnabled: vibrationEnabled,
       ambientEnabled: ambientEnabled,
       partialPaymentsEnabled: partialPaymentsEnabled,
@@ -1600,76 +1631,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
   String _formatPresetVal(double v) =>
       v == v.roundToDouble() ? v.toInt().toString() : v.toStringAsFixed(2);
-
-  Widget _buildManageAccountRow({
-    required IconData icon,
-    required Color color,
-    required String label,
-    required VoidCallback onTap,
-  }) {
-    return InkWell(
-      onTap: onTap,
-      child: Row(
-        children: [
-          Icon(icon, color: color, size: 20),
-          const SizedBox(width: 8),
-          Text(
-            label,
-            style: TextStyle(
-              fontSize: 16,
-              color: color,
-              fontWeight: FontWeight.w500,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Future<void> _exportUserData() async {
-    final tr = S.of(context);
-    final messenger = ScaffoldMessenger.of(context);
-    messenger.showSnackBar(
-      SnackBar(content: Text(tr.exportInProgress), duration: const Duration(seconds: 30)),
-    );
-    try {
-      final callable = FirebaseFunctions.instance.httpsCallable('exportUserData');
-      final result = await callable.call();
-      // Pretty-print so the file is human-readable when the user opens it.
-      final jsonStr = const JsonEncoder.withIndent('  ').convert(result.data);
-      final ts = DateTime.now().toIso8601String().replaceAll(':', '-').split('.').first;
-      messenger.hideCurrentSnackBar();
-      // share_plus.shareXFiles handles iOS share sheet, Android Intent.SEND,
-      // and saves to Downloads on web. Falls back gracefully on platforms
-      // that don't support file shares (e.g. desktop where it returns the
-      // raw bytes via clipboard).
-      await SharePlus.instance.share(
-        ShareParams(
-          files: [
-            XFile.fromData(
-              Uint8List.fromList(utf8.encode(jsonStr)),
-              name: 'pushka-data-export-$ts.json',
-              mimeType: 'application/json',
-            ),
-          ],
-          subject: 'Pushka data export',
-          text: tr.exportSubject,
-        ),
-      );
-    } on FirebaseFunctionsException catch (e) {
-      if (!mounted) return;
-      messenger.hideCurrentSnackBar();
-      messenger.showSnackBar(SnackBar(
-        content: Text(
-          e.code == 'resource-exhausted' ? tr.exportRateLimited : tr.exportFailed,
-        ),
-      ));
-    } catch (_) {
-      if (!mounted) return;
-      messenger.hideCurrentSnackBar();
-      messenger.showSnackBar(SnackBar(content: Text(tr.exportFailed)));
-    }
-  }
 
   Future<void> _showDeleteAccountDialog() async {
     final confirmed = await _showDeleteConfirmationDialog();

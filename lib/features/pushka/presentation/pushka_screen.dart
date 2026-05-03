@@ -171,8 +171,10 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
     if (goalJustReached) {
       _triggerCelebration();
     } else {
-      _pushkaKey.currentState?.triggerCoinDrop();
-      FeedbackService.instance.playCoinDrop();
+      // Coin drop animation + jingle sound were removed by product decision —
+      // only the bill animation remains. The slot in the pushka 3D model is
+      // still drawn (visual identity), but nothing falls through it except
+      // bills now.
       FeedbackService.instance.playBillFall();
       final titleBox = _fillItTitleKey.currentContext?.findRenderObject() as RenderBox?;
       final stackBox = _stackKey.currentContext?.findRenderObject() as RenderBox?;
@@ -597,7 +599,6 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
           if (userProfile != null) {
             FeedbackService.instance.updatePreferences(
               sound: (userProfile['soundEnabled'] as bool?) ?? true,
-              coinJingle: (userProfile['coinJingleEnabled'] as bool?) ?? true,
               vibration: (userProfile['vibrationEnabled'] as bool?) ?? true,
               ambient: (userProfile['ambientEnabled'] as bool?) ?? false,
             );

@@ -55,7 +55,6 @@ class UserRepository {
       'presetAmount': 1.00,
       'presetAmounts': <double>[],
       'soundEnabled': true,
-      'coinJingleEnabled': true,
       'vibrationEnabled': true,
       'partialPaymentsEnabled': true,
       'additionalPaymentOptionsEnabled': false,
@@ -206,7 +205,6 @@ class UserRepository {
     double? presetAmount,
     List<double>? presetAmounts,
     bool? soundEnabled,
-    bool? coinJingleEnabled,
     bool? vibrationEnabled,
     bool? ambientEnabled,
     bool? partialPaymentsEnabled,
@@ -232,7 +230,6 @@ class UserRepository {
     if (presetAmount != null) data['presetAmount'] = presetAmount;
     if (presetAmounts != null) data['presetAmounts'] = presetAmounts;
     if (soundEnabled != null) data['soundEnabled'] = soundEnabled;
-    if (coinJingleEnabled != null) data['coinJingleEnabled'] = coinJingleEnabled;
     if (vibrationEnabled != null) data['vibrationEnabled'] = vibrationEnabled;
     if (ambientEnabled != null) data['ambientEnabled'] = ambientEnabled;
     if (partialPaymentsEnabled != null) {
