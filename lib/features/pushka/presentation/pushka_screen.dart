@@ -1,5 +1,4 @@
 ﻿import 'dart:async';
-import 'dart:math' show pi;
 import '../../../core/hive_cache.dart';
 import 'jewish_confetti.dart';
 import '../../../core/format_utils.dart';
@@ -833,7 +832,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                               // Content offset so it starts after the streak rounded cap
                               padding: EdgeInsetsDirectional.fromSTEB(
                                 hasStreak ? streakContentPad + 54 : 20.0,
-                                0, 12, 0),
+                                0, 4, 0),
                               alignment: Alignment.centerLeft,
                               child: Row(
                                 mainAxisSize: MainAxisSize.min,
@@ -871,7 +870,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                             child: Stack(
                               children: [
                                 Container(
-                                  padding: const EdgeInsetsDirectional.fromSTEB(46, 0, 14, 0),
+                                  padding: const EdgeInsetsDirectional.fromSTEB(30, 0, 14, 0),
                                   decoration: BoxDecoration(
                                     gradient: LinearGradient(
                                       colors: [sc.$1, sc.$2],
@@ -903,16 +902,6 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                                       const SizedBox(width: 6),
                                       const Icon(Icons.local_fire_department, color: Colors.white, size: 18),
                                     ],
-                                  ),
-                                ),
-                                Positioned.fill(
-                                  child: CustomPaint(
-                                    painter: _StreakRightCapBorder(
-                                      radius: h / 2,
-                                      color: Theme.of(context).brightness == Brightness.dark
-                                          ? const Color(0xFF0F172A)
-                                          : Colors.white,
-                                    ),
                                   ),
                                 ),
                               ],
@@ -2583,31 +2572,5 @@ class _HexBadge extends StatelessWidget {
   }
 }
 
-class _StreakRightCapBorder extends CustomPainter {
-  final double radius;
-  final Color color;
-  const _StreakRightCapBorder({required this.radius, required this.color});
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final paint = Paint()
-      ..color = color
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.0
-      ..strokeCap = StrokeCap.round;
-    final cx = size.width - radius;
-    final cy = size.height / 2;
-    canvas.drawArc(
-      Rect.fromCircle(center: Offset(cx, cy), radius: radius),
-      -pi / 2,
-      pi,
-      false,
-      paint,
-    );
-  }
-
-  @override
-  bool shouldRepaint(_StreakRightCapBorder old) => old.radius != radius || old.color != color;
-}
 
 
