@@ -201,17 +201,13 @@ class _SavedCardsScreenState extends ConsumerState<SavedCardsScreen> {
   // pairs with a bg color so the logo box matches the visual identity
   // (Mastercard black, Visa navy, etc.) — see _brandBg().
   //
-  // Visa wordmark — path data approximating the official typeface
-  // (italic V-I-S-A with the characteristic curves). White fill so it
-  // sits on the navy box bg.
+  // Visa wordmark — public path-data representation of the Visa logo
+  // (single-color white, italic, V-I-S-A). The path comes from a clean
+  // single-path rendering of the wordmark; scales perfectly and reads
+  // as the real Visa mark.
   static const _svgVisa = '''
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 64" preserveAspectRatio="xMidYMid meet">
-  <g fill="#FFFFFF">
-    <path d="M67.4 8.1L42.5 56.3H30.6L18.4 16.7c-0.7-2.9-1.4-3.9-3.6-5.1C11.1 9.7 5.0 7.9 0 6.8L0.3 5.1H25.5c3.2 0 6.1 2.2 6.9 5.9L38.7 44.1 53.2 8.1H67.4z"/>
-    <path d="M114.4 56.3H102.3L110 8.1H122.1L114.4 56.3z"/>
-    <path d="M168.2 9.4C165.6 8.4 161.4 7.4 156.2 7.4c-13.7 0-23.3 7.3-23.4 17.7-0.1 7.7 6.9 12 12.1 14.6 5.4 2.6 7.2 4.3 7.2 6.6 -0.0 3.6-4.3 5.2-8.3 5.2 -5.5 0-8.5-0.8-13.0-2.8L129 47.4l-1.9 11.7C130.0 60.5 135.2 61.6 140.4 61.7c14.5 0 24.0-7.2 24.1-18.4 0.0-6.1-3.6-10.8-11.7-14.6 -4.9-2.5-7.9-4.1-7.9-6.6 0.0-2.2 2.5-4.6 8.0-4.6 4.6-0.1 7.9 1.0 10.5 2.1l1.3 0.6L168.2 9.4z"/>
-    <path d="M180.5 39.2c1.0-2.7 4.8-13.0 4.8-13.0 -0.1 0.1 1.0-2.7 1.6-4.4l0.8 4.0c0.0 0 2.3 11.0 2.8 13.4H180.5zM195.4 8.1H186.0c-2.9 0-5.1 0.8-6.4 3.9L161.4 56.3H174c0.0 0 2.1-5.7 2.6-6.9 1.4 0 13.5 0 15.3 0 0.4 1.6 1.5 6.9 1.5 6.9H205L195.4 8.1z"/>
-  </g>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+  <path fill="#FFFFFF" d="M9.112 8.262L5.97 15.758H3.92L2.374 9.775c-.094-.368-.175-.503-.461-.658C1.447 8.864.677 8.627 0 8.479l.046-.217h3.3a.904.904 0 01.894.764l.817 4.338 2.018-5.102zm8.033 5.049c.008-1.979-2.736-2.088-2.717-2.972.006-.269.262-.555.822-.628a3.66 3.66 0 011.913.336l.34-1.59a5.207 5.207 0 00-1.814-.333c-1.917 0-3.266 1.02-3.278 2.479-.012 1.079.963 1.68 1.698 2.04.756.367 1.01.603 1.006.931-.005.504-.602.725-1.16.734-.975.015-1.54-.263-1.992-.473l-.351 1.642c.453.208 1.289.39 2.156.398 2.037 0 3.37-1.006 3.377-2.564m5.061 2.447H24l-1.565-7.496h-1.656a.883.883 0 00-.826.55l-2.909 6.946h2.036l.405-1.12h2.488zm-2.163-2.656l1.02-2.815.588 2.815zm-8.16-4.84l-1.603 7.496H8.34l1.605-7.496z"/>
 </svg>''';
   static const _svgMastercard = '''
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 152 96">
