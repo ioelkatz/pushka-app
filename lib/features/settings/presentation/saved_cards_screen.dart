@@ -249,6 +249,10 @@ class _SavedCardsScreenState extends ConsumerState<SavedCardsScreen> {
   }) {
     final cs = Theme.of(context).colorScheme;
     final accent = _brandGradient(brand).$1;
+    // Visa's brand navy is invisible on the dark logo box — force white
+    // so the wordmark reads. Other brands' colors have enough contrast
+    // against #111827 to stay legible.
+    final iconColor = brand.toLowerCase() == 'visa' ? Colors.white : accent;
     final mm = expMonth.toString().padLeft(2, '0');
     final yy = expYear.toString().padLeft(4, '0').substring(2);
 
@@ -273,7 +277,7 @@ class _SavedCardsScreenState extends ConsumerState<SavedCardsScreen> {
             child: FaIcon(
               _brandFaIcon(brand),
               size: 22,
-              color: accent,
+              color: iconColor,
             ),
           ),
           const SizedBox(width: 12),
