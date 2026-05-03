@@ -838,8 +838,6 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
     const double h = 38.0;
     const double badgeSize = 34.0;
     final double pillW = MediaQuery.of(context).size.width - 32;
-    // Estimated streak section width (left pad + content + right pad)
-    const double streakContentPad = 165.0;
 
     return Container(
       margin: const EdgeInsets.only(bottom: 4),
@@ -871,9 +869,9 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                                   end: Alignment.centerRight,
                                 ),
                               ),
-                              // Content offset so it starts after the streak rounded cap
+                              // Content centered in the 50px holiday zone on the right
                               padding: EdgeInsetsDirectional.fromSTEB(
-                                hasStreak ? streakContentPad + 50 : 20.0,
+                                hasStreak ? pillW - 50 + 8 : 20.0,
                                 0, 4, 0),
                               alignment: Alignment.centerLeft,
                               child: Row(
@@ -904,49 +902,46 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                             ),
                           ),
                         ),
-                      // Streak: fully rounded pill on top, right cap "bites" into holiday
+                      // Streak: fills all but the last 50px (holiday zone on the right)
                       if (hasStreak)
                         Positioned(
                           left: 0, top: 0, bottom: 0,
-                          child: IntrinsicWidth(
-                            child: Stack(
-                              children: [
-                                Container(
-                                  padding: const EdgeInsetsDirectional.fromSTEB(50, 0, 20, 0),
-                                  decoration: BoxDecoration(
-                                    gradient: LinearGradient(
-                                      colors: [sc.$1, sc.$2],
-                                      begin: Alignment.centerLeft,
-                                      end: Alignment.centerRight,
-                                    ),
-                                    borderRadius: BorderRadius.circular(h / 2),
-                                  ),
-                                  alignment: Alignment.center,
-                                  child: Row(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      Text(
-                                        S.of(context).streakDays,
-                                        style: const TextStyle(
-                                          color: Colors.white,
-                                          fontSize: 16,
-                                          fontWeight: FontWeight.w800,
-                                          letterSpacing: 0.2,
-                                          shadows: [
-                                            Shadow(
-                                              color: Color(0x33000000),
-                                              blurRadius: 3,
-                                              offset: Offset(0, 1),
-                                            ),
-                                          ],
-                                        ),
-                                      ),
-                                      const SizedBox(width: 6),
-                                      const Icon(Icons.local_fire_department, color: Colors.white, size: 18),
-                                    ],
-                                  ),
+                          child: SizedBox(
+                            width: pillW - 50,
+                            child: Container(
+                              padding: const EdgeInsetsDirectional.fromSTEB(50, 0, 20, 0),
+                              decoration: BoxDecoration(
+                                gradient: LinearGradient(
+                                  colors: [sc.$1, sc.$2],
+                                  begin: Alignment.centerLeft,
+                                  end: Alignment.centerRight,
                                 ),
-                              ],
+                                borderRadius: BorderRadius.circular(h / 2),
+                              ),
+                              alignment: Alignment.center,
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Text(
+                                    S.of(context).streakDays,
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 16,
+                                      fontWeight: FontWeight.w800,
+                                      letterSpacing: 0.2,
+                                      shadows: [
+                                        Shadow(
+                                          color: Color(0x33000000),
+                                          blurRadius: 3,
+                                          offset: Offset(0, 1),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                  const SizedBox(width: 6),
+                                  const Icon(Icons.local_fire_department, color: Colors.white, size: 18),
+                                ],
+                              ),
                             ),
                           ),
                         ),
