@@ -99,4 +99,34 @@ class TenantConfig {
     final b = ((c.b * 255.0).round() & 0xff).toRadixString(16).padLeft(2, '0');
     return '#$r$g$b';
   }
+
+  // Equality + hashCode let the 60s tenant-status poll's invalidate→re-fetch
+  // chain skip MaterialApp/ThemeData rebuilds when the tenant config didn't
+  // actually change. Without this every tick rebuilds the entire UI tree.
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is TenantConfig &&
+          tenantId == other.tenantId &&
+          name == other.name &&
+          appName == other.appName &&
+          showPoweredBy == other.showPoweredBy &&
+          welcomeText == other.welcomeText &&
+          primaryColor == other.primaryColor &&
+          secondaryColor == other.secondaryColor &&
+          logoUrl == other.logoUrl &&
+          defaultLanguage == other.defaultLanguage &&
+          defaultCurrency == other.defaultCurrency &&
+          defaultCountry == other.defaultCountry &&
+          contactEmail == other.contactEmail &&
+          privacyPolicyUrl == other.privacyPolicyUrl &&
+          termsUrl == other.termsUrl;
+
+  @override
+  int get hashCode => Object.hash(
+        tenantId, name, appName, showPoweredBy, welcomeText,
+        primaryColor, secondaryColor, logoUrl,
+        defaultLanguage, defaultCurrency, defaultCountry,
+        contactEmail, privacyPolicyUrl, termsUrl,
+      );
 }

@@ -20,6 +20,7 @@ void main() {
         uid: uid,
         type: TransactionType.tzedaka,
         amount: 50.0,
+        tenantId: 'test_tenant',
         description: 'Test donation',
         paymentMethod: PaymentMethod.card,
         status: PaymentStatus.completed,
@@ -45,6 +46,7 @@ void main() {
         uid: uid,
         type: TransactionType.pushkaEmpty,
         amount: 100.0,
+        tenantId: 'test_tenant',
         docId: 'pi_test_stripe_id',
       );
 
@@ -64,6 +66,7 @@ void main() {
         uid: uid,
         type: TransactionType.tzedaka,
         amount: 25.0,
+        tenantId: 'test_tenant',
       );
 
       final snap = await fakeFirestore
@@ -81,6 +84,7 @@ void main() {
         uid: uid,
         type: TransactionType.tzedaka,
         amount: 10.0,
+        tenantId: 'test_tenant',
       );
 
       final snap = await fakeFirestore
@@ -99,6 +103,7 @@ void main() {
           uid: uid,
           type: TransactionType.tzedaka,
           amount: 10.0 * (++i),
+        tenantId: 'test_tenant',
           paymentMethod: method,
           docId: 'doc_$i',
         );
@@ -123,6 +128,7 @@ void main() {
           uid: uid,
           type: TransactionType.tzedaka,
           amount: 10.0,
+        tenantId: 'test_tenant',
           status: status,
           docId: 'status_${i++}',
         );
@@ -152,6 +158,7 @@ void main() {
         uid: uid,
         type: TransactionType.tzedaka,
         amount: 75.0,
+        tenantId: 'test_tenant',
         description: 'Shabbat donation',
       );
 
@@ -167,12 +174,14 @@ void main() {
         uid: uid,
         type: TransactionType.tzedaka,
         amount: 10.0,
+        tenantId: 'test_tenant',
         docId: 'a',
       );
       await repo.addTransaction(
         uid: uid,
         type: TransactionType.pushkaEmpty,
         amount: 200.0,
+        tenantId: 'test_tenant',
         docId: 'b',
       );
 
@@ -181,8 +190,8 @@ void main() {
     });
 
     test('transactions for different UIDs are isolated', () async {
-      await repo.addTransaction(uid: uid, type: TransactionType.tzedaka, amount: 50.0, docId: 'x');
-      await repo.addTransaction(uid: 'other_user', type: TransactionType.tzedaka, amount: 99.0, docId: 'y');
+      await repo.addTransaction(uid: uid, type: TransactionType.tzedaka, amount: 50.0, docId: 'x', tenantId: 'test_tenant');
+      await repo.addTransaction(uid: 'other_user', type: TransactionType.tzedaka, amount: 99.0, docId: 'y', tenantId: 'test_tenant');
 
       final list = await repo.watchTransactions(uid).first;
       expect(list.length, 1);
@@ -194,6 +203,7 @@ void main() {
         uid: uid,
         type: TransactionType.tzedaka,
         amount: 30.0,
+        tenantId: 'test_tenant',
         docId: 'txn_001',
       );
 
@@ -244,6 +254,7 @@ void main() {
         uid: uid,
         type: TransactionType.tzedaka,
         amount: 300.0,
+        tenantId: 'test_tenant',
         paymentMethod: PaymentMethod.check,
         status: PaymentStatus.pending,
         docId: 'pending_1',
@@ -258,6 +269,7 @@ void main() {
         uid: uid,
         type: TransactionType.tzedaka,
         amount: 100.0,
+        tenantId: 'test_tenant',
         paymentMethod: PaymentMethod.card,
         status: PaymentStatus.completed,
         docId: 'done_1',

@@ -628,12 +628,12 @@ exports.createPaymentIntent = onCall(
       // sheet without re-entering. setup_future_usage='off_session'
       // also enables the card for the auto-empty cron path.
       setup_future_usage: "off_session",
-      // Restrict to card to avoid surfacing BNPL (Affirm/Klarna/Afterpay) and
-      // bank debits (SEPA/ACH). These have radically different settlement
-      // timing — ACH can be reversed up to 60 days later via dispute,
-      // yielding a negative balance state our pushka-amount logic does not
-      // model. Re-enable specific methods deliberately as we add support
-      // for delayed-settlement payment flows.
+      // Card-family only (avoids BNPL and ACH/SEPA which have async/reversible
+      // settlement that our pushka-amount logic does not model). Apple Pay
+      // and Google Pay are wallet-wrapped cards — Stripe surfaces them
+      // automatically when "card" is enabled AND the client passes
+      // applePay/googlePay config to PaymentSheet (see stripe_service.dart).
+      // The wallet identifier ends up under card.wallet.type on the charge.
       payment_method_types: ["card"],
       ...connectParams,
       metadata: {
@@ -1019,7 +1019,9 @@ exports.stripeWebhook = onRequest(
       const intent = event.data.object;
       const uid = intent.metadata?.uid;
       const purpose = String(intent.metadata?.purpose || "donation");
-      const amount = (intent.amount || 0) / 100;
+      // ZERO-decimal currencies (CLP, JPY, KRW, etc.) charge in WHOLE units —
+      // dividing by 100 there would store ¥50 for a ¥5000 donation.
+      const amount = (intent.amount || 0) / currencyUnitDivisor(intent.currency || "usd");
       const docId = intent.id;
 
       // pushka_auto_empty: state already updated by the scheduled CF that
@@ -1036,15 +1038,33 @@ exports.stripeWebhook = onRequest(
         const txType = purpose === "pushka_empty" ? "pushkaEmpty" : "tzedaka";
         const txDesc = purpose === "pushka_empty" ? "Vaciado de Pushka (Stripe)" : "Donación Stripe";
         const txCurrency = String(intent.currency || "usd").toUpperCase();
-        // Resolve actual payment method from the charge (Apple Pay, Google Pay,
-        // SEPA, etc. all surface as "card" in PaymentMethod.type but the wallet
-        // identifier sits under card.wallet). Falls back to "card" so existing
-        // history rendering keeps working unchanged.
-        const charge0 = intent.charges?.data?.[0];
-        const pmDetails = charge0?.payment_method_details || {};
-        const pmType = pmDetails.type || (intent.payment_method_types?.[0]) || "card";
-        const wallet = pmDetails.card?.wallet?.type || null;
-        const txPaymentMethod = wallet || pmType;
+        // Resolve actual payment method from the latest charge. Stripe API
+        // 2024-06-20+ removed `intent.charges`; the canonical reference is
+        // `intent.latest_charge` (a string id). Apple Pay / Google Pay / Link
+        // all report PaymentMethod.type='card' but expose the wallet
+        // identifier under `card.wallet.type` — without this fetch the tx
+        // would always be persisted as plain "card". Best-effort: if the
+        // retrieve fails, fall back to whatever's available on the intent.
+        let txPaymentMethod = "card";
+        try {
+          if (intent.latest_charge && typeof intent.latest_charge === "string") {
+            const stripeClient = require("stripe")(stripeSecret.value());
+            const charge = await stripeClient.charges.retrieve(intent.latest_charge);
+            const pmDetails = charge?.payment_method_details || {};
+            const pmType = pmDetails.type || (intent.payment_method_types?.[0]) || "card";
+            const wallet = pmDetails.card?.wallet?.type || null;
+            txPaymentMethod = wallet || pmType;
+          } else {
+            txPaymentMethod = (intent.payment_method_types?.[0]) || "card";
+          }
+        } catch (chargeErr) {
+          // Non-fatal — preserve baseline "card" labeling so the tx still writes.
+          console.warn("stripeWebhook: latest_charge retrieve failed", {
+            paymentIntentId: intent.id,
+            latestCharge: intent.latest_charge,
+            errorMessage: chargeErr?.message,
+          });
+        }
         // tenantId comes from createPaymentIntent's metadata. Without it on
         // the tx doc, the multi-tenant history query (`where tenantId == X`)
         // silently excludes the row and the user thinks the payment never
@@ -1103,7 +1123,7 @@ exports.stripeWebhook = onRequest(
     } else if (event.type === "payment_intent.payment_failed") {
       const intent = event.data.object;
       const uid = intent.metadata?.uid;
-      const amount = (intent.amount || 0) / 100;
+      const amount = (intent.amount || 0) / currencyUnitDivisor(intent.currency || "usd");
       const reason = intent.last_payment_error?.message || "payment_failed";
 
       if (uid) {
@@ -1128,7 +1148,7 @@ exports.stripeWebhook = onRequest(
     } else if (event.type === "charge.refunded") {
       const charge = event.data.object;
       const uid = await resolveUidFromCharge(charge, stripe);
-      const refundedAmount = (charge.amount_refunded || 0) / 100;
+      const refundedAmount = (charge.amount_refunded || 0) / currencyUnitDivisor(charge.currency || "usd");
       const currency = String(charge.currency || "usd").toUpperCase();
       const paymentIntentId = typeof charge.payment_intent === "string" ?
         charge.payment_intent :
@@ -1197,7 +1217,7 @@ exports.stripeWebhook = onRequest(
         try { charge = await stripe.charges.retrieve(chargeId); } catch (_) { /* ignore */ }
       }
       const uid = charge ? await resolveUidFromCharge(charge, stripe) : null;
-      const disputedAmount = (dispute.amount || 0) / 100;
+      const disputedAmount = (dispute.amount || 0) / currencyUnitDivisor(dispute.currency || charge?.currency || "usd");
       const currency = String(dispute.currency || charge?.currency || "usd").toUpperCase();
       const paymentIntentId = charge && typeof charge.payment_intent === "string"
         ? charge.payment_intent
@@ -1322,7 +1342,7 @@ exports.stripeWebhook = onRequest(
       // Our commission was collected — log for tracking
       const fee = event.data.object;
       const tenantId = fee.charge?.metadata?.tenantId ?? null;
-      const amountUsd = (fee.amount || 0) / 100;
+      const amountUsd = (fee.amount || 0) / currencyUnitDivisor(fee.currency || "usd");
 
       await finalizeWebhookEvent(eventRef, {
         status: "processed",
@@ -2937,8 +2957,15 @@ exports.getFailedPayments = onCall(
 exports.setUserBlocked = onCall(
   { enforceAppCheck: true },
   async (request) => {
-    const callerClaims = request.auth?.token ?? {};
-    const isSuper = callerIsSuperAdmin(request);
+    const callerUid = request.auth?.uid;
+    if (!callerUid) throw new HttpsError("unauthenticated", "Debes estar autenticado.");
+    // Use FRESH custom claims, not the 1h-stale ID token, for this
+    // security-critical write. A demoted admin's old token must not be able to
+    // block users for the remainder of its TTL.
+    const callerRecord = await admin.auth().getUser(callerUid);
+    const callerClaims = callerRecord.customClaims || {};
+    const isSuper = callerClaims.role === "super_admin" ||
+      (callerClaims.admin === true && callerRecord.email === SUPER_ADMIN_EMAIL);
     const isTenantAdminRole = callerClaims.role === "tenant_admin";
     if (!isSuper && !isTenantAdminRole) {
       throw new HttpsError("permission-denied", "Solo administradores.");
@@ -3362,10 +3389,10 @@ exports.createTenant = onCall(
     } catch (e) {
       if (e instanceof HttpsError) throw e;
       // User doesn't have an account yet — claims will be set when they register
-      console.info(`createTenant: admin ${adminEmail} has no Firebase account yet; claims pending`);
+      console.info(`createTenant: admin ${_redactEmail(adminEmail)} has no Firebase account yet; claims pending`);
     }
 
-    console.info("createTenant", { id: tenantRef.id, slug: normalizedSlug, adminEmail });
+    console.info("createTenant", { id: tenantRef.id, slug: normalizedSlug, adminEmail: _redactEmail(adminEmail) });
     return { success: true, tenantId: tenantRef.id, slug: normalizedSlug };
   }
 );
@@ -3484,8 +3511,17 @@ exports.getTenantBranding = onCall(
 exports.updateTenant = onCall(
   { enforceAppCheck: true },
   async (request) => {
-    const callerClaims = request.auth?.token ?? {};
-    const isSuper = callerClaims.role === "super_admin" || callerClaims.admin === true;
+    const callerUid = request.auth?.uid;
+    if (!callerUid) throw new HttpsError("unauthenticated", "Debes estar autenticado.");
+    // Use FRESH custom claims, not the 1h-stale ID token. This endpoint writes
+    // branding fields that the new onTenantBrandingUpdated trigger fans out to
+    // every member's tenantState — a demoted admin must not be able to mass
+    // rewrite tenant branding for the remainder of their old token TTL.
+    // Anchor super_admin to the canonical email (matches callerIsSuperAdmin).
+    const callerRecord = await admin.auth().getUser(callerUid);
+    const callerClaims = callerRecord.customClaims || {};
+    const isSuper = callerClaims.role === "super_admin" ||
+      (callerClaims.admin === true && callerRecord.email === SUPER_ADMIN_EMAIL);
     const isTenantAdmin = callerClaims.role === "tenant_admin";
     if (!isSuper && !isTenantAdmin) {
       throw new HttpsError("permission-denied", "Acceso denegado.");
@@ -4326,7 +4362,7 @@ exports.checkGracePeriods = onSchedule(
         continue;
       }
 
-      console.log(`Sending ${daysLeft}-day grace reminder to ${adminEmail} for tenant ${doc.id}`);
+      console.log(`Sending ${daysLeft}-day grace reminder to ${_redactEmail(adminEmail)} for tenant ${doc.id}`);
 
       try {
         await sendEmail({

@@ -193,14 +193,18 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
   Future<void> emptyPushka() async {
     if (pushkaAmount <= 0 || _isProcessing) return;
     final tr = S.of(context);
+    // Hold _isProcessing true for the ENTIRE flow including blocking dialogs.
+    // Previously we set it false before showing the partial-payment / confirm
+    // dialogs so the spinner wouldn't visually overlap them — but that opened
+    // a window where a second tap on "Vaciar Pushka" started a parallel flow
+    // and produced two PaymentSheets / two charges. The button itself is
+    // disabled while _isProcessing is true, which is the correct behavior.
     setState(() => _isProcessing = true);
     try {
       double amountToEmpty = pushkaAmount;
       if (_partialPaymentsEnabled()) {
-        setState(() => _isProcessing = false);
         final partial = await _showPartialDonationDialog();
         if (partial == null || !mounted) return;
-        setState(() => _isProcessing = true);
         amountToEmpty = partial;
       }
 
@@ -214,10 +218,8 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
         return;
       }
 
-      setState(() => _isProcessing = false);
       final confirmed = await _confirmIfLarge(amountToEmpty);
       if (!confirmed || !mounted) return;
-      setState(() => _isProcessing = true);
 
       if (_biometricEnabled()) {
         final authenticated = await BiometricService.instance.authenticate(
@@ -462,6 +464,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
 
       final currency = _currencyCodeFromProfile();
       final user = ref.read(currentUserProvider);
+      final tenantId = ref.read(userProfileProvider).valueOrNull?['tenantId'] as String?;
       if (user != null) {
         final methodLabels = {
           PaymentMethod.check: tr.methodCheckFull,
@@ -476,6 +479,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
           paymentMethod: method,
           status: PaymentStatus.pending,
           currencyCode: currency,
+          tenantId: tenantId,
         );
       }
 

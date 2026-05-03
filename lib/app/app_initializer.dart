@@ -20,22 +20,22 @@ void scheduleDeferredInit() {
 Future<void> _performDeferredInit() async {
   if (kIsWeb) {
     await FirebaseAppCheck.instance.activate(
-      webProvider: ReCaptchaV3Provider(
+      providerWeb: ReCaptchaV3Provider(
         const String.fromEnvironment('RECAPTCHA_SITE_KEY', defaultValue: ''),
       ),
     );
   } else if (kReleaseMode) {
     await FirebaseAppCheck.instance.activate(
-      androidProvider: AndroidProvider.playIntegrity,
-      appleProvider: AppleProvider.deviceCheck,
+      providerAndroid: AndroidPlayIntegrityProvider(),
+      providerApple: AppleDeviceCheckProvider(),
     );
   } else {
     // Debug builds: backend enforces App Check, so we need the debug provider
     // here too. The token is printed to logcat on first launch — register it
     // at Firebase Console → App Check → <app> → Manage debug tokens.
     await FirebaseAppCheck.instance.activate(
-      androidProvider: AndroidProvider.debug,
-      appleProvider: AppleProvider.debug,
+      providerAndroid: AndroidDebugProvider(),
+      providerApple: AppleDebugProvider(),
     );
   }
 

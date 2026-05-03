@@ -45,8 +45,18 @@ class TransactionRepository {
     PaymentStatus status = PaymentStatus.completed,
     String? docId,
     String currencyCode = 'USD',
-    String? tenantId,
+    required String? tenantId,
   }) async {
+    // Firestore rules now require tenantId on every client-written transaction
+    // (otherwise the multi-tenant history queries silently exclude the row,
+    // and admin reports cannot attribute revenue). Reject missing tenantId at
+    // the call site rather than letting Firestore reject silently with
+    // permission-denied.
+    if (tenantId == null || tenantId.isEmpty) {
+      throw ArgumentError(
+        'addTransaction requires a non-empty tenantId — the user has no active tenant.',
+      );
+    }
     final data = <String, dynamic>{
       'type': type.name,
       'amount': amount,
@@ -54,11 +64,9 @@ class TransactionRepository {
       'paymentMethod': paymentMethod.name,
       'status': status.name,
       'currencyCode': currencyCode.toUpperCase(),
+      'tenantId': tenantId,
       'createdAt': firestore.FieldValue.serverTimestamp(),
     };
-    if (tenantId != null && tenantId.isNotEmpty) {
-      data['tenantId'] = tenantId;
-    }
     if (docId != null) {
       await _collection(uid).doc(docId).set(data);
     } else {

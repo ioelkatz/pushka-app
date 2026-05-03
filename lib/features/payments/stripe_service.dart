@@ -1,6 +1,8 @@
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter_stripe/flutter_stripe.dart';
 
+import '../../firebase_options.dart';
+
 class StripeServiceException implements Exception {
   final String code;
   const StripeServiceException(this.code);
@@ -10,6 +12,32 @@ class StripeService {
   StripeService._();
 
   static final StripeService instance = StripeService._();
+
+  // Wallet config builders (Apple Pay + Google Pay).
+  //
+  // merchantCountryCode is the country of the PLATFORM Stripe account that
+  // creates the PaymentIntent (we use Stripe Connect destination_charge —
+  // the platform is the merchant of record for the wallet handshake, not the
+  // tenant). Hardcoded to 'US' since this app's platform Stripe account is
+  // US-incorporated; revisit if the platform ever moves jurisdictions.
+  //
+  // Apple Pay: needs the merchantIdentifier configured in iOS via
+  // Stripe.merchantIdentifier (see main.dart) AND the Apple Pay capability
+  // enabled in the iOS project. Without those, Stripe silently does not
+  // surface the Apple Pay button — passing this config is harmless.
+  //
+  // Google Pay: testEnv must be true on dev builds to hit Google's test PSP
+  // sandbox; false on production. Stripe rejects mixing prod testEnv with
+  // a pk_test_ key (and vice versa).
+  static const _platformCountryCode = 'US';
+
+  static PaymentSheetApplePay get _applePayConfig =>
+      const PaymentSheetApplePay(merchantCountryCode: _platformCountryCode);
+
+  static PaymentSheetGooglePay get _googlePayConfig => PaymentSheetGooglePay(
+        merchantCountryCode: _platformCountryCode,
+        testEnv: DefaultFirebaseOptions.isDev,
+      );
 
   Future<String> pay({
     required int amountCents,
@@ -59,6 +87,8 @@ class StripeService {
         customerId: hasCustomerSession ? customerId : null,
         customerEphemeralKeySecret:
             hasCustomerSession ? ephemeralKeySecret : null,
+        applePay: _applePayConfig,
+        googlePay: _googlePayConfig,
       ),
     );
 
@@ -109,6 +139,8 @@ class StripeService {
         setupIntentClientSecret: clientSecret,
         merchantDisplayName: merchantDisplayName,
         allowsDelayedPaymentMethods: false,
+        applePay: _applePayConfig,
+        googlePay: _googlePayConfig,
       ),
     );
 

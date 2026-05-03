@@ -127,19 +127,31 @@ class Reminder {
     return dayNumbers.where((d) => d >= 1 && d <= 7).map((d) => names[d - 1]).join(', ');
   }
 
+  // Bidi separator + isolation marks. The hyphen-minus is bidi-neutral and
+  // gets pulled by the bidi algorithm to the wrong visual side when mixing
+  // RTL Hebrew day-names with LTR clock times ("8:00 AM"). Bullet (U+2022)
+  // is visually symmetric, and FSI (U+2068) / PDI (U+2069) wrap each segment
+  // so the time always renders as a coherent LTR run inside Hebrew/Arabic
+  // context. Use String.fromCharCode to keep the literal source bidi-trojan
+  // free (otherwise the embedded chars trip the analyzer warning).
+  static const _bidiSep = ' • ';
+  static final String _fsi = String.fromCharCode(0x2068);
+  static final String _pdi = String.fromCharCode(0x2069);
+  static String _isoLtr(String s) => '$_fsi$s$_pdi';
+
   String subtitleFor(S tr) {
     final timeStr = _formatTime(time);
     final dayNames = _getDayNames(days, tr);
 
     var result = '';
     if (dayNames.isNotEmpty) {
-      result = '$dayNames - $timeStr';
+      result = '$dayNames$_bidiSep${_isoLtr(timeStr)}';
     } else if (isHoliday) {
-      result = '${tr.repeatFridayHoliday} - $timeStr';
+      result = '${tr.repeatFridayHoliday}$_bidiSep${_isoLtr(timeStr)}';
     }
 
     if (minutesBefore != null) {
-      result += ' - ${tr.minBefore(minutesBefore.toString())}';
+      result += '$_bidiSep${_isoLtr(tr.minBefore(minutesBefore.toString()))}';
     }
 
     return result;
@@ -150,10 +162,10 @@ class Reminder {
     final timeStr = _formatTime(secondTime!);
     final dayNames = _getDayNames(secondDays, tr);
     if (dayNames.isNotEmpty) {
-      return '$dayNames - $timeStr';
+      return '$dayNames$_bidiSep${_isoLtr(timeStr)}';
     }
     if (secondIsHoliday) {
-      return '${tr.repeatFridayHoliday} - $timeStr';
+      return '${tr.repeatFridayHoliday}$_bidiSep${_isoLtr(timeStr)}';
     }
     return null;
   }
