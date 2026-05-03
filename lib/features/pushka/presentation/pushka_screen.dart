@@ -824,7 +824,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                               ),
                               // Content offset so it starts after the streak rounded cap
                               padding: EdgeInsetsDirectional.fromSTEB(
-                                hasStreak ? streakContentPad + 68 : 20.0,
+                                hasStreak ? streakContentPad + 50 : 20.0,
                                 0, 4, 0),
                               alignment: Alignment.centerLeft,
                               child: Row(
@@ -863,7 +863,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                             child: Stack(
                               children: [
                                 Container(
-                                  padding: const EdgeInsetsDirectional.fromSTEB(30, 0, 28, 0),
+                                  padding: const EdgeInsetsDirectional.fromSTEB(42, 0, 28, 0),
                                   decoration: BoxDecoration(
                                     gradient: LinearGradient(
                                       colors: [sc.$1, sc.$2],
