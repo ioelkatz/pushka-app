@@ -1,6 +1,7 @@
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter_stripe/flutter_stripe.dart';
 
+import '../../config/stripe_config.dart';
 import '../../firebase_options.dart';
 
 class StripeServiceException implements Exception {
@@ -31,8 +32,15 @@ class StripeService {
   // a pk_test_ key (and vice versa).
   static const _platformCountryCode = 'US';
 
-  static PaymentSheetApplePay get _applePayConfig =>
-      const PaymentSheetApplePay(merchantCountryCode: _platformCountryCode);
+  // Apple Pay config is gated on having a non-empty Stripe merchantIdentifier
+  // configured (passed via dart-define + applied to Stripe.merchantIdentifier
+  // in app_initializer). The Stripe SDK throws an assertion if applePay is
+  // present without merchantIdentifier set — passing null skips the wallet
+  // entirely on platforms / builds where it's not configured.
+  static PaymentSheetApplePay? get _applePayConfig =>
+      StripeConfig.merchantIdentifier.isEmpty
+          ? null
+          : const PaymentSheetApplePay(merchantCountryCode: _platformCountryCode);
 
   static PaymentSheetGooglePay get _googlePayConfig => PaymentSheetGooglePay(
         merchantCountryCode: _platformCountryCode,

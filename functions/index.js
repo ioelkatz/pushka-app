@@ -1351,6 +1351,96 @@ exports.stripeWebhook = onRequest(
         chargeId: fee.charge?.id ?? null,
         outcome: "commission_collected",
       });
+    } else if (event.type === "application_fee.refunded") {
+      // Commission refunded back to platform from connected account — happens
+      // automatically when the underlying charge is refunded. Logged so admin
+      // dashboards can reconcile platform revenue against gross donations.
+      const fee = event.data.object;
+      const tenantId = fee.charge?.metadata?.tenantId ?? null;
+      const refundedAmount = (fee.amount_refunded || 0) /
+        currencyUnitDivisor(fee.currency || "usd");
+
+      await finalizeWebhookEvent(eventRef, {
+        status: "processed",
+        tenantId,
+        amountUsd: refundedAmount,
+        chargeId: fee.charge?.id ?? null,
+        applicationFeeId: fee.id,
+        outcome: "commission_refunded",
+      });
+    } else if (event.type === "payment_intent.canceled") {
+      // User abandoned a PaymentIntent (e.g. closed PaymentSheet without
+      // confirming) and Stripe auto-cancels after the timeout. Without this
+      // handler the event would be marked "ignored" and clutter the
+      // observability path. Track it so we can detect abnormal abandonment
+      // rates (a spike usually means a UX regression).
+      const intent = event.data.object;
+      const uid = intent.metadata?.uid;
+      const tenantId = intent.metadata?.tenantId ?? null;
+      const amount = (intent.amount || 0) / currencyUnitDivisor(intent.currency || "usd");
+
+      if (uid) {
+        await writeUserPaymentEvent(uid, event.id, {
+          kind: "payment_canceled",
+          provider: "stripe",
+          paymentIntentId: intent.id,
+          amount,
+          currencyCode: String(intent.currency || "usd").toUpperCase(),
+          cancellationReason: intent.cancellation_reason || "user_abandoned",
+          livemode: !!event.livemode,
+        });
+      }
+
+      await finalizeWebhookEvent(eventRef, {
+        status: "processed",
+        uid: uid || null,
+        tenantId,
+        paymentIntentId: intent.id,
+        amount,
+        outcome: "canceled",
+        cancellationReason: intent.cancellation_reason || null,
+      });
+    } else if (event.type === "customer.subscription.deleted" ||
+               event.type === "customer.subscription.updated") {
+      // Tenant Stripe Billing subscription state change. Mirror the status
+      // onto tenants/{tid} so the suspension/grace-period logic
+      // (router redirects, processPushkaAutoEmpty gate) reacts within seconds
+      // instead of waiting for the next 60s tenant-config poll.
+      const sub = event.data.object;
+      const tenantId = sub.metadata?.tenantId ?? null;
+      const status = sub.status; // active|past_due|canceled|unpaid|trialing|...
+
+      if (tenantId) {
+        const tenantStatus =
+          status === "active" || status === "trialing" ? "active" :
+          status === "past_due" || status === "unpaid" ? "grace_period" :
+          status === "canceled" ? "suspended" :
+          null; // ignore incomplete/incomplete_expired noise
+        if (tenantStatus) {
+          await db.collection("tenants").doc(tenantId).set({
+            status: tenantStatus,
+            paymentStatus: status,
+            stripeSubscriptionId: sub.id,
+            ...(sub.current_period_end
+              ? { billingNextDue: admin.firestore.Timestamp.fromMillis(sub.current_period_end * 1000) }
+              : {}),
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          }, { merge: true });
+        }
+      } else {
+        console.warn("stripeWebhook: subscription event without tenantId metadata", {
+          subscriptionId: sub.id,
+          status,
+          eventType: event.type,
+        });
+      }
+
+      await finalizeWebhookEvent(eventRef, {
+        status: "processed",
+        tenantId,
+        subscriptionId: sub.id,
+        outcome: `subscription_${status}`,
+      });
     } else {
       await finalizeWebhookEvent(eventRef, {
         status: "ignored",
@@ -3021,6 +3111,186 @@ exports.setUserBlocked = onCall(
 
     return { success: true, uid, isBlocked };
   }
+);
+
+// ---------------------------------------------------------------------------
+// deleteAccount — GDPR right-to-be-forgotten (caller deletes their own account).
+//
+// Self-service only: a user can ONLY delete their own uid. Admin-side blocks
+// flow through `setUserBlocked` instead (preserves audit trail). This endpoint
+// burns:
+//   - All Stripe subscriptions on the user's customer
+//   - The Stripe Customer object (which detaches all saved cards/PMs)
+//   - users/{uid} + every subcollection (transactions, reminders, fcmTokens,
+//     tenantState, paymentEvents, savedCards, _rateLimits/{uid_*})
+//   - profile_photos/{uid}.jpg from Storage
+//   - The Firebase Auth user record (irreversible — same email can't recover
+//     the account, must re-register)
+//
+// Writes a tombstone to `_deletedAccounts/{uid}` so re-registration with the
+// same email can be detected, and so legal/compliance has a retention record
+// (uid + deletedAt + reason) for the statutory period without the PII.
+// ---------------------------------------------------------------------------
+exports.deleteAccount = onCall(
+  { secrets: [stripeSecret], enforceAppCheck: true },
+  async (request) => {
+    const uid = request.auth?.uid;
+    if (!uid) throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
+
+    // Stricter rate limit than the others — account deletion should never be
+    // automated. 3/day is enough for the legitimate "deleted by mistake →
+    // re-registered → re-deleted" path; anything beyond is suspicious.
+    await enforceRateLimit(uid, "deleteAccount", 3, 86400);
+
+    // Force fresh ID-token verification: the user must have refreshed within
+    // the last 5 minutes (i.e. just re-authenticated in the client). Stripe-
+    // backed irreversible action requires recent auth proof.
+    const recentAuthSec = request.auth?.token?.auth_time ?? 0;
+    if (Date.now() / 1000 - recentAuthSec > 300) {
+      throw new HttpsError(
+        "failed-precondition",
+        "Volvé a iniciar sesión y reintentá la eliminación.",
+      );
+    }
+
+    const userRef = db.collection("users").doc(uid);
+    const userSnap = await userRef.get();
+    const userData = userSnap.exists ? userSnap.data() || {} : {};
+    const stripeCustomerId = userData.stripeCustomerId || null;
+    const email = userData.email || null;
+
+    // ---- 1. Stripe cleanup (best-effort; don't block deletion on it) ----
+    let stripeCleanup = { customerDeleted: false, subscriptionsCanceled: 0 };
+    if (stripeCustomerId && stripeSecret.value()) {
+      try {
+        const stripe = require("stripe")(stripeSecret.value());
+        // Cancel any active subscriptions
+        const subs = await stripe.subscriptions.list({
+          customer: stripeCustomerId,
+          status: "active",
+          limit: 100,
+        });
+        for (const sub of subs.data) {
+          try {
+            await stripe.subscriptions.cancel(sub.id);
+            stripeCleanup.subscriptionsCanceled += 1;
+          } catch (subErr) {
+            console.warn("deleteAccount: subscription cancel failed", {
+              uid, subscriptionId: sub.id, errorMessage: subErr?.message,
+            });
+          }
+        }
+        // Delete customer (detaches all saved PMs)
+        await stripe.customers.del(stripeCustomerId);
+        stripeCleanup.customerDeleted = true;
+      } catch (stripeErr) {
+        // Stripe failures are logged but DO NOT block deletion. The platform
+        // operator can clean up the orphan Stripe customer manually if needed.
+        console.error("deleteAccount: Stripe cleanup failed", {
+          uid,
+          stripeCustomerId,
+          errorMessage: stripeErr?.message,
+        });
+      }
+    }
+
+    // ---- 2. Firestore subcollection delete (recursive batch) ----
+    const subCollections = [
+      "transactions", "reminders", "fcmTokens", "tenantState",
+      "paymentEvents", "savedCards",
+    ];
+    let docsDeleted = 0;
+    for (const subName of subCollections) {
+      const subRef = userRef.collection(subName);
+      // Iterate in chunks of 400 to stay under Firestore batch limit (500).
+      let lastDoc = null;
+      while (true) {
+        let q = subRef.orderBy("__name__").limit(400);
+        if (lastDoc) q = q.startAfter(lastDoc);
+        const snap = await q.get();
+        if (snap.empty) break;
+        const batch = db.batch();
+        snap.docs.forEach((d) => batch.delete(d.ref));
+        await batch.commit();
+        docsDeleted += snap.size;
+        if (snap.size < 400) break;
+        lastDoc = snap.docs[snap.docs.length - 1];
+      }
+    }
+
+    // ---- 3. Storage cleanup (profile photo) ----
+    let storageDeleted = false;
+    try {
+      const bucket = admin.storage().bucket();
+      const photoRef = bucket.file(`profile_photos/${uid}.jpg`);
+      const [exists] = await photoRef.exists();
+      if (exists) {
+        await photoRef.delete();
+        storageDeleted = true;
+      }
+    } catch (storageErr) {
+      console.warn("deleteAccount: storage cleanup failed", {
+        uid, errorMessage: storageErr?.message,
+      });
+    }
+
+    // ---- 4. Per-uid rate-limit doc cleanup (so re-registered uid starts fresh) ----
+    try {
+      const rlSnap = await db.collection("_rateLimits")
+        .where(admin.firestore.FieldPath.documentId(), ">=", `${uid}_`)
+        .where(admin.firestore.FieldPath.documentId(), "<", `${uid}_~`)
+        .get();
+      if (!rlSnap.empty) {
+        const batch = db.batch();
+        rlSnap.docs.forEach((d) => batch.delete(d.ref));
+        await batch.commit();
+      }
+    } catch (rlErr) {
+      // Rate limit cleanup is non-critical — leftover docs auto-expire by TTL.
+      console.warn("deleteAccount: rate-limit cleanup failed", {
+        uid, errorMessage: rlErr?.message,
+      });
+    }
+
+    // ---- 5. Tombstone (compliance retention) ----
+    // Store the BARE MINIMUM: uid + deletion timestamp + reason. NO PII.
+    // Re-registration with the same email is allowed but tombstone persists
+    // to satisfy "did this uid exist?" forensic questions during the
+    // statutory retention period.
+    await db.collection("_deletedAccounts").doc(uid).set({
+      uid,
+      deletedAt: admin.firestore.FieldValue.serverTimestamp(),
+      reason: "user_request",
+      stripeCustomerCleaned: stripeCleanup.customerDeleted,
+      subscriptionsCanceled: stripeCleanup.subscriptionsCanceled,
+      docsDeleted,
+      storageDeleted,
+    });
+
+    // ---- 6. Delete the parent user doc itself ----
+    await userRef.delete().catch(() => { /* idempotent */ });
+
+    // ---- 7. Delete Firebase Auth user (irreversible) ----
+    // This MUST be last — once gone, the client's request.auth is invalidated
+    // for any retry. Failure here would leave an orphan Auth record but all
+    // data is already gone, so the user can't access anything anyway.
+    await admin.auth().deleteUser(uid);
+
+    console.info("deleteAccount: completed", {
+      uid,
+      email: _redactEmail(email || ""),
+      docsDeleted,
+      stripeCleanup,
+      storageDeleted,
+    });
+
+    return {
+      success: true,
+      docsDeleted,
+      stripeCleanup,
+      storageDeleted,
+    };
+  },
 );
 
 // ===========================================================================
