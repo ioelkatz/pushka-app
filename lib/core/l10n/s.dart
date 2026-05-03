@@ -54,6 +54,13 @@ class S {
   String hello(String name) => _t('Hola $name', 'Hello $name', 'Bonjour $name', 'שלום $name');
   String get myPushka => _t('Mi Pushka', 'My Pushka', 'Ma Pushka', 'הפושקה שלי');
   String get wallet => _t('Billetera', 'Wallet', 'Portefeuille', 'ארנק');
+  String get cardAlreadySaved => _t(
+    'Esa tarjeta ya estaba registrada.',
+    'That card was already saved.',
+    'Cette carte était déjà enregistrée.',
+    'הכרטיס כבר היה רשום.',
+  );
+
   String get defaultCardSubtitle => _t(
     'Tarjeta predeterminada · tocá para administrar',
     'Default card · tap to manage',

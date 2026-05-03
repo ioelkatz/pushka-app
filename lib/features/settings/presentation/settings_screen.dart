@@ -824,29 +824,15 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               ),
             const SizedBox(width: 12),
             Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(
-                    hasCard
-                        ? '${cardBrandLabel(brand)} •••• $last4'
-                        : tr.noSavedCards.split('\n').first,
-                    style: TextStyle(
-                      fontSize: 15,
-                      fontWeight: FontWeight.w600,
-                      color: cs.onSurface,
-                    ),
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    hasCard ? tr.defaultCardSubtitle : tr.addCardSubtitle,
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: cs.onSurfaceVariant,
-                    ),
-                  ),
-                ],
+              child: Text(
+                hasCard
+                    ? '•••• $last4'
+                    : tr.noSavedCards.split('\n').first,
+                style: TextStyle(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w600,
+                  color: cs.onSurface,
+                ),
               ),
             ),
             Icon(Icons.chevron_right, color: cs.onSurfaceVariant),

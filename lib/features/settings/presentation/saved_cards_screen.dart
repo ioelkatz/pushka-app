@@ -73,15 +73,26 @@ class _SavedCardsScreenState extends ConsumerState<SavedCardsScreen> {
     if (_processing) return;
     final tr = S.of(context);
     setState(() => _processing = true);
+    // Snapshot count BEFORE the SetupIntent so we can detect a fingerprint
+    // collision after the reload. listSavedCards dedupes server-side at list
+    // time (matching `card.fingerprint` → detach the newly-attached PM and
+    // keep the older / default one), so if the post-add count is unchanged
+    // OR the collision flag came back, the user's "new" card was actually
+    // a re-save of one they already had.
+    final cardCountBefore = _cards.length;
     try {
       await StripeService.instance.setupCard(
         merchantDisplayName: ref.read(tenantConfigProvider).valueOrNull?.appName ?? 'Pushka',
       );
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(tr.cardAdded)),
-      );
       await _loadCards(autoSetDefault: true);
+      if (!mounted) return;
+      final isDuplicate = _cards.length <= cardCountBefore;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(isDuplicate ? tr.cardAlreadySaved : tr.cardAdded),
+        ),
+      );
     } on StripeException catch (e) {
       if (!mounted) return;
       if (e.error.code == FailureCode.Canceled) return;
