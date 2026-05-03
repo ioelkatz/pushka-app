@@ -70,6 +70,10 @@ dependencies:
   firebase_storage: ^13.0.0
   app_links: ^7.0.0
   flutter_svg: ^2.0.10+1
+  # iOS App Tracking Transparency — required by Apple for any SDK that may
+  # use IDFA-equivalents (Firebase Analytics, Crashlytics). On Android this
+  # package is a silent no-op so it's safe to call unconditionally.
+  app_tracking_transparency: ^2.0.6+1
 
 
 dev_dependencies:

@@ -1311,6 +1311,39 @@ exports.stripeWebhook = onRequest(
         disputeId: dispute.id,
         outcome: `dispute_${dispute.status || "closed"}`,
       });
+    } else if (event.type === "charge.dispute.funds_withdrawn" ||
+               event.type === "charge.dispute.funds_reinstated") {
+      // Notification-grade events that mirror the funds movement during a
+      // dispute lifecycle. The negating tx is already created in
+      // dispute.created and reversed in dispute.closed (won) — these
+      // sub-events serve only as a journal entry so admin reports can show
+      // funds-on-hold vs. funds-restored timing without duplicating the
+      // accounting impact.
+      const dispute = event.data.object;
+      const chargeId = typeof dispute.charge === "string" ? dispute.charge : dispute.charge?.id;
+      let charge = null;
+      if (chargeId) {
+        try { charge = await stripe.charges.retrieve(chargeId); } catch (_) { /* ignore */ }
+      }
+      const uid = charge ? await resolveUidFromCharge(charge, stripe) : null;
+      const isWithdrawn = event.type === "charge.dispute.funds_withdrawn";
+
+      if (uid) {
+        await writeUserPaymentEvent(uid, event.id, {
+          kind: isWithdrawn ? "dispute_funds_withdrawn" : "dispute_funds_reinstated",
+          provider: "stripe",
+          disputeId: dispute.id,
+          chargeId,
+          livemode: !!event.livemode,
+        });
+      }
+
+      await finalizeWebhookEvent(eventRef, {
+        status: "processed",
+        uid: uid || null,
+        disputeId: dispute.id,
+        outcome: isWithdrawn ? "dispute_funds_withdrawn" : "dispute_funds_reinstated",
+      });
     } else if (event.type === "account.updated") {
       // Stripe Connect: connected account status changed (charges/payouts enabled/disabled)
       const account = event.data.object;
@@ -3289,6 +3322,97 @@ exports.deleteAccount = onCall(
       docsDeleted,
       stripeCleanup,
       storageDeleted,
+    };
+  },
+);
+
+// ---------------------------------------------------------------------------
+// exportUserData — GDPR right-to-data-portability (caller exports their own data).
+//
+// Returns a JSON object containing every Firestore document that belongs to
+// this user (profile + all subcollections). Data is normalized: Timestamps
+// → ISO 8601 strings, DocumentReferences → path strings, server-internal
+// refs (_paths, byte fields) stripped. Client can save the result locally
+// or share it as a file.
+//
+// Self-service only (caller can only export their OWN uid). Rate-limited at
+// 5/day to discourage automated scraping but generous enough for a user
+// who lost the file or wants periodic backups.
+// ---------------------------------------------------------------------------
+exports.exportUserData = onCall(
+  { enforceAppCheck: true },
+  async (request) => {
+    const uid = request.auth?.uid;
+    if (!uid) throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
+    await enforceRateLimit(uid, "exportUserData", 5, 86400);
+
+    // Recursively serialize Firestore values into a JSON-safe shape.
+    // - Timestamps → ISO 8601 strings (always UTC; client converts on display)
+    // - DocumentReferences → reference path strings
+    // - GeoPoints → { latitude, longitude }
+    // - Bytes → base64 string (with size prefix so the consumer knows it was binary)
+    // - Plain objects/arrays → recursive descent
+    function _serialize(value) {
+      if (value === null || value === undefined) return null;
+      if (value instanceof admin.firestore.Timestamp) {
+        return value.toDate().toISOString();
+      }
+      if (value instanceof admin.firestore.GeoPoint) {
+        return { latitude: value.latitude, longitude: value.longitude };
+      }
+      if (value instanceof admin.firestore.DocumentReference) {
+        return value.path;
+      }
+      if (Buffer.isBuffer(value)) {
+        return { __binary: true, base64: value.toString("base64"), bytes: value.length };
+      }
+      if (Array.isArray(value)) return value.map(_serialize);
+      if (typeof value === "object") {
+        const out = {};
+        for (const [k, v] of Object.entries(value)) out[k] = _serialize(v);
+        return out;
+      }
+      return value;
+    }
+
+    const userRef = db.collection("users").doc(uid);
+    const userSnap = await userRef.get();
+    if (!userSnap.exists) {
+      // No user doc yet — still return a valid envelope so the client can
+      // distinguish this case from a network error.
+      return {
+        exportedAt: new Date().toISOString(),
+        uid,
+        profile: null,
+        subcollections: {},
+      };
+    }
+
+    const subCollectionNames = [
+      "transactions", "reminders", "fcmTokens", "tenantState", "paymentEvents", "savedCards",
+    ];
+    const subcollections = {};
+    for (const subName of subCollectionNames) {
+      const snap = await userRef.collection(subName).get();
+      subcollections[subName] = snap.docs.map((d) => ({
+        id: d.id,
+        ..._serialize(d.data() || {}),
+      }));
+    }
+
+    return {
+      exportedAt: new Date().toISOString(),
+      uid,
+      profile: _serialize(userSnap.data() || {}),
+      subcollections,
+      // Note for downstream consumer: saved cards live in Stripe (PaymentMethods
+      // collection on the customer) — they are not duplicated to Firestore.
+      // The user's stripeCustomerId is included in `profile` if they want to
+      // request their data from Stripe directly.
+      _meta: {
+        format: "pushka-export-v1",
+        notes: "Saved cards / payment methods live in Stripe; not included here. Request via Stripe support using stripeCustomerId from `profile`.",
+      },
     };
   },
 );

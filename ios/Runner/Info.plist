@@ -72,6 +72,14 @@
 		<string>Pushka uses Face ID to confirm donations securely.</string>
 		<key>NSPhotoLibraryUsageDescription</key>
 		<string>Pushka uses your photo library when you choose a profile picture.</string>
+		<!-- App Tracking Transparency: required by Apple for any SDK that may
+		     use IDFA / IDFV-equivalents (Firebase Analytics, Crashlytics user
+		     identifiers, etc). String is shown verbatim in the system prompt
+		     the first time we call requestTrackingAuthorization(). Apple
+		     reviewers reject submissions that surface analytics without
+		     prompting AND without a clear, user-facing reason. -->
+		<key>NSUserTrackingUsageDescription</key>
+		<string>Pushka uses anonymous activity data to improve donation flow stability and detect crashes. You can decline without affecting donations.</string>
 		<key>ITSAppUsesNonExemptEncryption</key>
 		<false/>
 		<key>NSAppTransportSecurity</key>

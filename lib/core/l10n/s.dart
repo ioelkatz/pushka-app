@@ -351,6 +351,26 @@ class S {
   String get mailingAddress => _t('DIRECCIÓN POSTAL', 'MAILING ADDRESS', 'ADRESSE POSTALE', 'כתובת למשלוח');
   String get manageAccount => _t('ADMINISTRAR CUENTA', 'MANAGE ACCOUNT', 'GÉRER LE COMPTE', 'נהל חשבון');
   String get deleteAccountQuestion => _t('¿Eliminar cuenta?', 'Delete account?', 'Supprimer le compte ?', 'מחק חשבון?');
+  String get exportMyData => _t('Exportar mis datos', 'Export my data', 'Exporter mes données', 'ייצוא הנתונים שלי');
+  String get exportInProgress => _t('Generando exportación...', 'Generating export...', "Génération de l'export...", 'מייצר ייצוא...');
+  String get exportSubject => _t(
+    'Adjunto mi exportación de datos de Pushka.',
+    'My Pushka data export attached.',
+    "Mon export de données Pushka ci-joint.",
+    'מצורף ייצוא הנתונים שלי מפושקה.',
+  );
+  String get exportFailed => _t(
+    'No se pudo generar la exportación. Intentá de nuevo.',
+    'Could not generate export. Please try again.',
+    "Impossible de générer l'export. Veuillez réessayer.",
+    'לא ניתן ליצור ייצוא. נסה שוב.',
+  );
+  String get exportRateLimited => _t(
+    'Llegaste al límite diario de exportaciones. Probá de nuevo mañana.',
+    'You hit the daily export limit. Try again tomorrow.',
+    "Vous avez atteint la limite quotidienne d'exports. Réessayez demain.",
+    'הגעת למגבלת הייצוא היומית. נסה שוב מחר.',
+  );
   String get logout => _t('Cerrar sesión', 'Log out', 'Déconnexion', 'התנתק');
   String get principalBadge => _t('Principal', 'Primary', 'Principal', 'ראשי');
   String get pushkaIconHebrew => 'צדקה';

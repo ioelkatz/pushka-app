@@ -1,6 +1,11 @@
+import 'dart:io' show Platform;
+
 import 'package:flutter/foundation.dart';
+import 'package:app_tracking_transparency/app_tracking_transparency.dart';
+import 'package:firebase_analytics/firebase_analytics.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_app_check/firebase_app_check.dart';
+import 'package:firebase_crashlytics/firebase_crashlytics.dart';
 import 'package:flutter_stripe/flutter_stripe.dart';
 
 import '../features/notifications/notification_service.dart';
@@ -57,6 +62,42 @@ Future<void> _performDeferredInit() async {
   }
 
   await FeedbackService.instance.init();
+
+  // App Tracking Transparency (iOS only). Apple rejects apps that ship with
+  // any IDFA-equivalent SDK (Firebase Analytics counts) without prompting
+  // the user via requestTrackingAuthorization first. The package is a
+  // no-op on Android — wrapping in Platform.isIOS keeps the call site
+  // explicit. We disable Firebase Analytics + Crashlytics auto-collection
+  // when the user declines, since both can attribute behavior to a device
+  // identifier behind the scenes.
+  //
+  // Run AFTER FirebaseAppCheck.activate so App Check tokens still mint
+  // (App Check uses DeviceCheck/Play Integrity, NOT IDFA — independent of
+  // ATT). Run AFTER first frame (a 600ms breath) so the system prompt
+  // doesn't race the splash teardown.
+  if (!kIsWeb && Platform.isIOS) {
+    try {
+      // Block-style: prompt → await user's choice → propagate.
+      await Future<void>.delayed(const Duration(milliseconds: 600));
+      final status = await AppTrackingTransparency.requestTrackingAuthorization();
+      final granted = status == TrackingStatus.authorized;
+      // Disable both analytics + crashlytics auto-collection when not
+      // granted. Crash REPORTING still works (manual recordError calls)
+      // but won't auto-attach device identifiers across sessions.
+      try {
+        await FirebaseAnalytics.instance.setAnalyticsCollectionEnabled(granted);
+        await FirebaseCrashlytics.instance.setCrashlyticsCollectionEnabled(granted);
+      } catch (e) {
+        debugPrint('appDeferredInit: ATT analytics gate apply failed: $e');
+      }
+    } catch (e) {
+      // Older iOS (< 14) doesn't support ATT; the package returns
+      // TrackingStatus.notSupported but throws on edge devices. Treat
+      // failure as "user did not opt in" — keep analytics off until next
+      // launch when we can prompt again.
+      debugPrint('appDeferredInit: ATT request failed: $e');
+    }
+  }
 
   // Two parallel deep-link surfaces (different concerns, same `app_links` package):
   //  - DeepLinkService (mine): static `pushka://<route>` whitelist for

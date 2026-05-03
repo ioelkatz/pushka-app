@@ -129,23 +129,111 @@ add a trailing newline. This bit us hard once; don't repeat the mistake.
 
 ## Operational tasks
 
-- **Run `backfillTenantSlugs` once per prod environment**: the
-  `_tenantSlugs/{slug}` lock collection was introduced after some tenants
-  already existed in `pushka-app-ioel`, so those legacy tenants don't have
-  lock entries. Until the backfill runs, a malicious `createTenant` could
-  duplicate one of those slugs (no lock = no rejection). The function is
-  idempotent and super_admin-only. Run from a logged-in super_admin account:
-  ```
-  // Browser console on console.firebase.google.com (signed in as super_admin):
-  firebase.functions().httpsCallable('backfillTenantSlugs')().then(r => console.log(r.data));
-  // OR via the Flutter app (one-off):
-  await FirebaseFunctions.instance.httpsCallable('backfillTenantSlugs').call();
-  ```
-  Returns `{ scanned, created, skippedAlreadyExists, skippedNoSlug, conflicts }`.
-  Watch for `conflicts` — those are slugs whose lock points at a different
-  tenantId than expected (manual review needed). Already deployed + verified
-  in `pushka-app-ioel-test`. Run in prod (`pushka-app-ioel`) before the next
-  `createTenant` call there.
+### Pre-launch blocker: `backfillTenantSlugs` in prod
+
+**Why it's a blocker**: the `_tenantSlugs/{slug}` lock collection was
+introduced after some tenants already existed in `pushka-app-ioel`, so those
+legacy tenants don't have lock entries. Until the backfill runs, a malicious
+`createTenant` call could duplicate one of those slugs (no lock = no
+rejection). Idempotent + super_admin-only.
+
+**Step-by-step (run BEFORE inviting users to prod)**:
+
+1. **Deploy current functions to prod**:
+   ```
+   firebase deploy --only functions --project pushka-app-ioel
+   ```
+
+2. **Verify the function is deployed**:
+   ```
+   firebase functions:list --project pushka-app-ioel | grep backfillTenantSlugs
+   ```
+   Should show `backfillTenantSlugs` in the list.
+
+3. **Sign in as super_admin** in the Flutter app (use the prod build —
+   `flutter run --flavor prod`) — must be the SUPER_ADMIN_EMAIL configured
+   in functions/index.js.
+
+4. **Run via app dev console** (preferred — App Check tokens just work):
+   - Open the app while logged in as super_admin
+   - Open the Flutter DevTools console (or add a temporary one-off button)
+   - Execute:
+     ```dart
+     final result = await FirebaseFunctions.instance
+         .httpsCallable('backfillTenantSlugs').call();
+     print(result.data);
+     ```
+
+   **OR via Cloud Functions REST** (alternative — bypass App Check via gcloud):
+   ```bash
+   gcloud auth print-identity-token \
+     --audiences=https://us-central1-pushka-app-ioel.cloudfunctions.net/backfillTenantSlugs \
+     | xargs -I {} curl -X POST \
+       https://us-central1-pushka-app-ioel.cloudfunctions.net/backfillTenantSlugs \
+       -H "Authorization: Bearer {}" \
+       -H "Content-Type: application/json" \
+       -d '{"data":{}}'
+   ```
+
+5. **Inspect the response**:
+   ```json
+   {
+     "scanned": 12,                  // total tenants seen
+     "created": 8,                   // new lock entries written
+     "skippedAlreadyExists": 4,     // lock already correct
+     "skippedNoSlug": 0,             // tenants without a slug field (review manually)
+     "conflicts": []                 // ⚠️ slugs whose lock points elsewhere
+   }
+   ```
+   - `conflicts` MUST be empty. If non-empty: each entry shows
+     `{ slug, expectedTenantId, currentLockTenantId }` — a slug that resolved
+     to two different tenants. Manual review required: pick the canonical
+     tenant, delete the wrong `_tenantSlugs/{slug}` lock doc, re-run.
+   - If `skippedNoSlug > 0`: those tenant docs lack a `slug` field entirely.
+     Inspect each manually and decide whether to add a slug or mark inactive.
+
+6. **Verify in Firestore Console**:
+   `pushka-app-ioel` → Firestore → `_tenantSlugs/` → confirm one doc per
+   active tenant slug.
+
+Already deployed + verified in `pushka-app-ioel-test`. **Do NOT skip this
+step in prod** — every day without the backfill is a day a malicious user
+could squat a legacy tenant's slug.
+
+### Other one-off backfills (lower priority)
+
+- **`tenantId` on legacy transactions**: Transactions created before the
+  multi-tenant cutover lack `tenantId`. The new strict Firestore rule
+  requires it on creates (existing docs grandfathered). Multi-tenant history
+  queries silently exclude these rows. To backfill: write a one-off CF that
+  reads each user's `tenantId` and stamps it on their pre-cutover txns.
+
+- **`tenantState` denormalized fields** (`tenantName`, `tenantAppName`,
+  `tenantLogoUrl`, `tenantPrimaryColor`): The `onTenantBrandingUpdated`
+  trigger keeps these fresh going forward, but legacy `tenantState` docs
+  written before the trigger existed may have stale or absent values. Run
+  a one-off scan: for each tenantState, read parent tenant doc, write
+  current values via batch.
+
+### iOS launch checklist (need Mac)
+
+- [ ] Apple Developer account ($99/yr) + create Apple Pay merchant ID
+- [ ] Add merchant ID to Xcode → Signing & Capabilities → Apple Pay
+- [ ] Set `MERCHANT_IDENTIFIER` dart-define so `StripeConfig.merchantIdentifier` is non-empty
+- [ ] Configure `apple-app-site-association` JSON on `pushkapp.cc/.well-known/`
+- [ ] Add Associated Domains entitlement in Xcode (`applinks:pushkapp.cc`)
+- [ ] Configure Apple Push Notifications certificates (Firebase Console → Cloud Messaging → APNs)
+- [ ] Configure App Check DeviceCheck/AppAttest in Firebase Console
+- [ ] Test ATT prompt fires on first launch (already wired in `app_initializer.dart`)
+- [ ] Submit to App Store Review
+
+### Stripe Dashboard checklist before going live
+
+- [ ] Switch project from `pk_test_*` to `pk_live_*` keys (functions secrets + dart-defines)
+- [ ] Configure `STRIPE_WEBHOOK_SECRET` for prod webhook endpoint
+- [ ] Enable Google Pay + Apple Pay in Dashboard → Settings → Payment methods → Wallets
+- [ ] Verify webhook endpoint URL on Stripe Dashboard matches `https://us-central1-pushka-app-ioel.cloudfunctions.net/stripeWebhook`
+- [ ] Subscribe to ALL relevant events (the webhook handles: payment_intent.succeeded, .payment_failed, .canceled, charge.refunded, charge.dispute.created, .closed, .funds_withdrawn, .funds_reinstated, account.updated, application_fee.created, .refunded, customer.subscription.deleted, .updated, invoice.payment_succeeded, .payment_failed)
 
 ## For Claude (both Alans)
 

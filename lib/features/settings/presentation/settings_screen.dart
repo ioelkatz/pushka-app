@@ -1,5 +1,8 @@
+import 'dart:convert';
 import 'dart:typed_data';
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:share_plus/share_plus.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:country_picker/country_picker.dart';
 import 'package:flutter/material.dart';
@@ -472,6 +475,13 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           // MANAGE ACCOUNT Section
           _buildSectionTitle(tr.manageAccount),
           const SizedBox(height: 12),
+          _buildManageAccountRow(
+            icon: Icons.download_outlined,
+            color: Theme.of(context).colorScheme.primary,
+            label: tr.exportMyData,
+            onTap: () => _exportUserData(),
+          ),
+          const SizedBox(height: 16),
           InkWell(
             onTap: () => _showDeleteAccountDialog(),
             child: Row(
@@ -1591,21 +1601,106 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   String _formatPresetVal(double v) =>
       v == v.roundToDouble() ? v.toInt().toString() : v.toStringAsFixed(2);
 
+  Widget _buildManageAccountRow({
+    required IconData icon,
+    required Color color,
+    required String label,
+    required VoidCallback onTap,
+  }) {
+    return InkWell(
+      onTap: onTap,
+      child: Row(
+        children: [
+          Icon(icon, color: color, size: 20),
+          const SizedBox(width: 8),
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 16,
+              color: color,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _exportUserData() async {
+    final tr = S.of(context);
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.showSnackBar(
+      SnackBar(content: Text(tr.exportInProgress), duration: const Duration(seconds: 30)),
+    );
+    try {
+      final callable = FirebaseFunctions.instance.httpsCallable('exportUserData');
+      final result = await callable.call();
+      // Pretty-print so the file is human-readable when the user opens it.
+      final jsonStr = const JsonEncoder.withIndent('  ').convert(result.data);
+      final ts = DateTime.now().toIso8601String().replaceAll(':', '-').split('.').first;
+      messenger.hideCurrentSnackBar();
+      // share_plus.shareXFiles handles iOS share sheet, Android Intent.SEND,
+      // and saves to Downloads on web. Falls back gracefully on platforms
+      // that don't support file shares (e.g. desktop where it returns the
+      // raw bytes via clipboard).
+      await SharePlus.instance.share(
+        ShareParams(
+          files: [
+            XFile.fromData(
+              Uint8List.fromList(utf8.encode(jsonStr)),
+              name: 'pushka-data-export-$ts.json',
+              mimeType: 'application/json',
+            ),
+          ],
+          subject: 'Pushka data export',
+          text: tr.exportSubject,
+        ),
+      );
+    } on FirebaseFunctionsException catch (e) {
+      if (!mounted) return;
+      messenger.hideCurrentSnackBar();
+      messenger.showSnackBar(SnackBar(
+        content: Text(
+          e.code == 'resource-exhausted' ? tr.exportRateLimited : tr.exportFailed,
+        ),
+      ));
+    } catch (_) {
+      if (!mounted) return;
+      messenger.hideCurrentSnackBar();
+      messenger.showSnackBar(SnackBar(content: Text(tr.exportFailed)));
+    }
+  }
+
   Future<void> _showDeleteAccountDialog() async {
     final confirmed = await _showDeleteConfirmationDialog();
     if (!confirmed || !mounted) return;
 
+    // Force a fresh ID token: the deleteAccount CF requires auth_time within
+    // the last 5 min. Re-auth refreshes auth_time AND surfaces wrong-password
+    // errors here, in the dialog, instead of as a server-side rejection.
     final reAuthed = await _showReAuthDialog();
     if (!reAuthed || !mounted) return;
 
     try {
-      await FirebaseAuth.instance.currentUser?.delete();
-      // GoRouter refresh stream detects auth state change and redirects to /login
-    } on FirebaseAuthException catch (e) {
+      // GDPR right-to-be-forgotten — call the server-side CF which cancels
+      // Stripe subscriptions, deletes the Stripe customer (detaching saved
+      // cards), recursively deletes every Firestore subcollection + the
+      // user doc, deletes the profile photo from Storage, writes a tombstone
+      // for compliance retention, then deletes the Firebase Auth user. The
+      // client's `currentUser?.delete()` would only kill the Auth record,
+      // leaving Firestore + Stripe data orphaned indefinitely.
+      final callable = FirebaseFunctions.instance.httpsCallable('deleteAccount');
+      await callable.call();
+      // Auth user is gone — GoRouter refresh stream detects sign-out and
+      // redirects to /login. Force-reload to clear any in-memory Riverpod
+      // state in case the listener races the navigation.
+      try { await FirebaseAuth.instance.signOut(); } catch (_) { /* already gone */ }
+    } on FirebaseFunctionsException catch (e) {
       if (!mounted) return;
-      final msg = e.code == 'requires-recent-login'
-          ? S.of(context).requiresRecentLogin
-          : S.of(context).couldNotDeleteAccount;
+      final tr = S.of(context);
+      final msg = e.code == 'failed-precondition'
+          ? tr.requiresRecentLogin
+          : tr.couldNotDeleteAccount;
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
     } catch (_) {
       if (!mounted) return;

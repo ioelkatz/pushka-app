@@ -42,8 +42,10 @@ class StripeService {
           ? null
           : const PaymentSheetApplePay(merchantCountryCode: _platformCountryCode);
 
-  static PaymentSheetGooglePay get _googlePayConfig => PaymentSheetGooglePay(
+  static PaymentSheetGooglePay _googlePayConfigFor(String currency) =>
+      PaymentSheetGooglePay(
         merchantCountryCode: _platformCountryCode,
+        currencyCode: currency.toUpperCase(),
         testEnv: DefaultFirebaseOptions.isDev,
       );
 
@@ -96,7 +98,7 @@ class StripeService {
         customerEphemeralKeySecret:
             hasCustomerSession ? ephemeralKeySecret : null,
         applePay: _applePayConfig,
-        googlePay: _googlePayConfig,
+        googlePay: _googlePayConfigFor(currency),
       ),
     );
 
@@ -148,7 +150,9 @@ class StripeService {
         merchantDisplayName: merchantDisplayName,
         allowsDelayedPaymentMethods: false,
         applePay: _applePayConfig,
-        googlePay: _googlePayConfig,
+        // SetupIntent has no currency context; default to platform primary
+        // (USD) which Google Pay requires for setup-mode card capture.
+        googlePay: _googlePayConfigFor('USD'),
       ),
     );
 
