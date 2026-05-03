@@ -242,10 +242,14 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
   Future<void> _donateNow() async {
     if (_isProcessing) return;
     final tr = S.of(context);
+    // Controllers must be disposed when the sheet closes — keeping them
+    // alive in function scope without dispose() is a memory leak the
+    // Flutter framework will warn about in debug. try/finally below.
     final amountCtrl = TextEditingController();
     final messageCtrl = TextEditingController();
     Map<String, dynamic>? result;
     String? error;
+    try {
     result = await showKeyboardSafeSheet<Map<String, dynamic>>(
       context: context,
       builder: (ctx, setDialogState) => Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
@@ -286,6 +290,10 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                       )),
                     ]),
     );
+    } finally {
+      amountCtrl.dispose();
+      messageCtrl.dispose();
+    }
     if (result == null || !mounted) return;
     final donationAmount = result['amount'] as double;
 
@@ -985,6 +993,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
     final amountCtrl = TextEditingController();
     Map<String, dynamic>? result;
     double? selectedPreset;
+    try {
     result = await showKeyboardSafeSheet<Map<String, dynamic>>(
       context: context,
       builder: (ctx, setDialogState) {
@@ -1116,6 +1125,9 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                     );
       },
     );
+    } finally {
+      amountCtrl.dispose();
+    }
 
     if (result == null || !mounted) return;
     final amount = result['amount'] as double;
@@ -1159,6 +1171,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
     final controller = TextEditingController();
     String? error;
     double? result;
+    try {
     result = await showKeyboardSafeSheet<double>(
       context: context,
       builder: (ctx, setDialogState) => Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -1195,6 +1208,9 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                       )),
                     ]),
     );
+    } finally {
+      controller.dispose();
+    }
 
     if (!mounted || result == null) return;
     await addAmount(result);
@@ -1729,6 +1745,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
     final ctrl2 = TextEditingController(text: _formatPresetValue(currentPresets[1]));
     final ctrl3 = TextEditingController(text: _formatPresetValue(currentPresets[2]));
     bool? saved;
+    try {
     saved = await showKeyboardSafeSheet<bool>(
       context: context,
       builder: (ctx, setDialogState) {
@@ -1850,12 +1867,16 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                     InkWell(
                       borderRadius: BorderRadius.circular(14),
                       onTap: () async {
-                        final corrected = await showDialog<double>(
+                        // Declare controller OUTSIDE showDialog's builder
+                        // so we can dispose it in the finally below.
+                        final amtCtrl = TextEditingController(
+                          text: _formatPresetValue(displayedAmount),
+                        );
+                        double? corrected;
+                        try {
+                        corrected = await showDialog<double>(
                           context: ctx,
                           builder: (dCtx) {
-                            final amtCtrl = TextEditingController(
-                              text: _formatPresetValue(displayedAmount),
-                            );
                             String? errorText;
                             return StatefulBuilder(
                               builder: (dCtx, setDState) => AlertDialog(
@@ -1926,6 +1947,9 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                             );
                           },
                         );
+                        } finally {
+                          amtCtrl.dispose();
+                        }
                         if (corrected == null || !mounted) return;
                         final capped = pushkaGoal > 0
                             ? corrected.clamp(0.0, pushkaGoal)
@@ -2108,6 +2132,11 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                     );
       },
     );
+    } finally {
+      ctrl1.dispose();
+      ctrl2.dispose();
+      ctrl3.dispose();
+    }
 
     if (saved == true && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -2120,6 +2149,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
     final controller = TextEditingController();
     String? error;
     double? result;
+    try {
     result = await showKeyboardSafeSheet<double>(
       context: context,
       builder: (ctx, setDialogState) => Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -2156,6 +2186,9 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                       )),
                     ]),
     );
+    } finally {
+      controller.dispose();
+    }
     return result;
   }
 }
