@@ -1,5 +1,4 @@
 ﻿import 'dart:async';
-import 'dart:math' as math;
 import '../../../core/hive_cache.dart';
 import 'jewish_confetti.dart';
 import '../../../core/format_utils.dart';
@@ -777,7 +776,8 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
     final sc = hasStreak
         ? _streakColors(streakCount)
         : (const Color(0xFFFFD54F), const Color(0xFFFFC107));
-    const double h = 36.0;
+    const double h = 50.0;
+    const double badgeSize = 58.0;
 
     return Container(
       margin: const EdgeInsets.only(bottom: 4),
@@ -785,14 +785,14 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
         clipBehavior: Clip.none,
         children: [
           Container(
-            margin: EdgeInsetsDirectional.only(start: hasStreak ? 18.0 : 0.0),
+            margin: EdgeInsetsDirectional.only(start: hasStreak ? 6.0 : 0.0),
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(h / 2),
               boxShadow: [
                 BoxShadow(
-                  color: sc.$2.withValues(alpha: 0.4),
-                  blurRadius: 10,
-                  offset: const Offset(0, 4),
+                  color: sc.$2.withValues(alpha: 0.5),
+                  blurRadius: 14,
+                  offset: const Offset(0, 5),
                 ),
               ],
             ),
@@ -806,9 +806,13 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                       if (hasStreak)
                         Container(
                           height: h,
-                          padding: const EdgeInsetsDirectional.fromSTEB(28, 0, 14, 0),
+                          padding: const EdgeInsetsDirectional.fromSTEB(62, 0, 16, 0),
                           decoration: BoxDecoration(
-                            gradient: LinearGradient(colors: [sc.$1, sc.$2]),
+                            gradient: LinearGradient(
+                              colors: [sc.$1, sc.$2],
+                              begin: Alignment.centerLeft,
+                              end: Alignment.centerRight,
+                            ),
                           ),
                           alignment: Alignment.center,
                           child: Row(
@@ -818,20 +822,20 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                                 S.of(context).streakDays,
                                 style: const TextStyle(
                                   color: Colors.white,
-                                  fontSize: 14,
-                                  fontWeight: FontWeight.w700,
-                                  letterSpacing: 0.3,
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w800,
+                                  letterSpacing: 0.2,
                                   shadows: [
                                     Shadow(
-                                      color: Color(0x26000000),
-                                      blurRadius: 2,
+                                      color: Color(0x33000000),
+                                      blurRadius: 3,
                                       offset: Offset(0, 1),
                                     ),
                                   ],
                                 ),
                               ),
-                              const SizedBox(width: 5),
-                              const Icon(Icons.local_fire_department, color: Colors.white, size: 16),
+                              const SizedBox(width: 6),
+                              const Icon(Icons.local_fire_department, color: Colors.white, size: 18),
                             ],
                           ),
                         ),
@@ -840,10 +844,12 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                           onTap: () { if (_isProcessing) return; _showHolidayDonationDialog(holiday); },
                           child: Container(
                             height: h,
-                            padding: EdgeInsets.symmetric(horizontal: hasStreak ? 10.0 : 16.0),
+                            padding: EdgeInsets.symmetric(horizontal: hasStreak ? 12.0 : 20.0),
                             decoration: const BoxDecoration(
                               gradient: LinearGradient(
-                                colors: [Color(0xFFBF7A1E), Color(0xFF7A4A00)],
+                                colors: [Color(0xFFC07D1A), Color(0xFF7A4A00)],
+                                begin: Alignment.centerLeft,
+                                end: Alignment.centerRight,
                               ),
                             ),
                             alignment: Alignment.center,
@@ -853,23 +859,30 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                                 if (hasStreak) ...[
                                   Container(
                                     width: 1,
-                                    height: 18,
-                                    color: const Color(0x4DFFFFFF),
+                                    height: 22,
+                                    color: const Color(0x40FFFFFF),
                                   ),
-                                  const SizedBox(width: 10),
+                                  const SizedBox(width: 12),
                                 ],
-                                _holidayIcon(holiday.nameEs),
-                                const SizedBox(width: 6),
+                                _holidayIcon(holiday.nameEs, size: 34),
+                                const SizedBox(width: 8),
                                 Text(
                                   holiday.localizedName(S.of(context)),
                                   style: const TextStyle(
                                     color: Colors.white,
-                                    fontSize: 13,
-                                    fontWeight: FontWeight.w700,
+                                    fontSize: 15,
+                                    fontWeight: FontWeight.w800,
+                                    shadows: [
+                                      Shadow(
+                                        color: Color(0x33000000),
+                                        blurRadius: 3,
+                                        offset: Offset(0, 1),
+                                      ),
+                                    ],
                                   ),
                                 ),
-                                const SizedBox(width: 4),
-                                const Icon(Icons.chevron_right, color: Colors.white, size: 16),
+                                const SizedBox(width: 6),
+                                const Icon(Icons.chevron_right, color: Colors.white, size: 18),
                               ],
                             ),
                           ),
@@ -882,8 +895,8 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                         decoration: BoxDecoration(
                           gradient: LinearGradient(
                             begin: Alignment.topCenter,
-                            end: const Alignment(0, 0.2),
-                            colors: const [Color(0x38FFFFFF), Color(0x00FFFFFF)],
+                            end: const Alignment(0, 0.5),
+                            colors: const [Color(0x55FFFFFF), Color(0x00FFFFFF)],
                           ),
                         ),
                       ),
@@ -895,14 +908,15 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
           ),
           if (hasStreak)
             PositionedDirectional(
-              start: 0,
-              top: -2,
+              start: 2,
+              top: -(badgeSize - h) / 2,
               child: _HexBadge(count: streakCount, color1: sc.$1, color2: sc.$2),
             ),
         ],
       ),
     );
   }
+
 
   (Color, Color) _streakColors(int count) {
     final day = ((count - 1) % 7) + 1;
@@ -2461,78 +2475,40 @@ class _HexBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    const double size = 58.0;
     return SizedBox(
-      width: 40,
-      height: 40,
-      child: CustomPaint(
-        painter: _HexPainter(color1: color1, color2: color2),
-        child: Center(
-          child: Text(
+      width: size,
+      height: size,
+      child: Stack(
+        alignment: Alignment.center,
+        children: [
+          ClipRect(
+            child: OverflowBox(
+              alignment: Alignment.center,
+              maxWidth: double.infinity,
+              child: Image.asset(
+                'assets/icons/gem_badge.png',
+                height: size,
+                fit: BoxFit.fitHeight,
+              ),
+            ),
+          ),
+          Text(
             '$count',
             style: const TextStyle(
-              fontSize: 16,
+              fontSize: 20,
               fontWeight: FontWeight.w900,
               color: Colors.white,
               height: 1,
+              shadows: [
+                Shadow(color: Color(0x99000000), blurRadius: 6, offset: Offset(0, 2)),
+              ],
             ),
           ),
-        ),
+        ],
       ),
     );
   }
-}
-
-class _HexPainter extends CustomPainter {
-  final Color color1;
-  final Color color2;
-  _HexPainter({required this.color1, required this.color2});
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final w = size.width;
-    final h = size.height;
-    final cx = w / 2;
-    final cy = h / 2;
-    final r = w * 0.48;
-
-    final path = Path();
-    for (int i = 0; i < 6; i++) {
-      final angle = (i * 60 - 90) * math.pi / 180;
-      final x = cx + r * math.cos(angle);
-      final y = cy + r * math.sin(angle);
-      if (i == 0) {
-        path.moveTo(x, y);
-      } else {
-        path.lineTo(x, y);
-      }
-    }
-    path.close();
-
-    canvas.drawPath(
-      path.shift(const Offset(0, 2)),
-      Paint()
-        ..color = color2.withValues(alpha: 0.35)
-        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 3),
-    );
-
-    final paint = Paint()
-      ..shader = LinearGradient(
-        begin: Alignment.topLeft,
-        end: Alignment.bottomRight,
-        colors: [color1, color2],
-      ).createShader(Rect.fromLTWH(0, 0, w, h));
-    canvas.drawPath(path, paint);
-
-    final highlightPaint = Paint()
-      ..color = Colors.white.withValues(alpha: 0.25)
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.2;
-    canvas.drawPath(path, highlightPaint);
-  }
-
-  @override
-  bool shouldRepaint(covariant _HexPainter old) =>
-      old.color1 != color1 || old.color2 != color2;
 }
 
 
