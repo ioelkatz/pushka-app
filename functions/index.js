@@ -959,6 +959,15 @@ exports.stripeWebhook = onRequest(
         const txType = purpose === "pushka_empty" ? "pushkaEmpty" : "tzedaka";
         const txDesc = purpose === "pushka_empty" ? "Vaciado de Pushka (Stripe)" : "Donación Stripe";
         const txCurrency = String(intent.currency || "usd").toUpperCase();
+        // tenantId comes from createPaymentIntent's metadata. Without it on
+        // the tx doc, the multi-tenant history query (`where tenantId == X`)
+        // silently excludes the row and the user thinks the payment never
+        // landed. The cron path (processPushkaAutoEmpty) already writes
+        // tenantId on its own movements; this brings the user-initiated
+        // path in line.
+        const txTenantId = intent.metadata?.tenantId
+          ? String(intent.metadata.tenantId)
+          : null;
         const txRates = await getExchangeRates(null);
         const txSnap = buildCurrencySnapshot(amount, txCurrency, txRates);
         await db
@@ -971,7 +980,10 @@ exports.stripeWebhook = onRequest(
             amount,
             currencyCode: txCurrency,
             ...txSnap,
+            ...(txTenantId ? { tenantId: txTenantId } : {}),
             description: txDesc,
+            paymentMethod: 'card',
+            status: 'completed',
             createdAt: admin.firestore.FieldValue.serverTimestamp(),
           });
 
