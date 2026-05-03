@@ -494,17 +494,24 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
         setState(() {
-          // Always apply max(local, remote) for the amount so a stale first
-          // snapshot never locks out the correct final value.
+          // Sync local pushkaAmount with the remote tenantState snapshot,
+          // EXCEPT during the recent-write window: stream snapshots that
+          // pre-date our own write would otherwise revert the optimistic
+          // setState. Previously this code special-cased "always accept
+          // lower remote" to handle external corrections (e.g. cron-side
+          // empty), but that rule couldn't distinguish a real lower
+          // correction from a stale pre-write snapshot — so a quick
+          // preset-tap had a ~50% chance of visually reverting to 0
+          // depending on which Firestore snapshot arrived first.
+          //
+          // 4-second window comfortably outlasts the round-trip for the
+          // write + echo. Any genuine external correction (cron, admin)
+          // syncs as soon as the window expires.
           if (remoteAmount is num) {
             final remote = remoteAmount.toDouble();
             final recentWrite = _localWriteAt != null &&
                 DateTime.now().difference(_localWriteAt!).inSeconds < 4;
-            // Always accept remote if it's lower (pushka emptied or corrected).
-            // Only suppress sync if remote > local and we have a recent write
-            // (prevents the server echo from overwriting an optimistic add).
-            final shouldSync = !recentWrite || remote < pushkaAmount;
-            if (shouldSync && remote != pushkaAmount) {
+            if (!recentWrite && remote != pushkaAmount) {
               pushkaAmount = remote;
               if (uid != null && tenantId != null) {
                 HiveCache.instance.savePushkaAmount(uid, tenantId, pushkaAmount);
