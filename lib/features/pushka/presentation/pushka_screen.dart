@@ -817,7 +817,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                               ),
                               // Content offset so it starts after the streak rounded cap
                               padding: EdgeInsetsDirectional.fromSTEB(
-                                hasStreak ? streakContentPad + 20 : 20.0,
+                                hasStreak ? streakContentPad + 32 : 20.0,
                                 0, 12, 0),
                               alignment: Alignment.centerLeft,
                               child: Row(
@@ -2505,7 +2505,7 @@ class _HexBadge extends StatelessWidget {
           Text(
             '$count',
             style: const TextStyle(
-              fontSize: 14,
+              fontSize: 16,
               fontWeight: FontWeight.w900,
               color: Colors.white,
               height: 1,
