@@ -817,7 +817,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                               ),
                               // Content offset so it starts after the streak rounded cap
                               padding: EdgeInsetsDirectional.fromSTEB(
-                                hasStreak ? streakContentPad + 8 : 20.0,
+                                hasStreak ? streakContentPad + 20 : 20.0,
                                 0, 12, 0),
                               alignment: Alignment.centerLeft,
                               child: Row(
@@ -843,8 +843,6 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                                       overflow: TextOverflow.ellipsis,
                                     ),
                                   ),
-                                  const SizedBox(width: 6),
-                                  const Icon(Icons.chevron_right, color: Colors.white, size: 18),
                                 ],
                               ),
                             ),
