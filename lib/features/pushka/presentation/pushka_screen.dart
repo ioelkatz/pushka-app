@@ -291,8 +291,14 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                     ]),
     );
     } finally {
-      amountCtrl.dispose();
-      messageCtrl.dispose();
+      // Defer ~400ms: showModalBottomSheet returns at pop-time, NOT at
+      // animation-end. Disposing immediately fires a notification that
+      // hits the still-rebuilding TextField mid-exit-animation →
+      // "TextEditingController was used after being disposed".
+      Future.delayed(const Duration(milliseconds: 400), () {
+        amountCtrl.dispose();
+        messageCtrl.dispose();
+      });
     }
     if (result == null || !mounted) return;
     final donationAmount = result['amount'] as double;
@@ -1107,7 +1113,8 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
       },
     );
     } finally {
-      amountCtrl.dispose();
+      // Defer to outlast the sheet's exit animation — see _donateNow.
+      Future.delayed(const Duration(milliseconds: 400), amountCtrl.dispose);
     }
 
     if (result == null || !mounted) return;
@@ -1190,7 +1197,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                     ]),
     );
     } finally {
-      controller.dispose();
+      Future.delayed(const Duration(milliseconds: 400), controller.dispose);
     }
 
     if (!mounted || result == null) return;
@@ -1929,7 +1936,10 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                           },
                         );
                         } finally {
-                          amtCtrl.dispose();
+                          Future.delayed(
+                            const Duration(milliseconds: 400),
+                            amtCtrl.dispose,
+                          );
                         }
                         if (corrected == null || !mounted) return;
                         final capped = pushkaGoal > 0
@@ -2114,9 +2124,11 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
       },
     );
     } finally {
-      ctrl1.dispose();
-      ctrl2.dispose();
-      ctrl3.dispose();
+      Future.delayed(const Duration(milliseconds: 400), () {
+        ctrl1.dispose();
+        ctrl2.dispose();
+        ctrl3.dispose();
+      });
     }
 
     if (saved == true && mounted) {
@@ -2168,7 +2180,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                     ]),
     );
     } finally {
-      controller.dispose();
+      Future.delayed(const Duration(milliseconds: 400), controller.dispose);
     }
     return result;
   }
