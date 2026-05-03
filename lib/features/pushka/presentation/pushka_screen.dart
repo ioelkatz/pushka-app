@@ -731,7 +731,23 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
             return Stack(
               key: _stackKey,
               children: [
-                SingleChildScrollView(child: content),
+                // ConstrainedBox + center alignment: now that the system
+                // nav bar is hidden (immersiveSticky), the screen has
+                // extra vertical space at the bottom. Without this wrap
+                // the Column(mainAxisSize: min) just stuck at the top
+                // and the freed space appeared as a blank strip.
+                // Centering the content distributes the extra room
+                // evenly (top + bottom) so the layout looks balanced.
+                SingleChildScrollView(
+                  child: ConstrainedBox(
+                    constraints: BoxConstraints(minHeight: constraints.maxHeight),
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      mainAxisSize: MainAxisSize.max,
+                      children: [content],
+                    ),
+                  ),
+                ),
                 Positioned.fill(
                   child: JewishConfetti(controller: _confettiController),
                 ),
