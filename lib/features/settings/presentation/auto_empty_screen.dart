@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:cloud_functions/cloud_functions.dart';
+import 'card_brand_box.dart';
 
 import '../../users/data/user_repository.dart';
 import '../../users/presentation/user_profile_provider.dart';
@@ -446,16 +447,19 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
                   size: 20,
                 ),
                 const SizedBox(width: 10),
-                Text(
-                  '${_brandLabel(brand)}  ···· $last4',
-                  style: TextStyle(
-                    fontSize: 15,
-                    fontWeight: FontWeight.w500,
-                    color: cs.onSurface,
+                cardBrandBox(brand),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    '${cardBrandLabel(brand)}  ···· $last4',
+                    style: TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w500,
+                      color: cs.onSurface,
+                    ),
                   ),
                 ),
-                if (card['isDefault'] == true) ...[
-                  const SizedBox(width: 8),
+                if (card['isDefault'] == true)
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                     decoration: BoxDecoration(
@@ -467,26 +471,12 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
                       style: TextStyle(fontSize: 11, color: cs.onPrimaryContainer, fontWeight: FontWeight.w600),
                     ),
                   ),
-                ],
               ],
             ),
           ),
         );
       }).toList(),
     );
-  }
-
-  String _brandLabel(String brand) {
-    const labels = {
-      'visa': 'Visa',
-      'mastercard': 'Mastercard',
-      'amex': 'Amex',
-      'discover': 'Discover',
-      'jcb': 'JCB',
-      'unionpay': 'UnionPay',
-      'dinersclub': 'Diners',
-    };
-    return labels[brand] ?? brand;
   }
 
   Widget _buildSelectTile(String value, VoidCallback onTap) {
