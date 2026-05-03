@@ -174,7 +174,16 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
                             tr.addCard,
                             style: const TextStyle(fontWeight: FontWeight.w700),
                           ),
-                          onPressed: () => context.go('/settings/saved-cards'),
+                          // Pop first: AutoEmptyScreen was pushed via
+                          // Navigator.push(MaterialPageRoute(...)) so it sits
+                          // ABOVE the GoRouter stack. context.go alone would
+                          // change the route under it but leave this screen
+                          // visible on top.
+                          onPressed: () {
+                            final goRouter = GoRouter.of(context);
+                            Navigator.of(context).pop();
+                            goRouter.go('/settings/saved-cards');
+                          },
                         ),
                       ),
                     ],
@@ -440,9 +449,14 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
               style: const TextStyle(fontWeight: FontWeight.w700),
             ),
             onPressed: () {
-              Navigator.pop(ctx);
-              if (!mounted) return;
-              context.go('/settings/saved-cards');
+              // Capture both the screen-level navigator and GoRouter BEFORE
+              // popping anything: after the dialog + screen pops, the original
+              // BuildContext is dead and cannot be used for navigation.
+              final screenNavigator = Navigator.of(context);
+              final goRouter = GoRouter.of(context);
+              Navigator.pop(ctx); // close dialog
+              screenNavigator.pop(); // close AutoEmptyScreen (MaterialPageRoute)
+              goRouter.go('/settings/saved-cards');
             },
           ),
         ],
