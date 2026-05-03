@@ -418,19 +418,15 @@ DrawerItem _drawerItemFromLocation(String loc) {
 
 // --- Page transition helpers ---
 
-// Drawer-triggered navigation runs in parallel with the drawer's own
-// close animation (~246ms in Material). Keeping our page transitions
-// short so the combined perceived latency stays snappy. Previously
-// 220-260ms felt like ~500ms once the drawer animation overlapped.
 CustomTransitionPage<void> _fadePage(GoRouterState state, Widget child) {
   return CustomTransitionPage<void>(
     key: state.pageKey,
     child: child,
-    transitionDuration: const Duration(milliseconds: 200),
-    reverseTransitionDuration: const Duration(milliseconds: 150),
+    transitionDuration: const Duration(milliseconds: 220),
+    reverseTransitionDuration: const Duration(milliseconds: 180),
     transitionsBuilder: (context, animation, secondaryAnimation, child) {
       return FadeTransition(
-        opacity: CurvedAnimation(parent: animation, curve: Curves.easeOutCubic),
+        opacity: CurvedAnimation(parent: animation, curve: Curves.easeOut),
         child: child,
       );
     },
@@ -441,15 +437,15 @@ CustomTransitionPage<void> _slidePage(GoRouterState state, Widget child) {
   return CustomTransitionPage<void>(
     key: state.pageKey,
     child: child,
-    transitionDuration: const Duration(milliseconds: 220),
-    reverseTransitionDuration: const Duration(milliseconds: 170),
+    transitionDuration: const Duration(milliseconds: 260),
+    reverseTransitionDuration: const Duration(milliseconds: 200),
     transitionsBuilder: (context, animation, secondaryAnimation, child) {
       final slide = Tween<Offset>(
-        begin: const Offset(0.04, 0),
+        begin: const Offset(0.06, 0),
         end: Offset.zero,
       ).animate(CurvedAnimation(parent: animation, curve: Curves.easeOutCubic));
       return FadeTransition(
-        opacity: CurvedAnimation(parent: animation, curve: Curves.easeOutCubic),
+        opacity: CurvedAnimation(parent: animation, curve: Curves.easeOut),
         child: SlideTransition(position: slide, child: child),
       );
     },
