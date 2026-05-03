@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../../app/theme/app_tokens.dart';
 import '../../../app/router.dart';
+import '../../../core/l10n/s.dart';
 import '../data/tenant_repository.dart';
 import '../domain/tenant_config.dart';
 import '../domain/tenant_summary.dart';
