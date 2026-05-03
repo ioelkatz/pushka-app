@@ -268,7 +268,7 @@ class _SavedCardsScreenState extends ConsumerState<SavedCardsScreen> {
   Widget _brandLogoFor(String brand) {
     switch (brand.toLowerCase()) {
       case 'visa':
-        return SvgPicture.string(_svgVisa, width: 30, height: 12);
+        return SvgPicture.string(_svgVisa, width: 34, height: 22);
       case 'mastercard':
         return SvgPicture.string(_svgMastercard, width: 24, height: 16);
       case 'amex':
