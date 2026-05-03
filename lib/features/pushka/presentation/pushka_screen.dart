@@ -873,8 +873,8 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                         // Combined: content pushed to the right 120px zone.
                         // Alone: content centered within the 120px pill.
                         padding: both
-                            ? EdgeInsetsDirectional.fromSTEB(streakW + 8, 0, 4, 0)
-                            : const EdgeInsets.symmetric(horizontal: 8),
+                            ? EdgeInsetsDirectional.fromSTEB(streakW, 0, 12, 0)
+                            : const EdgeInsets.only(left: 0, right: 20),
                         alignment: Alignment.center,
                         child: Row(
                           mainAxisSize: MainAxisSize.min,
