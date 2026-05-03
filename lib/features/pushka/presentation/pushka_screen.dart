@@ -860,14 +860,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                                 child: Row(
                                   mainAxisSize: MainAxisSize.min,
                                   children: [
-                                    if (hasStreak) ...[
-                                      Container(
-                                        width: 1,
-                                        height: 22,
-                                        color: const Color(0x40FFFFFF),
-                                      ),
-                                      const SizedBox(width: 12),
-                                    ],
+                                    if (hasStreak) const SizedBox(width: 4),
                                     _holidayIcon(holiday.nameEs, size: 28),
                                     const SizedBox(width: 8),
                                     Flexible(
