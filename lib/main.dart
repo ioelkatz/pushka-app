@@ -15,12 +15,16 @@ import 'core/deep_link_handler.dart';
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Edge-to-edge: app paints behind the status + nav bars (the Android
-  // styles.xml change makes the bars themselves transparent; this tells
-  // Flutter to extend its content all the way under them). The system
-  // adds a sutile scrim automatically for icon legibility.
+  // Hide the Android system navigation bar entirely (back/home/recents
+  // strip at the bottom). User can still reveal it temporarily by
+  // swiping up from the bottom edge — that's the "sticky" behavior.
+  // Status bar stays visible so the user keeps the clock/battery/wifi
+  // info plus our transparent overlay style on top of the app content.
   if (!kIsWeb) {
-    SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+    SystemChrome.setEnabledSystemUIMode(
+      SystemUiMode.immersiveSticky,
+      overlays: [SystemUiOverlay.top],
+    );
     SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
       statusBarColor: Colors.transparent,
       systemNavigationBarColor: Colors.transparent,
