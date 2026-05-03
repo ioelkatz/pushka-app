@@ -791,13 +791,6 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
               margin: EdgeInsetsDirectional.only(start: hasStreak ? 6.0 : 0.0),
               decoration: BoxDecoration(
                 borderRadius: BorderRadius.circular(h / 2),
-                boxShadow: [
-                  BoxShadow(
-                    color: sc.$2.withValues(alpha: 0.5),
-                    blurRadius: 14,
-                    offset: const Offset(0, 5),
-                  ),
-                ],
               ),
               child: ClipRRect(
                 borderRadius: BorderRadius.circular(h / 2),
