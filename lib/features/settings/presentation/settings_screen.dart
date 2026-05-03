@@ -801,14 +801,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
   String _activeOrgLabel() {
     final tenantConfig = ref.watch(tenantConfigProvider).valueOrNull;
-    final summaries = ref.watch(userTenantSummariesProvider).valueOrNull ?? [];
-    final activeName = (tenantConfig?.appName.isNotEmpty == true)
+    return (tenantConfig?.appName.isNotEmpty == true)
         ? tenantConfig!.appName
         : tenantConfig?.name ?? '';
-    if (summaries.length > 1) {
-      return '$activeName (${summaries.length})';
-    }
-    return activeName;
   }
 
   Widget _buildPushkaStyleSelector(WidgetRef ref) {
