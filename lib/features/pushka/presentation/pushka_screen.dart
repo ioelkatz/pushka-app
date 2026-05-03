@@ -1,4 +1,5 @@
 ﻿import 'dart:async';
+import 'dart:math' show pi;
 import '../../../core/hive_cache.dart';
 import 'jewish_confetti.dart';
 import '../../../core/format_utils.dart';
@@ -891,12 +892,11 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                                     ],
                                   ),
                                 ),
-                                // 1px white divider on the right cap only
-                                Positioned(
-                                  right: 0,
-                                  top: 5,
-                                  bottom: 5,
-                                  child: Container(width: 1, color: Colors.white54),
+                                // White arc border that traces the right rounded cap
+                                Positioned.fill(
+                                  child: CustomPaint(
+                                    painter: _StreakRightCapBorder(radius: h / 2),
+                                  ),
                                 ),
                               ],
                             ),
@@ -2522,4 +2522,31 @@ class _HexBadge extends StatelessWidget {
   }
 }
 
+class _StreakRightCapBorder extends CustomPainter {
+  final double radius;
+  const _StreakRightCapBorder({required this.radius});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = Colors.white54
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.5
+      ..strokeCap = StrokeCap.round;
+
+    // The right cap is a semicircle: center at (width - radius, radius), r = radius
+    final cx = size.width - radius;
+    final cy = size.height / 2;
+    canvas.drawArc(
+      Rect.fromCircle(center: Offset(cx, cy), radius: radius),
+      -pi / 2, // start at top
+      pi,      // sweep 180° clockwise → traces right semicircle
+      false,
+      paint,
+    );
+  }
+
+  @override
+  bool shouldRepaint(_StreakRightCapBorder old) => old.radius != radius;
+}
 
