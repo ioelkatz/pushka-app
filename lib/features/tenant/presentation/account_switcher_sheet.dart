@@ -73,12 +73,17 @@ class AccountSwitcherSheet extends ConsumerWidget {
                 onTap: isActive
                     ? null
                     : () async {
-                        // Capture messenger BEFORE pop — the dialog's
-                        // context becomes invalid after Navigator.pop.
+                        // Capture BEFORE pop — after Navigator.pop the
+                        // sheet's ConsumerWidget is disposed, which
+                        // invalidates its `ref`. We need a stable handle
+                        // that survives the pop. ProviderContainer is
+                        // owned by the root ProviderScope, not by this
+                        // widget, so it stays alive.
                         final messenger = ScaffoldMessenger.of(context);
+                        final container = ProviderScope.containerOf(context);
                         Navigator.of(context).pop();
                         try {
-                          await ref
+                          await container
                               .read(tenantRepositoryProvider)
                               .switchTenant(s.tenantId);
                           // Invalidate ALL providers that depend on the
@@ -86,9 +91,9 @@ class AccountSwitcherSheet extends ConsumerWidget {
                           // upstream source for tenantStateProvider —
                           // without forcing it the tenantState may keep
                           // pointing at the old tenant.
-                          ref.invalidate(userProfileProvider);
-                          ref.invalidate(tenantConfigProvider);
-                          ref.invalidate(tenantStateProvider);
+                          container.invalidate(userProfileProvider);
+                          container.invalidate(tenantConfigProvider);
+                          container.invalidate(tenantStateProvider);
                         } catch (e) {
                           debugPrint('switchTenant failed: $e');
                           messenger.showSnackBar(
