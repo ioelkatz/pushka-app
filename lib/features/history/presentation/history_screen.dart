@@ -161,22 +161,27 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
                     ),
                   ),
                   // Collapsible chart.
-                  // Curves chosen so closing looks clean: secondCurve fades
-                  // the chart to zero opacity within the first third of the
-                  // animation, then the container keeps shrinking with no
-                  // visible content. Default linear secondCurve let the
-                  // "DONACIONES POR MES" title linger as a half-faded ghost
-                  // while the box was still collapsing — looked broken.
-                  AnimatedCrossFade(
-                    firstChild: const SizedBox.shrink(),
-                    secondChild: DonationChart(transactions: transactions),
-                    crossFadeState: _chartExpanded
-                        ? CrossFadeState.showSecond
-                        : CrossFadeState.showFirst,
-                    duration: const Duration(milliseconds: 240),
-                    sizeCurve: Curves.easeInOut,
-                    firstCurve: Curves.easeIn,
-                    secondCurve: Curves.easeOutCubic,
+                  // We previously used AnimatedCrossFade here, but its
+                  // default layoutBuilder puts both children in a Stack
+                  // sized to the topChild — when the topChild is
+                  // SizedBox.shrink (0 width), the bottomChild (chart)
+                  // gets a 0-width constraint via Positioned(left:0,
+                  // right:0) and the chart title "DONACIONES POR MES"
+                  // wraps every character onto its own line, leaving a
+                  // permanent vertical-letter strip below the toggle.
+                  // AnimatedSize doesn't have that problem: the active
+                  // child renders at its natural width and the parent's
+                  // size animates between the two states. The chart
+                  // appears/disappears instantly (no fade) but cleanly.
+                  ClipRect(
+                    child: AnimatedSize(
+                      duration: const Duration(milliseconds: 240),
+                      curve: Curves.easeInOut,
+                      alignment: Alignment.topCenter,
+                      child: _chartExpanded
+                          ? DonationChart(transactions: transactions)
+                          : const SizedBox(width: double.infinity),
+                    ),
                   ),
                   if (filtered.isEmpty)
                     Expanded(
