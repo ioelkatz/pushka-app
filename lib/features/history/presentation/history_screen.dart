@@ -160,15 +160,23 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
                       ),
                     ),
                   ),
-                  // Collapsible chart
+                  // Collapsible chart.
+                  // Curves chosen so closing looks clean: secondCurve fades
+                  // the chart to zero opacity within the first third of the
+                  // animation, then the container keeps shrinking with no
+                  // visible content. Default linear secondCurve let the
+                  // "DONACIONES POR MES" title linger as a half-faded ghost
+                  // while the box was still collapsing — looked broken.
                   AnimatedCrossFade(
                     firstChild: const SizedBox.shrink(),
                     secondChild: DonationChart(transactions: transactions),
                     crossFadeState: _chartExpanded
                         ? CrossFadeState.showSecond
                         : CrossFadeState.showFirst,
-                    duration: const Duration(milliseconds: 280),
+                    duration: const Duration(milliseconds: 240),
                     sizeCurve: Curves.easeInOut,
+                    firstCurve: Curves.easeIn,
+                    secondCurve: Curves.easeOutCubic,
                   ),
                   if (filtered.isEmpty)
                     Expanded(
