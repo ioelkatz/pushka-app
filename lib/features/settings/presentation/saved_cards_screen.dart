@@ -200,6 +200,19 @@ class _SavedCardsScreenState extends ConsumerState<SavedCardsScreen> {
   // don't need a separate assets/ folder for 6 small files. Each brand
   // pairs with a bg color so the logo box matches the visual identity
   // (Mastercard black, Visa navy, etc.) — see _brandBg().
+  //
+  // Visa wordmark — path data approximating the official typeface
+  // (italic V-I-S-A with the characteristic curves). White fill so it
+  // sits on the navy box bg.
+  static const _svgVisa = '''
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 64" preserveAspectRatio="xMidYMid meet">
+  <g fill="#FFFFFF">
+    <path d="M67.4 8.1L42.5 56.3H30.6L18.4 16.7c-0.7-2.9-1.4-3.9-3.6-5.1C11.1 9.7 5.0 7.9 0 6.8L0.3 5.1H25.5c3.2 0 6.1 2.2 6.9 5.9L38.7 44.1 53.2 8.1H67.4z"/>
+    <path d="M114.4 56.3H102.3L110 8.1H122.1L114.4 56.3z"/>
+    <path d="M168.2 9.4C165.6 8.4 161.4 7.4 156.2 7.4c-13.7 0-23.3 7.3-23.4 17.7-0.1 7.7 6.9 12 12.1 14.6 5.4 2.6 7.2 4.3 7.2 6.6 -0.0 3.6-4.3 5.2-8.3 5.2 -5.5 0-8.5-0.8-13.0-2.8L129 47.4l-1.9 11.7C130.0 60.5 135.2 61.6 140.4 61.7c14.5 0 24.0-7.2 24.1-18.4 0.0-6.1-3.6-10.8-11.7-14.6 -4.9-2.5-7.9-4.1-7.9-6.6 0.0-2.2 2.5-4.6 8.0-4.6 4.6-0.1 7.9 1.0 10.5 2.1l1.3 0.6L168.2 9.4z"/>
+    <path d="M180.5 39.2c1.0-2.7 4.8-13.0 4.8-13.0 -0.1 0.1 1.0-2.7 1.6-4.4l0.8 4.0c0.0 0 2.3 11.0 2.8 13.4H180.5zM195.4 8.1H186.0c-2.9 0-5.1 0.8-6.4 3.9L161.4 56.3H174c0.0 0 2.1-5.7 2.6-6.9 1.4 0 13.5 0 15.3 0 0.4 1.6 1.5 6.9 1.5 6.9H205L195.4 8.1z"/>
+  </g>
+</svg>''';
   static const _svgMastercard = '''
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 152 96">
   <circle cx="58" cy="48" r="40" fill="#EB001B"/>
@@ -259,35 +272,7 @@ class _SavedCardsScreenState extends ConsumerState<SavedCardsScreen> {
   Widget _brandLogoFor(String brand) {
     switch (brand.toLowerCase()) {
       case 'visa':
-        // Visa wordmark — approximates the real logo: tightly-spaced,
-        // ultra-bold italic, with the characteristic small yellow accent
-        // bar above the "I" stem (echoing Visa's brand gold). Not pixel-
-        // perfect against the licensed mark but visually unmistakable.
-        return Stack(
-          alignment: Alignment.center,
-          children: [
-            const Text(
-              'VISA',
-              style: TextStyle(
-                color: Colors.white,
-                fontSize: 14,
-                fontWeight: FontWeight.w900,
-                fontStyle: FontStyle.italic,
-                letterSpacing: -0.2,
-                height: 1.0,
-              ),
-            ),
-            Positioned(
-              bottom: 1,
-              left: 0,
-              right: 0,
-              child: Container(
-                height: 1.6,
-                color: const Color(0xFFF7B600),
-              ),
-            ),
-          ],
-        );
+        return SvgPicture.string(_svgVisa, width: 30, height: 12);
       case 'mastercard':
         return SvgPicture.string(_svgMastercard, width: 24, height: 16);
       case 'amex':
@@ -322,10 +307,10 @@ class _SavedCardsScreenState extends ConsumerState<SavedCardsScreen> {
         children: [
           // Brand logo box — bg matches the brand identity (Visa navy,
           // Mastercard black, etc.) with the iconic mark inside. The
-          // 1px outline is invisible in light mode (subtle line over the
-          // dark box bg) but separates the box from the surrounding
-          // surface in dark mode where Mastercard's near-black bg would
-          // otherwise blend into the screen.
+          // border uses white-with-alpha so it's clearly visible in
+          // dark mode against Mastercard/JCB's near-black bg, while
+          // staying subtle in light mode (white scrim over a dark box
+          // reads as a soft halo, not an outline).
           Container(
             width: 40,
             height: 28,
@@ -333,7 +318,7 @@ class _SavedCardsScreenState extends ConsumerState<SavedCardsScreen> {
               color: _brandBg(brand),
               borderRadius: BorderRadius.circular(6),
               border: Border.all(
-                color: cs.outline.withValues(alpha: 0.25),
+                color: Colors.white.withValues(alpha: 0.18),
                 width: 1,
               ),
             ),
