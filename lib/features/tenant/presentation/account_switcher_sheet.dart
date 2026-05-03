@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../core/l10n/s.dart';
+import '../../users/presentation/user_profile_provider.dart';
 import '../data/tenant_repository.dart';
 
 // Public helper so the sheet can be opened from any screen (Settings,
@@ -72,12 +73,28 @@ class AccountSwitcherSheet extends ConsumerWidget {
                 onTap: isActive
                     ? null
                     : () async {
+                        // Capture messenger BEFORE pop — the dialog's
+                        // context becomes invalid after Navigator.pop.
+                        final messenger = ScaffoldMessenger.of(context);
                         Navigator.of(context).pop();
-                        await ref
-                            .read(tenantRepositoryProvider)
-                            .switchTenant(s.tenantId);
-                        ref.invalidate(tenantConfigProvider);
-                        ref.invalidate(tenantStateProvider);
+                        try {
+                          await ref
+                              .read(tenantRepositoryProvider)
+                              .switchTenant(s.tenantId);
+                          // Invalidate ALL providers that depend on the
+                          // active tenantId. userProfileProvider is the
+                          // upstream source for tenantStateProvider —
+                          // without forcing it the tenantState may keep
+                          // pointing at the old tenant.
+                          ref.invalidate(userProfileProvider);
+                          ref.invalidate(tenantConfigProvider);
+                          ref.invalidate(tenantStateProvider);
+                        } catch (e) {
+                          debugPrint('switchTenant failed: $e');
+                          messenger.showSnackBar(
+                            SnackBar(content: Text('Error: $e')),
+                          );
+                        }
                       },
               );
             }),
