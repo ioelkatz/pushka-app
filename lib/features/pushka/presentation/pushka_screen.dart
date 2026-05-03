@@ -924,7 +924,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
           // Gem badge
           if (hasStreak)
             PositionedDirectional(
-              start: 9,
+              start: 4,
               top: -(badgeSize - h) / 2,
               child: _HexBadge(count: streakCount, color1: sc.$1, color2: sc.$2),
             ),
