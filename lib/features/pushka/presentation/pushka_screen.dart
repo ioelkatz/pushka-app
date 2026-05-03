@@ -217,9 +217,11 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
 
       final remaining = (pushkaAmount - amountToEmpty).clamp(0.0, double.infinity);
       if (!mounted) return;
-      setState(() => pushkaAmount = remaining);
-      await _persistPushkaAmount(resetToZero: remaining <= 0);
+      // Persist FIRST then update local — close the race where the app
+      // is killed between optimistic setState and Firestore write.
+      await _persistPushkaAmount(overrideAmount: remaining);
       if (!mounted) return;
+      setState(() => pushkaAmount = remaining);
       FeedbackService.instance.vibratePushkaEmpty();
       FeedbackService.instance.playSuccess();
       ScaffoldMessenger.of(context).showSnackBar(
@@ -369,11 +371,10 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
       await AnalyticsService.instance.logDonation(donationAmount, currency);
       // Transaction is written server-side by the Stripe webhook (payment_intent.succeeded).
       final remaining = (pushkaAmount - donationAmount).clamp(0.0, double.infinity);
-      if (mounted) {
-        setState(() => pushkaAmount = remaining);
-      }
-      await _persistPushkaAmount(resetToZero: remaining <= 0);
+      // Persist FIRST then update local — same race fix as the other paths.
+      await _persistPushkaAmount(overrideAmount: remaining);
       if (!mounted) return;
+      setState(() => pushkaAmount = remaining);
 
       FeedbackService.instance.playSuccess();
       ScaffoldMessenger.of(context).showSnackBar(
@@ -402,9 +403,12 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
     setState(() => _isProcessing = true);
     try {
       final remaining = (pushkaAmount - amount).clamp(0.0, double.infinity);
-      if (mounted) setState(() => pushkaAmount = remaining);
-      await _persistPushkaAmount(resetToZero: remaining <= 0);
+      // Persist FIRST then update local: if the app is killed mid-flight
+      // we don't want the user to think the donation reduced the pushka
+      // (local) when it actually didn't make it to Firestore.
+      await _persistPushkaAmount(overrideAmount: remaining);
       if (!mounted) return;
+      setState(() => pushkaAmount = remaining);
 
       final currency = _currencyCodeFromProfile();
       final user = ref.read(currentUserProvider);
@@ -1255,7 +1259,10 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
         false;
   }
 
-  Future<void> _persistPushkaAmount({bool resetToZero = false}) async {
+  Future<void> _persistPushkaAmount({
+    bool resetToZero = false,
+    double? overrideAmount,
+  }) async {
     final user = ref.read(currentUserProvider);
     if (user == null) {
       _showError(S.of(context).signInToContinue);
@@ -1264,7 +1271,12 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
     final tenantId = ref.read(userProfileProvider).valueOrNull?['tenantId'] as String?;
     if (tenantId == null || tenantId.isEmpty) return;
     _localWriteAt = DateTime.now();
-    final amount = resetToZero ? 0.0 : pushkaAmount;
+    // overrideAmount lets the caller persist the new value BEFORE
+    // touching local pushkaAmount — the persist-then-setState order
+    // closes a race where the app is killed between the optimistic
+    // setState and the await, which would otherwise leave Firestore
+    // with the old value while the user thinks the donation registered.
+    final amount = overrideAmount ?? (resetToZero ? 0.0 : pushkaAmount);
     await Future.wait([
       ref.read(userRepositoryProvider).updatePushkaAmount(
         uid: user.uid,
