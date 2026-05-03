@@ -842,10 +842,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                                   ),
                                   const SizedBox(width: 10),
                                 ],
-                                Text(
-                                  _holidayEmoji(holiday.nameEs),
-                                  style: const TextStyle(fontSize: 15),
-                                ),
+                                _holidayIcon(holiday.nameEs),
                                 const SizedBox(width: 6),
                                 Text(
                                   holiday.localizedName(S.of(context)),
@@ -904,16 +901,29 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
     };
   }
 
-  String _holidayEmoji(String name) {
+  Widget _holidayIcon(String name, {double size = 28}) {
     final lower = name.toLowerCase();
-    if (lower.contains('pesaj') || lower.contains('jitim') || lower.contains('ma\u0027ot')) return '🫓';
-    if (lower.contains('shavuot')) return '🌾';
-    if (lower.contains('rosh')) return '🍎';
-    if (lower.contains('kipur')) return '🕊️';
-    if (lower.contains('sucot')) return '🌴';
-    if (lower.contains('januc')) return '🕯️';
-    if (lower.contains('purim')) return '🎉';
-    return '✨';
+    String? asset;
+    String emoji = '✨';
+    if (lower.contains('shavuot')) {
+      asset = 'assets/icons/shavuot.png';
+    } else if (lower.contains('pesaj') || lower.contains('jitim') || lower.contains('ma\u0027ot')) {
+      emoji = '🫓';
+    } else if (lower.contains('rosh')) {
+      emoji = '🍎';
+    } else if (lower.contains('kipur')) {
+      emoji = '🕊️';
+    } else if (lower.contains('sucot')) {
+      emoji = '🌴';
+    } else if (lower.contains('januc')) {
+      emoji = '🕯️';
+    } else if (lower.contains('purim')) {
+      emoji = '🎉';
+    }
+    if (asset != null) {
+      return Image.asset(asset, width: size, height: size, fit: BoxFit.contain);
+    }
+    return Text(emoji, style: TextStyle(fontSize: size * 0.55));
   }
   Future<void> _showHolidayDonationDialog(_HolidayInfo holiday) async {
     final amountCtrl = TextEditingController();
