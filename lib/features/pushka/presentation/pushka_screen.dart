@@ -904,18 +904,6 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                                     ],
                                   ),
                                 ),
-                                // Separator at right edge — outer ClipRRect clips it to pill shape
-                                Positioned(
-                                  right: 0,
-                                  top: 0,
-                                  bottom: 0,
-                                  child: Container(
-                                    width: 1.5,
-                                    color: Theme.of(context).brightness == Brightness.dark
-                                        ? const Color(0xFF0F172A)
-                                        : Colors.white,
-                                  ),
-                                ),
                               ],
                             ),
                           ),
