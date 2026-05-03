@@ -24,7 +24,13 @@ class _SavedCardsScreenState extends ConsumerState<SavedCardsScreen> {
   @override
   void initState() {
     super.initState();
-    _loadCards();
+    // autoSetDefault on initial load: cards added via the Stripe Payment
+    // Sheet during a payment (Vaciar Pushka) get attached to the customer
+    // but don't auto-set as default — so the user doc lacks
+    // stripeDefaultPaymentMethodLast4/Brand and the Settings entry shows
+    // "no cards" even though there is one. First open of this screen
+    // promotes the first card to default and back-fills those fields.
+    _loadCards(autoSetDefault: true);
   }
 
   Future<void> _loadCards({bool autoSetDefault = false}) async {
@@ -186,13 +192,173 @@ class _SavedCardsScreenState extends ConsumerState<SavedCardsScreen> {
     return labels[brand.toLowerCase()] ?? brand;
   }
 
-  IconData _brandIcon(String brand) {
+  // Brand-tinted gradient stops so each card visually matches its issuer
+  // (Visa = navy/blue, Mastercard = red→orange, Amex = teal, etc.).
+  // Returns (top-left color, bottom-right color).
+  (Color, Color) _brandGradient(String brand) {
     switch (brand.toLowerCase()) {
+      case 'visa':
+        return (const Color(0xFF1A1F71), const Color(0xFF2B3A9C));
+      case 'mastercard':
+        return (const Color(0xFFEB001B), const Color(0xFFF79E1B));
       case 'amex':
-        return Icons.credit_card_outlined;
+        return (const Color(0xFF016FD0), const Color(0xFF26A6E2));
+      case 'discover':
+        return (const Color(0xFFFF6000), const Color(0xFFFFA040));
+      case 'jcb':
+        return (const Color(0xFF0E4C92), const Color(0xFF7E1F23));
+      case 'unionpay':
+        return (const Color(0xFFD32027), const Color(0xFF005B9A));
+      case 'dinersclub':
+        return (const Color(0xFF0079BE), const Color(0xFF003B6F));
       default:
-        return Icons.credit_card;
+        return (const Color(0xFF374151), const Color(0xFF6B7280));
     }
+  }
+
+  Widget _buildCardTile({
+    required String pmId,
+    required String brand,
+    required String last4,
+    required int expMonth,
+    required int expYear,
+    required bool isDefault,
+    required S tr,
+  }) {
+    final gradient = _brandGradient(brand);
+    final mm = expMonth.toString().padLeft(2, '0');
+    final yy = expYear.toString().padLeft(4, '0').substring(2);
+    return Container(
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(16),
+        gradient: LinearGradient(
+          colors: [gradient.$1, gradient.$2],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: gradient.$1.withValues(alpha: 0.30),
+            blurRadius: 14,
+            offset: const Offset(0, 6),
+          ),
+        ],
+      ),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(18, 16, 8, 16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Top row: brand label + default pill + actions menu
+            Row(
+              children: [
+                Text(
+                  _brandLabel(brand).toUpperCase(),
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: 1.4,
+                  ),
+                ),
+                const SizedBox(width: 10),
+                if (isDefault)
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withValues(alpha: 0.22),
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(Icons.star_rounded, size: 12, color: Colors.white),
+                        const SizedBox(width: 4),
+                        Text(
+                          tr.cardDefault,
+                          style: const TextStyle(
+                            fontSize: 10.5,
+                            color: Colors.white,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                const Spacer(),
+                PopupMenuButton<String>(
+                  icon: const Icon(Icons.more_vert_rounded, color: Colors.white),
+                  onSelected: (value) {
+                    if (value == 'default') _setDefault(pmId);
+                    if (value == 'delete') _deleteCard(pmId);
+                  },
+                  itemBuilder: (_) => [
+                    if (!isDefault)
+                      PopupMenuItem(
+                        value: 'default',
+                        child: Row(
+                          children: [
+                            const Icon(Icons.star_outline, size: 18),
+                            const SizedBox(width: 8),
+                            Text(tr.setAsDefault),
+                          ],
+                        ),
+                      ),
+                    PopupMenuItem(
+                      value: 'delete',
+                      child: Row(
+                        children: [
+                          const Icon(Icons.delete_outline, size: 18, color: Colors.red),
+                          const SizedBox(width: 8),
+                          Text(tr.deleteCard, style: const TextStyle(color: Colors.red)),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+            const SizedBox(height: 18),
+            // Middle: masked PAN
+            Text(
+              '••••  ••••  ••••  $last4',
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 19,
+                fontWeight: FontWeight.w600,
+                letterSpacing: 1.6,
+                fontFeatures: [FontFeature.tabularFigures()],
+              ),
+            ),
+            const SizedBox(height: 14),
+            // Bottom row: expiry
+            Row(
+              children: [
+                Text(
+                  'EXP',
+                  style: TextStyle(
+                    color: Colors.white.withValues(alpha: 0.65),
+                    fontSize: 9,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 1.0,
+                  ),
+                ),
+                const SizedBox(width: 6),
+                Text(
+                  '$mm/$yy',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                    fontFeatures: [FontFeature.tabularFigures()],
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   @override
@@ -276,7 +442,7 @@ class _SavedCardsScreenState extends ConsumerState<SavedCardsScreen> {
                       : ListView.separated(
                           padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
                           itemCount: _cards.length,
-                          separatorBuilder: (_, _) => const SizedBox(height: 10),
+                          separatorBuilder: (_, _) => const SizedBox(height: 14),
                           itemBuilder: (context, index) {
                             final card = _cards[index];
                             final pmId = card['id'] as String;
@@ -285,104 +451,14 @@ class _SavedCardsScreenState extends ConsumerState<SavedCardsScreen> {
                             final expMonth = (card['expMonth'] as num?)?.toInt() ?? 0;
                             final expYear = (card['expYear'] as num?)?.toInt() ?? 0;
                             final isDefault = pmId == _defaultPaymentMethodId;
-
-                            return Container(
-                              decoration: BoxDecoration(
-                                color: Colors.white,
-                                borderRadius: BorderRadius.circular(12),
-                                border: Border.all(
-                                  color: isDefault ? blue : Colors.grey.shade200,
-                                  width: isDefault ? 1.5 : 1,
-                                ),
-                                boxShadow: [
-                                  BoxShadow(
-                                    color: Colors.black.withValues(alpha: 0.04),
-                                    blurRadius: 8,
-                                    offset: const Offset(0, 2),
-                                  ),
-                                ],
-                              ),
-                              child: Padding(
-                                padding: const EdgeInsets.fromLTRB(16, 14, 8, 14),
-                                child: Row(
-                                  children: [
-                                    Icon(_brandIcon(brand), size: 32, color: blue),
-                                    const SizedBox(width: 14),
-                                    Expanded(
-                                      child: Column(
-                                        crossAxisAlignment: CrossAxisAlignment.start,
-                                        children: [
-                                          Text(
-                                            '${_brandLabel(brand)}  ${tr.cardEndingIn(last4)}',
-                                            style: const TextStyle(
-                                              fontSize: 15,
-                                              fontWeight: FontWeight.w600,
-                                            ),
-                                          ),
-                                          const SizedBox(height: 2),
-                                          Text(
-                                            tr.cardExpiry(
-                                              expMonth.toString().padLeft(2, '0'),
-                                              expYear.toString(),
-                                            ),
-                                            style: TextStyle(
-                                              fontSize: 13,
-                                              color: Colors.grey.shade600,
-                                            ),
-                                          ),
-                                          if (isDefault) ...[
-                                            const SizedBox(height: 4),
-                                            Container(
-                                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                                              decoration: BoxDecoration(
-                                                color: blue.withValues(alpha: 0.10),
-                                                borderRadius: BorderRadius.circular(4),
-                                              ),
-                                              child: Text(
-                                                tr.cardDefault,
-                                                style: TextStyle(
-                                                  fontSize: 11,
-                                                  fontWeight: FontWeight.w600,
-                                                  color: blue,
-                                                ),
-                                              ),
-                                            ),
-                                          ],
-                                        ],
-                                      ),
-                                    ),
-                                    PopupMenuButton<String>(
-                                      onSelected: (value) {
-                                        if (value == 'default') _setDefault(pmId);
-                                        if (value == 'delete') _deleteCard(pmId);
-                                      },
-                                      itemBuilder: (_) => [
-                                        if (!isDefault)
-                                          PopupMenuItem(
-                                            value: 'default',
-                                            child: Row(
-                                              children: [
-                                                const Icon(Icons.star_outline, size: 18),
-                                                const SizedBox(width: 8),
-                                                Text(tr.setAsDefault),
-                                              ],
-                                            ),
-                                          ),
-                                        PopupMenuItem(
-                                          value: 'delete',
-                                          child: Row(
-                                            children: [
-                                              const Icon(Icons.delete_outline, size: 18, color: Colors.red),
-                                              const SizedBox(width: 8),
-                                              Text(tr.deleteCard, style: const TextStyle(color: Colors.red)),
-                                            ],
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  ],
-                                ),
-                              ),
+                            return _buildCardTile(
+                              pmId: pmId,
+                              brand: brand,
+                              last4: last4,
+                              expMonth: expMonth,
+                              expYear: expYear,
+                              isDefault: isDefault,
+                              tr: tr,
                             );
                           },
                         ),
