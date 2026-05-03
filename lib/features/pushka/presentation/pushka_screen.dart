@@ -552,7 +552,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
 
     return SafeArea(
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 20, 16, 10),
+        padding: const EdgeInsets.fromLTRB(16, 32, 16, 10),
         child: LayoutBuilder(
           builder: (context, constraints) {
             final isCompact = constraints.maxHeight < 560;
