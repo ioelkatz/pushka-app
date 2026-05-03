@@ -226,111 +226,104 @@ class _SavedCardsScreenState extends ConsumerState<SavedCardsScreen> {
     required S tr,
   }) {
     final cs = Theme.of(context).colorScheme;
-    final accent = _brandGradient(brand).$1; // single brand color, no gradient
+    final accent = _brandGradient(brand).$1;
     final mm = expMonth.toString().padLeft(2, '0');
     final yy = expYear.toString().padLeft(4, '0').substring(2);
-    return Container(
-      decoration: BoxDecoration(
-        color: cs.surface,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(
-          color: isDefault ? accent : cs.outlineVariant,
-          width: isDefault ? 1.4 : 1,
-        ),
-      ),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(12),
-        child: IntrinsicHeight(
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              // Brand-colored vertical accent bar — the only color touch
-              Container(width: 4, color: accent),
-              Expanded(
-                child: Padding(
-                  padding: const EdgeInsets.fromLTRB(14, 14, 4, 14),
-                  child: Row(
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        children: [
+          // Brand logo box — small tinted square with the brand initial
+          Container(
+            width: 38,
+            height: 38,
+            decoration: BoxDecoration(
+              color: accent.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            alignment: Alignment.center,
+            child: Text(
+              _brandLabel(brand).isNotEmpty
+                  ? _brandLabel(brand)[0].toUpperCase()
+                  : '•',
+              style: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.w800,
+                color: accent,
+              ),
+            ),
+          ),
+          const SizedBox(width: 12),
+          // Title + subtitle
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text.rich(
+                  TextSpan(
+                    style: TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w600,
+                      color: cs.onSurface,
+                    ),
                     children: [
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Row(
-                              children: [
-                                Text(
-                                  _brandLabel(brand),
-                                  style: TextStyle(
-                                    fontSize: 15,
-                                    fontWeight: FontWeight.w600,
-                                    color: cs.onSurface,
-                                  ),
-                                ),
-                                const SizedBox(width: 8),
-                                Text(
-                                  '•••• $last4',
-                                  style: TextStyle(
-                                    fontSize: 15,
-                                    fontWeight: FontWeight.w500,
-                                    color: cs.onSurface,
-                                    fontFeatures: const [FontFeature.tabularFigures()],
-                                  ),
-                                ),
-                                if (isDefault) ...[
-                                  const SizedBox(width: 8),
-                                  Icon(Icons.check_circle, size: 14, color: accent),
-                                ],
-                              ],
-                            ),
-                            const SizedBox(height: 3),
-                            Text(
-                              '$mm/$yy',
-                              style: TextStyle(
-                                fontSize: 12,
-                                color: cs.onSurfaceVariant,
-                                fontFeatures: const [FontFeature.tabularFigures()],
-                              ),
-                            ),
-                          ],
+                      TextSpan(text: _brandLabel(brand)),
+                      const TextSpan(text: '  ····'),
+                      TextSpan(
+                        text: last4,
+                        style: const TextStyle(
+                          fontFeatures: [FontFeature.tabularFigures()],
                         ),
-                      ),
-                      PopupMenuButton<String>(
-                        icon: Icon(Icons.more_vert_rounded, color: cs.onSurfaceVariant),
-                        onSelected: (value) {
-                          if (value == 'default') _setDefault(pmId);
-                          if (value == 'delete') _deleteCard(pmId);
-                        },
-                        itemBuilder: (_) => [
-                          if (!isDefault)
-                            PopupMenuItem(
-                              value: 'default',
-                              child: Row(
-                                children: [
-                                  const Icon(Icons.star_outline, size: 18),
-                                  const SizedBox(width: 8),
-                                  Text(tr.setAsDefault),
-                                ],
-                              ),
-                            ),
-                          PopupMenuItem(
-                            value: 'delete',
-                            child: Row(
-                              children: [
-                                const Icon(Icons.delete_outline, size: 18, color: Colors.red),
-                                const SizedBox(width: 8),
-                                Text(tr.deleteCard, style: const TextStyle(color: Colors.red)),
-                              ],
-                            ),
-                          ),
-                        ],
                       ),
                     ],
                   ),
                 ),
+                const SizedBox(height: 2),
+                Text(
+                  isDefault ? '${tr.cardDefault}  ·  $mm/$yy' : '$mm/$yy',
+                  style: TextStyle(
+                    fontSize: 12.5,
+                    color: isDefault ? accent : cs.onSurfaceVariant,
+                    fontWeight: isDefault ? FontWeight.w500 : FontWeight.w400,
+                    fontFeatures: const [FontFeature.tabularFigures()],
+                  ),
+                ),
+              ],
+            ),
+          ),
+          PopupMenuButton<String>(
+            icon: Icon(Icons.more_vert_rounded, color: cs.onSurfaceVariant),
+            onSelected: (value) {
+              if (value == 'default') _setDefault(pmId);
+              if (value == 'delete') _deleteCard(pmId);
+            },
+            itemBuilder: (_) => [
+              if (!isDefault)
+                PopupMenuItem(
+                  value: 'default',
+                  child: Row(
+                    children: [
+                      const Icon(Icons.star_outline, size: 18),
+                      const SizedBox(width: 8),
+                      Text(tr.setAsDefault),
+                    ],
+                  ),
+                ),
+              PopupMenuItem(
+                value: 'delete',
+                child: Row(
+                  children: [
+                    const Icon(Icons.delete_outline, size: 18, color: Colors.red),
+                    const SizedBox(width: 8),
+                    Text(tr.deleteCard, style: const TextStyle(color: Colors.red)),
+                  ],
+                ),
               ),
             ],
           ),
-        ),
+        ],
       ),
     );
   }
@@ -414,9 +407,13 @@ class _SavedCardsScreenState extends ConsumerState<SavedCardsScreen> {
                           ),
                         )
                       : ListView.separated(
-                          padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+                          padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
                           itemCount: _cards.length,
-                          separatorBuilder: (_, _) => const SizedBox(height: 14),
+                          separatorBuilder: (_, _) => Divider(
+                            height: 1,
+                            thickness: 1,
+                            color: Theme.of(context).colorScheme.outlineVariant,
+                          ),
                           itemBuilder: (context, index) {
                             final card = _cards[index];
                             final pmId = card['id'] as String;
