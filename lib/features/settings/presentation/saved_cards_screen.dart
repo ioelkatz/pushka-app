@@ -2,7 +2,7 @@ import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_stripe/flutter_stripe.dart';
-import 'package:font_awesome_flutter/font_awesome_flutter.dart';
+import 'package:flutter_svg/flutter_svg.dart';
 
 import '../../payments/stripe_service.dart';
 import '../../tenant/data/tenant_repository.dart';
@@ -196,24 +196,91 @@ class _SavedCardsScreenState extends ConsumerState<SavedCardsScreen> {
   // Brand-tinted gradient stops so each card visually matches its issuer
   // (Visa = navy/blue, Mastercard = red→orange, Amex = teal, etc.).
   // Returns (top-left color, bottom-right color).
-  // FontAwesome brand icon for the small logo box (null for unrecognized
-  // brands → falls back to a plain credit card icon).
-  IconData _brandFaIcon(String brand) {
+  // Inline SVGs of the iconic brand marks. Stored as Dart strings so we
+  // don't need a separate assets/ folder for 6 small files. Each brand
+  // pairs with a bg color so the logo box matches the visual identity
+  // (Mastercard black, Visa navy, etc.) — see _brandBg().
+  static const _svgMastercard = '''
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 152 96">
+  <circle cx="58" cy="48" r="40" fill="#EB001B"/>
+  <circle cx="94" cy="48" r="40" fill="#F79E1B"/>
+  <path d="M76,16.5 a40 40 0 0 1 0 63 a40 40 0 0 1 0 -63" fill="#FF5F00"/>
+</svg>''';
+  static const _svgAmex = '''
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 36">
+  <text x="50" y="25" text-anchor="middle" fill="#FFFFFF"
+        font-family="Helvetica, Arial, sans-serif" font-weight="900"
+        font-size="20" letter-spacing="1">AMEX</text>
+</svg>''';
+  static const _svgDiscover = '''
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 130 30">
+  <text x="65" y="22" text-anchor="middle" fill="#FFFFFF"
+        font-family="Helvetica, Arial, sans-serif" font-weight="800"
+        font-size="18" letter-spacing="1">DISCOVER</text>
+</svg>''';
+  static const _svgJcb = '''
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 60 30">
+  <text x="30" y="22" text-anchor="middle" fill="#FFFFFF"
+        font-family="Helvetica, Arial, sans-serif" font-weight="900"
+        font-size="20" letter-spacing="0.5">JCB</text>
+</svg>''';
+  static const _svgDinersClub = '''
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 90 30">
+  <text x="45" y="22" text-anchor="middle" fill="#FFFFFF"
+        font-family="Helvetica, Arial, sans-serif" font-weight="800"
+        font-size="16" letter-spacing="0.5">DINERS</text>
+</svg>''';
+
+  // Background color for the brand box — matches each brand's primary
+  // identity (Visa = navy, Mastercard = black, Amex = blue, etc.).
+  Color _brandBg(String brand) {
     switch (brand.toLowerCase()) {
       case 'visa':
-        return FontAwesomeIcons.ccVisa;
+        return const Color(0xFF1A1F71);
       case 'mastercard':
-        return FontAwesomeIcons.ccMastercard;
+        return const Color(0xFF111827);
       case 'amex':
-        return FontAwesomeIcons.ccAmex;
+        return const Color(0xFF016FD0);
       case 'discover':
-        return FontAwesomeIcons.ccDiscover;
+        return const Color(0xFFFF6000);
       case 'jcb':
-        return FontAwesomeIcons.ccJcb;
+        return const Color(0xFF0E4C92);
       case 'dinersclub':
-        return FontAwesomeIcons.ccDinersClub;
+        return const Color(0xFF0079BE);
       default:
-        return FontAwesomeIcons.creditCard;
+        return const Color(0xFF374151);
+    }
+  }
+
+  // Renders the brand mark inside the box. Visa is a custom Text widget
+  // (its iconic italic wordmark looks better in real text than as a
+  // text-rendered SVG). Mastercard is the iconic two-circle logo via
+  // inline SVG. Other brands use simplified white wordmark SVGs.
+  Widget _brandLogoFor(String brand) {
+    switch (brand.toLowerCase()) {
+      case 'visa':
+        return const Text(
+          'VISA',
+          style: TextStyle(
+            color: Colors.white,
+            fontSize: 13,
+            fontWeight: FontWeight.w900,
+            fontStyle: FontStyle.italic,
+            letterSpacing: 0.5,
+          ),
+        );
+      case 'mastercard':
+        return SvgPicture.string(_svgMastercard, width: 24, height: 16);
+      case 'amex':
+        return SvgPicture.string(_svgAmex, width: 28, height: 12);
+      case 'discover':
+        return SvgPicture.string(_svgDiscover, width: 32, height: 10);
+      case 'jcb':
+        return SvgPicture.string(_svgJcb, width: 22, height: 12);
+      case 'dinersclub':
+        return SvgPicture.string(_svgDinersClub, width: 28, height: 10);
+      default:
+        return const Icon(Icons.credit_card, color: Colors.white, size: 18);
     }
   }
 
@@ -249,10 +316,6 @@ class _SavedCardsScreenState extends ConsumerState<SavedCardsScreen> {
   }) {
     final cs = Theme.of(context).colorScheme;
     final accent = _brandGradient(brand).$1;
-    // Visa's brand navy is invisible on the dark logo box — force white
-    // so the wordmark reads. Other brands' colors have enough contrast
-    // against #111827 to stay legible.
-    final iconColor = brand.toLowerCase() == 'visa' ? Colors.white : accent;
     final mm = expMonth.toString().padLeft(2, '0');
     final yy = expYear.toString().padLeft(4, '0').substring(2);
 
@@ -260,25 +323,20 @@ class _SavedCardsScreenState extends ConsumerState<SavedCardsScreen> {
       padding: const EdgeInsets.symmetric(vertical: 4),
       child: Row(
         children: [
-          // Brand logo box — dark rounded square with the brand icon in
-          // brand color (Mastercard red, Visa blue, etc.). Matches the
-          // wallet-style look in the user reference. FontAwesome's cc*
-          // icons are solid single-color glyphs, so the brand color comes
-          // from accent — the real multi-color logos require bundled SVG
-          // assets and could be a future polish.
+          // Brand logo box — bg color matches the brand identity (Visa
+          // navy, Mastercard black, Amex blue, etc.) with the iconic
+          // brand mark inside. Mastercard renders as the real two-circle
+          // multicolor SVG; Visa as the white italic wordmark; others as
+          // a simplified white wordmark.
           Container(
-            width: 38,
-            height: 38,
+            width: 40,
+            height: 28,
             decoration: BoxDecoration(
-              color: const Color(0xFF111827),
-              borderRadius: BorderRadius.circular(9),
+              color: _brandBg(brand),
+              borderRadius: BorderRadius.circular(6),
             ),
             alignment: Alignment.center,
-            child: FaIcon(
-              _brandFaIcon(brand),
-              size: 22,
-              color: iconColor,
-            ),
+            child: _brandLogoFor(brand),
           ),
           const SizedBox(width: 12),
           // Title + subtitle
