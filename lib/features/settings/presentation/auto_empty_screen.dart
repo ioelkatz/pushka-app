@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:cloud_functions/cloud_functions.dart';
+
+import '../../../app/theme/app_tokens.dart';
 import 'card_brand_box.dart';
 
 import '../../../core/widgets/option_picker_sheet.dart';
@@ -115,9 +117,7 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
       });
     }
 
-    final isDark = Theme.of(context).brightness == Brightness.dark;
     final cs = Theme.of(context).colorScheme;
-    final red = isDark ? cs.primary : const Color(0xFFE05A4F);
 
     return Scaffold(
       appBar: AppBar(
@@ -347,7 +347,7 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
                       ),
                       focusedBorder: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(12),
-                        borderSide: BorderSide(color: Theme.of(context).colorScheme.primary, width: 2),
+                        borderSide: BorderSide(color: AppTokens.primaryBlue, width: 2),
                       ),
                     ),
                     onChanged: (value) {
@@ -359,24 +359,9 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
                 ],
                 const SizedBox(height: 24),
               ],
-              Row(
-                children: [
-                  Expanded(
-                    child: OutlinedButton(
-                      onPressed: () => Navigator.pop(context),
-                      style: OutlinedButton.styleFrom(
-                        side: BorderSide(color: Colors.grey.shade400),
-                        padding: const EdgeInsets.symmetric(vertical: 14),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(10),
-                        ),
-                      ),
-                      child: Text(tr.cancelBtn),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: OutlinedButton(
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton(
                       onPressed: user == null || _saving
                           ? null
                           : () async {
@@ -425,23 +410,22 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
                                 if (mounted) setState(() => _saving = false);
                               }
                             },
-                      style: OutlinedButton.styleFrom(
-                        side: BorderSide(color: red, width: 2),
-                        padding: const EdgeInsets.symmetric(vertical: 14),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppTokens.primaryBlue,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 16),
                         shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(10),
+                          borderRadius: BorderRadius.circular(12),
                         ),
                       ),
                       child: Text(
                         tr.saveBtn,
-                        style: TextStyle(
-                          color: red,
+                        style: const TextStyle(
+                          fontSize: 16,
                           fontWeight: FontWeight.w700,
                         ),
                       ),
-                    ),
-                  ),
-                ],
+                ),
               ),
             ],
           ),
@@ -528,7 +512,7 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
 
     final selected = resolveSelected();
     final brand = (selected['brand'] as String? ?? 'card').toLowerCase();
-    final last4 = selected['last4'] as String? ?? '****';
+    final last4 = selected['last4'] as String? ?? '••••';
 
     return InkWell(
       borderRadius: BorderRadius.circular(12),
@@ -546,7 +530,7 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
             const SizedBox(width: 12),
             Expanded(
               child: Text(
-                '${cardBrandLabel(brand)}  ···· $last4',
+                '${cardBrandLabel(brand)}  •••• $last4',
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
@@ -627,7 +611,7 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
     final cs = Theme.of(ctx).colorScheme;
     final pmId = card['id'] as String;
     final brand = (card['brand'] as String? ?? 'card').toLowerCase();
-    final last4 = card['last4'] as String? ?? '****';
+    final last4 = card['last4'] as String? ?? '••••';
     final isSelected = pmId == selectedId;
     return InkWell(
       borderRadius: BorderRadius.circular(12),
@@ -635,8 +619,8 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
         decoration: BoxDecoration(
-          color: isSelected ? cs.primary.withValues(alpha: 0.12) : cs.surface,
-          border: Border.all(color: isSelected ? cs.primary : cs.outline),
+          color: isSelected ? AppTokens.primaryBlue.withValues(alpha: 0.12) : cs.surface,
+          border: Border.all(color: isSelected ? AppTokens.primaryBlue : cs.outline),
           borderRadius: BorderRadius.circular(12),
         ),
         child: Row(
@@ -645,7 +629,7 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
             const SizedBox(width: 10),
             Expanded(
               child: Text(
-                '${cardBrandLabel(brand)}  ···· $last4',
+                '${cardBrandLabel(brand)}  •••• $last4',
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
@@ -668,7 +652,7 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
                 ),
               ),
             if (isSelected)
-              Icon(Icons.check, color: cs.primary, size: 22),
+              Icon(Icons.check, color: AppTokens.primaryBlue, size: 22),
           ],
         ),
       ),
@@ -710,10 +694,7 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
   /// — surface this hard before save, with a one-tap path to add the card.
   Future<void> _showAddCardRequiredDialog() async {
     final tr = S.of(context);
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final accent = isDark
-        ? Theme.of(context).colorScheme.primary
-        : const Color(0xFFE05A4F);
+    const accent = AppTokens.primaryBlue;
 
     await showDialog<void>(
       context: context,

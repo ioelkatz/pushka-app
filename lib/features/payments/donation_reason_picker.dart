@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../app/theme/app_tokens.dart';
 import '../../core/l10n/s.dart';
 
 /// Result of the donation-reason picker.
@@ -111,8 +112,8 @@ class _ReasonTile extends StatelessWidget {
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
         decoration: BoxDecoration(
-          color: selected ? cs.primary.withValues(alpha: 0.12) : cs.surface,
-          border: Border.all(color: selected ? cs.primary : cs.outline),
+          color: selected ? AppTokens.primaryBlue.withValues(alpha: 0.12) : cs.surface,
+          border: Border.all(color: selected ? AppTokens.primaryBlue : cs.outline),
           borderRadius: BorderRadius.circular(12),
         ),
         child: Row(
@@ -128,7 +129,7 @@ class _ReasonTile extends StatelessWidget {
               ),
             ),
             if (selected)
-              Icon(Icons.check, color: cs.primary, size: 22),
+              Icon(Icons.check, color: AppTokens.primaryBlue, size: 22),
           ],
         ),
       ),

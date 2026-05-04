@@ -156,7 +156,7 @@ class _LegalLink extends StatelessWidget {
           ),
           child: Row(
             children: [
-              Icon(icon, size: 20, color: Theme.of(context).colorScheme.primary),
+              Icon(icon, size: 20, color: Theme.of(context).colorScheme.onSurfaceVariant),
               const SizedBox(width: 12),
               Expanded(
                 child: Text(

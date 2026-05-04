@@ -1298,24 +1298,30 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                         },
                         decoration: InputDecoration(
                           labelText: S.of(context).amount,
+                          labelStyle: const TextStyle(color: AppTokens.primaryBlue),
+                          floatingLabelStyle: const TextStyle(color: AppTokens.primaryBlue),
                           hintText: S.of(context).amountHint, prefixText: '\$ ', errorText: error,
                           border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                          focusedBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(12),
+                            borderSide: const BorderSide(color: AppTokens.primaryBlue, width: 2),
+                          ),
                         ),
                         onChanged: (_) { if (error != null) setDialogState(() => error = null); },
                       ),
                       const SizedBox(height: 16),
                       SizedBox(width: double.infinity, height: 48, child: ElevatedButton(
-                        style: ElevatedButton.styleFrom(shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: AppTokens.primaryBlue,
+                          foregroundColor: Colors.white,
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                        ),
                         onPressed: () {
                           final value = double.tryParse(controller.text.trim().replaceAll(',', '.'));
                           if (value == null || value <= 0) { setDialogState(() => error = S.of(context).enterValidAmount); return; }
                           Navigator.pop(ctx, value);
                         },
                         child: Text(S.of(context).add, style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
-                      )),
-                      SizedBox(width: double.infinity, height: 44, child: TextButton(
-                        onPressed: () => Navigator.pop(ctx),
-                        child: Text(S.of(context).cancel, style: const TextStyle(fontWeight: FontWeight.w500)),
                       )),
                     ]),
     );
@@ -1945,7 +1951,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                       ),
                       focusedBorder: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(12),
-                        borderSide: BorderSide(color: cs.primary, width: 2),
+                        borderSide: BorderSide(color: AppTokens.primaryBlue, width: 2),
                       ),
                     ),
                     onChanged: (value) {
@@ -2000,7 +2006,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                       ),
                       focusedBorder: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(12),
-                        borderSide: BorderSide(color: cs.primary, width: 2),
+                        borderSide: BorderSide(color: AppTokens.primaryBlue, width: 2),
                       ),
                     ),
                     onChanged: (value) {
@@ -2065,7 +2071,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                               ),
                               focusedBorder: OutlineInputBorder(
                                 borderRadius: BorderRadius.circular(12),
-                                borderSide: BorderSide(color: cs.primary, width: 2),
+                                borderSide: BorderSide(color: AppTokens.primaryBlue, width: 2),
                               ),
                             ),
                           ),
@@ -2349,10 +2355,10 @@ class _PartialDonationSheetState extends State<_PartialDonationSheet> {
         height: 38,
         alignment: Alignment.center,
         decoration: BoxDecoration(
-          color: isSelected ? cs.primary.withValues(alpha: 0.12) : cs.surface,
+          color: isSelected ? AppTokens.primaryBlue.withValues(alpha: 0.12) : cs.surface,
           borderRadius: BorderRadius.circular(12),
           border: Border.all(
-            color: isSelected ? cs.primary : cs.outline,
+            color: isSelected ? AppTokens.primaryBlue : cs.outline,
             width: isSelected ? 1.8 : 1.0,
           ),
         ),
@@ -2360,7 +2366,7 @@ class _PartialDonationSheetState extends State<_PartialDonationSheet> {
           '$percent%',
           style: TextStyle(
             fontWeight: FontWeight.w700,
-            color: isSelected ? cs.primary : cs.onSurface,
+            color: isSelected ? AppTokens.primaryBlue : cs.onSurface,
           ),
         ),
       ),

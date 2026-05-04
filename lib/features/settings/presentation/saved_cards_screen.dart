@@ -7,6 +7,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_stripe/flutter_stripe.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 
+import '../../../app/theme/app_tokens.dart';
 import '../../auth/providers/auth_state_provider.dart';
 import '../../payments/stripe_service.dart';
 import '../../tenant/data/tenant_repository.dart';
@@ -114,11 +115,11 @@ class _SavedCardsScreenState extends ConsumerState<SavedCardsScreen> {
           content: Text(isDuplicate ? tr.cardAlreadySaved : tr.cardAdded),
         ),
       );
-      // Offer the user the chance to set a nickname (e.g. "BBVA") on the
-      // newly-added card. Only prompt when the add was a NET-NEW card
-      // (skip on duplicate save where the dedupe kept the prior entry).
+      // Post-add: prompt for optional nickname only when the add was a
+      // net-new card (skip on duplicate where the dedupe kept the prior
+      // entry — there's no new card to label).
       if (!isDuplicate && _cards.isNotEmpty && mounted) {
-        final newest = _cards.first; // Stripe returns newest-first
+        final newest = _cards.first;
         final newPmId = newest['id'] as String?;
         if (newPmId != null) {
           await _promptNickname(newPmId, initial: null);
@@ -523,27 +524,12 @@ class _SavedCardsScreenState extends ConsumerState<SavedCardsScreen> {
                     ),
                     children: [
                       TextSpan(text: '${_brandLabel(brand)} '),
-                      // Asterisks render against the cap-height in most
-                      // system fonts (not centered vertically), which makes
-                      // the "**** 4242" look top-heavy. Wrap them in a
-                      // WidgetSpan + Transform.translate to drop them ~3px
-                      // so they visually sit on the same midline as the
-                      // brand word and the last4 digits.
-                      WidgetSpan(
-                        alignment: PlaceholderAlignment.middle,
-                        child: Transform.translate(
-                          offset: const Offset(0, 3),
-                          child: Text(
-                            '****',
-                            style: TextStyle(
-                              fontSize: 15,
-                              fontWeight: FontWeight.w600,
-                              color: cs.onSurface,
-                              height: 1.0,
-                            ),
-                          ),
-                        ),
-                      ),
+                      // 4 bullets (U+2022) — same visual weight as a
+                      // typical card mask but already vertically centered
+                      // in the system font, so we don't need the prior
+                      // WidgetSpan + Transform.translate(0, 3) hack that
+                      // was correcting for asterisks riding the cap-height.
+                      const TextSpan(text: '••••'),
                       TextSpan(
                         text: ' $last4',
                         style: const TextStyle(
@@ -580,7 +566,7 @@ class _SavedCardsScreenState extends ConsumerState<SavedCardsScreen> {
           if (isDefault) ...[
             Tooltip(
               message: tr.cardDefault,
-              child: Icon(Icons.check, color: cs.primary, size: 22),
+              child: Icon(Icons.check, color: AppTokens.primaryBlue, size: 22),
             ),
             const SizedBox(width: 6),
           ],
@@ -628,14 +614,21 @@ class _SavedCardsScreenState extends ConsumerState<SavedCardsScreen> {
             ],
           ),
           actions: [
-            // Skip = close without saving (keeps current nickname unchanged).
+            // Omitir = close without saving (keeps current nickname unchanged).
             TextButton(
               onPressed: () => Navigator.pop(ctx, null),
+              style: TextButton.styleFrom(
+                foregroundColor: cs.onSurfaceVariant,
+              ),
               child: Text(tr.skip),
             ),
             ElevatedButton(
               onPressed: () => Navigator.pop(ctx, ctrl.text.trim()),
-              child: Text(tr.save),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppTokens.primaryBlue,
+                foregroundColor: Colors.white,
+              ),
+              child: Text(tr.add),
             ),
           ],
         );
@@ -696,7 +689,7 @@ class _SavedCardsScreenState extends ConsumerState<SavedCardsScreen> {
               child: Row(
                 children: [
                   Text(
-                    '${_brandLabel(brand)} **** $last4',
+                    '${_brandLabel(brand)} •••• $last4',
                     style: TextStyle(
                       fontSize: 14,
                       fontWeight: FontWeight.w600,
@@ -708,7 +701,7 @@ class _SavedCardsScreenState extends ConsumerState<SavedCardsScreen> {
             ),
             if (!isDefault)
               ListTile(
-                leading: Icon(Icons.star_outline, color: cs.primary),
+                leading: Icon(Icons.star_outline, color: AppTokens.primaryBlue),
                 title: Text(tr.setAsDefault),
                 onTap: () {
                   Navigator.pop(sheetCtx);
@@ -716,7 +709,7 @@ class _SavedCardsScreenState extends ConsumerState<SavedCardsScreen> {
                 },
               ),
             ListTile(
-              leading: Icon(Icons.edit_outlined, color: cs.primary),
+              leading: Icon(Icons.edit_outlined, color: AppTokens.primaryBlue),
               title: Text(currentNickname != null && currentNickname.isNotEmpty
                   ? tr.cardNicknameEditAction
                   : tr.cardNicknameAddAction),
@@ -746,10 +739,7 @@ class _SavedCardsScreenState extends ConsumerState<SavedCardsScreen> {
   @override
   Widget build(BuildContext context) {
     final tr = S.of(context);
-    const red = Color(0xFFE05A4F);
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final blue = Theme.of(context).colorScheme.primary;
-    final actionColor = isDark ? blue : red;
+    const actionColor = AppTokens.primaryBlue;
 
     return Scaffold(
       body: SafeArea(
@@ -795,33 +785,7 @@ class _SavedCardsScreenState extends ConsumerState<SavedCardsScreen> {
             Expanded(
               child: _loading
                   ? const Center(child: CircularProgressIndicator())
-                  : _cards.isEmpty
-                      ? Center(
-                          child: Padding(
-                            padding: const EdgeInsets.symmetric(horizontal: 32),
-                            child: Column(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Icon(
-                                  Icons.credit_card_off_outlined,
-                                  size: 56,
-                                  color: Colors.grey.shade400,
-                                ),
-                                const SizedBox(height: 16),
-                                Text(
-                                  tr.noSavedCards,
-                                  textAlign: TextAlign.center,
-                                  style: TextStyle(
-                                    fontSize: 15,
-                                    color: Colors.grey.shade600,
-                                    height: 1.5,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        )
-                      : Builder(builder: (context) {
+                  : Builder(builder: (context) {
                           // Show Google Pay only on Android, Apple Pay only
                           // on iOS — those are the only platforms where the
                           // respective wallet actually surfaces inside
@@ -848,7 +812,7 @@ class _SavedCardsScreenState extends ConsumerState<SavedCardsScreen> {
                             final card = _cards[index];
                             final pmId = card['id'] as String;
                             final brand = card['brand'] as String? ?? 'card';
-                            final last4 = card['last4'] as String? ?? '****';
+                            final last4 = card['last4'] as String? ?? '••••';
                             final expMonth = (card['expMonth'] as num?)?.toInt() ?? 0;
                             final expYear = (card['expYear'] as num?)?.toInt() ?? 0;
                             final isDefault = pmId == _defaultPaymentMethodId;

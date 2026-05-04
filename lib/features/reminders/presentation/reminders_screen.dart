@@ -830,9 +830,9 @@ class _ReminderFormPageState extends State<_ReminderFormPage> {
             height: 42,
             alignment: Alignment.center,
             decoration: BoxDecoration(
-              color: selected ? cs.primary : cs.surface,
+              color: selected ? AppTokens.primaryBlue : cs.surface,
               border: Border.all(
-                color: selected ? cs.primary : cs.outline,
+                color: selected ? AppTokens.primaryBlue : cs.outline,
               ),
               borderRadius: BorderRadius.circular(AppTokens.radiusSm),
             ),
@@ -841,7 +841,7 @@ class _ReminderFormPageState extends State<_ReminderFormPage> {
               style: TextStyle(
                 fontSize: 14,
                 fontWeight: FontWeight.w600,
-                color: selected ? cs.onPrimary : cs.onSurfaceVariant,
+                color: selected ? Colors.white : cs.onSurfaceVariant,
               ),
             ),
           ),

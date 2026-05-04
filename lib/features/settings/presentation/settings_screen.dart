@@ -27,6 +27,8 @@ import '../../../core/l10n/s.dart';
 import '../../feedback/feedback_service.dart';
 import '../../../core/pushka_style_provider.dart';
 import '../../../core/theme_provider.dart';
+import '../../../app/theme/app_tokens.dart';
+
 class SettingsScreen extends ConsumerStatefulWidget {
   const SettingsScreen({super.key});
 
@@ -252,7 +254,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 color: cs.onSurface,
               ),
               decoration: InputDecoration(
-                prefixText: '\$ ',
+                prefixText: '${_shortCurrencySymbol(selectedCurrency)} ',
                 prefixStyle: TextStyle(
                   fontSize: 16,
                   color: cs.onSurfaceVariant,
@@ -271,7 +273,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 ),
                 focusedBorder: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(12),
-                  borderSide: BorderSide(color: cs.primary, width: 2),
+                  borderSide: BorderSide(color: AppTokens.primaryBlue, width: 2),
                 ),
               ),
             );
@@ -834,12 +836,14 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                       textCapitalization: TextCapitalization.words,
                       decoration: InputDecoration(
                         labelText: tr.displayNameLabel,
+                        labelStyle: const TextStyle(color: AppTokens.primaryBlue),
+                        floatingLabelStyle: const TextStyle(color: AppTokens.primaryBlue),
                         hintText: tr.displayNameHint,
                         errorText: error,
                         border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
                         focusedBorder: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(12),
-                          borderSide: BorderSide(color: cs.primary, width: 1.6),
+                          borderSide: BorderSide(color: AppTokens.primaryBlue, width: 1.6),
                         ),
                       ),
                       onChanged: (_) {
@@ -851,7 +855,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                       height: 48,
                       child: ElevatedButton(
                         style: ElevatedButton.styleFrom(
-                          backgroundColor: cs.primary,
+                          backgroundColor: AppTokens.primaryBlue,
                           foregroundColor: Colors.white,
                           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                         ),
@@ -941,21 +945,11 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                         ),
                         children: [
                           TextSpan(text: '${cardBrandLabel(brand)} '),
-                          WidgetSpan(
-                            alignment: PlaceholderAlignment.middle,
-                            child: Transform.translate(
-                              offset: const Offset(0, 3),
-                              child: Text(
-                                '****',
-                                style: TextStyle(
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.w500,
-                                  color: cs.onSurface,
-                                  height: 1.0,
-                                ),
-                              ),
-                            ),
-                          ),
+                          // 4 bullets (U+2022) for the card mask — already
+                          // vertically centered in the system font, so we
+                          // skip the WidgetSpan + Transform.translate hack
+                          // that asterisks needed.
+                          const TextSpan(text: '••••'),
                           TextSpan(text: ' $last4'),
                         ],
                       ),
@@ -1004,8 +998,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         ref.read(pushkaStyleProvider.notifier).setStyle(selection.first);
       },
       style: SegmentedButton.styleFrom(
-        selectedBackgroundColor: cs.primary,
-        selectedForegroundColor: cs.onPrimary,
+        selectedBackgroundColor: AppTokens.primaryBlue,
+        selectedForegroundColor: Colors.white,
         foregroundColor: cs.onSurface,
       ),
     );
@@ -1160,7 +1154,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 ),
                 focusedBorder: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(12),
-                  borderSide: BorderSide(color: cs.primary, width: 2),
+                  borderSide: BorderSide(color: AppTokens.primaryBlue, width: 2),
                 ),
               ),
               onSubmitted: (_) => _commitPreset(idx),
@@ -1806,7 +1800,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                       border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
                       focusedBorder: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(12),
-                        borderSide: BorderSide(color: cs.primary, width: 2),
+                        borderSide: BorderSide(color: AppTokens.primaryBlue, width: 2),
                       ),
                     ),
                     onChanged: (_) { if (errorText != null) setSS(() => errorText = null); },
@@ -2233,7 +2227,7 @@ class _DeleteConfirmDialogState extends State<_DeleteConfirmDialog> {
               border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
               focusedBorder: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(12),
-                borderSide: BorderSide(color: cs.primary, width: 2),
+                borderSide: BorderSide(color: AppTokens.primaryBlue, width: 2),
               ),
             ),
           ),
