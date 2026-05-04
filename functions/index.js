@@ -2875,17 +2875,27 @@ exports.setAdminClaim = onCall(
       throw new HttpsError("invalid-argument", `role debe ser uno de: ${validRoles.join(", ")}`);
     }
 
-    // Only super_admin can assign super_admin or operate across tenants
+    // Resolve target early — needed for protection checks and claims write.
+    const targetRecord = await admin.auth().getUserByEmail(targetEmail);
+    const targetExistingClaims = targetRecord.customClaims || {};
+
     if (!callerIsSuper) {
       if (role === "super_admin") {
         throw new HttpsError("permission-denied", "Solo el super administrador puede asignar ese rol.");
       }
-      // tenant_admin can only manage collaborators of their own tenant
-      if (tenantId && tenantId !== callerClaims.tenantId) {
-        throw new HttpsError("permission-denied", "Solo puedes gestionar colaboradores de tu organización.");
+      const effectiveTenantId = tenantId || callerClaims.tenantId;
+      if (effectiveTenantId !== callerClaims.tenantId) {
+        throw new HttpsError("permission-denied", "Solo puedes gestionar tu propia organización.");
       }
-      if (role === "tenant_admin") {
-        throw new HttpsError("permission-denied", "Solo el super administrador puede asignar tenant_admin.");
+      // Only the first tenant admin can add other tenant_admins or revoke anyone
+      if (role === "tenant_admin" || revoke) {
+        const tenantDoc = await db.collection("tenants").doc(callerClaims.tenantId).get();
+        const isFirstAdmin = tenantDoc.exists && tenantDoc.data().adminEmail === callerRecord.email;
+        if (!isFirstAdmin) {
+          throw new HttpsError("permission-denied", revoke
+            ? "Solo el primer administrador puede revocar accesos."
+            : "Solo el primer administrador puede agregar administradores.");
+        }
       }
     }
 
@@ -2894,7 +2904,13 @@ exports.setAdminClaim = onCall(
       throw new HttpsError("permission-denied", "No se pueden revocar los permisos del super administrador.");
     }
 
-    const targetRecord = await admin.auth().getUserByEmail(targetEmail);
+    // First tenant admin of an org can never be revoked
+    if (revoke && targetExistingClaims.tenantId) {
+      const tenantDoc = await db.collection("tenants").doc(targetExistingClaims.tenantId).get();
+      if (tenantDoc.exists && tenantDoc.data().adminEmail === targetEmail) {
+        throw new HttpsError("permission-denied", "No se puede revocar al primer administrador de la organización.");
+      }
+    }
 
     // setCustomUserClaims REPLACES the claims object — it does not merge.
     // This is intentional:
@@ -2917,6 +2933,28 @@ exports.setAdminClaim = onCall(
     }
 
     await admin.auth().setCustomUserClaims(targetRecord.uid, newClaims);
+
+    // Maintain tenants/{tenantId}/team subcollection for tenant roles
+    const teamTenantId = revoke ? (targetExistingClaims.tenantId ?? tenantId) : tenantId;
+    if (teamTenantId && (revoke || role === "tenant_admin" || role === "tenant_collaborator")) {
+      const teamRef = db.collection("tenants").doc(teamTenantId).collection("team").doc(targetRecord.uid);
+      try {
+        if (revoke) {
+          await teamRef.delete();
+        } else {
+          await teamRef.set({
+            uid: targetRecord.uid,
+            email: targetRecord.email,
+            displayName: targetRecord.displayName ?? null,
+            role,
+            addedAt: admin.firestore.FieldValue.serverTimestamp(),
+            addedBy: callerUid,
+          });
+        }
+      } catch (e) {
+        console.warn("setAdminClaim: failed to update team subcollection", { error: String(e?.message || e) });
+      }
+    }
 
     // On revoke, also clear the user's tenantId in Firestore so the rule
     // `(isTenantMember() && resource.data.tenantId == callerTenantId())`
@@ -2974,46 +3012,48 @@ exports.listAdmins = onCall(
     // 30/hour is generous for dashboard polling but blocks runaway scripts.
     await enforceRateLimit(callerUid, "listAdmins", 30, 3600);
 
-    // For tenant_admin: query Firestore users by tenantId — bounded by tenant
-    // size, not total Auth users. Old behavior iterated ALL Auth users (millions
-    // at scale) just to filter for one tenant.
-    if (!isSuper) {
-      const callerTenantId = callerClaims.tenantId;
-      if (!callerTenantId) {
-        throw new HttpsError("failed-precondition", "tenant_admin sin tenantId.");
-      }
-      const usersSnap = await db
-        .collection("users")
-        .where("tenantId", "==", callerTenantId)
-        .get();
-
-      // Hydrate roles from Auth (only for the tenant's users).
-      const admins = [];
-      await Promise.all(usersSnap.docs.map(async (doc) => {
-        try {
-          const authUser = await admin.auth().getUser(doc.id);
-          const claims = authUser.customClaims ?? {};
-          if (claims.role || claims.admin === true) {
-            admins.push({
-              uid: authUser.uid,
-              email: authUser.email,
-              displayName: authUser.displayName,
-              role: claims.role ?? (claims.admin ? "super_admin" : null),
-              tenantId: claims.tenantId ?? null,
-            });
+    // Helper: build tenant team list from subcollection + first admin from tenant doc
+    async function buildTenantTeam(tid) {
+      const [teamSnap, tenantDoc] = await Promise.all([
+        db.collection("tenants").doc(tid).collection("team").get(),
+        db.collection("tenants").doc(tid).get(),
+      ]);
+      const admins = teamSnap.docs.map((d) => ({ ...d.data() }));
+      const firstEmail = tenantDoc.exists ? tenantDoc.data().adminEmail : null;
+      if (firstEmail) {
+        const existing = admins.find((a) => a.email === firstEmail);
+        if (existing) {
+          existing.isFirst = true;
+        } else {
+          try {
+            const firstRec = await admin.auth().getUserByEmail(firstEmail);
+            admins.unshift({ uid: firstRec.uid, email: firstRec.email, displayName: firstRec.displayName ?? null, role: "tenant_admin", isFirst: true });
+          } catch (_) {
+            admins.unshift({ uid: firstEmail, email: firstEmail, displayName: null, role: "tenant_admin", isFirst: true });
           }
-        } catch (_) {
-          // User in Firestore but not in Auth — skip silently.
         }
-      }));
-      return { admins };
+      }
+      return admins;
     }
 
-    // super_admin: needs the full list across all tenants. Paginate Auth with a hard cap.
+    // tenant_admin: return their own org's team
+    if (!isSuper) {
+      const callerTenantId = callerClaims.tenantId;
+      if (!callerTenantId) throw new HttpsError("failed-precondition", "tenant_admin sin tenantId.");
+      return { admins: await buildTenantTeam(callerTenantId) };
+    }
+
+    // super_admin with tenantId param: return that org's team
+    const requestedTenantId = request.data?.tenantId ?? null;
+    if (requestedTenantId) {
+      return { admins: await buildTenantTeam(requestedTenantId) };
+    }
+
+    // super_admin with no tenantId: return only super admins (paginate Auth)
     const allUsers = [];
     let pageToken;
     let pages = 0;
-    const MAX_PAGES = 50; // 50 * 1000 = 50k users hard cap
+    const MAX_PAGES = 50;
     do {
       const listResult = await admin.auth().listUsers(1000, pageToken);
       allUsers.push(...listResult.users);
@@ -3026,13 +3066,13 @@ exports.listAdmins = onCall(
     } while (pageToken);
 
     const admins = allUsers
-      .filter((u) => u.customClaims?.admin === true || u.customClaims?.role)
+      .filter((u) => u.customClaims?.role === "super_admin" || (u.customClaims?.admin === true && !u.customClaims?.tenantId))
       .map((u) => ({
         uid: u.uid,
         email: u.email,
         displayName: u.displayName,
-        role: u.customClaims?.role ?? (u.customClaims?.admin ? "super_admin" : null),
-        tenantId: u.customClaims?.tenantId ?? null,
+        role: "super_admin",
+        tenantId: null,
       }));
 
     return { admins };
