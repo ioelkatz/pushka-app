@@ -214,6 +214,14 @@ class AppTheme {
           return const Color(0xFF334155); // borderDark — muted track when OFF
         }),
       ),
+      textSelectionTheme: TextSelectionThemeData(
+        cursorColor: AppTokens.primaryBlue,
+        selectionHandleColor: AppTokens.primaryBlue,
+        selectionColor: AppTokens.primaryBlue.withValues(alpha: 0.3),
+      ),
+      progressIndicatorTheme: const ProgressIndicatorThemeData(
+        color: AppTokens.primaryBlue,
+      ),
     );
   }
 
@@ -350,6 +358,14 @@ class AppTheme {
           if (states.contains(WidgetState.selected)) return const Color(0xFFFF9500).withValues(alpha: 0.45);
           return const Color(0xFFE2E8F0); // border light — muted track when OFF
         }),
+      ),
+      textSelectionTheme: TextSelectionThemeData(
+        cursorColor: AppTokens.primaryBlue,
+        selectionHandleColor: AppTokens.primaryBlue,
+        selectionColor: AppTokens.primaryBlue.withValues(alpha: 0.3),
+      ),
+      progressIndicatorTheme: const ProgressIndicatorThemeData(
+        color: AppTokens.primaryBlue,
       ),
     );
   }

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../app/theme/app_tokens.dart';
 import '../../../core/format_utils.dart';
 import '../../../core/l10n/s.dart';
 import '../../../core/widgets/shimmer_list.dart';
@@ -207,7 +208,7 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
                             return GestureDetector(
                               onTap: () => _showTransactionDetail(
                                   context, filtered[index], currencySymbol),
-                              child: _buildTransactionItem(filtered[index], cs.primary, currencySymbol),
+                              child: _buildTransactionItem(filtered[index], cs.onSurface, currencySymbol),
                             );
                           },
                         ),
@@ -236,7 +237,7 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
     final amountLabel = isNeg
         ? '-${formatMoney(amount.abs(), symbol: currencySymbol)}'
         : formatMoney(amount, symbol: currencySymbol);
-    final amountColor = isNeg ? const Color(0xFFE05A4F) : cs.primary;
+    final amountColor = isNeg ? const Color(0xFFE05A4F) : cs.onSurface;
 
     final (typeIcon, typeColor) = switch (t.type) {
       TransactionType.tzedaka     => (Icons.volunteer_activism_rounded, const Color(0xFF2563EB)),
@@ -389,8 +390,8 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
         decoration: BoxDecoration(
-          color: selected ? cs.primary.withValues(alpha: 0.12) : cs.surface,
-          border: Border.all(color: selected ? cs.primary : cs.outline),
+          color: selected ? AppTokens.primaryBlue.withValues(alpha: 0.12) : cs.surface,
+          border: Border.all(color: selected ? AppTokens.primaryBlue : cs.outline),
           borderRadius: BorderRadius.circular(12),
         ),
         child: Row(
@@ -406,7 +407,7 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
               ),
             ),
             if (selected)
-              Icon(Icons.check, color: cs.primary, size: 22),
+              Icon(Icons.check, color: AppTokens.primaryBlue, size: 22),
           ],
         ),
       ),
@@ -476,7 +477,7 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
                       _buildBadge(
                         _methodLabel(transaction.paymentMethod),
                         _iconForMethod(transaction.paymentMethod),
-                        cs.primary,
+                        cs.onSurfaceVariant,
                       ),
                     if (showMethodBadge && showStatusBadge) const SizedBox(width: 6),
                     if (showStatusBadge)

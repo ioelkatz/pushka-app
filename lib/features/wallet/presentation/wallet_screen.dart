@@ -64,7 +64,7 @@ class _SectionLabel extends StatelessWidget {
 }
 
 /// Saved-card preview — exact mirror of Settings' `_buildSavedCardPreview`:
-/// brand box on the left + "Visa **** 4242" with WidgetSpan-centered
+/// brand box on the left + "Visa •••• 4242"
 /// asterisks. Falls back to "no tienes ninguna tarjeta" when empty.
 class _SavedCardPreview extends StatelessWidget {
   const _SavedCardPreview({
@@ -123,21 +123,11 @@ class _SavedCardPreview extends StatelessWidget {
                         ),
                         children: [
                           TextSpan(text: '${cardBrandLabel(brand)} '),
-                          WidgetSpan(
-                            alignment: PlaceholderAlignment.middle,
-                            child: Transform.translate(
-                              offset: const Offset(0, 3),
-                              child: Text(
-                                '****',
-                                style: TextStyle(
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.w500,
-                                  color: cs.onSurface,
-                                  height: 1.0,
-                                ),
-                              ),
-                            ),
-                          ),
+                          // 4 bullets (U+2022) for the card mask — already
+                          // vertically centered in the system font, so the
+                          // prior WidgetSpan + Transform.translate hack
+                          // (needed for asterisks) is gone.
+                          const TextSpan(text: '••••'),
                           TextSpan(text: ' $last4'),
                         ],
                       ),

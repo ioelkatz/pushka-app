@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../../app/theme/app_tokens.dart';
 import '../../../core/l10n/s.dart';
 import '../../users/presentation/user_profile_provider.dart';
 import '../data/tenant_repository.dart';
@@ -67,8 +68,8 @@ class AccountSwitcherSheet extends ConsumerWidget {
                   ),
                 ),
                 trailing: isActive
-                    ? Icon(Icons.check_rounded,
-                        color: Theme.of(context).colorScheme.primary)
+                    ? const Icon(Icons.check_rounded,
+                        color: AppTokens.primaryBlue)
                     : null,
                 onTap: isActive
                     ? null
