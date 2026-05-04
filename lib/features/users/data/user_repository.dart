@@ -171,6 +171,8 @@ class UserRepository {
     bool autoEmptyClearNextRunAt = false,
     String? autoEmptyPaymentMethodId,
     bool autoEmptyClearPaymentMethodId = false,
+    String? autoEmptyDonationReason,
+    bool autoEmptyClearDonationReason = false,
   }) async {
     final data = <String, dynamic>{
       'uid': uid,
@@ -195,6 +197,8 @@ class UserRepository {
     if (autoEmptyClearNextRunAt) data['autoEmptyNextRunAt'] = null;
     if (autoEmptyPaymentMethodId != null) data['autoEmptyPaymentMethodId'] = autoEmptyPaymentMethodId;
     if (autoEmptyClearPaymentMethodId) data['autoEmptyPaymentMethodId'] = null;
+    if (autoEmptyDonationReason != null) data['autoEmptyDonationReason'] = autoEmptyDonationReason;
+    if (autoEmptyClearDonationReason) data['autoEmptyDonationReason'] = null;
     await _tenantState(uid).doc(tenantId).set(data, SetOptions(merge: true));
   }
 

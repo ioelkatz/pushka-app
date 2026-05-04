@@ -4,7 +4,7 @@ import '../../core/l10n/s.dart';
 
 /// Result of the donation-reason picker.
 ///
-/// - `cancelled` — user dismissed the dialog (don't proceed with payment)
+/// - `cancelled` — user dismissed the sheet (don't proceed with payment)
 /// - `selected(null)` — user explicitly chose "Sin designación" (proceed)
 /// - `selected(reason)` — user picked a designación (proceed with reason)
 sealed class DonationReasonResult {
@@ -20,69 +20,66 @@ class DonationReasonSelected extends DonationReasonResult {
   final String? reason;
 }
 
-/// Compact menu-style picker for the donation reason. Sized to wrap content
-/// (not a full bottom sheet) so it reads as a discreet menu the user
-/// dismisses with one tap. The first row is always "Sin designación" so the
-/// donor can opt out without hunting for a skip button.
+/// Bottom-sheet picker styled like the History filter sheet — outlined
+/// option tiles with the current selection highlighted by primary color +
+/// checkmark. Pass [currentSelection] to indicate which row should render
+/// as selected on open.
 ///
 /// Returns `null` when the tenant has no reasons configured (caller should
 /// skip the picker entirely in that case).
 Future<DonationReasonResult?> showDonationReasonPicker({
   required BuildContext context,
   required List<String> reasons,
+  String? currentSelection,
 }) async {
   if (reasons.isEmpty) return null;
 
-  final selected = await showDialog<String?>(
+  final selected = await showModalBottomSheet<String?>(
     context: context,
-    barrierDismissible: true,
-    barrierColor: Colors.black54,
-    builder: (ctx) {
-      final cs = Theme.of(ctx).colorScheme;
-      final tr = S.of(ctx);
-      return Dialog(
-        insetPadding: const EdgeInsets.symmetric(horizontal: 32, vertical: 80),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 320),
+    useRootNavigator: true,
+    useSafeArea: true,
+    isScrollControlled: true,
+    backgroundColor: Theme.of(context).colorScheme.surface,
+    shape: const RoundedRectangleBorder(
+      borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
+    ),
+    barrierColor: const Color(0xDD000000),
+    builder: (sheetCtx) {
+      final cs = Theme.of(sheetCtx).colorScheme;
+      final tr = S.of(sheetCtx);
+      return SafeArea(
+        top: false,
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.fromLTRB(20, 12, 20, 18),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Padding(
-                padding: const EdgeInsets.fromLTRB(20, 18, 20, 6),
-                child: Text(
-                  tr.donationReasonTitle,
-                  style: TextStyle(
-                    fontSize: 17,
-                    fontWeight: FontWeight.w700,
-                    color: cs.onSurface,
+              Center(
+                child: Container(
+                  width: 36,
+                  height: 4,
+                  margin: const EdgeInsets.only(bottom: 16),
+                  decoration: BoxDecoration(
+                    color: cs.outlineVariant,
+                    borderRadius: BorderRadius.circular(2),
                   ),
                 ),
               ),
-              Flexible(
-                child: SingleChildScrollView(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      _ReasonItem(
-                        label: tr.donationReasonNone,
-                        muted: true,
-                        onTap: () => Navigator.pop(ctx, ''),
-                      ),
-                      Divider(height: 1, color: cs.outlineVariant),
-                      for (var i = 0; i < reasons.length; i++) ...[
-                        _ReasonItem(
-                          label: reasons[i],
-                          onTap: () => Navigator.pop(ctx, reasons[i]),
-                        ),
-                        if (i < reasons.length - 1)
-                          Divider(height: 1, color: cs.outlineVariant),
-                      ],
-                    ],
-                  ),
-                ),
+              _ReasonTile(
+                label: tr.donationReasonNone,
+                selected: currentSelection == null,
+                onTap: () => Navigator.pop(sheetCtx, ''),
               ),
+              const SizedBox(height: 8),
+              for (final r in reasons) ...[
+                _ReasonTile(
+                  label: r,
+                  selected: currentSelection == r,
+                  onTap: () => Navigator.pop(sheetCtx, r),
+                ),
+                const SizedBox(height: 8),
+              ],
             ],
           ),
         ),
@@ -94,31 +91,45 @@ Future<DonationReasonResult?> showDonationReasonPicker({
   return DonationReasonSelected(selected.isEmpty ? null : selected);
 }
 
-class _ReasonItem extends StatelessWidget {
-  const _ReasonItem({
+class _ReasonTile extends StatelessWidget {
+  const _ReasonTile({
     required this.label,
     required this.onTap,
-    this.muted = false,
+    this.selected = false,
   });
 
   final String label;
   final VoidCallback onTap;
-  final bool muted;
+  final bool selected;
 
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     return InkWell(
+      borderRadius: BorderRadius.circular(12),
       onTap: onTap,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
-        child: Text(
-          label,
-          style: TextStyle(
-            fontSize: 15,
-            fontWeight: muted ? FontWeight.w400 : FontWeight.w500,
-            color: muted ? cs.onSurfaceVariant : cs.onSurface,
-          ),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        decoration: BoxDecoration(
+          color: selected ? cs.primary.withValues(alpha: 0.12) : cs.surface,
+          border: Border.all(color: selected ? cs.primary : cs.outline),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Row(
+          children: [
+            Expanded(
+              child: Text(
+                label,
+                style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
+                  color: cs.onSurface,
+                ),
+              ),
+            ),
+            if (selected)
+              Icon(Icons.check, color: cs.primary, size: 22),
+          ],
         ),
       ),
     );

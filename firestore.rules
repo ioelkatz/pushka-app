@@ -115,7 +115,7 @@ service cloud.firestore {
               'streakCount', 'lastStreakDate',
               'autoEmptyFrequency', 'autoEmptyWeekday', 'autoEmptyDayOfMonth',
               'autoEmptyTopOffEnabled', 'autoEmptyTopOffAmount', 'autoEmptyNextRunAt',
-              'autoEmptyPaymentMethodId',
+              'autoEmptyPaymentMethodId', 'autoEmptyDonationReason',
               'createdAt', 'updatedAt'];
     }
 
@@ -165,7 +165,14 @@ service cloud.firestore {
           (!('autoEmptyPaymentMethodId' in request.resource.data) ||
               request.resource.data.autoEmptyPaymentMethodId == null ||
               (request.resource.data.autoEmptyPaymentMethodId is string &&
-                  request.resource.data.autoEmptyPaymentMethodId.size() <= 100));
+                  request.resource.data.autoEmptyPaymentMethodId.size() <= 100)) &&
+          // autoEmptyDonationReason: optional per-tenant designation that
+          // the cron threads into PaymentIntent.metadata so the org can
+          // attribute the scheduled donation. Null clears it.
+          (!('autoEmptyDonationReason' in request.resource.data) ||
+              request.resource.data.autoEmptyDonationReason == null ||
+              (request.resource.data.autoEmptyDonationReason is string &&
+                  request.resource.data.autoEmptyDonationReason.size() <= 80));
     }
 
     // CREATE: full new doc must only contain client-writable keys + field validations.

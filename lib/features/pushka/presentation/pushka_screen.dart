@@ -286,13 +286,14 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
   Future<void> _donateNow() async {
     if (_isProcessing) return;
     final tr = S.of(context);
-    // Controllers must be disposed when the sheet closes — keeping them
-    // alive in function scope without dispose() is a memory leak the
-    // Flutter framework will warn about in debug. try/finally below.
+    final reasons = ref.read(tenantConfigProvider).valueOrNull?.donationReasons ?? const [];
+    // The amount controller must be disposed when the sheet closes —
+    // keeping it alive in function scope without dispose() is a memory
+    // leak the Flutter framework will warn about in debug. try/finally below.
     final amountCtrl = TextEditingController();
-    final messageCtrl = TextEditingController();
     Map<String, dynamic>? result;
     String? error;
+    String? selectedReason; // inline picker state — null = "Sin designación"
     try {
     result = await showKeyboardSafeSheet<Map<String, dynamic>>(
       context: context,
@@ -310,16 +311,47 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                         ),
                         onChanged: (_) { if (error != null) setDialogState(() => error = null); },
                       ),
-                      const SizedBox(height: 14),
-                      TextField(
-                        controller: messageCtrl,
-                        decoration: InputDecoration(
-                          labelText: tr.optionalMessage,
-                          hintText: tr.writeMessage,
-                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                          focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: AppTokens.primaryBlue, width: 1.6)),
+                      // Inline designación picker — only when the tenant has
+                      // reasons configured. Tap-to-open row that mirrors the
+                      // amount TextField styling (OutlineInputBorder, labelText).
+                      // Opens a bottom sheet styled like the History filter so
+                      // donor picks a destino without losing the donation flow.
+                      if (reasons.isNotEmpty) ...[
+                        const SizedBox(height: 14),
+                        InkWell(
+                          borderRadius: BorderRadius.circular(12),
+                          onTap: () async {
+                            final picked = await showDonationReasonPicker(
+                              context: ctx,
+                              reasons: reasons,
+                              currentSelection: selectedReason,
+                            );
+                            if (picked is DonationReasonSelected) {
+                              setDialogState(() => selectedReason = picked.reason);
+                            }
+                          },
+                          child: InputDecorator(
+                            decoration: InputDecoration(
+                              labelText: tr.donationReasonTitle,
+                              border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                            ),
+                            child: Row(children: [
+                              Expanded(
+                                child: Text(
+                                  selectedReason ?? tr.donationReasonNone,
+                                  style: TextStyle(
+                                    fontSize: 16,
+                                    color: selectedReason == null
+                                        ? Theme.of(ctx).colorScheme.onSurfaceVariant
+                                        : Theme.of(ctx).colorScheme.onSurface,
+                                  ),
+                                ),
+                              ),
+                              Icon(Icons.keyboard_arrow_down_rounded, color: Theme.of(ctx).colorScheme.onSurfaceVariant),
+                            ]),
+                          ),
                         ),
-                      ),
+                      ],
                       const SizedBox(height: 10),
                       Text(tr.instantDonationNote, style: const TextStyle(color: Color(0xFF888888), fontSize: 12), textAlign: TextAlign.center),
                       const SizedBox(height: 14),
@@ -328,7 +360,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                         onPressed: () {
                           final value = double.tryParse(amountCtrl.text.trim().replaceAll(',', '.'));
                           if (value == null || value <= 0) { setDialogState(() => error = tr.enterValidAmount); return; }
-                          Navigator.pop(ctx, {'amount': value, 'message': messageCtrl.text.trim()});
+                          Navigator.pop(ctx, {'amount': value, 'reason': selectedReason});
                         },
                         child: Text(tr.donateNowBtn, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 16)),
                       )),
@@ -341,7 +373,6 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
       // "TextEditingController was used after being disposed".
       Future.delayed(const Duration(milliseconds: 400), () {
         amountCtrl.dispose();
-        messageCtrl.dispose();
       });
     }
     if (result == null || !mounted) return;
@@ -376,8 +407,8 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
         return;
       }
 
-      final (proceed, _) = await _resolveDonationReason();
-      if (!proceed || !mounted) return;
+      // Note: donation reason already collected inline in the donate-now
+      // sheet (see `result['reason']` above) — no separate picker step.
 
       await StripeService.instance.pay(
         amountCents: amountCents,

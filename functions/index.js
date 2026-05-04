@@ -2388,6 +2388,15 @@ exports.processPushkaAutoEmpty = onSchedule(
             updatedAt: admin.firestore.FieldValue.serverTimestamp(),
           }, { merge: true });
 
+          // Optional designación the donor picked when configuring the
+          // auto-empty schedule. Stamped into PaymentIntent.metadata so the
+          // org can attribute the recurring donation to a program.
+          const donationReasonRaw = state.autoEmptyDonationReason;
+          const donationReason = (typeof donationReasonRaw === "string" &&
+              donationReasonRaw.trim().length > 0)
+            ? donationReasonRaw.trim().slice(0, 80)
+            : null;
+
           plan = {
             amount: currentAmount,
             currency: rawCurrency,
@@ -2399,6 +2408,7 @@ exports.processPushkaAutoEmpty = onSchedule(
             tenantConnectAccountId,
             tenantCommissionRate,
             nextRunDateKey: String(runTs),
+            donationReason,
           };
         });
 
@@ -2442,6 +2452,7 @@ exports.processPushkaAutoEmpty = onSchedule(
             source: "pushka",
             purpose: "pushka_auto_empty",
             tenantId: plan.tenantId,
+            ...(plan.donationReason ? { donationReason: plan.donationReason } : {}),
           },
         };
         if (plan.tenantConnectAccountId) {

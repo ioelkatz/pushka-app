@@ -5,9 +5,11 @@ import 'package:go_router/go_router.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'card_brand_box.dart';
 
+import '../../payments/donation_reason_picker.dart';
 import '../../users/data/user_repository.dart';
 import '../../users/presentation/user_profile_provider.dart';
 import '../../tenant/data/tenant_repository.dart';
+import '../../tenant/domain/tenant_config.dart';
 import '../../../core/l10n/s.dart';
 
 class AutoEmptyScreen extends ConsumerStatefulWidget {
@@ -35,6 +37,11 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
   List<Map<String, dynamic>> _cards = [];
   bool _loadingCards = false;
   String? _selectedCardId;  // null = use current default
+
+  // Optional donation designación (per-tenant). null = "Sin designación".
+  // Persisted to tenantState.autoEmptyDonationReason so the cron can stamp
+  // it on PaymentIntent.metadata for each scheduled charge.
+  String? _selectedDonationReason;
 
   @override
   void dispose() {
@@ -93,6 +100,7 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
           // sees a concrete starting value instead of an empty field.
           _amountController.text = _topOffAmount?.toStringAsFixed(0) ?? '0';
           _selectedCardId = tenantState['autoEmptyPaymentMethodId'] as String?;
+          _selectedDonationReason = tenantState['autoEmptyDonationReason'] as String?;
         });
         if (_frequency != 'manual') _loadCards();
       });
@@ -144,11 +152,16 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
                   final wasManual = _frequency == 'manual';
                   setState(() {
                     _frequency = value;
-                    if (_frequency == 'weekly') {
-                      _topOffAmount ??= 18;
-                    } else if (_frequency == 'monthly' ||
-                        _frequency == 'erev_rosh_chodesh') {
-                      _topOffAmount ??= 36;
+                    // First-time activation (manual → any schedule):
+                    // turn on top-off and seed the amount with the user's
+                    // pushka goal so the schedule is "complete" out of the
+                    // box. The user can flip the toggle off if they don't
+                    // want top-off.
+                    if (wasManual && value != 'manual') {
+                      _topOffEnabled = true;
+                      final goal = (ref.read(tenantStateProvider).valueOrNull
+                          ?['pushkaGoal'] as num?)?.toDouble();
+                      _topOffAmount = goal ?? _topOffAmount ?? 18;
                     }
                     _amountController.text =
                         _topOffAmount?.toStringAsFixed(0) ?? '';
@@ -226,18 +239,23 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
                 ),
                 const SizedBox(height: 16),
               ],
-              Container(
-                padding: const EdgeInsets.all(14),
-                decoration: BoxDecoration(
-                  color: Theme.of(context).colorScheme.surfaceContainer,
-                  borderRadius: BorderRadius.circular(12),
+              // Hint card only when the user hasn't activated auto-empty
+              // yet (frequency == 'manual'). Once they pick a schedule the
+              // explanation is redundant and the schedule fields take over.
+              if (_frequency == 'manual') ...[
+                Container(
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    color: Theme.of(context).colorScheme.surfaceContainer,
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Text(
+                    tr.autoEmptyInfo,
+                    style: TextStyle(color: Theme.of(context).colorScheme.onSurface),
+                  ),
                 ),
-                child: Text(
-                  tr.autoEmptyInfo,
-                  style: TextStyle(color: Theme.of(context).colorScheme.onSurface),
-                ),
-              ),
-              const SizedBox(height: 20),
+                const SizedBox(height: 20),
+              ],
               if (_frequency == 'weekly') ...[
                 Text(
                   tr.dayOfWeek,
@@ -276,6 +294,7 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
                     : _buildCardSelector(tr),
                 const SizedBox(height: 20),
               ],
+              if (_frequency != 'manual') _buildDonationReasonPicker(tr),
               if (_frequency != 'manual') ...[
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -292,15 +311,21 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
                     Switch(
                       value: _topOffEnabled,
                       onChanged: (value) {
-                        setState(() => _topOffEnabled = value);
-                        if (value && _topOffAmount == null) {
-                          setState(() {
-                            _topOffAmount =
-                                _frequency == 'weekly' ? 18 : 36;
+                        setState(() {
+                          _topOffEnabled = value;
+                          // Re-arming the toggle: seed amount with the
+                          // user's pushka goal if no prior value exists
+                          // (matches the "first-time activation" behavior
+                          // of switching from manual to a schedule).
+                          if (value && _topOffAmount == null) {
+                            final goal = (ref.read(tenantStateProvider).valueOrNull
+                                ?['pushkaGoal'] as num?)?.toDouble();
+                            _topOffAmount = goal ??
+                                (_frequency == 'weekly' ? 18 : 36);
                             _amountController.text =
                                 _topOffAmount!.toStringAsFixed(0);
-                          });
-                        }
+                          }
+                        });
                       },
                     ),
                   ],
@@ -317,30 +342,28 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
                     color: Theme.of(context).colorScheme.onSurface,
                   ),
                 ),
-                const SizedBox(height: 12),
-                // Always render the amount field — disabled when the toggle
-                // is off so the user can preview the configured amount but
-                // not edit it. Re-enabling the toggle puts focus back on
-                // editing without re-entering the amount from scratch.
-                TextField(
-                  controller: _amountController,
-                  enabled: _topOffEnabled,
-                  keyboardType:
-                      const TextInputType.numberWithOptions(decimal: true),
-                  decoration: InputDecoration(
-                    prefixText: '\$ ',
-                    filled: !_topOffEnabled,
-                    fillColor: Theme.of(context).colorScheme.surfaceContainerHighest,
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(12),
+                // Amount field is shown only while top-off is enabled;
+                // hiding it removes visual noise and matches the user's
+                // mental model of "off = not in play."
+                if (_topOffEnabled) ...[
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: _amountController,
+                    keyboardType:
+                        const TextInputType.numberWithOptions(decimal: true),
+                    decoration: InputDecoration(
+                      prefixText: '\$ ',
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
                     ),
+                    onChanged: (value) {
+                      final parsed =
+                          double.tryParse(value.replaceAll(',', '.'));
+                      _topOffAmount = parsed;
+                    },
                   ),
-                  onChanged: (value) {
-                    final parsed =
-                        double.tryParse(value.replaceAll(',', '.'));
-                    _topOffAmount = parsed;
-                  },
-                ),
+                ],
                 const SizedBox(height: 24),
               ],
               Row(
@@ -434,65 +457,233 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
     );
   }
 
-  Widget _buildCardSelector(S tr) {
+  /// Designación picker for the auto-empty schedule. Hidden entirely when
+  /// the tenant has no `donationReasons` configured. Otherwise shows a
+  /// tap-to-open row that pops the same bottom sheet used elsewhere.
+  Widget _buildDonationReasonPicker(S tr) {
+    final TenantConfig? cfg = ref.watch(tenantConfigProvider).valueOrNull;
+    final reasons = cfg?.donationReasons ?? const <String>[];
+    if (reasons.isEmpty) return const SizedBox.shrink();
     final cs = Theme.of(context).colorScheme;
-    return Column(
-      children: _cards.map((card) {
-        final pmId = card['id'] as String;
-        final brand = (card['brand'] as String? ?? 'card').toLowerCase();
-        final last4 = card['last4'] as String? ?? '****';
-        final isSelected = _selectedCardId == pmId ||
-            (_selectedCardId == null && card['isDefault'] == true);
-        return InkWell(
-          onTap: () => setState(() => _selectedCardId = pmId),
-          borderRadius: BorderRadius.circular(12),
-          child: Container(
-            margin: const EdgeInsets.only(bottom: 8),
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(
-                color: isSelected ? cs.primary : cs.outlineVariant,
-                width: isSelected ? 2 : 1,
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            tr.donationReasonTitle,
+            style: const TextStyle(fontWeight: FontWeight.w600),
+          ),
+          const SizedBox(height: 8),
+          InkWell(
+            borderRadius: BorderRadius.circular(12),
+            onTap: () async {
+              final picked = await showDonationReasonPicker(
+                context: context,
+                reasons: reasons,
+                currentSelection: _selectedDonationReason,
+              );
+              if (picked is DonationReasonSelected && mounted) {
+                setState(() => _selectedDonationReason = picked.reason);
+              }
+            },
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+              decoration: BoxDecoration(
+                color: cs.surface,
+                border: Border.all(color: cs.outline),
+                borderRadius: BorderRadius.circular(12),
               ),
-            ),
-            child: Row(
-              children: [
-                Icon(
-                  isSelected ? Icons.radio_button_checked : Icons.radio_button_off,
-                  color: isSelected ? cs.primary : cs.outlineVariant,
-                  size: 20,
-                ),
-                const SizedBox(width: 10),
-                cardBrandBox(brand),
-                const SizedBox(width: 10),
+              child: Row(children: [
                 Expanded(
                   child: Text(
-                    '${cardBrandLabel(brand)}  ···· $last4',
+                    _selectedDonationReason ?? tr.donationReasonNone,
                     style: TextStyle(
-                      fontSize: 15,
-                      fontWeight: FontWeight.w500,
-                      color: cs.onSurface,
+                      fontSize: 16,
+                      color: _selectedDonationReason == null
+                          ? cs.onSurfaceVariant
+                          : cs.onSurface,
                     ),
                   ),
                 ),
-                if (card['isDefault'] == true)
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                Icon(Icons.keyboard_arrow_down_rounded, color: cs.onSurfaceVariant),
+              ]),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Compact one-row card selector — shows the currently configured card
+  /// + chevron. Tap opens a bottom sheet with the rest of the saved cards
+  /// (same UX pattern as the donation reason picker).
+  Widget _buildCardSelector(S tr) {
+    final cs = Theme.of(context).colorScheme;
+    if (_cards.isEmpty) return const SizedBox.shrink();
+
+    Map<String, dynamic> resolveSelected() {
+      if (_selectedCardId != null) {
+        final hit = _cards.where((c) => c['id'] == _selectedCardId).toList();
+        if (hit.isNotEmpty) return hit.first;
+      }
+      // Fall back to default-flagged card, or first in the list.
+      final defaults = _cards.where((c) => c['isDefault'] == true).toList();
+      return defaults.isNotEmpty ? defaults.first : _cards.first;
+    }
+
+    final selected = resolveSelected();
+    final brand = (selected['brand'] as String? ?? 'card').toLowerCase();
+    final last4 = selected['last4'] as String? ?? '****';
+    final isDefault = selected['isDefault'] == true;
+
+    return InkWell(
+      borderRadius: BorderRadius.circular(12),
+      onTap: _cards.length > 1 ? () => _showCardPickerSheet(tr) : null,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: cs.outline),
+          color: cs.surface,
+        ),
+        child: Row(
+          children: [
+            cardBrandBox(brand),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                '${cardBrandLabel(brand)}  ···· $last4',
+                style: TextStyle(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w500,
+                  color: cs.onSurface,
+                ),
+              ),
+            ),
+            if (isDefault) ...[
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                decoration: BoxDecoration(
+                  color: cs.primaryContainer,
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                child: Text(
+                  tr.cardDefault,
+                  style: TextStyle(fontSize: 11, color: cs.onPrimaryContainer, fontWeight: FontWeight.w600),
+                ),
+              ),
+              const SizedBox(width: 8),
+            ],
+            if (_cards.length > 1)
+              Icon(Icons.keyboard_arrow_down_rounded, color: cs.onSurfaceVariant),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Bottom sheet that lists ALL saved cards as outlined tiles, same
+  /// History-filter style used by the donation reason picker. Tapping a
+  /// row updates `_selectedCardId` and closes the sheet.
+  Future<void> _showCardPickerSheet(S tr) async {
+    final picked = await showModalBottomSheet<String>(
+      context: context,
+      useRootNavigator: true,
+      useSafeArea: true,
+      isScrollControlled: true,
+      backgroundColor: Theme.of(context).colorScheme.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
+      ),
+      barrierColor: const Color(0xDD000000),
+      builder: (sheetCtx) {
+        final cs = Theme.of(sheetCtx).colorScheme;
+        final selectedId = _selectedCardId ??
+            (_cards.firstWhere(
+              (c) => c['isDefault'] == true,
+              orElse: () => _cards.first,
+            )['id'] as String);
+        return SafeArea(
+          top: false,
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.fromLTRB(20, 12, 20, 18),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Center(
+                  child: Container(
+                    width: 36, height: 4,
+                    margin: const EdgeInsets.only(bottom: 16),
                     decoration: BoxDecoration(
-                      color: cs.primaryContainer,
-                      borderRadius: BorderRadius.circular(4),
-                    ),
-                    child: Text(
-                      tr.cardDefault,
-                      style: TextStyle(fontSize: 11, color: cs.onPrimaryContainer, fontWeight: FontWeight.w600),
+                      color: cs.outlineVariant,
+                      borderRadius: BorderRadius.circular(2),
                     ),
                   ),
+                ),
+                for (var i = 0; i < _cards.length; i++) ...[
+                  _buildCardTile(sheetCtx, _cards[i], selectedId, tr),
+                  if (i < _cards.length - 1) const SizedBox(height: 8),
+                ],
               ],
             ),
           ),
         );
-      }).toList(),
+      },
+    );
+    if (picked != null && mounted) {
+      setState(() => _selectedCardId = picked);
+    }
+  }
+
+  Widget _buildCardTile(BuildContext ctx, Map<String, dynamic> card, String selectedId, S tr) {
+    final cs = Theme.of(ctx).colorScheme;
+    final pmId = card['id'] as String;
+    final brand = (card['brand'] as String? ?? 'card').toLowerCase();
+    final last4 = card['last4'] as String? ?? '****';
+    final isSelected = pmId == selectedId;
+    return InkWell(
+      borderRadius: BorderRadius.circular(12),
+      onTap: () => Navigator.pop(ctx, pmId),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        decoration: BoxDecoration(
+          color: isSelected ? cs.primary.withValues(alpha: 0.12) : cs.surface,
+          border: Border.all(color: isSelected ? cs.primary : cs.outline),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Row(
+          children: [
+            cardBrandBox(brand),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                '${cardBrandLabel(brand)}  ···· $last4',
+                style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: isSelected ? FontWeight.w600 : FontWeight.w500,
+                  color: cs.onSurface,
+                ),
+              ),
+            ),
+            if (card['isDefault'] == true && !isSelected)
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                decoration: BoxDecoration(
+                  color: cs.primaryContainer,
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                child: Text(
+                  tr.cardDefault,
+                  style: TextStyle(fontSize: 11, color: cs.onPrimaryContainer, fontWeight: FontWeight.w600),
+                ),
+              ),
+            if (isSelected)
+              Icon(Icons.check, color: cs.primary, size: 22),
+          ],
+        ),
+      ),
     );
   }
 
@@ -725,6 +916,8 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
       autoEmptyClearNextRunAt: _frequency == 'manual',
       autoEmptyPaymentMethodId: _frequency != 'manual' ? _selectedCardId : null,
       autoEmptyClearPaymentMethodId: _frequency == 'manual',
+      autoEmptyDonationReason: _frequency != 'manual' ? _selectedDonationReason : null,
+      autoEmptyClearDonationReason: _frequency == 'manual' || _selectedDonationReason == null,
     );
   }
 
