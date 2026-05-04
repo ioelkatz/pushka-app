@@ -1038,24 +1038,22 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       WidgetsBinding.instance.addPostFrameCallback((_) => _presetEditFocus.requestFocus());
     }
 
-    Future<void> commitEdit() async {
+    void commitEdit() {
       final idx = _editingPresetIndex;
       if (idx == null) return;
       final parsed = double.tryParse(_presetEditCtrl.text.replaceAll(',', '.'));
       if (parsed == null || parsed <= 0) {
-        // Invalid — revert
-        setState(() { _editingPresetIndex = null; _localPresets = null; });
+        // Invalid — revert to current values without saving
+        setState(() { _editingPresetIndex = null; });
         return;
       }
       final updated = List<double>.of(presets);
       updated[idx] = parsed;
+      // Keep _localPresets as source of truth — don't clear after the await,
+      // because the Firestore stream may not have emitted before the setState fires.
       setState(() { _editingPresetIndex = null; _localPresets = updated; });
-      try {
-        await _updateSettings(user, presetAmounts: updated);
-        if (mounted) setState(() => _localPresets = null);
-      } catch (_) {
-        if (mounted) setState(() => _localPresets = null);
-      }
+      _updateSettings(user, presetAmounts: updated)
+          .catchError((Object e) => debugPrint('preset save error: $e'));
     }
 
     return Row(
@@ -2051,7 +2049,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       selectedCurrency = newCurrency;
       selectedFlag = selected['flag'] ?? _flagForCountry(selectedCountry);
       pushkaGoal = newGoal;
-      _localPresets = null;
+      _localPresets = _presetsForCurrency(newCurrency); // show immediately, no stream dependency
       _editingPresetIndex = null;
     });
     final uid = user?.uid;
