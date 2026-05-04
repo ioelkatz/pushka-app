@@ -997,7 +997,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
           PositionedDirectional(
             start: 4,
             top: -(badgeSize - h) / 2,
-            child: _HexBadge(count: streakCount, color1: sc.$1, color2: sc.$2),
+            child: _HexBadge(count: streakCount, color1: _hexColor1(streakCount), color2: _hexColor2(streakCount)),
           ),
       ],
     );
@@ -1019,6 +1019,18 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
       6 => (const Color(0xFF4DD0E1), const Color(0xFF00695C)),
       _ => (const Color(0xFF9FA8DA), const Color(0xFF1A237E)),
     };
+  }
+
+  Color _hexColor1(int count) {
+    final day = ((count - 1) % 7) + 1;
+    if (day == 3) return const Color(0xFF81D4FA);
+    return _streakColors(count).$1;
+  }
+
+  Color _hexColor2(int count) {
+    final day = ((count - 1) % 7) + 1;
+    if (day == 3) return const Color(0xFF29B6F6);
+    return _streakColors(count).$2;
   }
 
   Widget _holidayIcon(String name, {double size = 28}) {
