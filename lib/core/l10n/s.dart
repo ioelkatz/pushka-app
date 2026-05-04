@@ -258,6 +258,9 @@ class S {
   String get donate => _t('Donar', 'Donate', 'Donner', 'תרום');
   String get cannotExceedBalance => _t('No puede ser mayor al saldo de tu Pushka', 'Cannot exceed your Pushka balance', 'Ne peut pas dépasser le solde de votre Pushka', 'לא יכול לעלות על יתרת הפושקה שלך');
   String get tzedakahSettings => _t('Configuración de Tzedaká', 'Tzedakah Settings', 'Configuration de Tsédaka', 'הגדרות צדקה');
+  String get donationReasonTitle => _t('Designación', 'Designation', 'Désignation', 'ייעוד');
+  String get donationReasonSubtitle => _t('Opcional — elegí a qué destino va tu donación.', 'Optional — choose where your donation goes.', 'Optionnel — choisissez la destination de votre don.', 'אופציונלי — בחרו לאן הולכת התרומה.');
+  String get donationReasonNone => _t('Sin designación', 'No designation', 'Sans désignation', 'ללא ייעוד');
   String get pushkaGoalLabel => _t('META DE PUSHKA', 'PUSHKA GOAL', 'OBJECTIF DE PUSHKA', 'יעד פושקה');
   String get correctAmountLabel => _t('MONTO ACUMULADO', 'ACCUMULATED AMOUNT', 'MONTANT ACCUMULÉ', 'סכום שנצבר');
   String get correctAmountHint => _t('¿Pusiste de más? Corregí el monto acumulado.', 'Added too much? Correct the accumulated amount.', 'Trop ajouté ? Corrigez le montant accumulé.', 'הוספת יותר מדי? תקן את הסכום שנצבר.');

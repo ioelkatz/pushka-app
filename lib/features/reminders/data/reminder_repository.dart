@@ -27,6 +27,14 @@ class ReminderRepository {
     });
   }
 
+  /// One-shot fetch used at app cold-start to re-arm OS-level alarms after
+  /// uninstall / clear-data. The stream-based `watchReminders` is fine for the
+  /// UI but would keep the Firestore listener open just to read once.
+  Future<List<Reminder>> fetchAll(String uid) async {
+    final snap = await _collection(uid).get();
+    return snap.docs.map((d) => Reminder.fromMap(d.id, d.data())).toList();
+  }
+
   static const _keyReminderCount = 'reminderCount';
 
   firestore.DocumentReference<Map<String, dynamic>> _userRef(String uid) =>

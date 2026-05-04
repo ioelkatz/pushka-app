@@ -16,6 +16,7 @@ class TenantConfig {
     this.contactEmail,
     this.privacyPolicyUrl,
     this.termsUrl,
+    this.donationReasons = const [],
   });
 
   final String tenantId;
@@ -32,6 +33,9 @@ class TenantConfig {
   final String? contactEmail;
   final String? privacyPolicyUrl;
   final String? termsUrl;
+  /// Optional per-tenant list of donation reasons ("designaciones") shown
+  /// to the donor at payment time. Empty list = picker is hidden.
+  final List<String> donationReasons;
 
   factory TenantConfig.fromMap(String tenantId, Map<String, dynamic> data) {
     return TenantConfig(
@@ -49,6 +53,7 @@ class TenantConfig {
       contactEmail: _nonEmpty(data['contactEmail'] as String?),
       privacyPolicyUrl: _nonEmpty(data['privacyPolicyUrl'] as String?),
       termsUrl: _nonEmpty(data['termsUrl'] as String?),
+      donationReasons: _stringList(data['donationReasons']),
     );
   }
 
@@ -70,11 +75,21 @@ class TenantConfig {
       if (contactEmail != null) 'contactEmail': contactEmail,
       if (privacyPolicyUrl != null) 'privacyPolicyUrl': privacyPolicyUrl,
       if (termsUrl != null) 'termsUrl': termsUrl,
+      if (donationReasons.isNotEmpty) 'donationReasons': donationReasons,
     };
   }
 
   static String? _nonEmpty(String? s) =>
       (s == null || s.trim().isEmpty) ? null : s.trim();
+
+  static List<String> _stringList(dynamic raw) {
+    if (raw is! List) return const [];
+    return raw
+        .whereType<String>()
+        .map((s) => s.trim())
+        .where((s) => s.isNotEmpty)
+        .toList(growable: false);
+  }
 
   static Color? _parseColor(String? hex) {
     if (hex == null || hex.isEmpty) return null;
@@ -120,7 +135,16 @@ class TenantConfig {
           defaultCountry == other.defaultCountry &&
           contactEmail == other.contactEmail &&
           privacyPolicyUrl == other.privacyPolicyUrl &&
-          termsUrl == other.termsUrl;
+          termsUrl == other.termsUrl &&
+          _listEquals(donationReasons, other.donationReasons);
+
+  static bool _listEquals(List<String> a, List<String> b) {
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (a[i] != b[i]) return false;
+    }
+    return true;
+  }
 
   @override
   int get hashCode => Object.hash(
@@ -128,5 +152,6 @@ class TenantConfig {
         primaryColor, secondaryColor, logoUrl,
         defaultLanguage, defaultCurrency, defaultCountry,
         contactEmail, privacyPolicyUrl, termsUrl,
+        Object.hashAll(donationReasons),
       );
 }

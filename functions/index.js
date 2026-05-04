@@ -453,27 +453,35 @@ exports.createPaymentIntent = onCall(
     throw new HttpsError("failed-precondition", "Stripe no configurado.");
   }
 
-  // Block payments for suspended users
-  const adminDataSnap = await db.collection("adminData").doc(request.auth.uid).get();
+  // Parallelize the two independent Firestore reads (block check + user
+  // doc) — they were sequential and added ~150-300ms of avoidable latency.
+  const [adminDataSnap, userSnap] = await Promise.all([
+    db.collection("adminData").doc(request.auth.uid).get(),
+    db.collection("users").doc(request.auth.uid).get(),
+  ]);
   if (adminDataSnap.exists && adminDataSnap.data()?.isBlocked === true) {
     throw new HttpsError("permission-denied", "Tu cuenta está temporalmente suspendida. Contactá a soporte.");
   }
 
-  // Load user's tenant to route payment via Stripe Connect.
-  const userSnap = await db.collection("users").doc(request.auth.uid).get();
   const userData = userSnap.exists ? (userSnap.data() ?? {}) : {};
   const tenantId = userData.tenantId ?? null;
 
-  // Refuse if an auto-empty cron run is currently mid-charge for this
-  // (uid, tenantId). Without this guard, a manual "Vaciar Pushka" tap can
-  // race against the cron and double-charge the same balance. The lock now
-  // lives on the per-tenant `tenantState/{tenantId}` doc — a user belonging
-  // to two chabads can have one tenant locked while donating to the other.
-  // The lock is short-lived (released by the cron in <30s on success/failure;
-  // TTL 10min on crash, applied by the cron's stale-lock check).
+  // Same parallelization for tenantState lock check + tenant doc lookup —
+  // both are gated on tenantId existing and otherwise independent.
+  let tenantConnectAccountId = null;
+  let tenantCommissionRate = 0;
+
   if (tenantId) {
-    const stateSnap = await db.collection("users").doc(request.auth.uid)
-      .collection("tenantState").doc(tenantId).get();
+    const [stateSnap, tenantSnap] = await Promise.all([
+      db.collection("users").doc(request.auth.uid)
+        .collection("tenantState").doc(tenantId).get(),
+      db.collection("tenants").doc(tenantId).get(),
+    ]);
+
+    // Auto-empty cron lock: refuse if a scheduled charge is mid-flight for
+    // this (uid, tenantId) — prevents double-charge from a "Vaciar Pushka"
+    // tap that races the cron. Lock TTL is 10 minutes (cron releases on
+    // success/failure within ~30s; the longer window catches crashes).
     if (stateSnap.exists) {
       const _autoLockAt = stateSnap.data()?._autoEmptyChargeLockAt?.toMillis?.() ?? null;
       if (_autoLockAt && (Date.now() - _autoLockAt) < (10 * 60 * 1000)) {
@@ -483,17 +491,10 @@ exports.createPaymentIntent = onCall(
         );
       }
     }
-  }
 
-  let tenantConnectAccountId = null;
-  let tenantCommissionRate = 0;
-  let tenantStatus = null;
-
-  if (tenantId) {
-    const tenantSnap = await db.collection("tenants").doc(tenantId).get();
     if (tenantSnap.exists) {
       const tenantData = tenantSnap.data();
-      tenantStatus = tenantData.status;
+      const tenantStatus = tenantData.status;
       if (tenantStatus === "suspended") {
         throw new HttpsError("permission-denied", "El servicio de tu organización está suspendido. Contactá al administrador.");
       }
@@ -617,18 +618,26 @@ exports.createPaymentIntent = onCall(
     }
   }
 
-  // Proactively dedupe the customer's saved PaymentMethods BEFORE the
-  // PaymentSheet queries them. Same fingerprint-based logic as listSavedCards.
-  try {
-    const customer = await stripe.customers.retrieve(customerId);
+  // Skip the dedupe pass if it ran recently. The pass touches Stripe twice
+  // (customers.retrieve + paymentMethods.list) plus N more updates/detaches —
+  // ~400-800ms on the critical path. State only changes when a card is
+  // added or removed, so we cache `_lastPmDedupePassAt` on the user doc and
+  // skip if < 6h old. Card add/remove flows clear the cache so the next
+  // payment re-runs the pass.
+  const lastDedupeAt = userData._lastPmDedupePassAt?.toMillis?.() ?? 0;
+  const dedupeStale = (Date.now() - lastDedupeAt) > (6 * 60 * 60 * 1000);
+  if (dedupeStale) try {
+    const [customer, pmList] = await Promise.all([
+      stripe.customers.retrieve(customerId),
+      stripe.paymentMethods.list({
+        customer: customerId,
+        type: "card",
+        limit: 100,
+      }),
+    ]);
     const defaultPmId = customer && !customer.deleted
       ? customer.invoice_settings?.default_payment_method || null
       : null;
-    const pmList = await stripe.paymentMethods.list({
-      customer: customerId,
-      type: "card",
-      limit: 100,
-    });
     // Always-on inventory log so we can see what PaymentSheet WILL receive.
     console.info("createPaymentIntent: customer PM inventory", {
       uid: request.auth.uid,
@@ -703,6 +712,15 @@ exports.createPaymentIntent = onCall(
         }),
       ));
     }
+    // Stamp the success — fire-and-forget so it doesn't block the
+    // critical path. Next call within 6h skips the whole dedupe pass.
+    db.collection("users").doc(request.auth.uid).set({
+      _lastPmDedupePassAt: admin.firestore.FieldValue.serverTimestamp(),
+    }, { merge: true }).catch((stampErr) => {
+      console.warn("createPaymentIntent: dedupe stamp failed", {
+        uid: request.auth.uid, errorMessage: stampErr?.message,
+      });
+    });
   } catch (dedupeErr) {
     console.warn("createPaymentIntent: dedupe pass failed (non-fatal)", {
       uid: request.auth.uid, customerId,
@@ -710,9 +728,11 @@ exports.createPaymentIntent = onCall(
     });
   }
 
-  let paymentIntent;
-  try {
-    paymentIntent = await stripe.paymentIntents.create({
+  // Build the PaymentIntent + CustomerSession in parallel — neither depends
+  // on the other after customerId is resolved, but they were sequential and
+  // each costs ~300-600ms. Promise.allSettled so a CustomerSession failure
+  // doesn't kill the PaymentIntent (we fall back to ephemeralKey below).
+  const piParams = {
       amount,
       currency,
       customer: customerId,
@@ -748,8 +768,45 @@ exports.createPaymentIntent = onCall(
         purpose,
         ...(tenantId ? { tenantId } : {}),
       },
-    }, { idempotencyKey });
-  } catch (err) {
+  };
+
+  // Customer Sessions (Stripe's modern replacement for ephemeral keys)
+  // unlock the saved-cards list inside PaymentSheet AND let us declare the
+  // payment_method_save / payment_method_remove features so the SDK doesn't
+  // hide cards based on inferred constraints. With plain ephemeralKeys the
+  // SDK was filtering some saved cards out of the picker (observed on
+  // production: a customer with Visa default + MC saw only MC). The new
+  // CustomerSession.client_secret is consumed by PaymentSheet via the
+  // `customerSessionClientSecret` parameter.
+  //
+  // We still emit the legacy ephemeralKey as a fallback for the off-chance
+  // a future Stripe SDK version regresses Session support — the client
+  // prefers session > ephemeralKey when both are present.
+  const customerSessionParams = {
+    customer: customerId,
+    components: {
+      mobile_payment_element: {
+        enabled: true,
+        features: {
+          payment_method_save: "enabled",
+          payment_method_remove: "enabled",
+          payment_method_redisplay: "enabled",
+          payment_method_allow_redisplay_filters: ["always", "limited", "unspecified"],
+        },
+      },
+    },
+  };
+
+  // Fire both Stripe API calls concurrently. allSettled (not all) so a
+  // CustomerSession failure doesn't tank the PaymentIntent — we fall back
+  // to ephemeralKey in that branch.
+  const [piResult, sessionResult] = await Promise.allSettled([
+    stripe.paymentIntents.create(piParams, { idempotencyKey }),
+    stripe.customerSessions.create(customerSessionParams),
+  ]);
+
+  if (piResult.status === "rejected") {
+    const err = piResult.reason;
     console.error("createPaymentIntent: Stripe API error", {
       uid: request.auth.uid,
       tenantId: tenantId || null,
@@ -767,38 +824,14 @@ exports.createPaymentIntent = onCall(
         : "No se pudo procesar el pago. Intenta de nuevo.";
     throw new HttpsError("internal", userMessage);
   }
+  const paymentIntent = piResult.value;
 
-  // Customer Sessions (Stripe's modern replacement for ephemeral keys)
-  // unlock the saved-cards list inside PaymentSheet AND let us declare the
-  // payment_method_save / payment_method_remove features so the SDK doesn't
-  // hide cards based on inferred constraints. With plain ephemeralKeys the
-  // SDK was filtering some saved cards out of the picker (observed on
-  // production: a customer with Visa default + MC saw only MC). The new
-  // CustomerSession.client_secret is consumed by PaymentSheet via the
-  // `customerSessionClientSecret` parameter.
-  //
-  // We still emit the legacy ephemeralKey as a fallback for the off-chance
-  // a future Stripe SDK version regresses Session support — the client
-  // prefers session > ephemeralKey when both are present.
   let customerSessionClientSecret = null;
   let ephemeralKeySecret = null;
-  try {
-    const session = await stripe.customerSessions.create({
-      customer: customerId,
-      components: {
-        mobile_payment_element: {
-          enabled: true,
-          features: {
-            payment_method_save: "enabled",
-            payment_method_remove: "enabled",
-            payment_method_redisplay: "enabled",
-            payment_method_allow_redisplay_filters: ["always", "limited", "unspecified"],
-          },
-        },
-      },
-    });
-    customerSessionClientSecret = session.client_secret;
-  } catch (csErr) {
+  if (sessionResult.status === "fulfilled") {
+    customerSessionClientSecret = sessionResult.value.client_secret;
+  } else {
+    const csErr = sessionResult.reason;
     console.warn("createPaymentIntent: customer session creation failed", {
       uid: request.auth.uid,
       tenantId: tenantId || null,
@@ -849,6 +882,13 @@ exports.createSetupIntent = onCall(
     const uid = request.auth.uid;
     const stripe = require("stripe")(stripeSecret.value());
     const userRef = db.collection("users").doc(uid);
+
+    // Invalidate the dedupe cache eagerly: the user is about to add a card,
+    // so the next createPaymentIntent must re-run the inventory pass to
+    // catch a freshly-attached duplicate before PaymentSheet sees it.
+    userRef.set({
+      _lastPmDedupePassAt: admin.firestore.FieldValue.delete(),
+    }, { merge: true }).catch(() => {});
 
     // Resolve (or create) Stripe customer inside a Firestore transaction to
     // prevent a race condition where two concurrent calls both find
@@ -1179,6 +1219,13 @@ exports.deletePaymentMethod = onCall(
       }
     }
 
+    // Card removed → invalidate dedupe cache so the next payment re-runs
+    // the pass (otherwise the cron would still see the freshly-detached PM
+    // until the 6h TTL elapses).
+    userRef.set({
+      _lastPmDedupePassAt: admin.firestore.FieldValue.delete(),
+    }, { merge: true }).catch(() => {});
+
     return { success: true, newDefault };
   }
 );
@@ -1224,11 +1271,16 @@ exports.setDefaultPaymentMethod = onCall(
       invoice_settings: { default_payment_method: pmId },
     });
 
-    // Cache brand/last4 in Firestore for display in settings
+    // Cache brand/last4 in Firestore for display in settings.
+    // Also clear the dedupe cache: the dedupe pass picks a "winner" per
+    // fingerprint group based on which card is the default — switching
+    // defaults can change the winner, so the next createPaymentIntent
+    // should re-run the pass instead of relying on the cached state.
     await userRef.set({
       stripeDefaultPaymentMethodId: pmId,
       stripeDefaultPaymentMethodLast4: pm.card?.last4 || null,
       stripeDefaultPaymentMethodBrand: pm.card?.brand || null,
+      _lastPmDedupePassAt: admin.firestore.FieldValue.delete(),
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     }, { merge: true });
 
@@ -3924,6 +3976,7 @@ const TENANT_PUBLIC_FIELDS = [
   "defaultLanguage", "defaultCurrency", "defaultCountry",
   "contactEmail", "contactPhone", "privacyPolicyUrl", "termsUrl",
   "city", "neighborhood", "country",
+  "donationReasons",
 ];
 
 // Fields exposed to authenticated users of the tenant (same as public + status
@@ -4162,6 +4215,53 @@ exports.backfillTenantSlugs = onCall(
       conflicts,
     };
     console.info("backfillTenantSlugs: completed", summary);
+    return summary;
+  },
+);
+
+// ---------------------------------------------------------------------------
+// backfillDonationReasonsChabad — one-shot super_admin operation: stamp a
+// default Chabad-style donationReasons array on every tenant that doesn't
+// already have one configured. Idempotent (skips tenants where the field
+// is a non-empty array). Run once after launching the designación picker.
+// ---------------------------------------------------------------------------
+const DEFAULT_CHABAD_DONATION_REASONS = [
+  "Donde más se necesite",
+  "Comida para familias",
+  "Estudios de Torá",
+  "Festividades",
+  "Edificio / Beit Jabad",
+  "Becas para niños",
+];
+
+exports.backfillDonationReasonsChabad = onCall(
+  { enforceAppCheck: true },
+  async (request) => {
+    if (!(await callerIsSuperAdminFresh(request))) {
+      throw new HttpsError("permission-denied", "Solo super_admin.");
+    }
+
+    const tenantsSnap = await db.collection("tenants").get();
+    let scanned = 0;
+    let updated = 0;
+    let skipped = 0;
+
+    for (const tenantDoc of tenantsSnap.docs) {
+      scanned += 1;
+      const existing = tenantDoc.data()?.donationReasons;
+      if (Array.isArray(existing) && existing.length > 0) {
+        skipped += 1;
+        continue;
+      }
+      await tenantDoc.ref.set({
+        donationReasons: DEFAULT_CHABAD_DONATION_REASONS,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      }, { merge: true });
+      updated += 1;
+    }
+
+    const summary = { scanned, updated, skippedAlreadyConfigured: skipped };
+    console.info("backfillDonationReasonsChabad: completed", summary);
     return summary;
   },
 );

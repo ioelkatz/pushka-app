@@ -8,7 +8,10 @@ import 'package:firebase_app_check/firebase_app_check.dart';
 import 'package:firebase_crashlytics/firebase_crashlytics.dart';
 import 'package:flutter_stripe/flutter_stripe.dart';
 
+import 'package:cloud_firestore/cloud_firestore.dart';
+
 import '../features/notifications/notification_service.dart';
+import '../features/reminders/data/reminder_repository.dart';
 import '../features/deep_links/deep_link_service.dart';
 import '../config/stripe_config.dart';
 import '../features/feedback/feedback_service.dart';
@@ -50,6 +53,20 @@ Future<void> _performDeferredInit() async {
     if (user != null) {
       await NotificationService.instance.syncFcmToken(user.uid);
       NotificationService.instance.listenForTokenRefresh(user.uid);
+      // Re-arm OS-level alarms for any reminder saved in Firestore. The
+      // plugin persists its own AlarmManager schedule across reboots, but
+      // an uninstall (or clear-data) wipes those — leaving Firestore
+      // reminders orphaned (visible in the UI but never firing). This
+      // resync is idempotent: scheduleReminder calls cancelReminder first.
+      try {
+        final repo = ReminderRepository(FirebaseFirestore.instance);
+        final reminders = await repo.fetchAll(user.uid);
+        for (final r in reminders) {
+          await NotificationService.instance.scheduleReminder(r);
+        }
+      } catch (e) {
+        debugPrint('appDeferredInit: reminder resync failed: $e');
+      }
     }
   }
 

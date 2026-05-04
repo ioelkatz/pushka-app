@@ -1,4 +1,5 @@
 import 'package:cloud_functions/cloud_functions.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_stripe/flutter_stripe.dart';
 
 import '../../config/stripe_config.dart';
@@ -56,6 +57,7 @@ class StripeService {
     String purpose = 'donation',
     String merchantDisplayName = 'Pushka',
   }) async {
+    final sw = Stopwatch()..start();
     final callable = FirebaseFunctions.instance.httpsCallable(
       'createPaymentIntent',
     );
@@ -72,6 +74,8 @@ class StripeService {
     } catch (_) {
       throw const StripeServiceException('network-error');
     }
+    debugPrint('StripeService.pay: createPaymentIntent CF returned in ${sw.elapsedMilliseconds}ms');
+    sw.reset();
 
     final clientSecret = result.data['clientSecret'] as String?;
     if (clientSecret == null || clientSecret.isEmpty) {
@@ -110,9 +114,12 @@ class StripeService {
         googlePay: _googlePayConfigFor(currency),
       ),
     );
+    debugPrint('StripeService.pay: initPaymentSheet returned in ${sw.elapsedMilliseconds}ms');
+    sw.reset();
 
     try {
       await Stripe.instance.presentPaymentSheet();
+      debugPrint('StripeService.pay: presentPaymentSheet returned (user closed/paid) in ${sw.elapsedMilliseconds}ms');
     } on StripeException catch (e) {
       // Convert StripeException to a typed exception so callers can distinguish
       // a user-initiated cancel from a genuine payment failure.

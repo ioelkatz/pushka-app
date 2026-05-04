@@ -27,6 +27,11 @@ class NotificationService {
   // hashCode is not unique across different objects — a counter is safe.
   int _nextNotificationId = 1;
 
+  /// True when the user has granted SCHEDULE_EXACT_ALARM (Android 12+).
+  /// When false we fall back to AndroidScheduleMode.inexactAllowWhileIdle —
+  /// otherwise zonedSchedule throws and the reminder silently never fires.
+  bool _canScheduleExact = true;
+
   /// Called whenever a notification tap should navigate somewhere.
   /// Set this from the router/shell once GoRouter is available.
   void Function(String route)? _onNavigate;
@@ -236,7 +241,15 @@ class NotificationService {
         .resolvePlatformSpecificImplementation<
             AndroidFlutterLocalNotificationsPlugin>();
     await androidPlugin?.requestNotificationsPermission();
-    await androidPlugin?.requestExactAlarmsPermission();
+    final exactGranted =
+        await androidPlugin?.requestExactAlarmsPermission() ?? true;
+    _canScheduleExact = exactGranted;
+    if (!exactGranted) {
+      debugPrint(
+        'NotificationService: SCHEDULE_EXACT_ALARM denied — '
+        'reminders will fire within ~15min of target via inexact alarm.',
+      );
+    }
 
     final iosPlugin = _localNotifications
         .resolvePlatformSpecificImplementation<
@@ -247,6 +260,10 @@ class NotificationService {
       sound: true,
     );
   }
+
+  AndroidScheduleMode get _androidScheduleMode => _canScheduleExact
+      ? AndroidScheduleMode.exactAllowWhileIdle
+      : AndroidScheduleMode.inexactAllowWhileIdle;
 
   Future<void> _initializeLocalNotifications() async {
     const androidSettings = AndroidInitializationSettings('@mipmap/ic_launcher');
@@ -264,6 +281,35 @@ class NotificationService {
         }
       },
     );
+
+    // Pre-create both channels so Samsung One UI doesn't silence the first
+    // fire of a never-before-seen channel. Lazy creation (on first show) is
+    // documented to "work" but reliably surfaces silently the first time on
+    // some Samsung devices.
+    final androidPlugin = _localNotifications
+        .resolvePlatformSpecificImplementation<
+            AndroidFlutterLocalNotificationsPlugin>();
+    debugPrint('NotificationService: pre-creating channels '
+        '(androidPlugin=${androidPlugin != null})');
+    if (androidPlugin != null) {
+      try {
+        await androidPlugin.createNotificationChannel(const AndroidNotificationChannel(
+          'pushka_notifications',
+          'Pushka Notifications',
+          description: 'General Pushka notifications',
+          importance: Importance.high,
+        ));
+        await androidPlugin.createNotificationChannel(const AndroidNotificationChannel(
+          'pushka_reminders',
+          'Pushka Reminders',
+          description: 'Scheduled reminders and alerts',
+          importance: Importance.high,
+        ));
+        debugPrint('NotificationService: channels created OK');
+      } catch (e) {
+        debugPrint('NotificationService: channel creation failed: $e');
+      }
+    }
   }
 
   Future<void> _showLocalNotification(RemoteMessage message) async {
@@ -329,6 +375,12 @@ class NotificationService {
 
     await cancelReminder(reminder);
 
+    debugPrint('NotificationService.scheduleReminder: id=${reminder.id} '
+        'title="${reminder.title}" days=${reminder.days} time=${reminder.time.hour}:${reminder.time.minute} '
+        'minutesBefore=${reminder.minutesBefore} secondTime=${reminder.secondTime} '
+        'secondDays=${reminder.secondDays} mode=${_androidScheduleMode.name} '
+        'utcScheduling=$_useUtcScheduling');
+
     final body = tr != null ? reminder.subtitleFor(tr) : reminder.subtitle;
     final bodySecondary = tr != null
         ? reminder.subtitleSecondaryFor(tr)
@@ -341,16 +393,11 @@ class NotificationService {
         reminder.time,
         reminder.minutesBefore,
       );
-      await _localNotifications.zonedSchedule(
-        _notificationId(reminder.id, index++),
-        reminder.title,
-        body,
-        scheduleTime,
-        _notificationDetails(),
-        androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
-        uiLocalNotificationDateInterpretation:
-            UILocalNotificationDateInterpretation.absoluteTime,
-        matchDateTimeComponents: DateTimeComponents.dayOfWeekAndTime,
+      await _safeZonedSchedule(
+        id: _notificationId(reminder.id, index++),
+        title: reminder.title,
+        body: body,
+        when: scheduleTime,
       );
     }
 
@@ -361,17 +408,59 @@ class NotificationService {
           reminder.secondTime!,
           null,
         );
+        await _safeZonedSchedule(
+          id: _notificationId(reminder.id, index++),
+          title: reminder.title,
+          body: bodySecondary ?? body,
+          when: scheduleTime,
+        );
+      }
+    }
+  }
+
+  /// Wraps `zonedSchedule` so an `exact_alarms_not_permitted` PlatformException
+  /// (raised mid-session if the user revokes the permission after first grant)
+  /// downgrades to inexact instead of dropping the schedule on the floor.
+  Future<void> _safeZonedSchedule({
+    required int id,
+    required String title,
+    required String body,
+    required tz.TZDateTime when,
+  }) async {
+    debugPrint('NotificationService._safeZonedSchedule: id=$id '
+        'when=$when timezone=${when.location.name} '
+        'now=${tz.TZDateTime.now(when.location)}');
+    try {
+      await _localNotifications.zonedSchedule(
+        id,
+        title,
+        body,
+        when,
+        _notificationDetails(),
+        androidScheduleMode: _androidScheduleMode,
+        uiLocalNotificationDateInterpretation:
+            UILocalNotificationDateInterpretation.absoluteTime,
+        matchDateTimeComponents: DateTimeComponents.dayOfWeekAndTime,
+      );
+    } catch (e) {
+      final msg = e.toString();
+      if (msg.contains('exact_alarms_not_permitted') && _canScheduleExact) {
+        debugPrint('NotificationService: exact alarms revoked at runtime, '
+            'falling back to inexact scheduling.');
+        _canScheduleExact = false;
         await _localNotifications.zonedSchedule(
-          _notificationId(reminder.id, index++),
-          reminder.title,
-          bodySecondary ?? body,
-          scheduleTime,
+          id,
+          title,
+          body,
+          when,
           _notificationDetails(),
-          androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+          androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
           uiLocalNotificationDateInterpretation:
               UILocalNotificationDateInterpretation.absoluteTime,
           matchDateTimeComponents: DateTimeComponents.dayOfWeekAndTime,
         );
+      } else {
+        rethrow;
       }
     }
   }

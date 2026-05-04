@@ -42,7 +42,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   bool soundEnabled = true;
   bool vibrationEnabled = true;
   bool ambientEnabled = false;
-  bool partialPaymentsEnabled = true;
+  bool partialPaymentsEnabled = false;
   bool additionalPaymentOptionsEnabled = false;
   bool biometricAuthenticationEnabled = false;
   String selectedCurrency = 'USD';
@@ -1441,7 +1441,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(22)),
             scrollable: true,
             contentPadding: const EdgeInsets.fromLTRB(20, 22, 20, 0),
-            actionsPadding: const EdgeInsets.fromLTRB(20, 0, 20, 18),
+            actionsPadding: const EdgeInsets.fromLTRB(20, 10, 20, 18),
             content: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
               Text(title, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
               const SizedBox(height: 14),

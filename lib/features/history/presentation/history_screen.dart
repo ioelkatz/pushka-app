@@ -56,7 +56,9 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
 
     return Column(
       children: [
-        // Filtro dropdown
+        // Filter trigger — opens a bottom sheet (consistent with other
+        // pickers in the app; replaces the prior PopupMenu that dropped
+        // down underneath the row and felt out of place).
         Container(
           margin: const EdgeInsets.fromLTRB(18, 14, 18, 10),
           decoration: BoxDecoration(
@@ -64,11 +66,9 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
             borderRadius: BorderRadius.circular(12),
             border: Border.all(color: cs.outline),
           ),
-          child: PopupMenuButton<_HistoryFilter>(
-            offset: const Offset(0, 50),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(12),
-            ),
+          child: InkWell(
+            borderRadius: BorderRadius.circular(12),
+            onTap: _showFilterSheet,
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
               child: Row(
@@ -86,26 +86,6 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
                 ],
               ),
             ),
-            itemBuilder: (context) => [
-              PopupMenuItem(
-                value: _HistoryFilter.tzedaka,
-                child: Text(_tr.filterTzedaka),
-              ),
-              PopupMenuItem(
-                value: _HistoryFilter.pushkaEmpty,
-                child: Text(_tr.filterPushkaEmpty),
-              ),
-              const PopupMenuDivider(),
-              PopupMenuItem(
-                value: _HistoryFilter.all,
-                child: Text(_tr.filterAll),
-              ),
-            ],
-            onSelected: (value) {
-              setState(() {
-                selectedFilter = value;
-              });
-            },
           ),
         ),
 
@@ -361,6 +341,76 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
       case _HistoryFilter.all:
         return _tr.filterAll;
     }
+  }
+
+  Future<void> _showFilterSheet() async {
+    final result = await showModalBottomSheet<_HistoryFilter>(
+      context: context,
+      useRootNavigator: true,
+      useSafeArea: true,
+      backgroundColor: Theme.of(context).colorScheme.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
+      ),
+      barrierColor: const Color(0xDD000000),
+      builder: (sheetCtx) {
+        final cs = Theme.of(sheetCtx).colorScheme;
+        return SafeArea(
+          top: false,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 12, 20, 18),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Center(child: Container(width: 36, height: 4, margin: const EdgeInsets.only(bottom: 16), decoration: BoxDecoration(color: cs.outlineVariant, borderRadius: BorderRadius.circular(2)))),
+                _filterTile(sheetCtx, _HistoryFilter.all, _tr.filterAll),
+                const SizedBox(height: 8),
+                _filterTile(sheetCtx, _HistoryFilter.tzedaka, _tr.filterTzedaka),
+                const SizedBox(height: 8),
+                _filterTile(sheetCtx, _HistoryFilter.pushkaEmpty, _tr.filterPushkaEmpty),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+    if (result != null && mounted) {
+      setState(() => selectedFilter = result);
+    }
+  }
+
+  Widget _filterTile(BuildContext ctx, _HistoryFilter value, String label) {
+    final cs = Theme.of(ctx).colorScheme;
+    final selected = selectedFilter == value;
+    return InkWell(
+      borderRadius: BorderRadius.circular(12),
+      onTap: () => Navigator.pop(ctx, value),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        decoration: BoxDecoration(
+          color: selected ? cs.primary.withValues(alpha: 0.12) : cs.surface,
+          border: Border.all(color: selected ? cs.primary : cs.outline),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Row(
+          children: [
+            Expanded(
+              child: Text(
+                label,
+                style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
+                  color: cs.onSurface,
+                ),
+              ),
+            ),
+            if (selected)
+              Icon(Icons.check, color: cs.primary, size: 22),
+          ],
+        ),
+      ),
+    );
   }
 
   Widget _buildTransactionItem(Transaction transaction, Color primaryColor, String currencySymbol) {

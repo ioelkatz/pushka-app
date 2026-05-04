@@ -56,7 +56,7 @@ class UserRepository {
       'presetAmounts': <double>[],
       'soundEnabled': true,
       'vibrationEnabled': true,
-      'partialPaymentsEnabled': true,
+      'partialPaymentsEnabled': false,
       'additionalPaymentOptionsEnabled': false,
       'biometricAuthenticationEnabled': false,
       'currencyCountry': 'Estados Unidos',

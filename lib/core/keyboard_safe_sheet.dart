@@ -15,6 +15,10 @@ Future<T?> showKeyboardSafeSheet<T>({
     context: context,
     isScrollControlled: true,
     useSafeArea: true,
+    // Push the sheet onto the root navigator so the barrier covers the
+    // shell's AppBar too — otherwise the bar stays bright above the
+    // dimmed body and looks visually disconnected from the modal.
+    useRootNavigator: true,
     shape: const RoundedRectangleBorder(
       borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
     ),

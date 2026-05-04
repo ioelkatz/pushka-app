@@ -20,6 +20,7 @@ import '../../analytics/analytics_service.dart';
 import '../../auth/biometric_service.dart';
 import '../../history/data/transaction_repository.dart';
 import '../../history/domain/transaction.dart';
+import '../../payments/donation_reason_picker.dart';
 import '../../payments/stripe_service.dart';
 import '../../feedback/feedback_service.dart';
 import '../../tenant/data/tenant_repository.dart';
@@ -237,6 +238,9 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
         throw Exception(tr.stripeNotConfigured);
       }
 
+      final (proceed, _) = await _resolveDonationReason();
+      if (!proceed || !mounted) return;
+
       await StripeService.instance.pay(
         amountCents: amountCents,
         currency: currency,
@@ -372,6 +376,9 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
         return;
       }
 
+      final (proceed, _) = await _resolveDonationReason();
+      if (!proceed || !mounted) return;
+
       await StripeService.instance.pay(
         amountCents: amountCents,
         currency: currency,
@@ -414,6 +421,9 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
         _showMinAmountDialog(currency, minCents, donationAmount);
         return;
       }
+      final (proceed, _) = await _resolveDonationReason();
+      if (!proceed || !mounted) return;
+
       await StripeService.instance.pay(
         amountCents: amountCents,
         currency: currency,
@@ -1484,7 +1494,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
 
   bool _partialPaymentsEnabled() {
     final profile = ref.read(userProfileProvider).valueOrNull;
-    return (profile?['partialPaymentsEnabled'] as bool?) ?? true;
+    return (profile?['partialPaymentsEnabled'] as bool?) ?? false;
   }
 
   bool _additionalPaymentOptionsEnabled() {
@@ -1497,6 +1507,19 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
     return (profile?['biometricAuthenticationEnabled'] as bool?) ?? false;
   }
 
+  /// Optional designación picker. Returns `(false, null)` if the user dismissed
+  /// the dialog → caller aborts. The picked reason is intentionally discarded:
+  /// nothing is sent to Stripe metadata or written to Firestore.
+  Future<(bool proceed, String? reason)> _resolveDonationReason() async {
+    final reasons = ref.read(tenantConfigProvider).valueOrNull?.donationReasons ?? const [];
+    if (reasons.isEmpty) return (true, null);
+    final result = await showDonationReasonPicker(
+      context: context,
+      reasons: reasons,
+    );
+    if (result is DonationReasonSelected) return (true, result.reason);
+    return (false, null);
+  }
 
   Future<PaymentMethod?> _showPaymentMethodSelector() async {
     final tr = S.of(context);

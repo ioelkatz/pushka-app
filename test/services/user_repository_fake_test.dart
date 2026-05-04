@@ -80,7 +80,7 @@ void main() {
       expect(data['soundEnabled'], true);
       expect(data['coinJingleEnabled'], true);
       expect(data['vibrationEnabled'], true);
-      expect(data['partialPaymentsEnabled'], true);
+      expect(data['partialPaymentsEnabled'], false);
       expect(data['biometricAuthenticationEnabled'], false);
     });
 

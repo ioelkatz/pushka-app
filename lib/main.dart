@@ -21,6 +21,11 @@ Future<void> main() async {
   // Status bar stays visible so the user keeps the clock/battery/wifi
   // info plus our transparent overlay style on top of the app content.
   if (!kIsWeb) {
+    // Lock to portrait — the layout isn't designed for landscape.
+    SystemChrome.setPreferredOrientations([
+      DeviceOrientation.portraitUp,
+      DeviceOrientation.portraitDown,
+    ]);
     SystemChrome.setEnabledSystemUIMode(
       SystemUiMode.immersiveSticky,
       overlays: [SystemUiOverlay.top],
