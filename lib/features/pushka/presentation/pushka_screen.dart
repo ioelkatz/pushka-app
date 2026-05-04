@@ -1773,6 +1773,18 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
         return [1, 5, 10];
       case 'cad':
         return [1, 5, 10];
+      case 'uyu':
+        return [50, 200, 500];
+      case 'pen':
+        return [5, 20, 50];
+      case 'bob':
+        return [10, 30, 50];
+      case 'gtq':
+        return [10, 30, 50];
+      case 'dop':
+        return [100, 300, 600];
+      case 'aud':
+        return [1, 5, 10];
       case 'usd':
       default:
         return [1, 5, 10];

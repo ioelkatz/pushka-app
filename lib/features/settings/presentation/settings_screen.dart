@@ -1088,6 +1088,12 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       case 'eur': return [1, 5, 10];
       case 'gbp': return [1, 5, 10];
       case 'cad': return [1, 5, 10];
+      case 'uyu': return [50, 200, 500];
+      case 'pen': return [5, 20, 50];
+      case 'bob': return [10, 30, 50];
+      case 'gtq': return [10, 30, 50];
+      case 'dop': return [100, 300, 600];
+      case 'aud': return [1, 5, 10];
       default: return [1, 5, 10];
     }
   }
@@ -1965,6 +1971,12 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       'COP': {'country': 'Colombia', 'flag': '🇨🇴'},
       'GBP': {'country': 'Reino Unido', 'flag': '🇬🇧'},
       'CAD': {'country': 'Canadá', 'flag': '🇨🇦'},
+      'UYU': {'country': 'Uruguay', 'flag': '🇺🇾'},
+      'PEN': {'country': 'Perú', 'flag': '🇵🇪'},
+      'BOB': {'country': 'Bolivia', 'flag': '🇧🇴'},
+      'GTQ': {'country': 'Guatemala', 'flag': '🇬🇹'},
+      'DOP': {'country': 'Rep. Dominicana', 'flag': '🇩🇴'},
+      'AUD': {'country': 'Australia', 'flag': '🇦🇺'},
     };
 
     // Shortlist = USD + EUR + ILS + MXN (universally-relevant baseline
@@ -1980,7 +1992,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     final cfg = ref.read(tenantConfigProvider).valueOrNull;
     final tenantCurrency = cfg?.defaultCurrency?.toUpperCase();
     final tenantCountry = cfg?.defaultCountry;
-    final shortlist = <String>['USD', 'EUR', 'ILS', 'MXN'];
+    final shortlist = <String>['USD', 'EUR', 'ILS'];
     if (tenantCurrency != null && !shortlist.contains(tenantCurrency)) {
       shortlist.add(tenantCurrency);
     }

@@ -26,6 +26,12 @@ class UserRepository {
       case 'ARS': return 180000;
       case 'CLP': return 180000;
       case 'COP': return 770000;
+      case 'UYU': return 5000;
+      case 'PEN': return 500;
+      case 'BOB': return 1000;
+      case 'GTQ': return 1000;
+      case 'DOP': return 6000;
+      case 'AUD': return 180;
       case 'USD':
       default:    return 180;
     }
