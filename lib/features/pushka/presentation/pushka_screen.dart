@@ -638,7 +638,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
             //   'sucot' | 'januca' | 'purim'
             const int? debugStreak = 3;
             const bool debugHoliday = true;
-            const String? debugHolidayKey = 'roshHashana';
+            const String? debugHolidayKey = 'januca';
             // ─────────────────────────────────────────────────────────────
             final int bannerStreak = debugStreak ?? _streakCount;
             final _HolidayInfo? bannerHoliday = !debugHoliday ? null
@@ -855,7 +855,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
     const double badgeSize = 34.0;
     final double pillW = MediaQuery.of(context).size.width - 32;
     final bool isEn = Localizations.localeOf(context).languageCode == 'en';
-    final double streakW = pillW - (holiday?.key == 'roshHashana' ? (isEn ? 130 : 125) : 120);
+    final double streakW = pillW - (holiday?.key == 'roshHashana' ? (isEn ? 130 : 125) : holiday?.key == 'januca' && isEn ? 130 : 120);
     const double holidayW = 168.0;
 
     // Both together: full pill. Solo: the individual width, centered.
@@ -884,6 +884,10 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                           gradient: LinearGradient(
                             colors: holiday.key == 'roshHashana'
                                 ? const [Color(0xFFDCDCE8), Color(0xFF9898A8)]
+                                : holiday.key == 'sucot'
+                                ? const [Color(0xFFFEEDD8), Color(0xFFFCAB64)]
+                                : holiday.key == 'purim' || holiday.key == 'januca'
+                                ? const [Color(0xFF222222), Color(0xFF000000)]
                                 : const [Color(0xFF6B3800), Color(0xFF3A1A00)],
                             begin: Alignment.centerLeft,
                             end: Alignment.centerRight,
@@ -893,7 +897,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                         // Alone: content centered within the 120px pill.
                         padding: both
                             ? EdgeInsetsDirectional.fromSTEB(streakW, 0, 12, 0)
-                            : const EdgeInsets.only(right: 8),
+                            : EdgeInsets.only(left: holiday.key == 'sucot' ? 8.0 : 0.0, right: 8),
                         alignment: Alignment.center,
                         child: Row(
                           mainAxisSize: MainAxisSize.min,
@@ -1030,11 +1034,11 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
     } else if (lower.contains('kipur')) {
       emoji = '🕊️';
     } else if (lower.contains('sucot')) {
-      emoji = '🌴';
+      asset = 'assets/icons/sucot.png';
     } else if (lower.contains('januc')) {
-      emoji = '🕯️';
+      asset = 'assets/icons/januca.png';
     } else if (lower.contains('purim')) {
-      emoji = '🎉';
+      asset = 'assets/icons/purim.png';
     }
     if (asset != null) {
       return Image.asset(asset, width: size, height: size, fit: BoxFit.contain);
