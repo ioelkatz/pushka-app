@@ -100,7 +100,16 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
           // sees a concrete starting value instead of an empty field.
           _amountController.text = _topOffAmount?.toStringAsFixed(0) ?? '0';
           _selectedCardId = tenantState['autoEmptyPaymentMethodId'] as String?;
-          _selectedDonationReason = tenantState['autoEmptyDonationReason'] as String?;
+          // Default the designación to the tenant's first reason when no
+          // saved value exists and the schedule is active. Donors prefer
+          // an opinionated default over having to opt in to a destination.
+          final savedReason = tenantState['autoEmptyDonationReason'] as String?;
+          final cfgReasons =
+              ref.read(tenantConfigProvider).valueOrNull?.donationReasons ?? const <String>[];
+          _selectedDonationReason = savedReason ??
+              (_frequency != 'manual' && cfgReasons.isNotEmpty
+                  ? cfgReasons.first
+                  : null);
         });
         if (_frequency != 'manual') _loadCards();
       });
@@ -130,46 +139,9 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
                 ),
               ),
               const SizedBox(height: 8),
-              DropdownButtonFormField<String>(initialValue: _frequency,
-                decoration: InputDecoration(
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  contentPadding:
-                      const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-                ),
-                items: [
-                  DropdownMenuItem(value: 'manual', child: Text(tr.manualEmpty)),
-                  DropdownMenuItem(value: 'weekly', child: Text(tr.freqWeekly)),
-                  DropdownMenuItem(value: 'monthly', child: Text(tr.freqMonthly)),
-                  DropdownMenuItem(
-                    value: 'erev_rosh_chodesh',
-                    child: Text(tr.freqErevRosh),
-                  ),
-                ],
-                onChanged: (value) {
-                  if (value == null) return;
-                  final wasManual = _frequency == 'manual';
-                  setState(() {
-                    _frequency = value;
-                    // First-time activation (manual → any schedule):
-                    // turn on top-off and seed the amount with the user's
-                    // pushka goal so the schedule is "complete" out of the
-                    // box. The user can flip the toggle off if they don't
-                    // want top-off.
-                    if (wasManual && value != 'manual') {
-                      _topOffEnabled = true;
-                      final goal = (ref.read(tenantStateProvider).valueOrNull
-                          ?['pushkaGoal'] as num?)?.toDouble();
-                      _topOffAmount = goal ?? _topOffAmount ?? 18;
-                    }
-                    _amountController.text =
-                        _topOffAmount?.toStringAsFixed(0) ?? '';
-                  });
-                  if (wasManual && value != 'manual' && _cards.isEmpty) {
-                    _loadCards();
-                  }
-                },
+              _buildSelectTile(
+                _frequencyLabel(tr, _frequency),
+                () => _showFrequencyPicker(tr),
               ),
               const SizedBox(height: 16),
               if (needsCardWarning) ...[
@@ -488,10 +460,9 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
               }
             },
             child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
               decoration: BoxDecoration(
-                color: cs.surface,
-                border: Border.all(color: cs.outline),
+                border: Border.all(color: AppTokens.border),
                 borderRadius: BorderRadius.circular(12),
               ),
               child: Row(children: [
@@ -506,7 +477,7 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
                     ),
                   ),
                 ),
-                Icon(Icons.keyboard_arrow_down_rounded, color: cs.onSurfaceVariant),
+                Icon(Icons.keyboard_arrow_down, color: Colors.grey),
               ]),
             ),
           ),
@@ -544,8 +515,7 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: cs.outline),
-          color: cs.surface,
+          border: Border.all(color: AppTokens.border),
         ),
         child: Row(
           children: [
@@ -576,7 +546,7 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
               const SizedBox(width: 8),
             ],
             if (_cards.length > 1)
-              Icon(Icons.keyboard_arrow_down_rounded, color: cs.onSurfaceVariant),
+              const Icon(Icons.keyboard_arrow_down, color: Colors.grey),
           ],
         ),
       ),
@@ -975,42 +945,129 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
     return now.add(const Duration(days: 30));
   }
 
+  String _frequencyLabel(S tr, String value) {
+    switch (value) {
+      case 'weekly':
+        return tr.freqWeekly;
+      case 'monthly':
+        return tr.freqMonthly;
+      case 'erev_rosh_chodesh':
+        return tr.freqErevRosh;
+      default:
+        return tr.manualEmpty;
+    }
+  }
+
+  /// Generic green-highlighted bottom-sheet picker — same visual pattern as
+  /// the History filter and the donation reason picker. Lives here as a
+  /// helper so the frequency + day-of-week pickers reuse the exact UI.
+  Future<T?> _showOptionPickerSheet<T>({
+    required List<({T value, String label})> options,
+    required T currentValue,
+  }) {
+    return showModalBottomSheet<T>(
+      context: context,
+      useRootNavigator: true,
+      useSafeArea: true,
+      isScrollControlled: true,
+      backgroundColor: Theme.of(context).colorScheme.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
+      ),
+      barrierColor: const Color(0xDD000000),
+      builder: (sheetCtx) {
+        final cs = Theme.of(sheetCtx).colorScheme;
+        return SafeArea(
+          top: false,
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.fromLTRB(20, 12, 20, 18),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Center(
+                  child: Container(
+                    width: 36, height: 4,
+                    margin: const EdgeInsets.only(bottom: 16),
+                    decoration: BoxDecoration(
+                      color: cs.outlineVariant,
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                ),
+                for (var i = 0; i < options.length; i++) ...[
+                  _OptionTile(
+                    label: options[i].label,
+                    selected: options[i].value == currentValue,
+                    onTap: () => Navigator.pop(sheetCtx, options[i].value),
+                  ),
+                  if (i < options.length - 1) const SizedBox(height: 8),
+                ],
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _showFrequencyPicker(S tr) async {
+    final picked = await _showOptionPickerSheet<String>(
+      currentValue: _frequency,
+      options: [
+        (value: 'manual', label: tr.manualEmpty),
+        (value: 'weekly', label: tr.freqWeekly),
+        (value: 'monthly', label: tr.freqMonthly),
+        (value: 'erev_rosh_chodesh', label: tr.freqErevRosh),
+      ],
+    );
+    if (picked == null || !mounted || picked == _frequency) return;
+    final wasManual = _frequency == 'manual';
+    setState(() {
+      _frequency = picked;
+      // First-time activation (manual → any schedule): turn on top-off
+      // and seed the amount with the user's pushka goal so the schedule
+      // is "complete" out of the box. The user can flip the toggle off
+      // if they don't want top-off.
+      if (wasManual && picked != 'manual') {
+        _topOffEnabled = true;
+        final goal = (ref.read(tenantStateProvider).valueOrNull
+            ?['pushkaGoal'] as num?)?.toDouble();
+        _topOffAmount = goal ?? _topOffAmount ?? 18;
+        // Seed the designación to the tenant's first reason so the
+        // schedule starts with a concrete destination instead of the
+        // empty/Sin designación state.
+        if (_selectedDonationReason == null) {
+          final cfgReasons = ref.read(tenantConfigProvider).valueOrNull
+                  ?.donationReasons ?? const <String>[];
+          if (cfgReasons.isNotEmpty) {
+            _selectedDonationReason = cfgReasons.first;
+          }
+        }
+      }
+      _amountController.text = _topOffAmount?.toStringAsFixed(0) ?? '';
+    });
+    if (wasManual && picked != 'manual' && _cards.isEmpty) {
+      _loadCards();
+    }
+  }
+
   Future<void> _showWeeklyDialog() async {
     final tr = S.of(context);
-    final days = [
-      {'label': tr.dayMonFull, 'value': DateTime.monday},
-      {'label': tr.dayTueFull, 'value': DateTime.tuesday},
-      {'label': tr.dayWedFull, 'value': DateTime.wednesday},
-      {'label': tr.dayThuFull, 'value': DateTime.thursday},
-      {'label': tr.dayFriFull, 'value': DateTime.friday},
-      {'label': tr.daySatFull, 'value': DateTime.saturday},
-      {'label': tr.daySunFull, 'value': DateTime.sunday},
-    ];
-
-    final result = await showDialog<int>(
-      context: context,
-      builder: (context) => AlertDialog(
-        content: SizedBox(
-          width: double.maxFinite,
-          child: ListView.separated(
-            shrinkWrap: true,
-            itemCount: days.length,
-            separatorBuilder: (_, _) =>
-                Divider(height: 1, color: Colors.grey.shade200),
-            itemBuilder: (context, index) {
-              final item = days[index];
-              return ListTile(
-                title: Text(item['label'] as String),
-                onTap: () => Navigator.pop(context, item['value'] as int),
-              );
-            },
-          ),
-        ),
-      ),
+    final picked = await _showOptionPickerSheet<int>(
+      currentValue: _weekday,
+      options: [
+        (value: DateTime.monday, label: tr.dayMonFull),
+        (value: DateTime.tuesday, label: tr.dayTueFull),
+        (value: DateTime.wednesday, label: tr.dayWedFull),
+        (value: DateTime.thursday, label: tr.dayThuFull),
+        (value: DateTime.friday, label: tr.dayFriFull),
+        (value: DateTime.saturday, label: tr.daySatFull),
+        (value: DateTime.sunday, label: tr.daySunFull),
+      ],
     );
-
-    if (result != null && mounted) {
-      setState(() => _weekday = result);
+    if (picked != null && mounted) {
+      setState(() => _weekday = picked);
     }
   }
 
@@ -1070,6 +1127,54 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
       default:
         return tr.selectHint;
     }
+  }
+}
+
+/// Outlined tile used inside the bottom-sheet pickers — green-highlighted
+/// with a checkmark when [selected]. Shared style with the History filter
+/// and donation reason picker so all three feel like one component.
+class _OptionTile extends StatelessWidget {
+  const _OptionTile({
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return InkWell(
+      borderRadius: BorderRadius.circular(12),
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        decoration: BoxDecoration(
+          color: selected ? cs.primary.withValues(alpha: 0.12) : cs.surface,
+          border: Border.all(color: selected ? cs.primary : cs.outline),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Row(
+          children: [
+            Expanded(
+              child: Text(
+                label,
+                style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
+                  color: cs.onSurface,
+                ),
+              ),
+            ),
+            if (selected)
+              Icon(Icons.check, color: cs.primary, size: 22),
+          ],
+        ),
+      ),
+    );
   }
 }
 

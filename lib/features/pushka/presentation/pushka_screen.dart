@@ -293,7 +293,10 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
     final amountCtrl = TextEditingController();
     Map<String, dynamic>? result;
     String? error;
-    String? selectedReason; // inline picker state — null = "Sin designación"
+    // Inline picker state — defaults to the tenant's first reason so the
+    // donor isn't forced to opt in to a destination. They can still choose
+    // "Sin designación" from the picker if they want to opt out.
+    String? selectedReason = reasons.isNotEmpty ? reasons.first : null;
     try {
     result = await showKeyboardSafeSheet<Map<String, dynamic>>(
       context: context,
