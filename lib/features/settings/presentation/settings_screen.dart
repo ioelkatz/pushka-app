@@ -51,6 +51,10 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   bool _loadedProfile = false;
   bool _uploadingPhoto = false;
   bool _avatarLoadFailed = false;
+  int? _editingPresetIndex;
+  final TextEditingController _presetEditCtrl = TextEditingController();
+  final FocusNode _presetEditFocus = FocusNode();
+  List<double>? _localPresets;
 
   String _shortCurrencySymbol(String code) {
     const symbols = {
@@ -59,6 +63,13 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       'clp': '\$', 'cop': '\$',
     };
     return symbols[code.toLowerCase()] ?? '\$';
+  }
+
+  @override
+  void dispose() {
+    _presetEditCtrl.dispose();
+    _presetEditFocus.dispose();
+    super.dispose();
   }
 
   String _currencySymbol(String code) {
@@ -172,17 +183,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           // PRESET AMOUNTS
           _buildLabel(tr.presetAmount),
           const SizedBox(height: 8),
-          _buildCurrentPresets(tenantState, blue, onTap: () {
-            final rawPresets = tenantState?['presetAmounts'];
-            final List<double> current;
-            if (rawPresets is List && rawPresets.length >= 3) {
-              final c = rawPresets.whereType<num>().map((e) => e.toDouble()).toList();
-              current = c.length >= 3 ? c.take(3).toList() : [1.0, 5.0, 10.0];
-            } else {
-              current = [1.0, 5.0, 10.0];
-            }
-            _showEditPresetsDialog(user, current);
-          }),
+          _buildCurrentPresets(tenantState, blue, user),
           const SizedBox(height: 18),
 
           // EMPTY PUSHKA
@@ -1011,45 +1012,100 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     }
   }
 
-  Widget _buildCurrentPresets(Map<String, dynamic>? profile, Color blue, {VoidCallback? onTap}) {
+  Widget _buildCurrentPresets(Map<String, dynamic>? profile, Color blue, User? user) {
     final rawPresets = profile?['presetAmounts'];
-    final List<double> presets;
+    final List<double> remotePresets;
     if (rawPresets is List && rawPresets.length >= 3) {
       final converted = rawPresets.whereType<num>().map((e) => e.toDouble()).toList();
       final valid = converted.where((v) => v > 0).toList();
-      presets = valid.length >= 3 ? valid.take(3).toList() : _presetsForCurrency(selectedCurrency);
+      remotePresets = valid.length >= 3 ? valid.take(3).toList() : _presetsForCurrency(selectedCurrency);
     } else {
-      presets = _presetsForCurrency(selectedCurrency);
+      remotePresets = _presetsForCurrency(selectedCurrency);
     }
+    // Use local copy while editing so we can show pending changes instantly
+    final presets = _localPresets ?? remotePresets;
     final sym = _shortCurrencySymbol(selectedCurrency);
+    final primary = Theme.of(context).colorScheme.primary;
+
+    void startEditing(int idx) {
+      final val = presets[idx];
+      _presetEditCtrl.text = _formatPresetVal(val);
+      _presetEditCtrl.selection = TextSelection(baseOffset: 0, extentOffset: _presetEditCtrl.text.length);
+      setState(() {
+        _localPresets = List.of(presets);
+        _editingPresetIndex = idx;
+      });
+      WidgetsBinding.instance.addPostFrameCallback((_) => _presetEditFocus.requestFocus());
+    }
+
+    Future<void> commitEdit() async {
+      final idx = _editingPresetIndex;
+      if (idx == null) return;
+      final parsed = double.tryParse(_presetEditCtrl.text.replaceAll(',', '.'));
+      if (parsed == null || parsed <= 0) {
+        // Invalid — revert
+        setState(() { _editingPresetIndex = null; _localPresets = null; });
+        return;
+      }
+      final updated = List<double>.of(presets);
+      updated[idx] = parsed;
+      setState(() { _editingPresetIndex = null; _localPresets = updated; });
+      try {
+        await _updateSettings(user, presetAmounts: updated);
+        if (mounted) setState(() => _localPresets = null);
+      } catch (_) {
+        if (mounted) setState(() => _localPresets = null);
+      }
+    }
+
     return Row(
       children: presets.asMap().entries.map((entry) {
         final idx = entry.key;
         final amt = entry.value;
-        final label = '$sym${amt == amt.roundToDouble() ? amt.toInt() : amt.toStringAsFixed(2)}';
+        final isEditing = _editingPresetIndex == idx;
         return Expanded(
           child: Padding(
             padding: EdgeInsetsDirectional.only(end: idx < 2 ? 10 : 0),
-            child: GestureDetector(
-              onTap: onTap,
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-                decoration: BoxDecoration(
-                  color: Theme.of(context).colorScheme.surface,
-                  border: Border.all(color: Theme.of(context).colorScheme.outline),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                alignment: Alignment.center,
-                child: Text(
-                  label,
-                  style: TextStyle(
-                    fontWeight: FontWeight.w500,
-                    color: Theme.of(context).colorScheme.onSurface,
-                    fontSize: 16,
+            child: isEditing
+                ? TextField(
+                    controller: _presetEditCtrl,
+                    focusNode: _presetEditFocus,
+                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(fontWeight: FontWeight.w500, fontSize: 16),
+                    decoration: InputDecoration(
+                      prefixText: sym,
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 14),
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                      focusedBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: BorderSide(color: primary, width: 1.8),
+                      ),
+                    ),
+                    onSubmitted: (_) => commitEdit(),
+                    onEditingComplete: commitEdit,
+                    onTapOutside: (_) => commitEdit(),
+                  )
+                : GestureDetector(
+                    onTap: () => startEditing(idx),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                      decoration: BoxDecoration(
+                        color: Theme.of(context).colorScheme.surface,
+                        border: Border.all(color: Theme.of(context).colorScheme.outline),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      alignment: Alignment.center,
+                      child: Text(
+                        '$sym${amt == amt.roundToDouble() ? amt.toInt() : amt.toStringAsFixed(2)}',
+                        style: TextStyle(
+                          fontWeight: FontWeight.w500,
+                          color: Theme.of(context).colorScheme.onSurface,
+                          fontSize: 16,
+                        ),
+                      ),
+                    ),
                   ),
-                ),
-              ),
-            ),
           ),
         );
       }).toList(),
@@ -1559,110 +1615,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       additionalPaymentOptionsEnabled: additionalPaymentOptionsEnabled,
       biometricAuthenticationEnabled: biometricAuthenticationEnabled,
     ).catchError((Object e) => debugPrint('toggle updateSettings error: $e'));
-  }
-
-  Future<void> _showEditPresetsDialog(
-    User? user,
-    List<double> current,
-  ) async {
-    if (user == null) return;
-    final tr = S.of(context);
-    final sym = _currencySymbol(selectedCurrency);
-    final c1 = TextEditingController(text: _formatPresetVal(current[0]));
-    final c2 = TextEditingController(text: _formatPresetVal(current[1]));
-    final c3 = TextEditingController(text: _formatPresetVal(current[2]));
-    String? err;
-
-    await showDialog<void>(
-      context: context,
-      barrierDismissible: true,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setSS) => AlertDialog(
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(22)),
-          contentPadding: const EdgeInsets.fromLTRB(24, 28, 24, 8),
-          actionsPadding: const EdgeInsets.fromLTRB(24, 4, 24, 24),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Text(
-                tr.presetAmount,
-                textAlign: TextAlign.center,
-                style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                tr.editQuickAmountHint,
-                textAlign: TextAlign.center,
-                style: TextStyle(fontSize: 13, color: Colors.grey.shade600),
-              ),
-              const SizedBox(height: 20),
-              if (err != null) ...[
-                Text(err!, style: const TextStyle(color: Color(0xFFDC2626), fontSize: 13)),
-                const SizedBox(height: 8),
-              ],
-              Row(
-                children: [c1, c2, c3].asMap().entries.map((e) {
-                  return Expanded(
-                    child: Padding(
-                      padding: EdgeInsetsDirectional.only(end: e.key < 2 ? 8 : 0),
-                      child: TextField(
-                        controller: e.value,
-                        keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                        textAlign: TextAlign.center,
-                        decoration: InputDecoration(
-                          prefixText: sym,
-                          contentPadding: const EdgeInsets.symmetric(horizontal: 6, vertical: 12),
-                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                          focusedBorder: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(12),
-                            borderSide: BorderSide(color: Theme.of(ctx).colorScheme.primary, width: 1.8),
-                          ),
-                        ),
-                        onChanged: (_) { if (err != null) setSS(() => err = null); },
-                      ),
-                    ),
-                  );
-                }).toList(),
-              ),
-            ],
-          ),
-          actions: [
-            SizedBox(
-              width: double.infinity,
-              height: 48,
-              child: ElevatedButton(
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Theme.of(ctx).colorScheme.primary,
-                  foregroundColor: Colors.white,
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                ),
-                onPressed: () async {
-                  final p1 = double.tryParse(c1.text.replaceAll(',', '.')) ?? 0;
-                  final p2 = double.tryParse(c2.text.replaceAll(',', '.')) ?? 0;
-                  final p3 = double.tryParse(c3.text.replaceAll(',', '.')) ?? 0;
-                  if (p1 <= 0 || p2 <= 0 || p3 <= 0) {
-                    setSS(() => err = tr.allAmountsMustBePositive);
-                    return;
-                  }
-                  try {
-                    await _updateSettings(user, presetAmounts: [p1, p2, p3]);
-                    if (!mounted || !ctx.mounted) return;
-                    Navigator.pop(ctx);
-                  } catch (e) {
-                    debugPrint('presetAmounts save error: $e');
-                    if (!mounted || !ctx.mounted) return;
-                    setSS(() => err = tr.saveError);
-                  }
-                },
-                child: Text(tr.save, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-
   }
 
   String _formatPresetVal(double v) =>
