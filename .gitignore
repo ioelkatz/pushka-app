@@ -82,3 +82,9 @@ test2_*.png
 test_screenshots/
 run_dev.sh
 run.ps1
+
+# Firebase CLI local cache
+.firebase/
+
+# Temporary fix/migration scripts
+fix*.js
