@@ -2120,25 +2120,9 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                             ),
                     ),
                   ),
-                  const SizedBox(height: 10),
-                  SizedBox(
-                    width: double.infinity,
-                    child: OutlinedButton(
-                      style: OutlinedButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(vertical: 14),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                      ),
-                      onPressed: isSaving
-                          ? null
-                          : () => Navigator.of(ctx).pop(false),
-                      child: Text(
-                        S.of(context).cancelBtn,
-                        style: const TextStyle(fontWeight: FontWeight.w700),
-                      ),
-                    ),
-                  ),
+                  // Cancelar button removed by request — the user can
+                  // dismiss the sheet by swiping down or tapping the
+                  // dim barrier, so the explicit button was redundant.
                       ],
                     );
       },
