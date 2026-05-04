@@ -2132,27 +2132,24 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
   String _flagForCountry(String country) {
     switch (country) {
-      case 'México':
-        return '🇲🇽';
-      case 'España':
-        return '🇪🇸';
-      case 'Argentina':
-        return '🇦🇷';
-      case 'Brasil':
-        return '🇧🇷';
-      case 'Israel':
-        return '🇮🇱';
-      case 'Chile':
-        return '🇨🇱';
-      case 'Colombia':
-        return '🇨🇴';
-      case 'Reino Unido':
-        return '🇬🇧';
-      case 'Canadá':
-        return '🇨🇦';
+      case 'México':        return '🇲🇽';
+      case 'España':        return '🇪🇸';
+      case 'Argentina':     return '🇦🇷';
+      case 'Brasil':        return '🇧🇷';
+      case 'Israel':        return '🇮🇱';
+      case 'Chile':         return '🇨🇱';
+      case 'Colombia':      return '🇨🇴';
+      case 'Reino Unido':   return '🇬🇧';
+      case 'Canadá':        return '🇨🇦';
+      case 'Uruguay':       return '🇺🇾';
+      case 'Perú':          return '🇵🇪';
+      case 'Bolivia':       return '🇧🇴';
+      case 'Guatemala':     return '🇬🇹';
+      case 'Rep. Dominicana': return '🇩🇴';
+      case 'Australia':     return '🇦🇺';
+      case 'Eurozona':      return '🇪🇺';
       case 'Estados Unidos':
-      default:
-        return '🇺🇸';
+      default:              return '🇺🇸';
     }
   }
 
