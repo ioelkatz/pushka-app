@@ -104,24 +104,24 @@ service cloud.firestore {
              !('tenantIds' in request.resource.data);
     }
 
-    function validTenantStateDoc(uid, tenantId) {
-      return request.resource.data.keys().hasOnly([
-            'uid', 'tenantId',
-            'tenantName', 'tenantAppName', 'tenantLogoUrl', 'tenantPrimaryColor',
-            'pushkaAmount', 'pushkaGoal',
-            'presetAmount', 'presetAmounts',
-            'streakCount', 'lastStreakDate',
-            'autoEmptyFrequency', 'autoEmptyWeekday', 'autoEmptyDayOfMonth',
-            'autoEmptyTopOffEnabled', 'autoEmptyTopOffAmount', 'autoEmptyNextRunAt',
-            'autoEmptyPaymentMethodId',
-            '_autoEmptyChargeLockAt',
-            'autoEmptyConsecutiveFailures',
-            'autoEmptyLastFailureAt',
-            'autoEmptyLastFailureCode',
-            'autoEmptyLastSuccessAt',
-            'createdAt', 'updatedAt'
-          ]) &&
-          request.resource.data.uid == uid &&
+    // Client-writable tenantState keys. Used for create (hasOnly on full doc)
+    // and update (affectedKeys — so CF-written fields already in the doc don't
+    // block the write even if they're not in this list).
+    function tenantStateClientKeys() {
+      return ['uid', 'tenantId',
+              'tenantName', 'tenantAppName', 'tenantLogoUrl', 'tenantPrimaryColor',
+              'pushkaAmount', 'pushkaGoal',
+              'presetAmount', 'presetAmounts',
+              'streakCount', 'lastStreakDate',
+              'autoEmptyFrequency', 'autoEmptyWeekday', 'autoEmptyDayOfMonth',
+              'autoEmptyTopOffEnabled', 'autoEmptyTopOffAmount', 'autoEmptyNextRunAt',
+              'autoEmptyPaymentMethodId',
+              'createdAt', 'updatedAt'];
+    }
+
+    // Field-value validations shared by create and update.
+    function validTenantStateFields(uid, tenantId) {
+      return request.resource.data.uid == uid &&
           request.resource.data.tenantId == tenantId &&
           (!('pushkaAmount' in request.resource.data) ||
               (request.resource.data.pushkaAmount is number &&
@@ -162,13 +162,26 @@ service cloud.firestore {
           (!('autoEmptyNextRunAt' in request.resource.data) ||
               request.resource.data.autoEmptyNextRunAt is timestamp ||
               request.resource.data.autoEmptyNextRunAt == null) &&
-          // autoEmptyPaymentMethodId: Stripe PaymentMethod ID picked by the
-          // user for the auto-empty cron charge. Null clears it (cron falls
-          // back to the user's stripeDefaultPaymentMethodId).
           (!('autoEmptyPaymentMethodId' in request.resource.data) ||
               request.resource.data.autoEmptyPaymentMethodId == null ||
               (request.resource.data.autoEmptyPaymentMethodId is string &&
                   request.resource.data.autoEmptyPaymentMethodId.size() <= 100));
+    }
+
+    // CREATE: full new doc must only contain client-writable keys + field validations.
+    function validTenantStateDoc(uid, tenantId) {
+      return request.resource.data.keys().hasOnly(tenantStateClientKeys()) &&
+          validTenantStateFields(uid, tenantId);
+    }
+
+    // UPDATE: only check which keys are being CHANGED (affectedKeys), not the
+    // full resulting document. This prevents CF-written fields already in the
+    // document (_autoEmptyChargeLockAt, autoEmptyConsecutiveFailures, etc.)
+    // from blocking legitimate client updates to presets, goal, etc.
+    function validTenantStateUpdateDoc(uid, tenantId) {
+      return request.resource.data.diff(resource.data).affectedKeys()
+                  .hasOnly(tenantStateClientKeys()) &&
+          validTenantStateFields(uid, tenantId);
     }
 
     function validUserDoc(uid) {
@@ -507,7 +520,7 @@ service cloud.firestore {
       match /tenantState/{tenantStateId} {
         allow read: if isOwner(uid);
         allow create: if isOwner(uid) && validTenantStateDoc(uid, tenantStateId);
-        allow update: if isOwner(uid) && validTenantStateDoc(uid, tenantStateId);
+        allow update: if isOwner(uid) && validTenantStateUpdateDoc(uid, tenantStateId);
         allow delete: if false;
       }
 
