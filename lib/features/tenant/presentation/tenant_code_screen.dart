@@ -201,7 +201,16 @@ class _TenantCodeScreenState extends ConsumerState<TenantCodeScreen> {
                         const SizedBox(height: AppTokens.spaceSm),
                         TextButton(
                           onPressed: _joining ? null : _openCodeSheet,
-                          child: Text(S.of(context).tenantEnterCode),
+                          style: TextButton.styleFrom(
+                            foregroundColor: AppTokens.textPrimary,
+                          ),
+                          child: Text(
+                            S.of(context).tenantEnterCode,
+                            style: tt.bodyMedium?.copyWith(
+                              color: AppTokens.textPrimary,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
                         ),
                       ],
                     ),
