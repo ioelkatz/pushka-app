@@ -607,7 +607,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           ),
           // POWERED BY footer — visible only when tenant has showPoweredBy: true
           if (tenantConfig != null && tenantConfig.showPoweredBy) ...[
-            const SizedBox(height: 8),
+            const SizedBox(height: 20),
             Center(
               child: Text(
                 '${tenantConfig.appName} · Powered by Pushka',
