@@ -126,11 +126,11 @@ service cloud.firestore {
           (!('pushkaAmount' in request.resource.data) ||
               (request.resource.data.pushkaAmount is number &&
                   request.resource.data.pushkaAmount >= 0 &&
-                  request.resource.data.pushkaAmount <= 100000)) &&
+                  request.resource.data.pushkaAmount <= 10000000)) &&
           (!('pushkaGoal' in request.resource.data) ||
               (request.resource.data.pushkaGoal is number &&
                   request.resource.data.pushkaGoal > 0 &&
-                  request.resource.data.pushkaGoal <= 100000)) &&
+                  request.resource.data.pushkaGoal <= 10000000)) &&
           (!('presetAmount' in request.resource.data) ||
               (request.resource.data.presetAmount is number &&
                   request.resource.data.presetAmount > 0)) &&
@@ -245,11 +245,11 @@ service cloud.firestore {
           (!('pushkaAmount' in request.resource.data) ||
               (request.resource.data.pushkaAmount is number &&
                   request.resource.data.pushkaAmount >= 0 &&
-                  request.resource.data.pushkaAmount <= 100000)) &&
+                  request.resource.data.pushkaAmount <= 10000000)) &&
           (!('pushkaGoal' in request.resource.data) ||
               (request.resource.data.pushkaGoal is number &&
                   request.resource.data.pushkaGoal > 0 &&
-                  request.resource.data.pushkaGoal <= 100000)) &&
+                  request.resource.data.pushkaGoal <= 10000000)) &&
           (!('presetAmount' in request.resource.data) ||
               (request.resource.data.presetAmount is number &&
                   request.resource.data.presetAmount > 0)) &&
