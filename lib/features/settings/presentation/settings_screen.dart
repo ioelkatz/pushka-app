@@ -871,6 +871,10 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                       ),
                     ),
             ),
+            // Predeterminada tick removed by request — this preview is
+            // a navigation row to Saved Cards, so the default-state
+            // indicator belongs inside that screen, not here. Just the
+            // chevron stays.
             Icon(Icons.chevron_right, color: cs.onSurfaceVariant),
           ],
         ),
@@ -1189,68 +1193,131 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   Widget _buildLanguageSelector() {
     final currentLocale = ref.watch(localeProvider);
     final tr = S.of(context);
+    final cs = Theme.of(context).colorScheme;
     final languages = [
       {'label': tr.langSpanish, 'code': 'es'},
       {'label': tr.langEnglish, 'code': 'en'},
       {'label': tr.langFrench, 'code': 'fr'},
       {'label': tr.langHebrew, 'code': 'he'},
     ];
+    final currentLabel = languages.firstWhere(
+      (l) => l['code'] == currentLocale.languageCode,
+      orElse: () => languages.first,
+    )['label']!;
 
-    return Theme(
-      data: Theme.of(context).copyWith(
-        focusColor: Colors.transparent,
-        hoverColor: Colors.transparent,
-        highlightColor: Colors.transparent,
-        splashColor: Colors.transparent,
-      ),
+    return InkWell(
+      borderRadius: BorderRadius.circular(12),
+      onTap: () => _showLanguagePicker(languages, currentLocale.languageCode),
       child: Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16),
-      decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.surface,
-        border: Border.all(color: AppTokens.border),
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: DropdownButtonFormField<String>(
-        initialValue: currentLocale.languageCode,
-        focusColor: Colors.transparent,
-        dropdownColor: Theme.of(context).colorScheme.surface,
-        decoration: const InputDecoration(
-          border: InputBorder.none,
-          enabledBorder: InputBorder.none,
-          focusedBorder: InputBorder.none,
-          filled: false,
-          isDense: true,
-          contentPadding: EdgeInsets.symmetric(vertical: 12),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        decoration: BoxDecoration(
+          color: cs.surface,
+          border: Border.all(color: AppTokens.border),
+          borderRadius: BorderRadius.circular(12),
         ),
-        icon: Icon(Icons.keyboard_arrow_down, color: Theme.of(context).colorScheme.onSurfaceVariant),
-        isExpanded: true,
-        items: languages
-            .map((lang) => DropdownMenuItem<String>(
-                  value: lang['code'],
-                  child: Text(
-                    lang['label']!,
-                    style: const TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w500,
-                    ),
-                  ),
-                ))
-            .toList(),
-        onChanged: (value) {
-          if (value == null) return;
-          // Save to Hive immediately (persists across restarts) then sync Firestore
-          ref.read(localeProvider.notifier).setLanguageCode(value);
-          final uid = ref.read(currentUserProvider)?.uid;
-          if (uid != null) {
-            ref.read(userRepositoryProvider).updateSettings(
-              uid: uid,
-              language: value,
-            ).catchError((Object e) => debugPrint('language updateSettings error: $e'));
-          }
-        },
-      ),
+        child: Row(
+          children: [
+            Expanded(
+              child: Text(
+                currentLabel,
+                style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w500,
+                  color: cs.onSurface,
+                ),
+              ),
+            ),
+            Icon(Icons.keyboard_arrow_down, color: cs.onSurfaceVariant),
+          ],
+        ),
       ),
     );
+  }
+
+  Future<void> _showLanguagePicker(
+    List<Map<String, String>> languages,
+    String currentCode,
+  ) async {
+    final picked = await showModalBottomSheet<String>(
+      context: context,
+      useRootNavigator: true,
+      useSafeArea: true,
+      isScrollControlled: true,
+      backgroundColor: Theme.of(context).colorScheme.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
+      ),
+      barrierColor: const Color(0xDD000000),
+      builder: (sheetCtx) {
+        final cs = Theme.of(sheetCtx).colorScheme;
+        return SafeArea(
+          top: false,
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.fromLTRB(20, 12, 20, 18),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Center(
+                  child: Container(
+                    width: 36, height: 4,
+                    margin: const EdgeInsets.only(bottom: 16),
+                    decoration: BoxDecoration(
+                      color: cs.outlineVariant,
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                ),
+                for (var i = 0; i < languages.length; i++) ...[
+                  Builder(builder: (tileCtx) {
+                    final lang = languages[i];
+                    final selected = lang['code'] == currentCode;
+                    return InkWell(
+                      borderRadius: BorderRadius.circular(12),
+                      onTap: () => Navigator.pop(sheetCtx, lang['code']),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                        decoration: BoxDecoration(
+                          color: selected ? cs.primary.withValues(alpha: 0.12) : cs.surface,
+                          border: Border.all(color: selected ? cs.primary : cs.outline),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                lang['label']!,
+                                style: TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
+                                  color: cs.onSurface,
+                                ),
+                              ),
+                            ),
+                            if (selected)
+                              Icon(Icons.check, color: cs.primary, size: 22),
+                          ],
+                        ),
+                      ),
+                    );
+                  }),
+                  if (i < languages.length - 1) const SizedBox(height: 8),
+                ],
+              ],
+            ),
+          ),
+        );
+      },
+    );
+    if (picked == null || !mounted || picked == currentCode) return;
+    ref.read(localeProvider.notifier).setLanguageCode(picked);
+    final uid = ref.read(currentUserProvider)?.uid;
+    if (uid != null) {
+      ref.read(userRepositoryProvider).updateSettings(
+        uid: uid,
+        language: picked,
+      ).catchError((Object e) => debugPrint('language updateSettings error: $e'));
+    }
   }
 
   Widget _buildToggleRow(

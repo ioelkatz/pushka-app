@@ -4026,6 +4026,19 @@ const TENANT_PUBLIC_FIELDS = [
 // so members can see if their own tenant is in grace_period / suspended).
 const TENANT_MEMBER_FIELDS = [...TENANT_PUBLIC_FIELDS, "status"];
 
+// Fallback donationReasons list. Returned by getTenantConfig (and the public
+// branding endpoints) when a tenant doc has no donationReasons set, so every
+// org gets a sensible default destinación picker out of the box. The
+// backfillDonationReasonsChabad CF stamps this same list onto each tenant doc.
+const DEFAULT_CHABAD_DONATION_REASONS = [
+  "Donde más se necesite",
+  "Comida para familias",
+  "Estudios de Torá",
+  "Festividades",
+  "Edificio / Beit Jabad",
+  "Becas para niños",
+];
+
 /**
  * Normalizes a slug to lowercase alphanumeric and validates length.
  * Does NOT check uniqueness — that must be done atomically inside a
@@ -4263,20 +4276,13 @@ exports.backfillTenantSlugs = onCall(
 );
 
 // ---------------------------------------------------------------------------
-// backfillDonationReasonsChabad — one-shot super_admin operation: stamp a
-// default Chabad-style donationReasons array on every tenant that doesn't
-// already have one configured. Idempotent (skips tenants where the field
-// is a non-empty array). Run once after launching the designación picker.
+// backfillDonationReasonsChabad — one-shot super_admin operation: stamp the
+// default Chabad-style DEFAULT_CHABAD_DONATION_REASONS on every tenant that
+// doesn't already have one configured. Idempotent (skips tenants where the
+// field is a non-empty array). Optional: getTenantConfig already returns the
+// same fallback at read-time, so the backfill is mainly for keeping the
+// admin-facing tenant docs self-describing.
 // ---------------------------------------------------------------------------
-const DEFAULT_CHABAD_DONATION_REASONS = [
-  "Donde más se necesite",
-  "Comida para familias",
-  "Estudios de Torá",
-  "Festividades",
-  "Edificio / Beit Jabad",
-  "Becas para niños",
-];
-
 exports.backfillDonationReasonsChabad = onCall(
   { enforceAppCheck: true },
   async (request) => {
@@ -4681,6 +4687,13 @@ exports.getTenantConfig = onCall(
     const config = {};
     for (const field of TENANT_MEMBER_FIELDS) {
       if (data[field] !== undefined) config[field] = data[field];
+    }
+    // Default donationReasons to the Chabad fallback when the tenant doc
+    // doesn't have one (or has an empty array). Keeps every org's donation
+    // flow with a usable destinación picker out of the box; admins can
+    // override by writing the field on the tenant doc.
+    if (!Array.isArray(config.donationReasons) || config.donationReasons.length === 0) {
+      config.donationReasons = DEFAULT_CHABAD_DONATION_REASONS;
     }
 
     return { tenantId, config, tenantIds };

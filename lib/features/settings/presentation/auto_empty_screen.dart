@@ -460,8 +460,9 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
               }
             },
             child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
               decoration: BoxDecoration(
+                color: cs.surface,
                 border: Border.all(color: AppTokens.border),
                 borderRadius: BorderRadius.circular(12),
               ),
@@ -471,13 +472,14 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
                     _selectedDonationReason ?? tr.donationReasonNone,
                     style: TextStyle(
                       fontSize: 16,
+                      fontWeight: FontWeight.w500,
                       color: _selectedDonationReason == null
                           ? cs.onSurfaceVariant
                           : cs.onSurface,
                     ),
                   ),
                 ),
-                Icon(Icons.keyboard_arrow_down, color: Colors.grey),
+                Icon(Icons.keyboard_arrow_down, color: cs.onSurfaceVariant),
               ]),
             ),
           ),
@@ -512,41 +514,35 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
       borderRadius: BorderRadius.circular(12),
       onTap: _cards.length > 1 ? () => _showCardPickerSheet(tr) : null,
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
         decoration: BoxDecoration(
+          color: cs.surface,
           borderRadius: BorderRadius.circular(12),
           border: Border.all(color: AppTokens.border),
         ),
         child: Row(
           children: [
             cardBrandBox(brand),
-            const SizedBox(width: 10),
+            const SizedBox(width: 12),
             Expanded(
               child: Text(
                 '${cardBrandLabel(brand)}  ···· $last4',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
                 style: TextStyle(
-                  fontSize: 15,
+                  fontSize: 16,
                   fontWeight: FontWeight.w500,
                   color: cs.onSurface,
                 ),
               ),
             ),
-            if (isDefault) ...[
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                decoration: BoxDecoration(
-                  color: cs.primaryContainer,
-                  borderRadius: BorderRadius.circular(4),
-                ),
-                child: Text(
-                  tr.cardDefault,
-                  style: TextStyle(fontSize: 11, color: cs.onPrimaryContainer, fontWeight: FontWeight.w600),
-                ),
-              ),
-              const SizedBox(width: 8),
-            ],
+            // Predeterminada indicator removed by request — within
+            // Auto Vaciar the row is already showing the chosen card,
+            // so the "default" state is implicit and the extra tick
+            // adds visual noise. Saved Cards keeps it (that's where the
+            // user actually chooses which card is default).
             if (_cards.length > 1)
-              const Icon(Icons.keyboard_arrow_down, color: Colors.grey),
+              Icon(Icons.keyboard_arrow_down, color: cs.onSurfaceVariant),
           ],
         ),
       ),
@@ -630,6 +626,8 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
             Expanded(
               child: Text(
                 '${cardBrandLabel(brand)}  ···· $last4',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
                 style: TextStyle(
                   fontSize: 16,
                   fontWeight: isSelected ? FontWeight.w600 : FontWeight.w500,
@@ -658,11 +656,13 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
   }
 
   Widget _buildSelectTile(String value, VoidCallback onTap) {
+    final cs = Theme.of(context).colorScheme;
     return InkWell(
       onTap: onTap,
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
         decoration: BoxDecoration(
+          color: cs.surface,
           borderRadius: BorderRadius.circular(12),
           border: Border.all(color: AppTokens.border),
         ),
@@ -671,10 +671,14 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
             Expanded(
               child: Text(
                 value,
-                style: const TextStyle(fontSize: 16),
+                style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w500,
+                  color: cs.onSurface,
+                ),
               ),
             ),
-            const Icon(Icons.keyboard_arrow_down, color: Colors.grey),
+            Icon(Icons.keyboard_arrow_down, color: cs.onSurfaceVariant),
           ],
         ),
       ),

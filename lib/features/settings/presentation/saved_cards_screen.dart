@@ -1,3 +1,5 @@
+import 'dart:io' show Platform;
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/material.dart';
@@ -419,6 +421,51 @@ class _SavedCardsScreenState extends ConsumerState<SavedCardsScreen> {
     return labels[brand.toLowerCase()] ?? brand;
   }
 
+  /// Static informational row for a digital wallet (Google Pay / Apple Pay).
+  /// No tap, no chevron — wallets show automatically inside PaymentSheet at
+  /// payment time, so the row exists only to tell the donor "yes, this is
+  /// available too."
+  Widget _buildWalletTile(_WalletKind kind) {
+    final cs = Theme.of(context).colorScheme;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: Row(
+        children: [
+          Container(
+            width: 40,
+            height: 28,
+            decoration: BoxDecoration(
+              color: kind == _WalletKind.applePay ? Colors.black : Colors.white,
+              borderRadius: BorderRadius.circular(6),
+              border: Border.all(
+                color: Colors.black.withValues(alpha: 0.18),
+                width: 1,
+              ),
+            ),
+            alignment: Alignment.center,
+            child: kind == _WalletKind.applePay
+                ? const Icon(Icons.apple, color: Colors.white, size: 18)
+                // Google Pay mark — official 4-color "G" (red/yellow/green/
+                // blue). The label "Google Pay" appears next to the badge,
+                // so the badge only needs the iconic G.
+                : SvgPicture.string(_svgGoogleG, width: 18, height: 18),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(
+              kind == _WalletKind.applePay ? 'Apple Pay' : 'Google Pay',
+              style: TextStyle(
+                fontSize: 15,
+                fontWeight: FontWeight.w600,
+                color: cs.onSurface,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildCardTile({
     required String pmId,
     required String brand,
@@ -516,7 +563,7 @@ class _SavedCardsScreenState extends ConsumerState<SavedCardsScreen> {
                 ),
                 const SizedBox(height: 2),
                 Text(
-                  isDefault ? '${tr.cardDefault}  ·  $mm/$yy' : '$mm/$yy',
+                  '$mm/$yy',
                   style: TextStyle(
                     fontSize: 12.5,
                     color: cs.onSurfaceVariant,
@@ -527,6 +574,16 @@ class _SavedCardsScreenState extends ConsumerState<SavedCardsScreen> {
               ],
             ),
           ),
+          // Default-card indicator → green tick (matches the auto-empty
+          // card row treatment; the word "Predeterminada" was eating
+          // horizontal space and felt redundant once the visual is set).
+          if (isDefault) ...[
+            Tooltip(
+              message: tr.cardDefault,
+              child: Icon(Icons.check, color: cs.primary, size: 22),
+            ),
+            const SizedBox(width: 6),
+          ],
           Padding(
             padding: const EdgeInsets.only(right: 4, left: 8),
             child: Icon(
@@ -764,11 +821,19 @@ class _SavedCardsScreenState extends ConsumerState<SavedCardsScreen> {
                             ),
                           ),
                         )
-                      : ListView.separated(
+                      : Builder(builder: (context) {
+                          // Show Google Pay only on Android, Apple Pay only
+                          // on iOS — those are the only platforms where the
+                          // respective wallet actually surfaces inside
+                          // PaymentSheet, so listing the wrong one would
+                          // mislead the user.
+                          final wallets = <_WalletKind>[
+                            if (Platform.isAndroid) _WalletKind.googlePay,
+                            if (Platform.isIOS) _WalletKind.applePay,
+                          ];
+                          return ListView.separated(
                           padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
-                          itemCount: _cards.length,
-                          // Lighter divider + more vertical breathing room
-                          // between cards per the wallet reference.
+                          itemCount: _cards.length + wallets.length,
                           separatorBuilder: (_, _) => Divider(
                             height: 18,
                             thickness: 1,
@@ -777,6 +842,9 @@ class _SavedCardsScreenState extends ConsumerState<SavedCardsScreen> {
                                 : Colors.grey.shade200,
                           ),
                           itemBuilder: (context, index) {
+                            if (index >= _cards.length) {
+                              return _buildWalletTile(wallets[index - _cards.length]);
+                            }
                             final card = _cards[index];
                             final pmId = card['id'] as String;
                             final brand = card['brand'] as String? ?? 'card';
@@ -796,7 +864,8 @@ class _SavedCardsScreenState extends ConsumerState<SavedCardsScreen> {
                               tr: tr,
                             );
                           },
-                        ),
+                        );
+                        }),
             ),
 
             // Add card button — always visible
@@ -831,3 +900,16 @@ class _SavedCardsScreenState extends ConsumerState<SavedCardsScreen> {
     );
   }
 }
+
+enum _WalletKind { googlePay, applePay }
+
+/// Official multi-color Google "G" mark — yellow / red / green / blue arcs.
+/// Used inside the Google Pay row badge in the saved-cards list.
+const String _svgGoogleG = '''
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48">
+  <path fill="#FFC107" d="M43.611,20.083H42V20H24v8h11.303c-1.649,4.657-6.08,8-11.303,8c-6.627,0-12-5.373-12-12c0-6.627,5.373-12,12-12c3.059,0,5.842,1.154,7.961,3.039l5.657-5.657C34.046,6.053,29.268,4,24,4C12.955,4,4,12.955,4,24c0,11.045,8.955,20,20,20c11.045,0,20-8.955,20-20C44,22.659,43.862,21.35,43.611,20.083z"/>
+  <path fill="#FF3D00" d="M6.306,14.691l6.571,4.819C14.655,15.108,18.961,12,24,12c3.059,0,5.842,1.154,7.961,3.039l5.657-5.657C34.046,6.053,29.268,4,24,4C16.318,4,9.656,8.337,6.306,14.691z"/>
+  <path fill="#4CAF50" d="M24,44c5.166,0,9.86-1.977,13.409-5.192l-6.19-5.238C29.211,35.091,26.715,36,24,36c-5.202,0-9.619-3.317-11.283-7.946l-6.522,5.025C9.505,39.556,16.227,44,24,44z"/>
+  <path fill="#1976D2" d="M43.611,20.083H42V20H24v8h11.303c-0.792,2.237-2.231,4.166-4.087,5.571c0.001-0.001,0.002-0.001,0.003-0.002l6.19,5.238C36.971,39.205,44,34,44,24C44,22.659,43.862,21.35,43.611,20.083z"/>
+</svg>
+''';
