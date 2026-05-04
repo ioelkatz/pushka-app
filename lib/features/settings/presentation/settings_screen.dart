@@ -807,7 +807,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       onTap: () => context.go('/settings/saved-cards'),
       borderRadius: BorderRadius.circular(12),
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
         decoration: BoxDecoration(
           color: cs.surface,
           border: Border.all(color: AppTokens.border),
