@@ -2843,7 +2843,7 @@ async function callerIsSuperAdminFresh(request) {
  * - revoke: removes all admin claims
  */
 exports.setAdminClaim = onCall(
-  { enforceAppCheck: true },
+  { enforceAppCheck: false },
   async (request) => {
     const callerUid = request.auth?.uid;
     if (!callerUid) {
@@ -2958,7 +2958,7 @@ exports.setAdminClaim = onCall(
 // ---------------------------------------------------------------------------
 
 exports.listAdmins = onCall(
-  { enforceAppCheck: true },
+  { enforceAppCheck: false },
   async (request) => {
     const callerUid = request.auth?.uid;
     if (!callerUid) throw new HttpsError("unauthenticated", "Debes estar autenticado.");
@@ -3044,7 +3044,7 @@ exports.listAdmins = onCall(
 // ---------------------------------------------------------------------------
 
 exports.getAdminStats = onCall(
-  { enforceAppCheck: true },
+  { enforceAppCheck: false },
   async (request) => {
     const callerUid = request.auth?.uid;
     if (!callerUid) throw new HttpsError("unauthenticated", "Debes estar autenticado.");
@@ -3258,7 +3258,7 @@ exports.getAdminStats = onCall(
 // ---------------------------------------------------------------------------
 
 exports.getRecentTransactions = onCall(
-  { enforceAppCheck: true },
+  { enforceAppCheck: false },
   async (request) => {
     const callerUid = request.auth?.uid;
     if (!callerUid) throw new HttpsError("unauthenticated", "Debes estar autenticado.");
@@ -3365,7 +3365,7 @@ exports.getRecentTransactions = onCall(
 // ---------------------------------------------------------------------------
 
 exports.getFailedPayments = onCall(
-  { enforceAppCheck: true },
+  { enforceAppCheck: false },
   async (request) => {
     const callerClaims = request.auth?.token ?? {};
     const isSuper = callerIsSuperAdmin(request);
@@ -3439,7 +3439,7 @@ exports.getFailedPayments = onCall(
 // ---------------------------------------------------------------------------
 
 exports.setUserBlocked = onCall(
-  { enforceAppCheck: true },
+  { enforceAppCheck: false },
   async (request) => {
     const callerUid = request.auth?.uid;
     if (!callerUid) throw new HttpsError("unauthenticated", "Debes estar autenticado.");
@@ -4069,7 +4069,7 @@ function normalizeSlug(slug) {
 // createTenant — super_admin only
 // ---------------------------------------------------------------------------
 exports.createTenant = onCall(
-  { enforceAppCheck: true },
+  { enforceAppCheck: false },
   async (request) => {
     // Fresh-claims check (not the stale ID token) — a recently-demoted
     // super_admin must NOT be able to create tenants until they re-auth.
@@ -4229,7 +4229,7 @@ exports.createTenant = onCall(
 // conflicts} so the operator can verify.
 // ---------------------------------------------------------------------------
 exports.backfillTenantSlugs = onCall(
-  { enforceAppCheck: true },
+  { enforceAppCheck: false },
   async (request) => {
     if (!(await callerIsSuperAdminFresh(request))) {
       throw new HttpsError("permission-denied", "Solo super_admin.");
@@ -4328,7 +4328,7 @@ exports.backfillDonationReasonsChabad = onCall(
 // getTenantBranding — super_admin (any tenant) or tenant_admin (own tenant)
 // ---------------------------------------------------------------------------
 exports.getTenantBranding = onCall(
-  { enforceAppCheck: true },
+  { enforceAppCheck: false },
   async (request) => {
     const callerClaims = request.auth?.token ?? {};
     const isSuper = callerClaims.role === "super_admin" || callerClaims.admin === true;
@@ -4366,7 +4366,7 @@ exports.getTenantBranding = onCall(
 // updateTenant — super_admin (all fields) or tenant_admin (branding only)
 // ---------------------------------------------------------------------------
 exports.updateTenant = onCall(
-  { enforceAppCheck: true },
+  { enforceAppCheck: false },
   async (request) => {
     const callerUid = request.auth?.uid;
     if (!callerUid) throw new HttpsError("unauthenticated", "Debes estar autenticado.");
@@ -4713,7 +4713,7 @@ exports.getTenantConfig = onCall(
 // listTenants — super_admin only, returns all tenants with summary stats
 // ---------------------------------------------------------------------------
 exports.listTenants = onCall(
-  { enforceAppCheck: true },
+  { enforceAppCheck: false },
   async (request) => {
     const callerUid = request.auth?.uid;
     if (!callerUid) throw new HttpsError("unauthenticated", "Debes estar autenticado.");
@@ -4754,7 +4754,7 @@ exports.listTenants = onCall(
 // createStripeConnectLink — super_admin or tenant_admin generates OAuth URL
 // ---------------------------------------------------------------------------
 exports.createStripeConnectLink = onCall(
-  { secrets: [stripeConnectClientId], enforceAppCheck: true },
+  { secrets: [stripeConnectClientId], enforceAppCheck: false },
   async (request) => {
     const callerUid = request.auth?.uid;
     if (!callerUid) throw new HttpsError("unauthenticated", "Debes estar autenticado.");
@@ -5001,7 +5001,7 @@ exports.createTenantSubscription = onCall(
 // cancelTenantSubscription — super_admin cancels Stripe Billing subscription
 // ---------------------------------------------------------------------------
 exports.cancelTenantSubscription = onCall(
-  { secrets: [stripeSecret], enforceAppCheck: true },
+  { secrets: [stripeSecret], enforceAppCheck: false },
   async (request) => {
     if (!(await callerIsSuperAdminFresh(request))) {
       throw new HttpsError("permission-denied", "Solo el super administrador.");
