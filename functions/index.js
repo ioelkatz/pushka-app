@@ -3874,14 +3874,23 @@ exports.joinTenant = onCall(
         tenantIds: newTenantIds,
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       };
-      // First org ever: set as active tenant; apply tenant defaults if present
+      // First org ever: set as active tenant; apply the tenant's defaults
+      // unconditionally. createUserDocument seeds language='es' and
+      // currencyCode='USD' as placeholders, so the prior `&& !userData.X`
+      // guards never fired — the local-currency-default behavior the UI
+      // promises was silently broken. On first tenant join the user is
+      // committing to that org, so the tenant's locale is the right
+      // baseline; the user can still override it later in Settings.
       if (isFirst) {
         patch.tenantId = tenantId;
-        if (tenantData.defaultLanguage && !userData.language) {
+        if (tenantData.defaultLanguage) {
           patch.language = tenantData.defaultLanguage;
         }
-        if (tenantData.defaultCurrency && !userData.currencyCode) {
+        if (tenantData.defaultCurrency) {
           patch.currencyCode = String(tenantData.defaultCurrency).toUpperCase();
+        }
+        if (tenantData.defaultCountry) {
+          patch.currencyCountry = tenantData.defaultCountry;
         }
       }
       tx.set(userRef, patch, { merge: true });

@@ -4,6 +4,7 @@ import '../../../app/theme/app_tokens.dart';
 import '../../../core/l10n/s.dart';
 import '../../../core/widgets/shimmer_list.dart';
 import '../../../core/widgets/empty_state.dart';
+import '../../../core/widgets/option_picker_sheet.dart';
 
 import '../../analytics/analytics_service.dart';
 import '../../notifications/notification_service.dart';
@@ -657,56 +658,108 @@ class _ReminderFormPageState extends State<_ReminderFormPage> {
     );
   }
 
-  Widget _buildMinutesBeforeDropdown() {
+  String _minutesBeforeLabel(int? value) {
     final tr = S.of(context);
-    final cs = Theme.of(context).colorScheme;
-    final options = <int?, String>{
-      null: tr.atExactTime,
-      30: tr.minutesBefore30,
-      60: tr.minutesBefore60,
-      90: tr.minutesBefore90,
-      120: tr.minutesBefore120,
+    return switch (value) {
+      null => tr.atExactTime,
+      30 => tr.minutesBefore30,
+      60 => tr.minutesBefore60,
+      90 => tr.minutesBefore90,
+      120 => tr.minutesBefore120,
+      _ => '$value min',
     };
-    return DropdownButtonFormField<int?>(
-      initialValue: _minutesBefore,
-      decoration: const InputDecoration(
-        contentPadding: EdgeInsets.symmetric(horizontal: 14, vertical: 14),
-      ),
-      icon: Icon(Icons.arrow_drop_down, color: cs.onSurfaceVariant),
-      dropdownColor: cs.surface,
-      items: options.entries.map((e) {
-        return DropdownMenuItem<int?>(
-          value: e.key,
-          child: Text(e.value),
+  }
+
+  Widget _buildMinutesBeforeDropdown() {
+    final cs = Theme.of(context).colorScheme;
+    return InkWell(
+      borderRadius: BorderRadius.circular(AppTokens.radiusMd),
+      onTap: () async {
+        final picked = await showOptionPickerSheet<int?>(
+          context: context,
+          currentValue: _minutesBefore,
+          options: [
+            (value: null, label: _minutesBeforeLabel(null)),
+            (value: 30, label: _minutesBeforeLabel(30)),
+            (value: 60, label: _minutesBeforeLabel(60)),
+            (value: 90, label: _minutesBeforeLabel(90)),
+            (value: 120, label: _minutesBeforeLabel(120)),
+          ],
         );
-      }).toList(),
-      onChanged: (v) => setState(() => _minutesBefore = v),
+        // Distinguishing "user dismissed sheet" from "user picked null
+        // (= 'a la hora exacta')" is impossible with the helper's API
+        // (both return null). Mitigation: skip the setState when nothing
+        // changed, so a dismiss is a no-op.
+        if (!mounted || picked == _minutesBefore) return;
+        setState(() => _minutesBefore = picked);
+      },
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+        decoration: BoxDecoration(
+          color: cs.surface,
+          border: Border.all(color: AppTokens.border),
+          borderRadius: BorderRadius.circular(AppTokens.radiusMd),
+        ),
+        child: Row(
+          children: [
+            Expanded(
+              child: Text(
+                _minutesBeforeLabel(_minutesBefore),
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w500, color: cs.onSurface),
+              ),
+            ),
+            Icon(Icons.keyboard_arrow_down, color: cs.onSurfaceVariant),
+          ],
+        ),
+      ),
     );
   }
 
-  Widget _buildRepeatDropdown() {
+  String _repeatOptionLabel(_RepeatOption o) {
     final tr = S.of(context);
+    return switch (o) {
+      _RepeatOption.daily => tr.repeatDaily,
+      _RepeatOption.weekdays => tr.repeatWeekdays,
+      _RepeatOption.fridayHoliday => tr.repeatFridayHoliday,
+      _RepeatOption.chooseDate => tr.repeatChooseDate,
+      _RepeatOption.custom => tr.repeatCustom,
+    };
+  }
+
+  Widget _buildRepeatDropdown() {
     final cs = Theme.of(context).colorScheme;
-    return DropdownButtonFormField<_RepeatOption>(
-      initialValue: _repeatOption,
-      decoration: const InputDecoration(
-        contentPadding: EdgeInsets.symmetric(horizontal: 14, vertical: 14),
-      ),
-      icon: Icon(Icons.arrow_drop_down, color: cs.onSurfaceVariant),
-      dropdownColor: cs.surface,
-      items: _RepeatOption.values.map((o) {
-        final label = switch (o) {
-          _RepeatOption.daily => tr.repeatDaily,
-          _RepeatOption.weekdays => tr.repeatWeekdays,
-          _RepeatOption.fridayHoliday => tr.repeatFridayHoliday,
-          _RepeatOption.chooseDate => tr.repeatChooseDate,
-          _RepeatOption.custom => tr.repeatCustom,
-        };
-        return DropdownMenuItem(value: o, child: Text(label));
-      }).toList(),
-      onChanged: (v) {
-        if (v != null) _applyRepeatOption(v);
+    return InkWell(
+      borderRadius: BorderRadius.circular(AppTokens.radiusMd),
+      onTap: () async {
+        final picked = await showOptionPickerSheet<_RepeatOption>(
+          context: context,
+          currentValue: _repeatOption,
+          options: [
+            for (final o in _RepeatOption.values)
+              (value: o, label: _repeatOptionLabel(o)),
+          ],
+        );
+        if (picked != null) _applyRepeatOption(picked);
       },
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+        decoration: BoxDecoration(
+          color: cs.surface,
+          border: Border.all(color: AppTokens.border),
+          borderRadius: BorderRadius.circular(AppTokens.radiusMd),
+        ),
+        child: Row(
+          children: [
+            Expanded(
+              child: Text(
+                _repeatOptionLabel(_repeatOption),
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w500, color: cs.onSurface),
+              ),
+            ),
+            Icon(Icons.keyboard_arrow_down, color: cs.onSurfaceVariant),
+          ],
+        ),
+      ),
     );
   }
 

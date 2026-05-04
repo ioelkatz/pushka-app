@@ -1114,7 +1114,7 @@ class S {
   // SAVED CARDS
   // ---------------------------------------------------------------------------
 
-  String get savedCards => _t('Tarjetas guardadas', 'Saved cards', 'Cartes enregistrées', 'כרטיסים שמורים');
+  String get savedCards => _t('Métodos de pago', 'Payment methods', 'Moyens de paiement', 'אמצעי תשלום');
   String get myCards => _t('Mis tarjetas', 'My cards', 'Mes cartes', 'הכרטיסים שלי');
   String get noCardsYet => _t('Sin tarjetas guardadas', 'No saved cards', 'Aucune carte enregistrée', 'אין כרטיסים שמורים');
   String get noSavedCards => _t(

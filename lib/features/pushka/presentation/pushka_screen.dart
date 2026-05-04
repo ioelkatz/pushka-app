@@ -1850,12 +1850,6 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
       return;
     }
 
-    final goalOptions = <double>[36, 60, 90, 180, 360, 600, 900, 1200, 1800, 3600];
-    if (!goalOptions.any((v) => (v - pushkaGoal).abs() < 0.001)) {
-      goalOptions.add(pushkaGoal);
-      goalOptions.sort();
-    }
-
     final currency = _currencyCodeFromProfile();
     final defaults = _presetsForCurrency(currency);
     final currentPresets = (_presetAmounts.length == 3 && _presetAmounts.every((v) => v > 0))
@@ -1870,6 +1864,14 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
     final ctrl1 = TextEditingController(text: _formatPresetValue(currentPresets[0]));
     final ctrl2 = TextEditingController(text: _formatPresetValue(currentPresets[1]));
     final ctrl3 = TextEditingController(text: _formatPresetValue(currentPresets[2]));
+    // Inline TextField for monto acumulado (replaced the prior tap-to-edit
+    // dialog) so the user can edit it the same way as the presets.
+    final amountAccCtrl = TextEditingController(text: _formatPresetValue(displayedAmount));
+    // Inline TextField for the pushka goal — replaced the prior tap-to-open
+    // bottom-sheet picker. The user prefers a single editable field over
+    // a list of preset goals; "Otro" is no longer needed because every
+    // value is freely typable.
+    final goalCtrl = TextEditingController(text: _formatPresetValue(selectedGoal));
     bool? saved;
     try {
     saved = await showKeyboardSafeSheet<bool>(
@@ -1904,224 +1906,101 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                     ),
                   ),
                   const SizedBox(height: 8),
-                  DropdownButtonFormField<double>(
-                    initialValue: goalOptions.contains(selectedGoal) ? selectedGoal : null,
-                    icon: const Icon(Icons.keyboard_arrow_down_rounded),
-                    isExpanded: true,
-                    menuMaxHeight: 620,
-                    dropdownColor: cs.surface,
-                    borderRadius: BorderRadius.circular(16),
-                    itemHeight: 52,
+                  TextField(
+                    controller: goalCtrl,
+                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                    style: const TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w500,
+                    ),
                     decoration: InputDecoration(
-                      hintText: formatMoney(selectedGoal),
+                      prefixText: '$symbol ',
+                      prefixStyle: TextStyle(
+                        fontSize: 16,
+                        color: cs.onSurfaceVariant,
+                        fontWeight: FontWeight.w500,
+                      ),
+                      filled: true,
+                      fillColor: cs.surface,
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
                       border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(14),
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: BorderSide(color: AppTokens.border),
+                      ),
+                      enabledBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: BorderSide(color: AppTokens.border),
                       ),
                       focusedBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(14),
+                        borderRadius: BorderRadius.circular(12),
                         borderSide: BorderSide(color: cs.primary, width: 2),
                       ),
-                      contentPadding: const EdgeInsets.symmetric(
-                        horizontal: 14,
-                        vertical: 14,
-                      ),
                     ),
-                    items: goalOptions.map((value) {
-                      return DropdownMenuItem<double>(
-                        value: value,
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Text(
-                              symbol,
-                              style: TextStyle(
-                                fontSize: 15,
-                                fontWeight: FontWeight.w500,
-                                color: cs.onSurfaceVariant,
-                              ),
-                            ),
-                            const SizedBox(width: 6),
-                            Text(
-                              formatAmount(value),
-                              style: const TextStyle(
-                                fontSize: 16,
-                                fontWeight: FontWeight.w500,
-                              ),
-                            ),
-                          ],
-                        ),
-                      );
-                    }).toList()
-                      ..add(
-                        DropdownMenuItem<double>(
-                          value: -1,
-                          child: Text(
-                            S.of(context).dropdownOther,
-                            style: TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.w500,
-                            ),
-                          ),
-                        ),
-                      ),
-                    onChanged: (value) async {
-                      if (value == null) return;
-                      if (value == -1) {
-                        final custom = await _showCustomGoalDialog();
-                        if (custom != null && ctx.mounted) {
-                          setDialogState(() => selectedGoal = custom);
-                        }
-                        return;
+                    onChanged: (value) {
+                      final parsed = double.tryParse(value.replaceAll(',', '.'));
+                      if (parsed != null && parsed > 0) {
+                        selectedGoal = parsed;
                       }
-                      setDialogState(() => selectedGoal = value);
                     },
                   ),
 
-                  // ── Corregir monto acumulado ─────────────────────────────
-                  if (displayedAmount > 0) ...[
-                    const SizedBox(height: 18),
-                    Text(
-                      S.of(context).correctAmountLabel,
-                      style: TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w700,
+                  // ── Monto acumulado ──────────────────────────────────
+                  // Inline TextField (mismo patrón que los presets) en
+                  // lugar del antiguo tap-to-open dialog. Los cambios se
+                  // confirman al tocar Guardar abajo, junto con presets +
+                  // meta. El estilo coincide con Settings (filled surface
+                  // + AppTokens.border + 12 radius + 16/14 padding).
+                  const SizedBox(height: 18),
+                  Text(
+                    S.of(context).correctAmountLabel,
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                      color: cs.onSurfaceVariant,
+                      letterSpacing: 0.8,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: amountAccCtrl,
+                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                    style: const TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w500,
+                    ),
+                    decoration: InputDecoration(
+                      prefixText: '$symbol ',
+                      prefixStyle: TextStyle(
+                        fontSize: 16,
                         color: cs.onSurfaceVariant,
-                        letterSpacing: 0.8,
+                        fontWeight: FontWeight.w500,
+                      ),
+                      filled: true,
+                      fillColor: cs.surface,
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: BorderSide(color: AppTokens.border),
+                      ),
+                      enabledBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: BorderSide(color: AppTokens.border),
+                      ),
+                      focusedBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: BorderSide(color: cs.primary, width: 2),
                       ),
                     ),
-                    const SizedBox(height: 10),
-                    InkWell(
-                      borderRadius: BorderRadius.circular(14),
-                      onTap: () async {
-                        // Declare controller OUTSIDE showDialog's builder
-                        // so we can dispose it in the finally below.
-                        final amtCtrl = TextEditingController(
-                          text: _formatPresetValue(displayedAmount),
-                        );
-                        double? corrected;
-                        try {
-                        corrected = await showDialog<double>(
-                          context: ctx,
-                          builder: (dCtx) {
-                            String? errorText;
-                            return StatefulBuilder(
-                              builder: (dCtx, setDState) => AlertDialog(
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(20),
-                                ),
-                                title: Text(
-                                  S.of(context).correctAmountDialogTitle,
-                                  style: const TextStyle(
-                                    fontSize: 18,
-                                    fontWeight: FontWeight.w700,
-                                  ),
-                                ),
-                                content: TextField(
-                                  controller: amtCtrl,
-                                  autofocus: true,
-                                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                                  textInputAction: TextInputAction.done,
-                                  decoration: InputDecoration(
-                                    labelText: S.of(context).amount,
-                                    prefixText: '$symbol ',
-                                    border: OutlineInputBorder(
-                                      borderRadius: BorderRadius.circular(12),
-                                    ),
-                                    focusedBorder: OutlineInputBorder(
-                                      borderRadius: BorderRadius.circular(12),
-                                      borderSide: BorderSide(color: cs.primary, width: 2),
-                                    ),
-                                    errorText: errorText,
-                                  ),
-                                  onSubmitted: (_) {
-                                    final v = double.tryParse(
-                                      amtCtrl.text.trim().replaceAll(',', '.'),
-                                    );
-                                    if (v == null || v < 0) {
-                                      setDState(() => errorText = S.of(context).enterValidAmount);
-                                      return;
-                                    }
-                                    Navigator.pop(dCtx, v);
-                                  },
-                                ),
-                                actions: [
-                                  TextButton(
-                                    onPressed: () => Navigator.pop(dCtx),
-                                    child: Text(S.of(context).cancel),
-                                  ),
-                                  ElevatedButton(
-                                    style: ElevatedButton.styleFrom(
-                                      backgroundColor: cs.primary,
-                                      foregroundColor: Colors.white,
-                                      shape: RoundedRectangleBorder(
-                                        borderRadius: BorderRadius.circular(10),
-                                      ),
-                                    ),
-                                    onPressed: () {
-                                      final v = double.tryParse(
-                                        amtCtrl.text.trim().replaceAll(',', '.'),
-                                      );
-                                      if (v == null || v < 0) {
-                                        setDState(() => errorText = S.of(context).enterValidAmount);
-                                        return;
-                                      }
-                                      Navigator.pop(dCtx, v);
-                                    },
-                                    child: Text(S.of(context).save),
-                                  ),
-                                ],
-                              ),
-                            );
-                          },
-                        );
-                        } finally {
-                          Future.delayed(
-                            const Duration(milliseconds: 400),
-                            amtCtrl.dispose,
-                          );
-                        }
-                        if (corrected == null || !mounted) return;
+                    onChanged: (value) {
+                      final parsed = double.tryParse(value.replaceAll(',', '.'));
+                      if (parsed != null && parsed >= 0) {
                         final capped = pushkaGoal > 0
-                            ? corrected.clamp(0.0, pushkaGoal)
-                            : corrected.clamp(0.0, 100000.0);
-                        setDialogState(() => displayedAmount = capped);
-                      },
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
-                        decoration: BoxDecoration(
-                          border: Border.all(color: AppTokens.border),
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: Row(
-                          children: [
-                            Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Text(
-                                  symbol,
-                                  style: TextStyle(
-                                    fontSize: 15,
-                                    fontWeight: FontWeight.w500,
-                                    color: cs.onSurfaceVariant,
-                                  ),
-                                ),
-                                const SizedBox(width: 6),
-                                Text(
-                                  _formatPresetValue(displayedAmount),
-                                  style: const TextStyle(
-                                    fontSize: 16,
-                                    fontWeight: FontWeight.w500,
-                                  ),
-                                ),
-                              ],
-                            ),
-                            const Spacer(),
-                            Icon(Icons.edit_outlined, size: 18, color: cs.onSurfaceVariant),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ],
+                            ? parsed.clamp(0.0, pushkaGoal)
+                            : parsed.clamp(0.0, 100000.0);
+                        displayedAmount = capped;
+                      }
+                    },
+                  ),
 
                   const SizedBox(height: 18),
                   Text(
@@ -2161,17 +2040,19 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                                 color: cs.onSurfaceVariant,
                                 fontWeight: FontWeight.w500,
                               ),
+                              filled: true,
+                              fillColor: cs.surface,
                               contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 14),
                               border: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(14),
-                                borderSide: BorderSide(color: cs.outline, width: 1.2),
+                                borderRadius: BorderRadius.circular(12),
+                                borderSide: BorderSide(color: AppTokens.border),
                               ),
                               enabledBorder: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(14),
-                                borderSide: BorderSide(color: cs.outline, width: 1.2),
+                                borderRadius: BorderRadius.circular(12),
+                                borderSide: BorderSide(color: AppTokens.border),
                               ),
                               focusedBorder: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(14),
+                                borderRadius: BorderRadius.circular(12),
                                 borderSide: BorderSide(color: cs.primary, width: 2),
                               ),
                             ),
@@ -2267,6 +2148,8 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
         ctrl1.dispose();
         ctrl2.dispose();
         ctrl3.dispose();
+        amountAccCtrl.dispose();
+        goalCtrl.dispose();
       });
     }
 
@@ -2277,52 +2160,6 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
     }
   }
 
-  Future<double?> _showCustomGoalDialog() async {
-    final controller = TextEditingController();
-    String? error;
-    double? result;
-    try {
-    result = await showKeyboardSafeSheet<double>(
-      context: context,
-      builder: (ctx, setDialogState) => Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
-                      Center(child: Container(width: 36, height: 4, margin: const EdgeInsets.only(bottom: 12), decoration: BoxDecoration(color: Colors.grey.shade300, borderRadius: BorderRadius.circular(2)))),
-                      Text(S.of(context).customGoal, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
-                      const SizedBox(height: 14),
-                      TextField(
-                        controller: controller,
-                        keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                        textInputAction: TextInputAction.done,
-                        onSubmitted: (_) {
-                          final value = double.tryParse(controller.text.trim().replaceAll(',', '.'));
-                          if (value != null && value > 0) Navigator.pop(ctx, value);
-                        },
-                        decoration: InputDecoration(
-                          hintText: S.of(context).customGoalHint, prefixText: '\$ ', errorText: error,
-                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                        ),
-                        onChanged: (_) { if (error != null) setDialogState(() => error = null); },
-                      ),
-                      const SizedBox(height: 16),
-                      SizedBox(width: double.infinity, height: 48, child: ElevatedButton(
-                        style: ElevatedButton.styleFrom(shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
-                        onPressed: () {
-                          final value = double.tryParse(controller.text.trim().replaceAll(',', '.'));
-                          if (value == null || value <= 0) { setDialogState(() => error = S.of(context).enterValidAmount); return; }
-                          Navigator.pop(ctx, value);
-                        },
-                        child: Text(S.of(context).accept, style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
-                      )),
-                      SizedBox(width: double.infinity, height: 44, child: TextButton(
-                        onPressed: () => Navigator.pop(ctx),
-                        child: Text(S.of(context).cancel, style: const TextStyle(fontWeight: FontWeight.w500)),
-                      )),
-                    ]),
-    );
-    } finally {
-      Future.delayed(const Duration(milliseconds: 400), controller.dispose);
-    }
-    return result;
-  }
 }
 
 class _PartialDonationSheet extends StatefulWidget {

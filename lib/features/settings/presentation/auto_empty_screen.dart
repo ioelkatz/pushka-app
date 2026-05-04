@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'card_brand_box.dart';
 
+import '../../../core/widgets/option_picker_sheet.dart';
 import '../../payments/donation_reason_picker.dart';
 import '../../users/data/user_repository.dart';
 import '../../users/presentation/user_profile_provider.dart';
@@ -323,10 +324,31 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
                     controller: _amountController,
                     keyboardType:
                         const TextInputType.numberWithOptions(decimal: true),
+                    style: const TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w500,
+                    ),
                     decoration: InputDecoration(
                       prefixText: '\$ ',
+                      prefixStyle: TextStyle(
+                        fontSize: 16,
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                        fontWeight: FontWeight.w500,
+                      ),
+                      filled: true,
+                      fillColor: Theme.of(context).colorScheme.surface,
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
                       border: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(12),
+                        borderSide: BorderSide(color: AppTokens.border),
+                      ),
+                      enabledBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: BorderSide(color: AppTokens.border),
+                      ),
+                      focusedBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: BorderSide(color: Theme.of(context).colorScheme.primary, width: 2),
                       ),
                     ),
                     onChanged: (value) {
@@ -508,7 +530,6 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
     final selected = resolveSelected();
     final brand = (selected['brand'] as String? ?? 'card').toLowerCase();
     final last4 = selected['last4'] as String? ?? '****';
-    final isDefault = selected['isDefault'] == true;
 
     return InkWell(
       borderRadius: BorderRadius.circular(12),
@@ -962,61 +983,9 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
     }
   }
 
-  /// Generic green-highlighted bottom-sheet picker — same visual pattern as
-  /// the History filter and the donation reason picker. Lives here as a
-  /// helper so the frequency + day-of-week pickers reuse the exact UI.
-  Future<T?> _showOptionPickerSheet<T>({
-    required List<({T value, String label})> options,
-    required T currentValue,
-  }) {
-    return showModalBottomSheet<T>(
-      context: context,
-      useRootNavigator: true,
-      useSafeArea: true,
-      isScrollControlled: true,
-      backgroundColor: Theme.of(context).colorScheme.surface,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
-      ),
-      barrierColor: const Color(0xDD000000),
-      builder: (sheetCtx) {
-        final cs = Theme.of(sheetCtx).colorScheme;
-        return SafeArea(
-          top: false,
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.fromLTRB(20, 12, 20, 18),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Center(
-                  child: Container(
-                    width: 36, height: 4,
-                    margin: const EdgeInsets.only(bottom: 16),
-                    decoration: BoxDecoration(
-                      color: cs.outlineVariant,
-                      borderRadius: BorderRadius.circular(2),
-                    ),
-                  ),
-                ),
-                for (var i = 0; i < options.length; i++) ...[
-                  _OptionTile(
-                    label: options[i].label,
-                    selected: options[i].value == currentValue,
-                    onTap: () => Navigator.pop(sheetCtx, options[i].value),
-                  ),
-                  if (i < options.length - 1) const SizedBox(height: 8),
-                ],
-              ],
-            ),
-          ),
-        );
-      },
-    );
-  }
-
   Future<void> _showFrequencyPicker(S tr) async {
-    final picked = await _showOptionPickerSheet<String>(
+    final picked = await showOptionPickerSheet<String>(
+      context: context,
       currentValue: _frequency,
       options: [
         (value: 'manual', label: tr.manualEmpty),
@@ -1058,7 +1027,8 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
 
   Future<void> _showWeeklyDialog() async {
     final tr = S.of(context);
-    final picked = await _showOptionPickerSheet<int>(
+    final picked = await showOptionPickerSheet<int>(
+      context: context,
       currentValue: _weekday,
       options: [
         (value: DateTime.monday, label: tr.dayMonFull),
@@ -1134,52 +1104,5 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
   }
 }
 
-/// Outlined tile used inside the bottom-sheet pickers — green-highlighted
-/// with a checkmark when [selected]. Shared style with the History filter
-/// and donation reason picker so all three feel like one component.
-class _OptionTile extends StatelessWidget {
-  const _OptionTile({
-    required this.label,
-    required this.selected,
-    required this.onTap,
-  });
-
-  final String label;
-  final bool selected;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-    return InkWell(
-      borderRadius: BorderRadius.circular(12),
-      onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-        decoration: BoxDecoration(
-          color: selected ? cs.primary.withValues(alpha: 0.12) : cs.surface,
-          border: Border.all(color: selected ? cs.primary : cs.outline),
-          borderRadius: BorderRadius.circular(12),
-        ),
-        child: Row(
-          children: [
-            Expanded(
-              child: Text(
-                label,
-                style: TextStyle(
-                  fontSize: 16,
-                  fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
-                  color: cs.onSurface,
-                ),
-              ),
-            ),
-            if (selected)
-              Icon(Icons.check, color: cs.primary, size: 22),
-          ],
-        ),
-      ),
-    );
-  }
-}
 
 

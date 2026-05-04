@@ -22,7 +22,12 @@ Future<T?> showKeyboardSafeSheet<T>({
     shape: const RoundedRectangleBorder(
       borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
     ),
-    backgroundColor: Theme.of(context).colorScheme.surface,
+    // Use the scaffold background color (NOT cs.surface) so tiles
+    // inside the sheet — which themselves use cs.surface as fill to
+    // match the Settings convention — actually have contrast against
+    // the modal bg. With both being cs.surface the tiles disappeared
+    // visually.
+    backgroundColor: Theme.of(context).scaffoldBackgroundColor,
     barrierColor: const Color(0xDD000000),
     builder: (sheetCtx) => Padding(
       padding: EdgeInsets.only(

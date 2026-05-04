@@ -14,8 +14,8 @@ import '../../users/presentation/user_profile_provider.dart';
 import '../../tenant/data/tenant_repository.dart';
 import '../../tenant/domain/tenant_config.dart';
 import '../../tenant/presentation/account_switcher_sheet.dart';
-import '../../../core/format_utils.dart';
 import '../../../core/l10n/locale_provider.dart';
+import '../../../core/widgets/option_picker_sheet.dart';
 import 'package:go_router/go_router.dart';
 
 import 'package:url_launcher/url_launcher.dart';
@@ -52,10 +52,28 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   bool _loadedProfile = false;
   bool _uploadingPhoto = false;
   bool _avatarLoadFailed = false;
-  int? _editingPresetIndex;
-  final TextEditingController _presetEditCtrl = TextEditingController();
-  final FocusNode _presetEditFocus = FocusNode();
   List<double>? _localPresets;
+
+  // One persistent controller per preset slot — same pattern as the
+  // Tzedaká config (Mi Pushka), so the field is ALWAYS a TextField (no
+  // tap-to-toggle between display/edit container). Synced from the remote
+  // value only when the field is NOT focused, then committed on blur or
+  // submit so the user's typing is never stomped mid-edit.
+  final List<TextEditingController> _presetCtrls = [
+    TextEditingController(),
+    TextEditingController(),
+    TextEditingController(),
+  ];
+  final List<FocusNode> _presetFocusNodes = [FocusNode(), FocusNode(), FocusNode()];
+  bool _presetCtrlsInited = false;
+
+  // Inline editor for the pushka goal — replaces the prior tap-to-open
+  // dialog. Synced with [pushkaGoal] when remote state arrives, but only
+  // when the field is NOT focused so we don't stomp the user mid-type.
+  // Saved on submit (Done on keyboard) or on blur.
+  final TextEditingController _pushkaGoalCtrl = TextEditingController();
+  final FocusNode _pushkaGoalFocus = FocusNode();
+  bool _pushkaGoalCtrlInited = false;
 
   String _shortCurrencySymbol(String code) {
     const symbols = {
@@ -67,20 +85,56 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   }
 
   @override
+  void initState() {
+    super.initState();
+    _pushkaGoalFocus.addListener(_onPushkaGoalFocusChange);
+    for (var i = 0; i < _presetFocusNodes.length; i++) {
+      final idx = i;
+      _presetFocusNodes[i].addListener(() {
+        if (!_presetFocusNodes[idx].hasFocus) _commitPreset(idx);
+      });
+    }
+  }
+
+  @override
   void dispose() {
-    _presetEditCtrl.dispose();
-    _presetEditFocus.dispose();
+    _pushkaGoalFocus.removeListener(_onPushkaGoalFocusChange);
+    _pushkaGoalCtrl.dispose();
+    _pushkaGoalFocus.dispose();
+    for (final c in _presetCtrls) {
+      c.dispose();
+    }
+    for (final f in _presetFocusNodes) {
+      f.dispose();
+    }
     super.dispose();
   }
 
-  String _currencySymbol(String code) {
-    const symbols = {
-      'usd': 'US\$', 'eur': '€', 'gbp': '£', 'cad': 'CA\$',
-      'mxn': 'MX\$', 'ars': 'ARS\$', 'brl': 'R\$', 'ils': '₪',
-      'clp': 'CL\$', 'cop': 'CO\$',
-    };
-    return symbols[code.toLowerCase()] ?? '\$';
+  /// Save-on-blur for the pushka goal field. Without this the user could
+  /// type a new value, tap somewhere else, and the change would be lost
+  /// (no Done press). Also re-syncs the controller text on blur in case
+  /// the value couldn't parse → field re-shows the last valid amount.
+  void _onPushkaGoalFocusChange() {
+    if (_pushkaGoalFocus.hasFocus) return;
+    _commitPushkaGoal();
   }
+
+  void _commitPushkaGoal() {
+    final raw = _pushkaGoalCtrl.text.trim().replaceAll(',', '.');
+    final parsed = double.tryParse(raw);
+    if (parsed == null || parsed <= 0) {
+      // Invalid → restore last valid value in the field, no save.
+      _pushkaGoalCtrl.text = pushkaGoal % 1 == 0
+          ? pushkaGoal.toInt().toString()
+          : pushkaGoal.toStringAsFixed(2);
+      return;
+    }
+    if (parsed == pushkaGoal) return;
+    setState(() => pushkaGoal = parsed);
+    _updateSettings(ref.read(currentUserProvider), pushkaGoal: parsed)
+        .catchError((Object e) => debugPrint('pushkaGoal updateSettings error: $e'));
+  }
+
 
   @override
   Widget build(BuildContext context) {
@@ -171,14 +225,59 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           _buildSectionTitle(tr.general),
           const SizedBox(height: 12),
 
-          // PUSHKA GOAL
+          // PUSHKA GOAL — inline TextField. Sync the controller on every
+          // build EXCEPT while the user is editing (focused), so external
+          // tenant-state pushes don't stomp mid-type. Persist on blur or
+          // submit via _commitPushkaGoal.
           _buildLabel(tr.pushkaGoalSetting),
           const SizedBox(height: 6),
-          _buildInputField(
-            value: formatMoney(pushkaGoal),
-            onTap: () => _showPushkaGoalDialog(),
-            blue: blue,
-          ),
+          Builder(builder: (_) {
+            if (!_pushkaGoalCtrlInited || (!_pushkaGoalFocus.hasFocus)) {
+              final formatted = pushkaGoal % 1 == 0
+                  ? pushkaGoal.toInt().toString()
+                  : pushkaGoal.toStringAsFixed(2);
+              if (_pushkaGoalCtrl.text != formatted) {
+                _pushkaGoalCtrl.text = formatted;
+              }
+              _pushkaGoalCtrlInited = true;
+            }
+            final cs = Theme.of(context).colorScheme;
+            return TextField(
+              controller: _pushkaGoalCtrl,
+              focusNode: _pushkaGoalFocus,
+              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              textInputAction: TextInputAction.done,
+              onSubmitted: (_) => _commitPushkaGoal(),
+              style: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.w500,
+                color: cs.onSurface,
+              ),
+              decoration: InputDecoration(
+                prefixText: '\$ ',
+                prefixStyle: TextStyle(
+                  fontSize: 16,
+                  color: cs.onSurfaceVariant,
+                  fontWeight: FontWeight.w500,
+                ),
+                filled: true,
+                fillColor: cs.surface,
+                contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: BorderSide(color: AppTokens.border),
+                ),
+                enabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: BorderSide(color: AppTokens.border),
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: BorderSide(color: cs.primary, width: 2),
+                ),
+              ),
+            );
+          }),
           const SizedBox(height: 18),
 
           // PRESET AMOUNTS
@@ -215,6 +314,10 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           _buildActionButton(
             _activeOrgLabel(),
             onTap: () => showAccountSwitcher(context),
+            // Down-chevron because tapping opens a bottom sheet (picker),
+            // not a navigation to a new screen — matches the convention
+            // used by the Auto Vaciar selector tiles.
+            trailingIcon: Icons.keyboard_arrow_down,
           ),
           const SizedBox(height: 18),
 
@@ -976,32 +1079,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     );
   }
 
-  Widget _buildInputField({
-    required String value,
-    required VoidCallback onTap,
-    required Color blue,
-  }) {
-    return InkWell(
-      onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-        decoration: BoxDecoration(
-          color: Theme.of(context).colorScheme.surface,
-          border: Border.all(color: AppTokens.border),
-          borderRadius: BorderRadius.circular(12),
-        ),
-        child: Text(
-          value,
-          style: TextStyle(
-            fontSize: 16,
-            fontWeight: FontWeight.w500,
-            color: Theme.of(context).colorScheme.onSurface,
-          ),
-        ),
-      ),
-    );
-  }
-
   List<double> _presetsForCurrency(String currency) {
     switch (currency.toLowerCase()) {
       case 'mxn': return [20, 100, 200];
@@ -1030,92 +1107,91 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     // Use local copy while editing so we can show pending changes instantly
     final presets = _localPresets ?? remotePresets;
     final sym = _shortCurrencySymbol(selectedCurrency);
-    final primary = Theme.of(context).colorScheme.primary;
+    final cs = Theme.of(context).colorScheme;
 
-    void startEditing(int idx) {
-      final val = presets[idx];
-      _presetEditCtrl.text = _formatPresetVal(val);
-      _presetEditCtrl.selection = TextSelection(baseOffset: 0, extentOffset: _presetEditCtrl.text.length);
-      setState(() {
-        _localPresets = List.of(presets);
-        _editingPresetIndex = idx;
-      });
-      WidgetsBinding.instance.addPostFrameCallback((_) => _presetEditFocus.requestFocus());
-    }
-
-    void commitEdit() {
-      final idx = _editingPresetIndex;
-      if (idx == null) return;
-      final parsed = double.tryParse(_presetEditCtrl.text.replaceAll(',', '.'));
-      if (parsed == null || parsed <= 0) {
-        // Invalid — revert to current values without saving
-        setState(() { _editingPresetIndex = null; });
-        return;
+    // Sync controllers from the source-of-truth presets list, but only
+    // when the field is NOT focused — otherwise the user's typing would
+    // be stomped on every rebuild (Firestore stream tick, theme change,
+    // etc.). First-time init is unconditional.
+    for (var i = 0; i < 3; i++) {
+      final formatted = _formatPresetVal(presets[i]);
+      if (!_presetCtrlsInited || (!_presetFocusNodes[i].hasFocus && _presetCtrls[i].text != formatted)) {
+        _presetCtrls[i].text = formatted;
       }
-      final updated = List<double>.of(presets);
-      updated[idx] = parsed;
-      // Keep _localPresets as source of truth — don't clear after the await,
-      // because the Firestore stream may not have emitted before the setState fires.
-      setState(() { _editingPresetIndex = null; _localPresets = updated; });
-      _updateSettings(user, presetAmounts: updated)
-          .catchError((Object e) => debugPrint('preset save error: $e'));
     }
+    _presetCtrlsInited = true;
 
     return Row(
-      children: presets.asMap().entries.map((entry) {
-        final idx = entry.key;
-        final amt = entry.value;
-        final isEditing = _editingPresetIndex == idx;
+      children: List.generate(3, (idx) {
         return Expanded(
           child: Padding(
             padding: EdgeInsetsDirectional.only(end: idx < 2 ? 10 : 0),
-            child: isEditing
-                ? TextField(
-                    controller: _presetEditCtrl,
-                    focusNode: _presetEditFocus,
-                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                    textAlign: TextAlign.center,
-                    style: const TextStyle(fontWeight: FontWeight.w500, fontSize: 16),
-                    decoration: InputDecoration(
-                      prefixText: sym,
-                      contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 14),
-                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                      focusedBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12),
-                        borderSide: BorderSide(color: primary, width: 1.8),
-                      ),
-                    ),
-                    onSubmitted: (_) => commitEdit(),
-                    onEditingComplete: commitEdit,
-                    onTapOutside: (_) => commitEdit(),
-                  )
-                : GestureDetector(
-                    onTap: () => startEditing(idx),
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-                      decoration: BoxDecoration(
-                        color: Theme.of(context).colorScheme.surface,
-                        border: Border.all(color: AppTokens.border),
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      alignment: Alignment.center,
-                      child: Text(
-                        '$sym${amt == amt.roundToDouble() ? amt.toInt() : amt.toStringAsFixed(2)}',
-                        style: TextStyle(
-                          fontWeight: FontWeight.w500,
-                          color: Theme.of(context).colorScheme.onSurface,
-                          fontSize: 16,
-                        ),
-                      ),
-                    ),
-                  ),
+            child: TextField(
+              controller: _presetCtrls[idx],
+              focusNode: _presetFocusNodes[idx],
+              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              textAlign: TextAlign.center,
+              textInputAction: TextInputAction.done,
+              style: const TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.w500,
+              ),
+              decoration: InputDecoration(
+                prefixText: sym,
+                prefixStyle: TextStyle(
+                  fontSize: 15,
+                  color: cs.onSurfaceVariant,
+                  fontWeight: FontWeight.w500,
+                ),
+                filled: true,
+                fillColor: cs.surface,
+                contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 14),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: BorderSide(color: AppTokens.border),
+                ),
+                enabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: BorderSide(color: AppTokens.border),
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: BorderSide(color: cs.primary, width: 2),
+                ),
+              ),
+              onSubmitted: (_) => _commitPreset(idx),
+            ),
           ),
         );
-      }).toList(),
+      }),
     );
   }
 
-  Widget _buildActionButton(String label, {required VoidCallback onTap}) {
+  /// Save-on-blur (or submit) for one preset slot. Mirrors the pushka-goal
+  /// commit logic: parse, validate, fall back to the previous value if the
+  /// input is invalid, persist via _updateSettings.
+  void _commitPreset(int idx) {
+    final raw = _presetCtrls[idx].text.trim().replaceAll(',', '.');
+    final parsed = double.tryParse(raw);
+    final basePresets = _localPresets ?? _presetsForCurrency(selectedCurrency);
+    if (parsed == null || parsed <= 0) {
+      // Invalid → restore the controller text from the previous value
+      _presetCtrls[idx].text = _formatPresetVal(basePresets[idx]);
+      return;
+    }
+    if (parsed == basePresets[idx]) return;
+    final updated = List<double>.of(basePresets);
+    updated[idx] = parsed;
+    setState(() => _localPresets = updated);
+    _updateSettings(ref.read(currentUserProvider), presetAmounts: updated)
+        .catchError((Object e) => debugPrint('preset save error: $e'));
+  }
+
+  Widget _buildActionButton(
+    String label, {
+    required VoidCallback onTap,
+    IconData trailingIcon = Icons.chevron_right,
+  }) {
     return InkWell(
       onTap: onTap,
       child: Container(
@@ -1137,7 +1213,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 ),
               ),
             ),
-            Icon(Icons.chevron_right, color: Theme.of(context).colorScheme.onSurfaceVariant),
+            Icon(trailingIcon, color: Theme.of(context).colorScheme.onSurfaceVariant),
           ],
         ),
       ),
@@ -1238,76 +1314,13 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     List<Map<String, String>> languages,
     String currentCode,
   ) async {
-    final picked = await showModalBottomSheet<String>(
+    final picked = await showOptionPickerSheet<String>(
       context: context,
-      useRootNavigator: true,
-      useSafeArea: true,
-      isScrollControlled: true,
-      backgroundColor: Theme.of(context).colorScheme.surface,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
-      ),
-      barrierColor: const Color(0xDD000000),
-      builder: (sheetCtx) {
-        final cs = Theme.of(sheetCtx).colorScheme;
-        return SafeArea(
-          top: false,
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.fromLTRB(20, 12, 20, 18),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Center(
-                  child: Container(
-                    width: 36, height: 4,
-                    margin: const EdgeInsets.only(bottom: 16),
-                    decoration: BoxDecoration(
-                      color: cs.outlineVariant,
-                      borderRadius: BorderRadius.circular(2),
-                    ),
-                  ),
-                ),
-                for (var i = 0; i < languages.length; i++) ...[
-                  Builder(builder: (tileCtx) {
-                    final lang = languages[i];
-                    final selected = lang['code'] == currentCode;
-                    return InkWell(
-                      borderRadius: BorderRadius.circular(12),
-                      onTap: () => Navigator.pop(sheetCtx, lang['code']),
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-                        decoration: BoxDecoration(
-                          color: selected ? cs.primary.withValues(alpha: 0.12) : cs.surface,
-                          border: Border.all(color: selected ? cs.primary : cs.outline),
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: Row(
-                          children: [
-                            Expanded(
-                              child: Text(
-                                lang['label']!,
-                                style: TextStyle(
-                                  fontSize: 16,
-                                  fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
-                                  color: cs.onSurface,
-                                ),
-                              ),
-                            ),
-                            if (selected)
-                              Icon(Icons.check, color: cs.primary, size: 22),
-                          ],
-                        ),
-                      ),
-                    );
-                  }),
-                  if (i < languages.length - 1) const SizedBox(height: 8),
-                ],
-              ],
-            ),
-          ),
-        );
-      },
+      currentValue: currentCode,
+      options: [
+        for (final lang in languages)
+          (value: lang['code']!, label: lang['label']!),
+      ],
     );
     if (picked == null || !mounted || picked == currentCode) return;
     ref.read(localeProvider.notifier).setLanguageCode(picked);
@@ -1936,110 +1949,75 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     }
   }
 
-  Future<void> _showPushkaGoalDialog() async {
-    final result = await showDialog<double>(
-      context: context,
-      barrierDismissible: true,
-      builder: (ctx) {
-        final controller = TextEditingController(
-          text: pushkaGoal % 1 == 0 ? pushkaGoal.toInt().toString() : pushkaGoal.toStringAsFixed(2),
-        );
-        String? errorText;
-        return StatefulBuilder(
-          builder: (ctx, setDialogState) => AlertDialog(
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(22)),
-            scrollable: true,
-            contentPadding: const EdgeInsets.fromLTRB(20, 22, 20, 0),
-            actionsPadding: const EdgeInsets.fromLTRB(20, 15, 20, 18),
-            content: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text(S.of(context).pushkaGoalDialog, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
-              const SizedBox(height: 14),
-              TextField(
-                controller: controller,
-                autofocus: true,
-                keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                textInputAction: TextInputAction.done,
-                onSubmitted: (_) {
-                  final value = double.tryParse(controller.text.trim().replaceAll(',', '.'));
-                  if (value != null && value > 0) Navigator.pop(ctx, value);
-                },
-                decoration: InputDecoration(
-                  labelText: S.of(context).amount, prefixText: '\$ ', hintText: S.of(context).exampleGoalHint, errorText: errorText,
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                  focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide(color: Theme.of(ctx).brightness == Brightness.dark ? Theme.of(ctx).colorScheme.primary : const Color(0xFFE05A4F), width: 1.6)),
-                ),
-                onChanged: (_) { if (errorText != null) setDialogState(() => errorText = null); },
-              ),
-            ]),
-            actions: [
-              SizedBox(width: double.infinity, height: 48, child: ElevatedButton(
-                style: ElevatedButton.styleFrom(backgroundColor: Theme.of(ctx).brightness == Brightness.dark ? Theme.of(ctx).colorScheme.primary : const Color(0xFFE05A4F), foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
-                onPressed: () {
-                  final value = double.tryParse(controller.text.trim().replaceAll(',', '.'));
-                  if (value == null || value <= 0) { setDialogState(() => errorText = S.of(context).enterValidAmount); return; }
-                  Navigator.pop(ctx, value);
-                },
-                child: Text(S.of(context).save, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
-              )),
-              SizedBox(width: double.infinity, height: 44, child: TextButton(
-                onPressed: () => Navigator.pop(ctx),
-                child: Text(S.of(context).cancel, style: TextStyle(color: Colors.grey.shade600, fontWeight: FontWeight.w500)),
-              )),
-            ],
-          ),
-        );
-      },
-    );
-
-    if (result != null && mounted) {
-      setState(() => pushkaGoal = result);
-      _updateSettings(ref.read(currentUserProvider), pushkaGoal: result)
-          .catchError((Object e) => debugPrint('pushkaGoal updateSettings error: $e'));
-    }
-  }
-
   Future<void> _showCurrencyDialog() async {
-    final currencies = [
-      {'country': 'Estados Unidos', 'currency': 'USD', 'flag': '🇺🇸'},
-      {'country': 'México', 'currency': 'MXN', 'flag': '🇲🇽'},
-      {'country': 'España', 'currency': 'EUR', 'flag': '🇪🇸'},
-      {'country': 'Argentina', 'currency': 'ARS', 'flag': '🇦🇷'},
-      {'country': 'Brasil', 'currency': 'BRL', 'flag': '🇧🇷'},
-      {'country': 'Israel', 'currency': 'ILS', 'flag': '🇮🇱'},
-      {'country': 'Chile', 'currency': 'CLP', 'flag': '🇨🇱'},
-      {'country': 'Colombia', 'currency': 'COP', 'flag': '🇨🇴'},
-      {'country': 'Reino Unido', 'currency': 'GBP', 'flag': '🇬🇧'},
-      {'country': 'Canadá', 'currency': 'CAD', 'flag': '🇨🇦'},
-    ];
+    // Currency metadata used to render flag + country label per code.
+    // Anything not listed here falls through to a generic globe + the
+    // raw 3-letter code, so adding new locals only requires updating
+    // this map.
+    const allCurrencies = <String, Map<String, String>>{
+      'USD': {'country': 'Estados Unidos', 'flag': '🇺🇸'},
+      'EUR': {'country': 'Eurozona', 'flag': '🇪🇺'},
+      'ILS': {'country': 'Israel', 'flag': '🇮🇱'},
+      'MXN': {'country': 'México', 'flag': '🇲🇽'},
+      'ARS': {'country': 'Argentina', 'flag': '🇦🇷'},
+      'BRL': {'country': 'Brasil', 'flag': '🇧🇷'},
+      'CLP': {'country': 'Chile', 'flag': '🇨🇱'},
+      'COP': {'country': 'Colombia', 'flag': '🇨🇴'},
+      'GBP': {'country': 'Reino Unido', 'flag': '🇬🇧'},
+      'CAD': {'country': 'Canadá', 'flag': '🇨🇦'},
+    };
 
-    final selected = await showDialog<Map<String, String>>(
+    // Shortlist = USD + EUR + ILS + MXN (universally-relevant baseline
+    // for Pushka's primary markets) plus two contextual additions:
+    //   - the tenant's default currency (so the local org currency is
+    //     always reachable from the picker)
+    //   - the user's currently-selected currency (so switching away from
+    //     a currency doesn't make it vanish from the list — they can
+    //     switch back later)
+    // Without the last one, a user that picked their local currency
+    // would see it only as long as they kept it; a single switch to USD
+    // would hide the local forever (the original bug report).
+    final cfg = ref.read(tenantConfigProvider).valueOrNull;
+    final tenantCurrency = cfg?.defaultCurrency?.toUpperCase();
+    final tenantCountry = cfg?.defaultCountry;
+    final shortlist = <String>['USD', 'EUR', 'ILS', 'MXN'];
+    if (tenantCurrency != null && !shortlist.contains(tenantCurrency)) {
+      shortlist.add(tenantCurrency);
+    }
+    final currentUpper = selectedCurrency.toUpperCase();
+    if (!shortlist.contains(currentUpper)) {
+      shortlist.add(currentUpper);
+    }
+
+    final currencies = shortlist.map((code) {
+      final meta = allCurrencies[code] ?? const {'country': '', 'flag': '🌐'};
+      // For the local currency, prefer the tenant-provided country label
+      // (e.g. tenant set country: 'Cdmx' instead of generic 'México').
+      final country = (code == tenantCurrency && tenantCountry != null && tenantCountry.isNotEmpty)
+          ? tenantCountry
+          : (meta['country']!.isNotEmpty ? meta['country']! : code);
+      return {
+        'currency': code,
+        'country': country,
+        'flag': meta['flag']!,
+      };
+    }).toList();
+
+    final selectedCode = await showOptionPickerSheet<String>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: Text(S.of(context).selectCurrency),
-        content: ConstrainedBox(
-          constraints: BoxConstraints(
-            maxHeight: MediaQuery.of(context).size.height * 0.55,
-            maxWidth: 360,
+      currentValue: selectedCurrency,
+      options: [
+        for (final c in currencies)
+          (
+            value: c['currency']!,
+            label: '${c['flag']}  ${c['country']}  ·  ${c['currency']!}',
           ),
-          child: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: currencies.map((currency) {
-                return ListTile(
-                  leading: Text(currency['flag']!, style: const TextStyle(fontSize: 24)),
-                  title: Text(currency['country']!),
-                  subtitle: Text('${_currencySymbol(currency['currency']!)} ${currency['currency']!}'),
-                  onTap: () => Navigator.pop(context, currency),
-                );
-              }).toList(),
-            ),
-          ),
-        ),
-      ),
+      ],
     );
 
-    if (selected == null || !mounted) return;
-    if (selected['currency'] == selectedCurrency) return;
+    if (selectedCode == null || !mounted) return;
+    if (selectedCode == selectedCurrency) return;
+    final selected = currencies.firstWhere((c) => c['currency'] == selectedCode);
 
     // Confirmation modal
     final tr = S.of(context);
@@ -2118,7 +2096,10 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       selectedFlag = selected['flag'] ?? _flagForCountry(selectedCountry);
       pushkaGoal = newGoal;
       _localPresets = _presetsForCurrency(newCurrency); // show immediately, no stream dependency
-      _editingPresetIndex = null;
+      // Force the preset controllers to re-sync from the new currency's
+      // defaults on the next build (otherwise the prior controller texts
+      // would stick with the old-currency preset values).
+      _presetCtrlsInited = false;
     });
     final uid = user?.uid;
     final tenantId = ref.read(userProfileProvider).valueOrNull?['tenantId'] as String?;
