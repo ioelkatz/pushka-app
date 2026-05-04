@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../../app/theme/app_tokens.dart';
 import '../../../core/l10n/s.dart';
 import '../../settings/presentation/auto_empty_action_row.dart';
 import '../../settings/presentation/auto_empty_screen.dart';
@@ -92,7 +93,7 @@ class _SavedCardPreview extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
         decoration: BoxDecoration(
           color: cs.surface,
-          border: Border.all(color: cs.outline),
+          border: Border.all(color: AppTokens.border),
           borderRadius: BorderRadius.circular(12),
         ),
         child: Row(

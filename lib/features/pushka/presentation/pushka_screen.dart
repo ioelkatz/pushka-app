@@ -1138,7 +1138,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                           child: Container(
                             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                             decoration: BoxDecoration(
-                              border: Border.all(color: Colors.grey.shade300),
+                              border: Border.all(color: AppTokens.border),
                               borderRadius: BorderRadius.circular(12),
                             ),
                             child: Row(
@@ -1563,7 +1563,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: Theme.of(ctx).colorScheme.outline),
+          border: Border.all(color: AppTokens.border),
         ),
         child: Row(children: [
           Container(
@@ -2055,8 +2055,8 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                       child: Container(
                         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
                         decoration: BoxDecoration(
-                          border: Border.all(color: cs.outline, width: 1.2),
-                          borderRadius: BorderRadius.circular(14),
+                          border: Border.all(color: AppTokens.border),
+                          borderRadius: BorderRadius.circular(12),
                         ),
                         child: Row(
                           children: [
@@ -2485,8 +2485,8 @@ class _PartialDonationSheetState extends State<_PartialDonationSheet> {
           color: isSelected ? cs.primary.withValues(alpha: 0.12) : cs.surface,
           borderRadius: BorderRadius.circular(12),
           border: Border.all(
-            color: isSelected ? cs.primary : cs.outline,
-            width: isSelected ? 1.8 : 1.2,
+            color: isSelected ? cs.primary : AppTokens.border,
+            width: isSelected ? 1.8 : 1.0,
           ),
         ),
         child: Text(

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../app/theme/app_tokens.dart';
 import '../../../core/format_utils.dart';
 import '../../../core/l10n/s.dart';
 import '../../../core/widgets/shimmer_list.dart';
@@ -64,7 +65,7 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
           decoration: BoxDecoration(
             color: cs.surface,
             borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: cs.outline),
+            border: Border.all(color: AppTokens.border),
           ),
           child: InkWell(
             borderRadius: BorderRadius.circular(12),
@@ -115,7 +116,7 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
                       decoration: BoxDecoration(
                         color: cs.surface,
                         borderRadius: BorderRadius.circular(12),
-                        border: Border.all(color: cs.outline),
+                        border: Border.all(color: AppTokens.border),
                       ),
                       child: Row(
                         children: [
@@ -390,7 +391,7 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
         decoration: BoxDecoration(
           color: selected ? cs.primary.withValues(alpha: 0.12) : cs.surface,
-          border: Border.all(color: selected ? cs.primary : cs.outline),
+          border: Border.all(color: selected ? cs.primary : AppTokens.border),
           borderRadius: BorderRadius.circular(12),
         ),
         child: Row(
@@ -437,7 +438,7 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
         color: cs.surface,
         borderRadius: BorderRadius.circular(12),
         border: Border.all(
-          color: transaction.isPending ? Colors.orange.shade200 : cs.outline,
+          color: transaction.isPending ? Colors.orange.shade200 : AppTokens.border,
         ),
       ),
       child: Row(

@@ -163,7 +163,7 @@ class _RemindersScreenState extends ConsumerState<RemindersScreen> {
           padding: const EdgeInsets.fromLTRB(16, 12, 8, 12),
           decoration: BoxDecoration(
             color: cs.surface,
-            border: Border.all(color: cs.outline),
+            border: Border.all(color: AppTokens.border),
             borderRadius: BorderRadius.circular(12),
           ),
           child: Row(
@@ -642,7 +642,7 @@ class _ReminderFormPageState extends State<_ReminderFormPage> {
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
         decoration: BoxDecoration(
-          border: Border.all(color: cs.outline),
+          border: Border.all(color: AppTokens.border),
           borderRadius: BorderRadius.circular(AppTokens.radiusMd),
         ),
         child: Row(
@@ -724,7 +724,7 @@ class _ReminderFormPageState extends State<_ReminderFormPage> {
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
         decoration: BoxDecoration(
-          border: Border.all(color: cs.outline),
+          border: Border.all(color: AppTokens.border),
           borderRadius: BorderRadius.circular(AppTokens.radiusMd),
         ),
         child: Row(
@@ -779,7 +779,7 @@ class _ReminderFormPageState extends State<_ReminderFormPage> {
             decoration: BoxDecoration(
               color: selected ? cs.primary : cs.surface,
               border: Border.all(
-                color: selected ? cs.primary : cs.outline,
+                color: selected ? cs.primary : AppTokens.border,
               ),
               borderRadius: BorderRadius.circular(AppTokens.radiusSm),
             ),
@@ -1010,7 +1010,7 @@ class _ReminderFormPageState extends State<_ReminderFormPage> {
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
         decoration: BoxDecoration(
-          border: Border.all(color: cs.outline),
+          border: Border.all(color: AppTokens.border),
           borderRadius: BorderRadius.circular(AppTokens.radiusMd),
         ),
         child: Row(

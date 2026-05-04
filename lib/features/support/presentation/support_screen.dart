@@ -255,7 +255,7 @@ class SupportScreen extends StatelessWidget {
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.grey.shade300, width: 1),
+        border: Border.all(color: AppTokens.border),
       ),
       child: Stack(
         children: [
@@ -272,7 +272,7 @@ class SupportScreen extends StatelessWidget {
                   bottomLeft: Radius.circular(8),
                   bottomRight: Radius.circular(8),
                 ),
-                border: Border.all(color: Colors.grey.shade300, width: 1.5),
+                border: Border.all(color: AppTokens.border, width: 1.5),
               ),
               child: Stack(
                 children: [
