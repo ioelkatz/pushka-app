@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import '../../../app/theme/app_tokens.dart';
 import 'package:go_router/go_router.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'card_brand_box.dart';
@@ -340,11 +339,11 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
                       contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
                       border: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(12),
-                        borderSide: BorderSide(color: AppTokens.border),
+                        borderSide: BorderSide(color: cs.outline),
                       ),
                       enabledBorder: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(12),
-                        borderSide: BorderSide(color: AppTokens.border),
+                        borderSide: BorderSide(color: cs.outline),
                       ),
                       focusedBorder: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(12),
@@ -485,7 +484,7 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
               decoration: BoxDecoration(
                 color: cs.surface,
-                border: Border.all(color: AppTokens.border),
+                border: Border.all(color: cs.outline),
                 borderRadius: BorderRadius.circular(12),
               ),
               child: Row(children: [
@@ -539,7 +538,7 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
         decoration: BoxDecoration(
           color: cs.surface,
           borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: AppTokens.border),
+          border: Border.all(color: cs.outline),
         ),
         child: Row(
           children: [
@@ -685,7 +684,7 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
         decoration: BoxDecoration(
           color: cs.surface,
           borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: AppTokens.border),
+          border: Border.all(color: cs.outline),
         ),
         child: Row(
           children: [

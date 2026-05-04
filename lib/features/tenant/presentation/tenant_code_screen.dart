@@ -166,10 +166,10 @@ class _TenantCodeScreenState extends ConsumerState<TenantCodeScreen> {
                     }
                     return SliverList.separated(
                       itemCount: filtered.length,
-                      separatorBuilder: (_, _) => const Divider(
+                      separatorBuilder: (ctx, _) => Divider(
                         height: 1,
                         thickness: 1,
-                        color: AppTokens.border,
+                        color: Theme.of(ctx).colorScheme.outline,
                         indent: AppTokens.spaceXl,
                         endIndent: AppTokens.spaceXl,
                       ),
@@ -190,7 +190,7 @@ class _TenantCodeScreenState extends ConsumerState<TenantCodeScreen> {
                     ),
                     child: Column(
                       children: [
-                        const Divider(color: AppTokens.border, thickness: 1),
+                        Divider(color: Theme.of(context).colorScheme.outline, thickness: 1),
                         const SizedBox(height: AppTokens.spaceLg),
                         Text(
                           '¿Tenés un código de invitación?',
@@ -466,7 +466,7 @@ class _JoinConfirmSheet extends StatelessWidget {
               width: 36,
               height: 4,
               decoration: BoxDecoration(
-                color: AppTokens.border,
+                color: Theme.of(context).colorScheme.outline,
                 borderRadius: BorderRadius.circular(2),
               ),
             ),
@@ -577,7 +577,7 @@ class _InviteCodeSheetState extends ConsumerState<_InviteCodeSheet> {
                 width: 36,
                 height: 4,
                 decoration: BoxDecoration(
-                  color: AppTokens.border,
+                  color: Theme.of(context).colorScheme.outline,
                   borderRadius: BorderRadius.circular(2),
                 ),
               ),

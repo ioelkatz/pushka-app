@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../../app/theme/app_tokens.dart';
 import '../../../core/l10n/s.dart';
 import '../../tenant/data/tenant_repository.dart';
 
@@ -51,7 +50,7 @@ class AutoEmptyActionRow extends ConsumerWidget {
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
         decoration: BoxDecoration(
           color: cs.surface,
-          border: Border.all(color: AppTokens.border),
+          border: Border.all(color: cs.outline),
           borderRadius: BorderRadius.circular(12),
         ),
         child: Row(

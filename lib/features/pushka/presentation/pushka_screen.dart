@@ -1172,7 +1172,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                           child: Container(
                             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                             decoration: BoxDecoration(
-                              border: Border.all(color: AppTokens.border),
+                              border: Border.all(color: Theme.of(ctx).colorScheme.outline),
                               borderRadius: BorderRadius.circular(12),
                             ),
                             child: Row(
@@ -1597,7 +1597,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: AppTokens.border),
+          border: Border.all(color: Theme.of(ctx).colorScheme.outline),
         ),
         child: Row(children: [
           Container(
@@ -1925,11 +1925,11 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                       contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
                       border: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(12),
-                        borderSide: BorderSide(color: AppTokens.border),
+                        borderSide: BorderSide(color: cs.outline),
                       ),
                       enabledBorder: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(12),
-                        borderSide: BorderSide(color: AppTokens.border),
+                        borderSide: BorderSide(color: cs.outline),
                       ),
                       focusedBorder: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(12),
@@ -1949,7 +1949,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                   // lugar del antiguo tap-to-open dialog. Los cambios se
                   // confirman al tocar Guardar abajo, junto con presets +
                   // meta. El estilo coincide con Settings (filled surface
-                  // + AppTokens.border + 12 radius + 16/14 padding).
+                  // + cs.outline + 12 radius + 16/14 padding).
                   const SizedBox(height: 18),
                   Text(
                     S.of(context).correctAmountLabel,
@@ -1980,11 +1980,11 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                       contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
                       border: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(12),
-                        borderSide: BorderSide(color: AppTokens.border),
+                        borderSide: BorderSide(color: cs.outline),
                       ),
                       enabledBorder: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(12),
-                        borderSide: BorderSide(color: AppTokens.border),
+                        borderSide: BorderSide(color: cs.outline),
                       ),
                       focusedBorder: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(12),
@@ -2045,11 +2045,11 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                               contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 14),
                               border: OutlineInputBorder(
                                 borderRadius: BorderRadius.circular(12),
-                                borderSide: BorderSide(color: AppTokens.border),
+                                borderSide: BorderSide(color: cs.outline),
                               ),
                               enabledBorder: OutlineInputBorder(
                                 borderRadius: BorderRadius.circular(12),
-                                borderSide: BorderSide(color: AppTokens.border),
+                                borderSide: BorderSide(color: cs.outline),
                               ),
                               focusedBorder: OutlineInputBorder(
                                 borderRadius: BorderRadius.circular(12),
@@ -2340,7 +2340,7 @@ class _PartialDonationSheetState extends State<_PartialDonationSheet> {
           color: isSelected ? cs.primary.withValues(alpha: 0.12) : cs.surface,
           borderRadius: BorderRadius.circular(12),
           border: Border.all(
-            color: isSelected ? cs.primary : AppTokens.border,
+            color: isSelected ? cs.primary : cs.outline,
             width: isSelected ? 1.8 : 1.0,
           ),
         ),

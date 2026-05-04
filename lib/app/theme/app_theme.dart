@@ -85,8 +85,8 @@ class AppTheme {
         surfaceContainerHighest: borderDark,
         onSurface: textDark,
         onSurfaceVariant: mutedDark,
-        outline: borderDark,
-        outlineVariant: borderDark,
+        outline: Colors.white.withValues(alpha: 0.20),
+        outlineVariant: Colors.white.withValues(alpha: 0.20),
       ),
       scaffoldBackgroundColor: surfaceDark,
       bottomSheetTheme: const BottomSheetThemeData(
@@ -228,6 +228,10 @@ class AppTheme {
     );
 
     return base.copyWith(
+      colorScheme: base.colorScheme.copyWith(
+        outline: AppTokens.border,
+        outlineVariant: AppTokens.border,
+      ),
       scaffoldBackgroundColor: AppTokens.surface,
       appBarTheme: AppBarTheme(
         elevation: 0,

@@ -27,8 +27,6 @@ import '../../../core/l10n/s.dart';
 import '../../feedback/feedback_service.dart';
 import '../../../core/pushka_style_provider.dart';
 import '../../../core/theme_provider.dart';
-import '../../../app/theme/app_tokens.dart';
-
 class SettingsScreen extends ConsumerStatefulWidget {
   const SettingsScreen({super.key});
 
@@ -265,11 +263,11 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
                 border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(12),
-                  borderSide: BorderSide(color: AppTokens.border),
+                  borderSide: BorderSide(color: cs.outline),
                 ),
                 enabledBorder: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(12),
-                  borderSide: BorderSide(color: AppTokens.border),
+                  borderSide: BorderSide(color: cs.outline),
                 ),
                 focusedBorder: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(12),
@@ -696,7 +694,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       decoration: BoxDecoration(
         color: Theme.of(context).colorScheme.surface,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: AppTokens.border),
+        border: Border.all(color: Theme.of(context).colorScheme.outline),
       ),
       child: Row(
         children: [
@@ -913,7 +911,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
         decoration: BoxDecoration(
           color: cs.surface,
-          border: Border.all(color: AppTokens.border),
+          border: Border.all(color: cs.outline),
           borderRadius: BorderRadius.circular(12),
         ),
         child: Row(
@@ -1148,11 +1146,11 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 14),
                 border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(12),
-                  borderSide: BorderSide(color: AppTokens.border),
+                  borderSide: BorderSide(color: cs.outline),
                 ),
                 enabledBorder: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(12),
-                  borderSide: BorderSide(color: AppTokens.border),
+                  borderSide: BorderSide(color: cs.outline),
                 ),
                 focusedBorder: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(12),
@@ -1192,13 +1190,14 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     required VoidCallback onTap,
     IconData trailingIcon = Icons.chevron_right,
   }) {
+    final cs2 = Theme.of(context).colorScheme;
     return InkWell(
       onTap: onTap,
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
         decoration: BoxDecoration(
-          color: Theme.of(context).colorScheme.surface,
-          border: Border.all(color: AppTokens.border),
+          color: cs2.surface,
+          border: Border.all(color: cs2.outline),
           borderRadius: BorderRadius.circular(12),
         ),
         child: Row(
@@ -1225,13 +1224,14 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     required String currency,
     required VoidCallback onTap,
   }) {
+    final cs2 = Theme.of(context).colorScheme;
     return InkWell(
       onTap: onTap,
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
         decoration: BoxDecoration(
-          color: Theme.of(context).colorScheme.surface,
-          border: Border.all(color: AppTokens.border),
+          color: cs2.surface,
+          border: Border.all(color: cs2.outline),
           borderRadius: BorderRadius.circular(12),
         ),
         child: Row(
@@ -1288,7 +1288,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
         decoration: BoxDecoration(
           color: cs.surface,
-          border: Border.all(color: AppTokens.border),
+          border: Border.all(color: cs.outline),
           borderRadius: BorderRadius.circular(12),
         ),
         child: Row(
