@@ -2051,6 +2051,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       selectedCurrency = newCurrency;
       selectedFlag = selected['flag'] ?? _flagForCountry(selectedCountry);
       pushkaGoal = newGoal;
+      _localPresets = null;
+      _editingPresetIndex = null;
     });
     final uid = user?.uid;
     final tenantId = ref.read(userProfileProvider).valueOrNull?['tenantId'] as String?;
@@ -2058,12 +2060,13 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       ref.read(userRepositoryProvider).updatePushkaAmount(uid: uid, tenantId: tenantId, amount: 0)
           .catchError((Object e) => debugPrint('resetPushkaAmount error: $e'));
     }
+    final newPresets = _presetsForCurrency(newCurrency);
     _updateSettings(
       user,
       currencyCountry: selected['country']!,
       currencyCode: newCurrency,
       pushkaGoal: newGoal,
-      presetAmounts: <double>[],
+      presetAmounts: newPresets,
     ).catchError((Object e) => debugPrint('currency updateSettings error: $e'));
   }
 
