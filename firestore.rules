@@ -212,7 +212,8 @@ service cloud.firestore {
             'stripeCustomerIdPending',
             'isBlocked',
             'tenantId',
-            'tenantIds'
+            'tenantIds',
+            '_lastPmDedupePassAt'
           ]) &&
           request.resource.data.uid is string &&
           request.resource.data.uid == uid &&
