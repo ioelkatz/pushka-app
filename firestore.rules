@@ -114,6 +114,11 @@ service cloud.firestore {
             'autoEmptyFrequency', 'autoEmptyWeekday', 'autoEmptyDayOfMonth',
             'autoEmptyTopOffEnabled', 'autoEmptyTopOffAmount', 'autoEmptyNextRunAt',
             'autoEmptyPaymentMethodId',
+            '_autoEmptyChargeLockAt',
+            'autoEmptyConsecutiveFailures',
+            'autoEmptyLastFailureAt',
+            'autoEmptyLastFailureCode',
+            'autoEmptyLastSuccessAt',
             'createdAt', 'updatedAt'
           ]) &&
           request.resource.data.uid == uid &&
