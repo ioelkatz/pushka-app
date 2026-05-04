@@ -636,9 +636,9 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
             // debugHolidayKey: null = festividad real, o uno de:
             //   'maotJitim' | 'shavuot' | 'roshHashana' | 'yomKippur'
             //   'sucot' | 'januca' | 'purim'
-            const int? debugStreak = 3;
+            const int? debugStreak = 0;
             const bool debugHoliday = true;
-            const String? debugHolidayKey = 'januca';
+            const String? debugHolidayKey = 'yomKippur';
             // ─────────────────────────────────────────────────────────────
             final int bannerStreak = debugStreak ?? _streakCount;
             final _HolidayInfo? bannerHoliday = !debugHoliday ? null
@@ -855,7 +855,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
     const double badgeSize = 34.0;
     final double pillW = MediaQuery.of(context).size.width - 32;
     final bool isEn = Localizations.localeOf(context).languageCode == 'en';
-    final double streakW = pillW - (holiday?.key == 'roshHashana' ? (isEn ? 130 : 125) : holiday?.key == 'januca' && isEn ? 130 : 120);
+    final double streakW = pillW - (holiday?.key == 'roshHashana' ? (isEn ? 130 : 125) : holiday?.key == 'januca' && isEn ? 130 : holiday?.key == 'yomKippur' ? 135 : 120);
     const double holidayW = 168.0;
 
     // Both together: full pill. Solo: the individual width, centered.
@@ -886,7 +886,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                                 ? const [Color(0xFFDCDCE8), Color(0xFF9898A8)]
                                 : holiday.key == 'sucot'
                                 ? const [Color(0xFFFEEDD8), Color(0xFFFCAB64)]
-                                : holiday.key == 'purim' || holiday.key == 'januca'
+                                : holiday.key == 'purim' || holiday.key == 'januca' || holiday.key == 'yomKippur'
                                 ? const [Color(0xFF222222), Color(0xFF000000)]
                                 : const [Color(0xFF6B3800), Color(0xFF3A1A00)],
                             begin: Alignment.centerLeft,
@@ -908,7 +908,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                               holiday.localizedBannerName(S.of(context)),
                               style: TextStyle(
                                 color: Colors.white,
-                                fontSize: holiday.key == 'roshHashana' && both ? 13.0 : 15.0,
+                                fontSize: (holiday.key == 'roshHashana' || holiday.key == 'yomKippur') && both ? 13.0 : 15.0,
                                 fontWeight: FontWeight.w800,
                                 shadows: const [
                                   Shadow(
@@ -932,7 +932,9 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                     child: SizedBox(
                       width: both ? streakW : containerW,
                       child: Container(
-                        padding: const EdgeInsetsDirectional.fromSTEB(50, 0, 20, 0),
+                        padding: holiday?.key == 'yomKippur' && both
+                            ? const EdgeInsetsDirectional.fromSTEB(44, 0, 12, 0)
+                            : const EdgeInsetsDirectional.fromSTEB(50, 0, 20, 0),
                         decoration: BoxDecoration(
                           gradient: LinearGradient(
                             colors: [sc.$1, sc.$2],
@@ -1044,7 +1046,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
     } else if (lower.contains('rosh')) {
       asset = 'assets/icons/rosh_hashana.png';
     } else if (lower.contains('kipur')) {
-      emoji = '🕊️';
+      asset = 'assets/icons/yom_kipur.png';
     } else if (lower.contains('sucot')) {
       asset = 'assets/icons/sucot.png';
     } else if (lower.contains('januc')) {
@@ -1053,7 +1055,11 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
       asset = 'assets/icons/purim.png';
     }
     if (asset != null) {
-      return Image.asset(asset, width: size, height: size, fit: BoxFit.contain);
+      final img = Image.asset(asset, width: size, height: size, fit: BoxFit.contain);
+      if (lower.contains('kipur')) {
+        return Transform.translate(offset: const Offset(0, 4), child: img);
+      }
+      return img;
     }
     return Text(emoji, style: TextStyle(fontSize: size * 0.55));
   }

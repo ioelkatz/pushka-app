@@ -323,7 +323,7 @@ class S {
     "Nouvel An juif. Commencez l'année avec la tsédaka et de bonnes actions",
     'ראש השנה היהודי. התחל את השנה עם צדקה ומעשים טובים',
   );
-  String get holidayYomKippur => _t('Yom Kippur', 'Yom Kippur', 'Yom Kippour', 'יום כיפור');
+  String get holidayYomKippur => _t('Yom Kipur', 'Yom Kippur', 'Yom Kippour', 'יום כיפור');
   String get holidayYomKippurDesc => _t(
     "Día de la Expiación. La tzedaká es un mérito especial antes de Yom Kippur",
     "Day of Atonement. Tzedakah is a special merit before Yom Kippur",
