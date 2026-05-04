@@ -27,6 +27,7 @@ import '../../../core/l10n/s.dart';
 import '../../feedback/feedback_service.dart';
 import '../../../core/pushka_style_provider.dart';
 import '../../../core/theme_provider.dart';
+import '../../../app/theme/app_tokens.dart';
 
 class SettingsScreen extends ConsumerStatefulWidget {
   const SettingsScreen({super.key});
@@ -982,7 +983,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
         decoration: BoxDecoration(
           color: Theme.of(context).colorScheme.surface,
-          border: Border.all(color: Theme.of(context).colorScheme.outline),
+          border: Border.all(color: AppTokens.border),
           borderRadius: BorderRadius.circular(12),
         ),
         child: Text(
@@ -1090,7 +1091,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
                       decoration: BoxDecoration(
                         color: Theme.of(context).colorScheme.surface,
-                        border: Border.all(color: Theme.of(context).colorScheme.outline),
+                        border: Border.all(color: AppTokens.border),
                         borderRadius: BorderRadius.circular(12),
                       ),
                       alignment: Alignment.center,
@@ -1117,7 +1118,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
         decoration: BoxDecoration(
           color: Theme.of(context).colorScheme.surface,
-          border: Border.all(color: Theme.of(context).colorScheme.outline),
+          border: Border.all(color: AppTokens.border),
           borderRadius: BorderRadius.circular(12),
         ),
         child: Row(
@@ -1150,7 +1151,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
         decoration: BoxDecoration(
           color: Theme.of(context).colorScheme.surface,
-          border: Border.all(color: Theme.of(context).colorScheme.outline),
+          border: Border.all(color: AppTokens.border),
           borderRadius: BorderRadius.circular(12),
         ),
         child: Row(
@@ -1206,7 +1207,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       padding: const EdgeInsets.symmetric(horizontal: 16),
       decoration: BoxDecoration(
         color: Theme.of(context).colorScheme.surface,
-        border: Border.all(color: Theme.of(context).colorScheme.outline),
+        border: Border.all(color: AppTokens.border),
         borderRadius: BorderRadius.circular(12),
       ),
       child: DropdownButtonFormField<String>(
