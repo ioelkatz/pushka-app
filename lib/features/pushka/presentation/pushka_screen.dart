@@ -576,23 +576,27 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
             }
           }
         }
-        if (!_loadedRemote) {
-          if (remoteGoal is num) {
-            pushkaGoal = remoteGoal.toDouble();
+        if (remoteGoal is num) {
+          final newGoal = remoteGoal.toDouble();
+          if (newGoal != pushkaGoal) {
+            pushkaGoal = newGoal;
             changed = true;
             if (uid != null && tenantId != null) {
               HiveCache.instance.savePushkaGoal(uid, tenantId, pushkaGoal);
             }
           }
-          if (remotePresets is List && remotePresets.length == 3) {
-            try {
-              _presetAmounts = remotePresets.whereType<num>().map((e) => e.toDouble()).toList();
-              if (_presetAmounts.length != 3) _presetAmounts = [];
+        }
+        if (remotePresets is List) {
+          try {
+            final parsed = remotePresets.whereType<num>().map((e) => e.toDouble()).toList();
+            final newPresets = (parsed.length == 3 && parsed.every((v) => v > 0)) ? parsed : <double>[];
+            if (newPresets.length != _presetAmounts.length || !newPresets.every((v) => _presetAmounts.contains(v))) {
+              _presetAmounts = newPresets;
               changed = true;
-            } catch (_) {
-              _presetAmounts = [];
             }
-          }
+          } catch (_) {}
+        }
+        if (!_loadedRemote) {
           _loadedRemote = true;
           _streakCount = (tenantState['streakCount'] as num?)?.toInt() ?? 0;
           changed = true;
@@ -630,21 +634,8 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                         final activeHoliday = _HolidayInfo.getActiveHoliday();
             final bool isFull = pushkaGoal > 0 && pushkaAmount >= pushkaGoal;
 
-            // ── DEBUG OVERRIDES (borrar al terminar pruebas) ──────────────
-            // debugStreak: null = real, 0 = sin racha, 1-7 = día específico
-            // debugHoliday: true = mostrar, false = ocultar
-            // debugHolidayKey: null = festividad real, o uno de:
-            //   'maotJitim' | 'shavuot' | 'roshHashana' | 'yomKippur'
-            //   'sucot' | 'januca' | 'purim'
-            const int? debugStreak = 0;
-            const bool debugHoliday = true;
-            const String? debugHolidayKey = 'yomKippur';
-            // ─────────────────────────────────────────────────────────────
-            final int bannerStreak = debugStreak ?? _streakCount;
-            final _HolidayInfo? bannerHoliday = !debugHoliday ? null
-                : (debugHolidayKey != null
-                    ? _HolidayInfo(nameEs: switch (debugHolidayKey) { 'maotJitim' => 'Pesaj', 'shavuot' => 'Shavuot', 'roshHashana' => 'Rosh Hashaná', 'yomKippur' => 'Yom Kipur', 'sucot' => 'Sucot', 'januca' => 'Janucá', 'purim' => 'Purim', _ => debugHolidayKey }, descriptionEs: '', key: debugHolidayKey, presetAmounts: const [], startDate: DateTime.now(), showDaysBefore: 0)
-                    : activeHoliday);
+            final int bannerStreak = _streakCount;
+            final _HolidayInfo? bannerHoliday = activeHoliday;
 
             final content = Column(
               mainAxisSize: MainAxisSize.min,

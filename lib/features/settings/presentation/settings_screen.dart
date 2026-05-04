@@ -52,6 +52,15 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   bool _uploadingPhoto = false;
   bool _avatarLoadFailed = false;
 
+  String _shortCurrencySymbol(String code) {
+    const symbols = {
+      'usd': '\$', 'eur': '€', 'gbp': '£', 'cad': 'C\$',
+      'mxn': '\$', 'ars': '\$', 'brl': 'R\$', 'ils': '₪',
+      'clp': '\$', 'cop': '\$',
+    };
+    return symbols[code.toLowerCase()] ?? '\$';
+  }
+
   String _currencySymbol(String code) {
     const symbols = {
       'usd': 'US\$', 'eur': '€', 'gbp': '£', 'cad': 'CA\$',
@@ -987,16 +996,32 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     );
   }
 
+  List<double> _presetsForCurrency(String currency) {
+    switch (currency.toLowerCase()) {
+      case 'mxn': return [20, 100, 200];
+      case 'ars': return [1000, 5000, 10000];
+      case 'brl': return [5, 25, 50];
+      case 'clp': return [1000, 5000, 10000];
+      case 'cop': return [5000, 20000, 50000];
+      case 'ils': return [5, 20, 40];
+      case 'eur': return [1, 5, 10];
+      case 'gbp': return [1, 5, 10];
+      case 'cad': return [1, 5, 10];
+      default: return [1, 5, 10];
+    }
+  }
+
   Widget _buildCurrentPresets(Map<String, dynamic>? profile, Color blue, {VoidCallback? onTap}) {
     final rawPresets = profile?['presetAmounts'];
     final List<double> presets;
     if (rawPresets is List && rawPresets.length >= 3) {
       final converted = rawPresets.whereType<num>().map((e) => e.toDouble()).toList();
-      presets = converted.length >= 3 ? converted.take(3).toList() : [1.0, 5.0, 10.0];
+      final valid = converted.where((v) => v > 0).toList();
+      presets = valid.length >= 3 ? valid.take(3).toList() : _presetsForCurrency(selectedCurrency);
     } else {
-      presets = [1.0, 5.0, 10.0];
+      presets = _presetsForCurrency(selectedCurrency);
     }
-    final sym = _currencySymbol(selectedCurrency);
+    final sym = _shortCurrencySymbol(selectedCurrency);
     return Row(
       children: presets.asMap().entries.map((entry) {
         final idx = entry.key;
@@ -1899,7 +1924,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       barrierDismissible: true,
       builder: (ctx) {
         final controller = TextEditingController(
-          text: pushkaGoal.toStringAsFixed(2),
+          text: pushkaGoal % 1 == 0 ? pushkaGoal.toInt().toString() : pushkaGoal.toStringAsFixed(2),
         );
         String? errorText;
         return StatefulBuilder(
