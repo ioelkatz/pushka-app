@@ -63,7 +63,6 @@ class UserRepository {
       'soundEnabled': true,
       'vibrationEnabled': true,
       'partialPaymentsEnabled': false,
-      'additionalPaymentOptionsEnabled': false,
       'biometricAuthenticationEnabled': false,
       'currencyCountry': 'Estados Unidos',
       'currencyCode': 'USD',
@@ -218,7 +217,6 @@ class UserRepository {
     bool? vibrationEnabled,
     bool? ambientEnabled,
     bool? partialPaymentsEnabled,
-    bool? additionalPaymentOptionsEnabled,
     bool? biometricAuthenticationEnabled,
     String? currencyCountry,
     String? currencyCode,
@@ -244,9 +242,6 @@ class UserRepository {
     if (ambientEnabled != null) data['ambientEnabled'] = ambientEnabled;
     if (partialPaymentsEnabled != null) {
       data['partialPaymentsEnabled'] = partialPaymentsEnabled;
-    }
-    if (additionalPaymentOptionsEnabled != null) {
-      data['additionalPaymentOptionsEnabled'] = additionalPaymentOptionsEnabled;
     }
     if (biometricAuthenticationEnabled != null) {
       data['biometricAuthenticationEnabled'] = biometricAuthenticationEnabled;

@@ -422,48 +422,57 @@ class _SavedCardsScreenState extends ConsumerState<SavedCardsScreen> {
     return labels[brand.toLowerCase()] ?? brand;
   }
 
-  /// Static informational row for a digital wallet (Google Pay / Apple Pay).
-  /// No tap, no chevron — wallets show automatically inside PaymentSheet at
-  /// payment time, so the row exists only to tell the donor "yes, this is
-  /// available too."
+  /// Informational row for a digital wallet (Google Pay / Apple Pay).
+  /// Wallets show automatically inside PaymentSheet at payment time, so the
+  /// row exists to tell the donor "yes, this is available too." Tapping
+  /// opens a small detail page that explains how the wallet integrates with
+  /// the donation flow + the off-session limitation for auto-empty.
   Widget _buildWalletTile(_WalletKind kind) {
     final cs = Theme.of(context).colorScheme;
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8),
-      child: Row(
-        children: [
-          Container(
-            width: 40,
-            height: 28,
-            decoration: BoxDecoration(
-              color: kind == _WalletKind.applePay ? Colors.black : Colors.white,
-              borderRadius: BorderRadius.circular(6),
-              border: Border.all(
-                color: Colors.black.withValues(alpha: 0.18),
-                width: 1,
-              ),
-            ),
-            alignment: Alignment.center,
-            child: kind == _WalletKind.applePay
-                ? const Icon(Icons.apple, color: Colors.white, size: 18)
-                // Google Pay mark — official 4-color "G" (red/yellow/green/
-                // blue). The label "Google Pay" appears next to the badge,
-                // so the badge only needs the iconic G.
-                : SvgPicture.string(_svgGoogleG, width: 18, height: 18),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Text(
-              kind == _WalletKind.applePay ? 'Apple Pay' : 'Google Pay',
-              style: TextStyle(
-                fontSize: 15,
-                fontWeight: FontWeight.w600,
-                color: cs.onSurface,
-              ),
-            ),
-          ),
-        ],
+    return InkWell(
+      borderRadius: BorderRadius.circular(8),
+      onTap: () => Navigator.of(context).push(
+        MaterialPageRoute(builder: (_) => _WalletInfoPage(kind: kind)),
       ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 8),
+        child: Row(
+          children: [
+            _walletBadge(kind),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                kind == _WalletKind.applePay ? 'Apple Pay' : 'Google Pay',
+                style: TextStyle(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w600,
+                  color: cs.onSurface,
+                ),
+              ),
+            ),
+            Icon(Icons.chevron_right, color: cs.onSurfaceVariant),
+          ],
+        ),
+      ),
+    );
+  }
+
+  static Widget _walletBadge(_WalletKind kind) {
+    return Container(
+      width: 40,
+      height: 28,
+      decoration: BoxDecoration(
+        color: kind == _WalletKind.applePay ? Colors.black : Colors.white,
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(
+          color: Colors.black.withValues(alpha: 0.18),
+          width: 1,
+        ),
+      ),
+      alignment: Alignment.center,
+      child: kind == _WalletKind.applePay
+          ? const Icon(Icons.apple, color: Colors.white, size: 18)
+          : SvgPicture.string(_svgGoogleG, width: 18, height: 18),
     );
   }
 
@@ -866,6 +875,84 @@ class _SavedCardsScreenState extends ConsumerState<SavedCardsScreen> {
 }
 
 enum _WalletKind { googlePay, applePay }
+
+/// Detail page shown when the donor taps the Google Pay / Apple Pay row in
+/// Métodos de pago. Mirrors the simple Uber/Stripe-style explainer: title,
+/// big wallet badge in the top-right, body copy describing how the wallet
+/// works in this app + the auto-empty caveat.
+class _WalletInfoPage extends StatelessWidget {
+  const _WalletInfoPage({required this.kind});
+
+  final _WalletKind kind;
+
+  @override
+  Widget build(BuildContext context) {
+    final tr = S.of(context);
+    final cs = Theme.of(context).colorScheme;
+    final title = kind == _WalletKind.applePay ? 'Apple Pay' : 'Google Pay';
+    final body = kind == _WalletKind.applePay
+        ? tr.walletApplePayBody
+        : tr.walletGooglePayBody;
+    return Scaffold(
+      appBar: AppBar(
+        // The Métodos de pago shell already renders a back arrow above this
+        // screen; suppress the auto-implied one here to avoid two stacked
+        // arrows (Flutter would otherwise inject one because the route can
+        // pop).
+        automaticallyImplyLeading: false,
+        toolbarHeight: 0,
+      ),
+      body: SafeArea(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(
+                    child: Text(
+                      title,
+                      style: TextStyle(
+                        fontSize: 32,
+                        fontWeight: FontWeight.w700,
+                        color: cs.onSurface,
+                      ),
+                    ),
+                  ),
+                  // Larger version of the same wallet badge used in the row.
+                  Container(
+                    width: 60,
+                    height: 60,
+                    alignment: Alignment.center,
+                    decoration: BoxDecoration(
+                      color: cs.surface,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: AppTokens.border),
+                    ),
+                    child: kind == _WalletKind.applePay
+                        ? const Icon(Icons.apple, color: Colors.black, size: 32)
+                        : SvgPicture.string(_svgGoogleG, width: 32, height: 32),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 24),
+              Text(
+                body,
+                style: TextStyle(
+                  fontSize: 15,
+                  height: 1.5,
+                  color: cs.onSurface,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
 
 /// Official multi-color Google "G" mark — yellow / red / green / blue arcs.
 /// Used inside the Google Pay row badge in the saved-cards list.

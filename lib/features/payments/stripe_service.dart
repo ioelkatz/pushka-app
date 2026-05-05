@@ -150,6 +150,7 @@ class StripeService {
     String? donorMessage,
     String merchantDisplayName = 'Pushka',
   }) async {
+    debugPrint('StripeService.subscribe: calling CF amount=$amountCents currency=$currency interval=$interval');
     final callable = FirebaseFunctions.instance
         .httpsCallable('createDonationSubscription');
     HttpsCallableResult result;
@@ -161,11 +162,14 @@ class StripeService {
         if (donorMessage != null && donorMessage.isNotEmpty)
           'donorMessage': donorMessage,
       });
-    } on FirebaseFunctionsException {
+    } on FirebaseFunctionsException catch (e) {
+      debugPrint('StripeService.subscribe: CF error code=${e.code} message=${e.message}');
       rethrow;
-    } catch (_) {
+    } catch (e) {
+      debugPrint('StripeService.subscribe: network error $e');
       throw const StripeServiceException('network-error');
     }
+    debugPrint('StripeService.subscribe: CF returned, initing PaymentSheet');
 
     final clientSecret = result.data['clientSecret'] as String?;
     final customerId = result.data['customerId'] as String?;
@@ -190,8 +194,11 @@ class StripeService {
     );
 
     try {
+      debugPrint('StripeService.subscribe: presenting PaymentSheet');
       await Stripe.instance.presentPaymentSheet();
+      debugPrint('StripeService.subscribe: PaymentSheet completed');
     } on StripeException catch (e) {
+      debugPrint('StripeService.subscribe: PaymentSheet error code=${e.error.code} message=${e.error.message} localized=${e.error.localizedMessage}');
       final code = e.error.code;
       if (code == FailureCode.Canceled) {
         throw const StripeServiceException('canceled');

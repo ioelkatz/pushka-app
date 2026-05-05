@@ -14,7 +14,13 @@ import '../../tenant/data/tenant_repository.dart';
 import '../../../core/l10n/s.dart';
 
 class AutoEmptyScreen extends ConsumerStatefulWidget {
-  const AutoEmptyScreen({super.key});
+  /// When true, the save handler pops twice — once to close this screen and
+  /// once to dismiss the underlying "Vaciar Pushka" sheet that pushed it.
+  /// Default false matches the Settings → Auto Vaciar entry path where the
+  /// screen sits directly on the root navigator with no sheet underneath.
+  const AutoEmptyScreen({super.key, this.popExtra = false});
+
+  final bool popExtra;
 
   @override
   ConsumerState<AutoEmptyScreen> createState() => _AutoEmptyScreenState();
@@ -393,6 +399,13 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
                                 await _saveConfig(user.uid);
                                 if (!mounted) return;
                                 navigator.pop();
+                                // When this screen was pushed on top of the
+                                // Vaciar Pushka sheet, also dismiss the sheet
+                                // so the user lands back on Mi Pushka home
+                                // instead of the half-filled sheet.
+                                if (widget.popExtra && navigator.canPop()) {
+                                  navigator.pop();
+                                }
                                 messenger.showSnackBar(
                                   SnackBar(content: Text(tr.settingsSaved)),
                                 );

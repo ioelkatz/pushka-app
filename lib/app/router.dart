@@ -5,7 +5,6 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_analytics/firebase_analytics.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
-import 'package:share_plus/share_plus.dart';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -204,21 +203,14 @@ class _TenantMainAppBar extends ConsumerWidget implements PreferredSizeWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final tr = S.of(context);
+    final onSettingsTap = ref.watch(pushkaSettingsTapProvider);
     return AppBar(
       title: Text(tr.myPushka, style: const TextStyle(fontWeight: FontWeight.w600)),
       centerTitle: true,
       actions: [
         IconButton(
-          icon: const Icon(Icons.share),
-          onPressed: () async {
-            try {
-              await SharePlus.instance.share(
-                ShareParams(text: tr.appShareText, subject: tr.myPushka),
-              );
-            } catch (e) {
-              debugPrint('[router] share failed: $e');
-            }
-          },
+          icon: const Icon(Icons.settings_outlined),
+          onPressed: onSettingsTap,
         ),
       ],
     );
