@@ -2883,18 +2883,19 @@ exports.setAdminClaim = onCall(
       if (role === "super_admin") {
         throw new HttpsError("permission-denied", "Solo el super administrador puede asignar ese rol.");
       }
+      if (!callerClaims.tenantId) {
+        throw new HttpsError("permission-denied", "Tu cuenta no está asociada a ninguna organización.");
+      }
       const effectiveTenantId = tenantId || callerClaims.tenantId;
       if (effectiveTenantId !== callerClaims.tenantId) {
         throw new HttpsError("permission-denied", "Solo puedes gestionar tu propia organización.");
       }
-      // Only the first tenant admin can add other tenant_admins or revoke anyone
-      if (role === "tenant_admin" || revoke) {
+      // Only the first tenant admin can revoke access
+      if (revoke) {
         const tenantDoc = await db.collection("tenants").doc(callerClaims.tenantId).get();
         const isFirstAdmin = tenantDoc.exists && tenantDoc.data().adminEmail === callerRecord.email;
         if (!isFirstAdmin) {
-          throw new HttpsError("permission-denied", revoke
-            ? "Solo el primer administrador puede revocar accesos."
-            : "Solo el primer administrador puede agregar administradores.");
+          throw new HttpsError("permission-denied", "Solo el primer administrador puede revocar accesos.");
         }
       }
     }
