@@ -136,6 +136,72 @@ class StripeService {
     return _extractIdFromSecret(clientSecret, 'pi_');
   }
 
+  /// Creates a Stripe Subscription for a recurring donation and confirms
+  /// the first invoice via PaymentSheet. Subsequent charges run off-session
+  /// against the saved default payment method (the Stripe webhook
+  /// `invoice.payment_succeeded` writes each transaction record).
+  ///
+  /// Returns the subscription ID. Throws [StripeServiceException]('canceled')
+  /// when the user dismisses the sheet.
+  Future<String> subscribe({
+    required int amountCents,
+    required String currency,
+    String interval = 'month',
+    String? donorMessage,
+    String merchantDisplayName = 'Pushka',
+  }) async {
+    final callable = FirebaseFunctions.instance
+        .httpsCallable('createDonationSubscription');
+    HttpsCallableResult result;
+    try {
+      result = await callable.call({
+        'amount': amountCents,
+        'currency': currency.toLowerCase(),
+        'interval': interval,
+        if (donorMessage != null && donorMessage.isNotEmpty)
+          'donorMessage': donorMessage,
+      });
+    } on FirebaseFunctionsException {
+      rethrow;
+    } catch (_) {
+      throw const StripeServiceException('network-error');
+    }
+
+    final clientSecret = result.data['clientSecret'] as String?;
+    final customerId = result.data['customerId'] as String?;
+    final ephemeralKeySecret = result.data['ephemeralKeySecret'] as String?;
+    final subscriptionId = result.data['subscriptionId'] as String?;
+    if (clientSecret == null || clientSecret.isEmpty) {
+      throw const StripeServiceException('no-client-secret');
+    }
+
+    await Stripe.instance.initPaymentSheet(
+      paymentSheetParameters: SetupPaymentSheetParameters(
+        paymentIntentClientSecret: clientSecret,
+        merchantDisplayName: merchantDisplayName,
+        allowsDelayedPaymentMethods: false,
+        customerId: (customerId != null && customerId.isNotEmpty) ? customerId : null,
+        customerEphemeralKeySecret: (customerId != null && customerId.isNotEmpty)
+            ? ephemeralKeySecret
+            : null,
+        applePay: _applePayConfig,
+        googlePay: _googlePayConfigFor(currency),
+      ),
+    );
+
+    try {
+      await Stripe.instance.presentPaymentSheet();
+    } on StripeException catch (e) {
+      final code = e.error.code;
+      if (code == FailureCode.Canceled) {
+        throw const StripeServiceException('canceled');
+      }
+      throw StripeServiceException(code.name);
+    }
+
+    return subscriptionId ?? '';
+  }
+
   static String _extractIdFromSecret(String clientSecret, String expectedPrefix) {
     const separator = '_secret_';
     final index = clientSecret.indexOf(separator);
