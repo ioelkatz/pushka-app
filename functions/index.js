@@ -4110,7 +4110,7 @@ function normalizeSlug(slug) {
 // createTenant — super_admin only
 // ---------------------------------------------------------------------------
 exports.createTenant = onCall(
-  { enforceAppCheck: false },
+  { enforceAppCheck: false, secrets: [stripeConnectClientId, sendgridApiKey] },
   async (request) => {
     // Fresh-claims check (not the stale ID token) — a recently-demoted
     // super_admin must NOT be able to create tenants until they re-auth.
@@ -4209,17 +4209,32 @@ exports.createTenant = onCall(
       throw e;
     }
 
-    // Assign tenant_admin claim to the admin email if they already have a Firebase account.
+    // Provision admin account + claims.
     // CRITICAL: setCustomUserClaims REPLACES the entire claims object — naively
     // setting `{ role, tenantId }` would silently strip a super_admin's `admin: true`
     // claim, OR move a tenant_admin from another tenant without warning. We must
     // (a) preserve unrelated claims via spread, and (b) refuse to overwrite an
     // existing tenant_admin assignment to a different tenant — the operator
     // probably typed the wrong email.
+    let passwordSetupLink = null;
     try {
-      const adminRecord = await admin.auth().getUserByEmail(adminEmail.trim());
-      const existingClaims = adminRecord.customClaims ?? {};
+      let adminRecord;
+      try {
+        adminRecord = await admin.auth().getUserByEmail(adminEmail.trim());
+      } catch (notFound) {
+        if (notFound.code === "auth/user-not-found") {
+          // Create the account now so the password-setup link in the welcome email works immediately.
+          adminRecord = await admin.auth().createUser({
+            email: adminEmail.trim(),
+            emailVerified: false,
+            displayName: String(appName || name).trim(),
+          });
+        } else {
+          throw notFound;
+        }
+      }
 
+      const existingClaims = adminRecord.customClaims ?? {};
       if (
         existingClaims.role === "tenant_admin" &&
         existingClaims.tenantId &&
@@ -4244,13 +4259,62 @@ exports.createTenant = onCall(
         // privileges plus get tenant_admin scope for their own tenant.
       });
       await tenantRef.update({ adminUid: adminRecord.uid });
+
+      // Generate a password-setup link (Firebase password reset) for the welcome email.
+      try {
+        passwordSetupLink = await admin.auth().generatePasswordResetLink(adminEmail.trim());
+      } catch (e) {
+        console.warn("createTenant: generatePasswordResetLink failed:", e.message);
+      }
     } catch (e) {
       if (e instanceof HttpsError) throw e;
-      // User doesn't have an account yet — claims will be set when they register
-      console.info(`createTenant: admin ${_redactEmail(adminEmail)} has no Firebase account yet; claims pending`);
+      console.warn(`createTenant: account provisioning error for ${_redactEmail(adminEmail)}:`, e.message);
     }
 
     console.info("createTenant", { id: tenantRef.id, slug: normalizedSlug, adminEmail: _redactEmail(adminEmail) });
+
+    // Generate Stripe Connect link and send welcome email — errors are logged, never thrown.
+    const adminPanelUrl = "https://pushka-admin.web.app";
+    let stripeConnectUrl = null;
+    try {
+      const clientId = stripeConnectClientId.value();
+      if (clientId && !clientId.startsWith("PLACEHOLDER")) {
+        const crypto = require("crypto");
+        const state = crypto.randomBytes(20).toString("hex");
+        await tenantRef.update({
+          stripeConnectOAuthState: state,
+          stripeConnectOAuthStateCreatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+        const redirectUri = "https://us-central1-pushka-app-ioel.cloudfunctions.net/handleStripeConnectOAuth";
+        const params = new URLSearchParams({
+          response_type: "code",
+          client_id: clientId,
+          scope: "read_write",
+          state,
+          redirect_uri: redirectUri,
+        });
+        stripeConnectUrl = `https://connect.stripe.com/oauth/authorize?${params.toString()}`;
+      }
+    } catch (e) {
+      console.warn("createTenant: Stripe Connect link generation failed:", e.message);
+    }
+
+    try {
+      await sendEmail({
+        to: adminEmail.trim(),
+        subject: `Bienvenido/a a ${tenantData.appName} — Tu panel está listo`,
+        html: buildTenantWelcomeEmail({
+          appName: tenantData.appName,
+          adminEmail: adminEmail.trim(),
+          adminPanelUrl,
+          passwordSetupLink,
+          stripeConnectUrl,
+        }),
+      });
+    } catch (e) {
+      console.warn("createTenant: welcome email failed:", e.message);
+    }
+
     return { success: true, tenantId: tenantRef.id, slug: normalizedSlug };
   }
 );
@@ -4984,6 +5048,77 @@ exports.handleStripeConnectOAuth = onRequest(
 
 const SUPER_ADMIN_NOTIFICATION_EMAIL = "ioelkatz@gmail.com";
 const SENDGRID_FROM = "ioelkatz@gmail.com";
+
+// ---------------------------------------------------------------------------
+// buildTenantWelcomeEmail — HTML email sent to new tenant admins on onboarding
+// ---------------------------------------------------------------------------
+function buildTenantWelcomeEmail({ appName, adminEmail, adminPanelUrl, passwordSetupLink, stripeConnectUrl }) {
+  const stepNum = (n) => passwordSetupLink ? String(n) : String(n - 1);
+
+  const passwordBlock = passwordSetupLink
+    ? `<div style="background:#f8fafc;border-radius:12px;padding:20px;margin-bottom:16px;border-left:4px solid #3b82f6;">
+        <p style="margin:0 0 6px;font-weight:700;color:#1e293b;font-size:14px;">1. Configurá tu contraseña</p>
+        <p style="margin:0 0 14px;color:#64748b;font-size:13px;line-height:1.5;">Hacé clic para crear tu contraseña y acceder al panel de control.</p>
+        <a href="${passwordSetupLink}" style="display:inline-block;background:#3b82f6;color:#fff;padding:11px 22px;border-radius:8px;text-decoration:none;font-size:13px;font-weight:600;">Crear contraseña →</a>
+      </div>`
+    : "";
+
+  const panelStep = passwordSetupLink ? "2" : "1";
+  const stripeStep = passwordSetupLink ? "3" : "2";
+
+  const stripeBlock = stripeConnectUrl
+    ? `<div style="background:#f8fafc;border-radius:12px;padding:20px;margin-bottom:16px;border-left:4px solid #8b5cf6;">
+        <p style="margin:0 0 6px;font-weight:700;color:#1e293b;font-size:14px;">${stripeStep}. Conectá tu cuenta de Stripe</p>
+        <p style="margin:0 0 14px;color:#64748b;font-size:13px;line-height:1.5;">Para recibir los pagos de tus donantes directamente en tu cuenta bancaria.</p>
+        <a href="${stripeConnectUrl}" style="display:inline-block;background:#8b5cf6;color:#fff;padding:11px 22px;border-radius:8px;text-decoration:none;font-size:13px;font-weight:600;">Conectar Stripe →</a>
+      </div>`
+    : "";
+
+  return `<!DOCTYPE html>
+<html lang="es">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:32px 16px;background:#f1f5f9;font-family:Inter,Arial,Helvetica,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0"><tr><td align="center">
+  <table width="560" cellpadding="0" cellspacing="0" style="max-width:560px;width:100%;background:#ffffff;border-radius:20px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,0.08);">
+    <tr>
+      <td style="background:linear-gradient(135deg,#1e3a5f 0%,#1e40af 100%);padding:36px 40px;text-align:center;">
+        <p style="margin:0 0 10px;color:#93c5fd;font-size:12px;letter-spacing:1.5px;text-transform:uppercase;font-weight:600;">Plataforma de donaciones</p>
+        <h1 style="margin:0;color:#ffffff;font-size:26px;font-weight:700;line-height:1.2;">${appName}</h1>
+        <p style="margin:12px 0 0;color:#bfdbfe;font-size:14px;">Tu panel de control ya está activo ✓</p>
+      </td>
+    </tr>
+    <tr>
+      <td style="padding:36px 40px;">
+        <p style="margin:0 0 6px;color:#1e293b;font-size:15px;font-weight:600;">¡Bienvenido/a!</p>
+        <p style="margin:0 0 28px;color:#64748b;font-size:14px;line-height:1.6;">
+          Tu organización <strong style="color:#1e293b;">${appName}</strong> está configurada en la plataforma.
+          Seguí estos pasos para empezar a recibir donaciones.
+        </p>
+
+        ${passwordBlock}
+
+        <div style="background:#f8fafc;border-radius:12px;padding:20px;margin-bottom:16px;border-left:4px solid #10b981;">
+          <p style="margin:0 0 6px;font-weight:700;color:#1e293b;font-size:14px;">${panelStep}. Accedé al panel de control</p>
+          <p style="margin:0 0 4px;color:#64748b;font-size:13px;">Tu email de acceso: <strong style="color:#1e293b;">${adminEmail}</strong></p>
+          <p style="margin:0 0 14px;color:#64748b;font-size:13px;line-height:1.5;">Desde acá vas a ver métricas, donaciones y configuración de tu organización.</p>
+          <a href="${adminPanelUrl}" style="display:inline-block;background:#10b981;color:#fff;padding:11px 22px;border-radius:8px;text-decoration:none;font-size:13px;font-weight:600;">Ir al panel →</a>
+        </div>
+
+        ${stripeBlock}
+
+        <div style="margin-top:32px;padding-top:24px;border-top:1px solid #e2e8f0;text-align:center;">
+          <p style="margin:0;color:#94a3b8;font-size:12px;line-height:1.6;">
+            ¿Tenés dudas? Contactá a tu asesor de Pushka.<br>
+            Este email fue generado automáticamente al activar tu organización.
+          </p>
+        </div>
+      </td>
+    </tr>
+  </table>
+  </td></tr></table>
+</body>
+</html>`;
+}
 
 // ---------------------------------------------------------------------------
 // sendEmail — internal helper using SendGrid
