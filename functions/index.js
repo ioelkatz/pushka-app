@@ -4851,6 +4851,7 @@ exports.updateTenant = onCall(
       "stripeSubscriptionId", "stripeCustomerId", "paymentStatus",
       "billingNextDue", "gracePeriodEndsAt", "billingCycleStart",
       "adminEmail", "adminUid",
+      "setupFee", "setupFeeDate", "subscriptionMonthlyAmount",
     ];
     const allowed = isSuper ? [...brandingFields, ...superOnlyFields] : brandingFields;
 
@@ -5204,10 +5205,10 @@ exports.getSuperAdminDashboard = onCall(
 
     const now = new Date();
     const startOfThisMonth  = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
-    const startOfLastMonth   = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1));
-    const startOf3Months     = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 3, 1));
-    const startOf12Months    = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 11, 1));
-    const sinceTs            = admin.firestore.Timestamp.fromDate(startOf12Months);
+    const startOfLastMonth  = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1));
+    const startOf3Months    = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 3, 1));
+    const startOf6Months    = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 6, 1));
+    const startOf12Months   = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 11, 1));
 
     const rates   = await getExchangeRates(null);
     const mxnRate = rates["MXN"] ?? 17.1;
@@ -5223,9 +5224,9 @@ exports.getSuperAdminDashboard = onCall(
 
         const [usersSnap, txsSnap] = await Promise.all([
           db.collection("users").where("tenantId", "==", tid).get(),
+          // No date filter — fetch all transactions for all-time revenue + LTV
           db.collectionGroup("transactions")
             .where("tenantId", "==", tid)
-            .where("createdAt", ">=", sinceTs)
             .limit(10000)
             .get(),
         ]);
@@ -5234,7 +5235,9 @@ exports.getSuperAdminDashboard = onCall(
         const activeThisMonthSet = new Set();
         let revenueLastMonth = 0;
         let revenueLastThreeMonths = 0;
+        let revenueLastSixMonths = 0;
         let revenueLastYear = 0;
+        let revenueAllTime = 0;
 
         for (const txDoc of txsSnap.docs) {
           const tx = txDoc.data();
@@ -5252,8 +5255,10 @@ exports.getSuperAdminDashboard = onCall(
             amountUSD = (tx.amount ?? 0) / txRate;
           }
 
-          revenueLastYear += amountUSD;
-          if (createdAt >= startOf3Months) revenueLastThreeMonths += amountUSD;
+          revenueAllTime += amountUSD;
+          if (createdAt >= startOf12Months) revenueLastYear += amountUSD;
+          if (createdAt >= startOf6Months)  revenueLastSixMonths += amountUSD;
+          if (createdAt >= startOf3Months)  revenueLastThreeMonths += amountUSD;
           if (createdAt >= startOfLastMonth) revenueLastMonth += amountUSD;
           if (createdAt >= startOfThisMonth && uid) activeThisMonthSet.add(uid);
         }
@@ -5263,15 +5268,21 @@ exports.getSuperAdminDashboard = onCall(
           tenantName,
           appName,
           totalUsers,
-          activeThisMonth:        activeThisMonthSet.size,
-          revenueLastMonth:       Math.round(revenueLastMonth * 100) / 100,
-          revenueLastThreeMonths: Math.round(revenueLastThreeMonths * 100) / 100,
-          revenueLastYear:        Math.round(revenueLastYear * 100) / 100,
-          status:                 tenantData.status ?? "active",
-          paymentStatus:          tenantData.paymentStatus ?? null,
-          gracePeriodEndsAt:      tenantData.gracePeriodEndsAt?.toDate?.()?.toISOString() ?? null,
-          stripeConnectStatus:    tenantData.stripeConnectStatus ?? null,
-          commissionRate:         tenantData.commissionRate ?? 0,
+          activeThisMonth:          activeThisMonthSet.size,
+          revenueLastMonth:         Math.round(revenueLastMonth * 100) / 100,
+          revenueLastThreeMonths:   Math.round(revenueLastThreeMonths * 100) / 100,
+          revenueLastSixMonths:     Math.round(revenueLastSixMonths * 100) / 100,
+          revenueLastYear:          Math.round(revenueLastYear * 100) / 100,
+          revenueAllTime:           Math.round(revenueAllTime * 100) / 100,
+          status:                   tenantData.status ?? "active",
+          paymentStatus:            tenantData.paymentStatus ?? null,
+          gracePeriodEndsAt:        tenantData.gracePeriodEndsAt?.toDate?.()?.toISOString() ?? null,
+          stripeConnectStatus:      tenantData.stripeConnectStatus ?? null,
+          commissionRate:           tenantData.commissionRate ?? 0,
+          setupFee:                 tenantData.setupFee ?? 0,
+          setupFeeDate:             tenantData.setupFeeDate ?? null,
+          subscriptionMonthlyAmount: tenantData.subscriptionMonthlyAmount ?? 0,
+          tenantCreatedAt:          tenantData.createdAt?.toDate?.()?.toISOString() ?? null,
         };
       })
     );
