@@ -865,6 +865,273 @@ exports.createPaymentIntent = onCall(
 });
 
 // ---------------------------------------------------------------------------
+// Stripe Subscription — recurring donation (monthly / weekly / etc.)
+// ---------------------------------------------------------------------------
+//
+// Creates a Stripe Subscription with inline `price_data` for the donor's
+// chosen amount + interval. Returns the latest invoice's PaymentIntent
+// client secret so the client can confirm the first charge via
+// PaymentSheet; subsequent charges are billed automatically off-session
+// using the saved default payment method (Stripe webhook
+// `invoice.payment_succeeded` writes the transaction record).
+//
+// Connect routing: when the tenant has an active Connect account we set
+// `application_fee_percent` (subs use percent, not amount) + transfer_data
+// so each invoice routes to the tenant.
+exports.createDonationSubscription = onCall(
+  { secrets: [stripeSecret], enforceAppCheck: true },
+  async (request) => {
+    if (!request.auth?.uid) {
+      throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
+    }
+    await enforceRateLimit(request.auth.uid, "createDonationSubscription", 10, 600);
+    if (!stripeSecret.value()) {
+      throw new HttpsError("failed-precondition", "Stripe no configurado.");
+    }
+
+    const [adminDataSnap, userSnap] = await Promise.all([
+      db.collection("adminData").doc(request.auth.uid).get(),
+      db.collection("users").doc(request.auth.uid).get(),
+    ]);
+    if (adminDataSnap.exists && adminDataSnap.data()?.isBlocked === true) {
+      throw new HttpsError("permission-denied", "Tu cuenta está temporalmente suspendida.");
+    }
+
+    const userData = userSnap.exists ? (userSnap.data() ?? {}) : {};
+    const tenantId = userData.tenantId ?? null;
+
+    let tenantConnectAccountId = null;
+    let tenantCommissionRate = 0;
+    if (tenantId) {
+      const tenantSnap = await db.collection("tenants").doc(tenantId).get();
+      if (tenantSnap.exists) {
+        const td = tenantSnap.data();
+        if (td.status === "suspended") {
+          throw new HttpsError("permission-denied", "El servicio de tu organización está suspendido.");
+        }
+        const cs = td.stripeConnectStatus;
+        const cid = td.stripeConnectAccountId;
+        if (cs === "active" && cid) {
+          tenantConnectAccountId = cid;
+          tenantCommissionRate = typeof td.commissionRate === "number" ? td.commissionRate : 0.03;
+        } else if (cid && cs !== "active") {
+          throw new HttpsError(
+            "failed-precondition",
+            "Tu organización está temporalmente sin conexión con el procesador de pagos.",
+          );
+        }
+      }
+    }
+
+    const amount = Number(request.data?.amount || 0);
+    const currency = validateCurrency(request.data?.currency || "usd");
+    const interval = String(request.data?.interval || "month");
+    if (interval !== "month" && interval !== "week") {
+      throw new HttpsError("invalid-argument", "Intervalo inválido.");
+    }
+    if (!Number.isFinite(amount) || amount <= 0) {
+      throw new HttpsError("invalid-argument", "Monto inválido.");
+    }
+    if (amount > 99999999) {
+      throw new HttpsError("invalid-argument", "El monto excede el límite permitido.");
+    }
+    const minAmount = minAmountForCurrency(currency);
+    if (amount < minAmount) {
+      throw new HttpsError(
+        "invalid-argument",
+        `Monto mínimo para ${currency.toUpperCase()} es ${formatAmount(minAmount)}.`,
+      );
+    }
+
+    const stripe = require("stripe")(stripeSecret.value(), { timeout: 15000 });
+
+    const customerEmail = request.auth.token?.email
+      ? String(request.auth.token.email).slice(0, 254)
+      : null;
+
+    let customerId = String(userData.stripeCustomerId || "").trim() || null;
+    if (!customerId) {
+      const userRef = db.collection("users").doc(request.auth.uid);
+      try {
+        const customer = await stripe.customers.create(
+          {
+            email: customerEmail || undefined,
+            metadata: { uid: request.auth.uid },
+          },
+          { idempotencyKey: `customer_create_${request.auth.uid}` },
+        );
+        customerId = customer.id;
+        await userRef.set(
+          {
+            stripeCustomerId: customerId,
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          },
+          { merge: true },
+        );
+      } catch (stripeErr) {
+        console.error("createDonationSubscription: customer create failed", {
+          uid: request.auth.uid,
+          err: stripeErr.message,
+        });
+        throw new HttpsError("internal", "No se pudo crear el cliente.");
+      }
+    }
+
+    const donorMessage = String(request.data?.donorMessage || "").slice(0, 240);
+
+    // Stripe subscription items.price_data accepts a `product` ID (not the
+    // top-level `product_data` shortcut). Get-or-create a single shared
+    // "Pushka recurring donation" product and cache its ID in Firestore so
+    // we don't create a new one on every call.
+    let recurringProductId = null;
+    const cfgRef = db.collection("_appConfig").doc("stripe");
+    try {
+      const cfgSnap = await cfgRef.get();
+      if (cfgSnap.exists) {
+        recurringProductId = cfgSnap.data()?.recurringProductId ?? null;
+      }
+    } catch (cfgErr) {
+      console.error("createDonationSubscription: cfg read failed", {
+        err: cfgErr.message,
+        stack: cfgErr.stack,
+      });
+      throw new HttpsError("internal", `cfg-read: ${cfgErr.message}`);
+    }
+    console.info("createDonationSubscription: cfg lookup", {
+      uid: request.auth.uid,
+      recurringProductId,
+    });
+    if (!recurringProductId) {
+      try {
+        const product = await stripe.products.create(
+          {
+            name: "Pushka — Donación recurrente",
+            metadata: { source: "pushka_recurring" },
+          },
+          { idempotencyKey: "pushka_recurring_product_v1" },
+        );
+        recurringProductId = product.id;
+        console.info("createDonationSubscription: product created", {
+          productId: recurringProductId,
+        });
+        try {
+          await cfgRef.set(
+            {
+              recurringProductId,
+              updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            },
+            { merge: true },
+          );
+        } catch (writeErr) {
+          console.error("createDonationSubscription: cfg write failed", {
+            err: writeErr.message,
+            stack: writeErr.stack,
+          });
+          // Non-fatal: we already have the product ID, just won't cache it.
+        }
+      } catch (prodErr) {
+        console.error("createDonationSubscription: product create failed", {
+          err: prodErr.message,
+          stack: prodErr.stack,
+        });
+        throw new HttpsError("internal", `product-create: ${prodErr.message}`);
+      }
+    }
+
+    const subParams = {
+      customer: customerId,
+      items: [
+        {
+          price_data: {
+            currency: currency.toLowerCase(),
+            product: recurringProductId,
+            unit_amount: amount,
+            recurring: { interval },
+          },
+        },
+      ],
+      payment_behavior: "default_incomplete",
+      payment_settings: {
+        save_default_payment_method: "on_subscription",
+      },
+      expand: ["latest_invoice.payment_intent"],
+      metadata: {
+        uid: request.auth.uid,
+        tenantId: tenantId || "",
+        purpose: "donation_recurring",
+        donorMessage,
+      },
+    };
+
+    if (tenantConnectAccountId) {
+      // Subscriptions accept `application_fee_percent` (Stripe computes the
+      // fee from each invoice's subtotal). Clamp to [0, 99] — a misconfigured
+      // 100%+ rate would have Stripe reject every invoice forever.
+      subParams.application_fee_percent = Math.min(
+        99,
+        Math.max(0, tenantCommissionRate * 100),
+      );
+      subParams.transfer_data = { destination: tenantConnectAccountId };
+    }
+
+    console.info("createDonationSubscription: creating sub", {
+      uid: request.auth.uid,
+      customerId,
+      recurringProductId,
+      amount,
+      currency,
+      interval,
+      hasConnect: !!tenantConnectAccountId,
+    });
+    let subscription;
+    try {
+      subscription = await stripe.subscriptions.create(subParams);
+      console.info("createDonationSubscription: sub created", {
+        subId: subscription.id,
+        status: subscription.status,
+      });
+    } catch (stripeErr) {
+      console.error("createDonationSubscription: Stripe error", {
+        uid: request.auth.uid,
+        err: stripeErr.message,
+        type: stripeErr.type,
+        code: stripeErr.code,
+        param: stripeErr.param,
+      });
+      throw new HttpsError("internal", `sub-create: ${stripeErr.message}`);
+    }
+
+    const pi = subscription.latest_invoice?.payment_intent;
+    if (!pi?.client_secret) {
+      throw new HttpsError("internal", "Suscripción creada sin payment intent.");
+    }
+
+    // EphemeralKey lets PaymentSheet show saved cards. Best-effort —
+    // subscription works without it, just lacks the saved-card picker.
+    let ephemeralKeySecret = null;
+    try {
+      const ephemeralKey = await stripe.ephemeralKeys.create(
+        { customer: customerId },
+        { apiVersion: "2024-06-20" },
+      );
+      ephemeralKeySecret = ephemeralKey.secret;
+    } catch (ekErr) {
+      console.warn("createDonationSubscription: ephemeralKey create failed", {
+        uid: request.auth.uid,
+        err: ekErr.message,
+      });
+    }
+
+    return {
+      subscriptionId: subscription.id,
+      clientSecret: pi.client_secret,
+      customerId,
+      ephemeralKeySecret,
+    };
+  },
+);
+
+// ---------------------------------------------------------------------------
 // Stripe Customer — SetupIntent (save card for future off-session charges)
 // ---------------------------------------------------------------------------
 
