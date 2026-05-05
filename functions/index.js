@@ -4792,6 +4792,77 @@ exports.listTenants = onCall(
 );
 
 // ---------------------------------------------------------------------------
+// getSuperAdminDashboard — per-tenant stats for the super admin view
+// ---------------------------------------------------------------------------
+exports.getSuperAdminDashboard = onCall(
+  { enforceAppCheck: false },
+  async (request) => {
+    const callerUid = request.auth?.uid;
+    if (!callerUid) throw new HttpsError("unauthenticated", "Debes estar autenticado.");
+    if (!callerIsSuperAdmin(request)) throw new HttpsError("permission-denied", "Solo el super administrador.");
+    await enforceRateLimit(callerUid, "getSuperAdminDashboard", 30, 3600);
+
+    const now = new Date();
+    const startOfThisMonth  = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+    const startOfLastMonth   = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1));
+    const startOf3Months     = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 3, 1));
+    const startOf12Months    = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 11, 1));
+    const sinceTs            = admin.firestore.Timestamp.fromDate(startOf12Months);
+
+    const tenantsSnap = await db.collection("tenants").get();
+
+    const tenantStats = await Promise.all(
+      tenantsSnap.docs.map(async (tenantDoc) => {
+        const tid = tenantDoc.id;
+        const tenantData = tenantDoc.data();
+        const tenantName = tenantData.name ?? tid;
+        const appName    = tenantData.appName ?? tenantName;
+
+        const [usersSnap, txsSnap] = await Promise.all([
+          db.collection("users").where("tenantId", "==", tid).get(),
+          db.collectionGroup("transactions")
+            .where("tenantId", "==", tid)
+            .where("createdAt", ">=", sinceTs)
+            .limit(10000)
+            .get(),
+        ]);
+
+        const totalUsers = usersSnap.size;
+        const activeThisMonthSet = new Set();
+        let revenueLastMonth = 0;
+        let revenueLastThreeMonths = 0;
+        let revenueLastYear = 0;
+
+        for (const txDoc of txsSnap.docs) {
+          const tx = txDoc.data();
+          const amountMXN = tx.amountMXN ?? 0;
+          const createdAt = tx.createdAt?.toDate?.() ?? new Date();
+          const uid = txDoc.ref.parent.parent?.id;
+
+          revenueLastYear += amountMXN;
+          if (createdAt >= startOf3Months) revenueLastThreeMonths += amountMXN;
+          if (createdAt >= startOfLastMonth) revenueLastMonth += amountMXN;
+          if (createdAt >= startOfThisMonth && uid) activeThisMonthSet.add(uid);
+        }
+
+        return {
+          tenantId: tid,
+          tenantName,
+          appName,
+          totalUsers,
+          activeThisMonth:        activeThisMonthSet.size,
+          revenueLastMonth:       Math.round(revenueLastMonth * 100) / 100,
+          revenueLastThreeMonths: Math.round(revenueLastThreeMonths * 100) / 100,
+          revenueLastYear:        Math.round(revenueLastYear * 100) / 100,
+        };
+      })
+    );
+
+    return { stats: tenantStats };
+  }
+);
+
+// ---------------------------------------------------------------------------
 // createStripeConnectLink — super_admin or tenant_admin generates OAuth URL
 // ---------------------------------------------------------------------------
 exports.createStripeConnectLink = onCall(
