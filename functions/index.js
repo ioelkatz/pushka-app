@@ -379,6 +379,24 @@ async function writeActivityLog({ type, tenantId, tenantName, severity, requires
   });
 }
 
+// Atomic counter increment on tenant doc — called after every confirmed donation.
+// Non-blocking: failures are logged but never propagate to the caller.
+async function incrementTenantRevenue(tenantId, amountUSD) {
+  if (!tenantId || !amountUSD || amountUSD <= 0) return;
+  const now = new Date();
+  const monthKey = `${now.getUTCFullYear()}_${String(now.getUTCMonth() + 1).padStart(2, "0")}`;
+  try {
+    await db.collection("tenants").doc(tenantId).update({
+      [`revenueStats.${monthKey}.revenue`]: admin.firestore.FieldValue.increment(amountUSD),
+      [`revenueStats.${monthKey}.count`]:   admin.firestore.FieldValue.increment(1),
+      "revenueStats.allTime.revenue":       admin.firestore.FieldValue.increment(amountUSD),
+      "revenueStats.allTime.count":         admin.firestore.FieldValue.increment(1),
+    });
+  } catch (err) {
+    console.warn("incrementTenantRevenue: failed (non-fatal)", { tenantId, amountUSD, error: String(err?.message || err) });
+  }
+}
+
 async function deleteQueryBatch(query) {
   const snap = await query.get();
   if (snap.empty) return 0;
@@ -1750,6 +1768,9 @@ exports.stripeWebhook = onRequest(
             createdAt: admin.firestore.FieldValue.serverTimestamp(),
           });
 
+        // Update pre-aggregated revenue counters on tenant doc (non-blocking)
+        if (txTenantId) await incrementTenantRevenue(txTenantId, txSnap.amountUSD);
+
         await finalizeWebhookEvent(eventRef, {
           status: "processed",
           uid,
@@ -2871,6 +2892,9 @@ async function _runPushkaAutoEmptyTick() {
               createdAt: admin.firestore.FieldValue.serverTimestamp(),
             });
           });
+        // Update pre-aggregated revenue counters after successful commit (non-blocking)
+        await incrementTenantRevenue(plan.tenantId, emptySnap.amountUSD);
+
         } catch (step3Err) {
           // Stripe charge succeeded but local finalize failed. Lock stays
           // set until TTL expires (10 min) — that's intentional so a retry
@@ -5204,85 +5228,69 @@ exports.getSuperAdminDashboard = onCall(
     await enforceRateLimit(callerUid, "getSuperAdminDashboard", 60, 3600);
 
     const now = new Date();
-    const startOfThisMonth  = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
-    const startOfLastMonth  = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1));
-    const startOf3Months    = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 3, 1));
-    const startOf6Months    = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 6, 1));
-    const startOf12Months   = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 11, 1));
-
-    const rates   = await getExchangeRates(null);
-    const mxnRate = rates["MXN"] ?? 17.1;
+    const startOfThisMonth = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+    const thisMonthTs      = admin.firestore.Timestamp.fromDate(startOfThisMonth);
 
     const tenantsSnap = await db.collection("tenants").get();
 
+    // Helper: sum revenueStats monthly buckets going back N months (inclusive of current).
+    // Matches the original semantics: "since the first day of N months ago".
+    function sumMonths(revenueStats, monthsBack) {
+      let total = 0;
+      for (let i = 0; i <= monthsBack; i++) {
+        const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - i, 1));
+        const key = `${d.getUTCFullYear()}_${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
+        total += (revenueStats[key]?.revenue || 0);
+      }
+      return total;
+    }
+
     const tenantStats = await Promise.all(
       tenantsSnap.docs.map(async (tenantDoc) => {
-        const tid = tenantDoc.id;
+        const tid        = tenantDoc.id;
         const tenantData = tenantDoc.data();
         const tenantName = tenantData.name ?? tid;
         const appName    = tenantData.appName ?? tenantName;
+        const revenueStats = tenantData.revenueStats || {};
 
-        const [usersSnap, txsSnap] = await Promise.all([
+        // Only query this month's transactions — to count unique active users.
+        // Revenue is read from pre-aggregated counters, not from transactions.
+        const [usersSnap, thisMonthTxsSnap] = await Promise.all([
           db.collection("users").where("tenantId", "==", tid).get(),
-          // No date filter — fetch all transactions for all-time revenue + LTV
           db.collectionGroup("transactions")
             .where("tenantId", "==", tid)
-            .limit(10000)
+            .where("createdAt", ">=", thisMonthTs)
+            .limit(5000)
             .get(),
         ]);
 
         const totalUsers = usersSnap.size;
         const activeThisMonthSet = new Set();
-        let revenueLastMonth = 0;
-        let revenueLastThreeMonths = 0;
-        let revenueLastSixMonths = 0;
-        let revenueLastYear = 0;
-        let revenueAllTime = 0;
-
-        for (const txDoc of txsSnap.docs) {
-          const tx = txDoc.data();
-          const createdAt = tx.createdAt?.toDate?.() ?? new Date();
+        for (const txDoc of thisMonthTxsSnap.docs) {
           const uid = txDoc.ref.parent.parent?.id;
-
-          let amountUSD;
-          if (tx.amountUSD != null) {
-            amountUSD = tx.amountUSD;
-          } else if (tx.amountMXN != null) {
-            amountUSD = tx.amountMXN / mxnRate;
-          } else {
-            const txCurrency = String(tx.currencyCode || "USD").toUpperCase();
-            const txRate = rates[txCurrency] ?? 1;
-            amountUSD = (tx.amount ?? 0) / txRate;
-          }
-
-          revenueAllTime += amountUSD;
-          if (createdAt >= startOf12Months) revenueLastYear += amountUSD;
-          if (createdAt >= startOf6Months)  revenueLastSixMonths += amountUSD;
-          if (createdAt >= startOf3Months)  revenueLastThreeMonths += amountUSD;
-          if (createdAt >= startOfLastMonth) revenueLastMonth += amountUSD;
-          if (createdAt >= startOfThisMonth && uid) activeThisMonthSet.add(uid);
+          if (uid) activeThisMonthSet.add(uid);
         }
 
         return {
-          tenantId: tid,
+          tenantId:   tid,
           tenantName,
           appName,
           totalUsers,
-          activeThisMonth:          activeThisMonthSet.size,
-          revenueLastMonth:         Math.round(revenueLastMonth * 100) / 100,
-          revenueLastThreeMonths:   Math.round(revenueLastThreeMonths * 100) / 100,
-          revenueLastSixMonths:     Math.round(revenueLastSixMonths * 100) / 100,
-          revenueLastYear:          Math.round(revenueLastYear * 100) / 100,
-          revenueAllTime:           Math.round(revenueAllTime * 100) / 100,
-          status:                   tenantData.status ?? "active",
-          paymentStatus:            tenantData.paymentStatus ?? null,
-          gracePeriodEndsAt:        tenantData.gracePeriodEndsAt?.toDate?.()?.toISOString() ?? null,
-          stripeConnectStatus:      tenantData.stripeConnectStatus ?? null,
-          commissionRate:           tenantData.commissionRate ?? 0,
-          setupFee:                 tenantData.setupFee ?? 0,
-          setupFeeDate:             tenantData.setupFeeDate ?? null,
+          activeThisMonth:           activeThisMonthSet.size,
+          revenueLastMonth:          Math.round(sumMonths(revenueStats, 1)  * 100) / 100,
+          revenueLastThreeMonths:    Math.round(sumMonths(revenueStats, 3)  * 100) / 100,
+          revenueLastSixMonths:      Math.round(sumMonths(revenueStats, 6)  * 100) / 100,
+          revenueLastYear:           Math.round(sumMonths(revenueStats, 11) * 100) / 100,
+          revenueAllTime:            Math.round((revenueStats.allTime?.revenue || 0) * 100) / 100,
+          status:                    tenantData.status ?? "active",
+          paymentStatus:             tenantData.paymentStatus ?? null,
+          gracePeriodEndsAt:         tenantData.gracePeriodEndsAt?.toDate?.()?.toISOString() ?? null,
+          stripeConnectStatus:       tenantData.stripeConnectStatus ?? null,
+          commissionRate:            tenantData.commissionRate ?? 0,
+          setupFee:                  tenantData.setupFee ?? 0,
+          setupFeeDate:              tenantData.setupFeeDate ?? null,
           subscriptionMonthlyAmount: tenantData.subscriptionMonthlyAmount ?? 0,
-          tenantCreatedAt:          tenantData.createdAt?.toDate?.()?.toISOString() ?? null,
+          tenantCreatedAt:           tenantData.createdAt?.toDate?.()?.toISOString() ?? null,
         };
       })
     );
