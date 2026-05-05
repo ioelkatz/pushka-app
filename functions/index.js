@@ -3161,21 +3161,21 @@ exports.getAdminStats = onCall(
       else if (createdAt >= startOfLastMonth) newUsersLastMonth++;
     }
 
-    // Monthly buckets for last 12 months — all values in MXN
+    // Monthly buckets for last 12 months — all values in USD
     const monthlyBuckets = {};
     for (let i = 11; i >= 0; i--) {
       const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - i, 1));
       const key = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
-      monthlyBuckets[key] = { totalMXN: 0, count: 0, tzedaka: 0, pushkaEmpty: 0 };
+      monthlyBuckets[key] = { totalUSD: 0, count: 0, tzedaka: 0, pushkaEmpty: 0 };
     }
 
-    let totalMonthMXN = 0;
-    let totalLastMonthMXN = 0;
-    let totalYearMXN = 0;
-    let totalAllTimeMXN = 0;
+    let totalMonthUSD = 0;
+    let totalLastMonthUSD = 0;
+    let totalYearUSD = 0;
+    let totalAllTimeUSD = 0;
     const topDonorsMap = {};
     const topDonorsThisMonthMap = {};
-    const currencyTotals = {};         // MXN equivalent, for sorting/percentage
+    const currencyTotals = {};         // USD equivalent, for sorting/percentage
     const currencyTotalsOriginal = {}; // sum in original currency, for display
     const activeThisMonthSet = new Set();
 
@@ -3194,15 +3194,15 @@ exports.getAdminStats = onCall(
       const userMeta = userMap[uid] || { displayName: uid, email: "", currencyCode: "USD" };
       const txCurrency = String(tx.currencyCode || userMeta.currencyCode).toUpperCase();
 
-      // Priority: frozen snapshot → frozen USD converted → live rate fallback
-      let amountMXN;
-      if (tx.amountMXN != null) {
-        amountMXN = tx.amountMXN;
-      } else if (tx.amountUSD != null) {
-        amountMXN = tx.amountUSD * mxnRate;
+      // Priority: frozen USD snapshot → derive from MXN snapshot → live rate fallback
+      let amountUSD;
+      if (tx.amountUSD != null) {
+        amountUSD = tx.amountUSD;
+      } else if (tx.amountMXN != null) {
+        amountUSD = tx.amountMXN / mxnRate;
       } else {
         const txRate = rates[txCurrency] ?? 1;
-        amountMXN = (tx.amount / txRate) * mxnRate;
+        amountUSD = tx.amount / txRate;
       }
 
       const txDate = tx.createdAt?.toDate?.() ?? new Date(tx.createdAt);
@@ -3211,18 +3211,18 @@ exports.getAdminStats = onCall(
       if (txDate >= startOfMonth) activeThisMonthSet.add(uid);
 
       if (monthlyBuckets[monthKey]) {
-        monthlyBuckets[monthKey].totalMXN += amountMXN;
+        monthlyBuckets[monthKey].totalUSD += amountUSD;
         monthlyBuckets[monthKey].count++;
-        if (tx.type === "tzedaka") monthlyBuckets[monthKey].tzedaka += amountMXN;
-        else if (tx.type === "pushkaEmpty") monthlyBuckets[monthKey].pushkaEmpty += amountMXN;
+        if (tx.type === "tzedaka") monthlyBuckets[monthKey].tzedaka += amountUSD;
+        else if (tx.type === "pushkaEmpty") monthlyBuckets[monthKey].pushkaEmpty += amountUSD;
       }
 
-      totalAllTimeMXN += amountMXN;
-      if (txDate >= startOfMonth) totalMonthMXN += amountMXN;
-      if (txDate >= startOfLastMonth && txDate < startOfMonth) totalLastMonthMXN += amountMXN;
-      if (txDate >= startOfYear) totalYearMXN += amountMXN;
+      totalAllTimeUSD += amountUSD;
+      if (txDate >= startOfMonth) totalMonthUSD += amountUSD;
+      if (txDate >= startOfLastMonth && txDate < startOfMonth) totalLastMonthUSD += amountUSD;
+      if (txDate >= startOfYear) totalYearUSD += amountUSD;
 
-      currencyTotals[txCurrency] = (currencyTotals[txCurrency] || 0) + amountMXN;
+      currencyTotals[txCurrency] = (currencyTotals[txCurrency] || 0) + amountUSD;
       currencyTotalsOriginal[txCurrency] = (currencyTotalsOriginal[txCurrency] || 0) + (tx.amount ?? 0);
 
       if (tx.type === "tzedaka" || tx.type === "pushkaEmpty") {
@@ -3232,11 +3232,11 @@ exports.getAdminStats = onCall(
             displayName: userMeta.displayName,
             email: userMeta.email,
             currencyCode: userMeta.currencyCode,
-            totalMXN: 0,
+            totalUSD: 0,
             count: 0,
           };
         }
-        topDonorsMap[uid].totalMXN += amountMXN;
+        topDonorsMap[uid].totalUSD += amountUSD;
         topDonorsMap[uid].count++;
 
         if (txDate >= startOfMonth) {
@@ -3246,22 +3246,22 @@ exports.getAdminStats = onCall(
               displayName: userMeta.displayName,
               email: userMeta.email,
               currencyCode: userMeta.currencyCode,
-              totalMXN: 0,
+              totalUSD: 0,
               count: 0,
             };
           }
-          topDonorsThisMonthMap[uid].totalMXN += amountMXN;
+          topDonorsThisMonthMap[uid].totalUSD += amountUSD;
           topDonorsThisMonthMap[uid].count++;
         }
       }
     }
 
     const topDonors = Object.values(topDonorsMap)
-      .sort((a, b) => b.totalMXN - a.totalMXN)
+      .sort((a, b) => b.totalUSD - a.totalUSD)
       .slice(0, 10);
 
     const topDonorsThisMonth = Object.values(topDonorsThisMonthMap)
-      .sort((a, b) => b.totalMXN - a.totalMXN)
+      .sort((a, b) => b.totalUSD - a.totalUSD)
       .slice(0, 5);
 
     const monthlyStats = Object.entries(monthlyBuckets).map(([key, v]) => {
@@ -3271,8 +3271,8 @@ exports.getAdminStats = onCall(
       return { month: key, label, ...v };
     });
 
-    const monthGrowth = totalLastMonthMXN > 0
-      ? ((totalMonthMXN - totalLastMonthMXN) / totalLastMonthMXN) * 100
+    const monthGrowth = totalLastMonthUSD > 0
+      ? ((totalMonthUSD - totalLastMonthUSD) / totalLastMonthUSD) * 100
       : null;
 
     return {
@@ -3280,10 +3280,10 @@ exports.getAdminStats = onCall(
       activeThisMonth: activeThisMonthSet.size,
       newUsersThisMonth,
       newUsersLastMonth,
-      totalMonthMXN,
-      totalLastMonthMXN,
-      totalYearMXN,
-      totalAllTimeMXN,
+      totalMonthUSD,
+      totalLastMonthUSD,
+      totalYearUSD,
+      totalAllTimeUSD,
       monthGrowth,
       monthlyStats,
       topDonors,
@@ -3365,11 +3365,11 @@ exports.getRecentTransactions = onCall(
         const tx = d.data();
         const uid = d.ref.parent.parent?.id ?? "";
         const user = userMap[uid] ?? { displayName: uid, email: "" };
-        let amountMXN = tx.amountMXN;
-        if (amountMXN == null && tx.amountUSD != null) amountMXN = tx.amountUSD * mxnRate;
-        if (amountMXN == null) {
+        let amountUSD = tx.amountUSD;
+        if (amountUSD == null && tx.amountMXN != null) amountUSD = tx.amountMXN / mxnRate;
+        if (amountUSD == null) {
           const txRate = rates[String(tx.currencyCode || "USD").toUpperCase()] ?? 1;
-          amountMXN = (tx.amount / txRate) * mxnRate;
+          amountUSD = tx.amount / txRate;
         }
         const createdAt = tx.createdAt?.toDate?.() ?? new Date(0);
         return {
@@ -3380,7 +3380,7 @@ exports.getRecentTransactions = onCall(
           type: tx.type ?? "tzedaka",
           amount: tx.amount ?? 0,
           currencyCode: String(tx.currencyCode || "USD").toUpperCase(),
-          amountMXN: Math.round((amountMXN || 0) * 100) / 100,
+          amountUSD: Math.round((amountUSD || 0) * 100) / 100,
           description: tx.description ?? "",
           createdAt: createdAt.toISOString(),
         };
@@ -4822,7 +4822,7 @@ exports.listTenants = onCall(
   async (request) => {
     const callerUid = request.auth?.uid;
     if (!callerUid) throw new HttpsError("unauthenticated", "Debes estar autenticado.");
-    await enforceRateLimit(callerUid, "listTenants", 30, 3600);
+    await enforceRateLimit(callerUid, "listTenants", 60, 3600);
 
     if (!callerIsSuperAdmin(request)) {
       throw new HttpsError("permission-denied", "Solo el super administrador.");
@@ -4864,7 +4864,7 @@ exports.getSuperAdminDashboard = onCall(
     const callerUid = request.auth?.uid;
     if (!callerUid) throw new HttpsError("unauthenticated", "Debes estar autenticado.");
     if (!callerIsSuperAdmin(request)) throw new HttpsError("permission-denied", "Solo el super administrador.");
-    await enforceRateLimit(callerUid, "getSuperAdminDashboard", 30, 3600);
+    await enforceRateLimit(callerUid, "getSuperAdminDashboard", 60, 3600);
 
     const now = new Date();
     const startOfThisMonth  = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
@@ -4872,6 +4872,9 @@ exports.getSuperAdminDashboard = onCall(
     const startOf3Months     = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 3, 1));
     const startOf12Months    = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 11, 1));
     const sinceTs            = admin.firestore.Timestamp.fromDate(startOf12Months);
+
+    const rates   = await getExchangeRates(null);
+    const mxnRate = rates["MXN"] ?? 17.1;
 
     const tenantsSnap = await db.collection("tenants").get();
 
@@ -4899,13 +4902,23 @@ exports.getSuperAdminDashboard = onCall(
 
         for (const txDoc of txsSnap.docs) {
           const tx = txDoc.data();
-          const amountMXN = tx.amountMXN ?? 0;
           const createdAt = tx.createdAt?.toDate?.() ?? new Date();
           const uid = txDoc.ref.parent.parent?.id;
 
-          revenueLastYear += amountMXN;
-          if (createdAt >= startOf3Months) revenueLastThreeMonths += amountMXN;
-          if (createdAt >= startOfLastMonth) revenueLastMonth += amountMXN;
+          let amountUSD;
+          if (tx.amountUSD != null) {
+            amountUSD = tx.amountUSD;
+          } else if (tx.amountMXN != null) {
+            amountUSD = tx.amountMXN / mxnRate;
+          } else {
+            const txCurrency = String(tx.currencyCode || "USD").toUpperCase();
+            const txRate = rates[txCurrency] ?? 1;
+            amountUSD = (tx.amount ?? 0) / txRate;
+          }
+
+          revenueLastYear += amountUSD;
+          if (createdAt >= startOf3Months) revenueLastThreeMonths += amountUSD;
+          if (createdAt >= startOfLastMonth) revenueLastMonth += amountUSD;
           if (createdAt >= startOfThisMonth && uid) activeThisMonthSet.add(uid);
         }
 
