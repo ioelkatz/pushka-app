@@ -44,7 +44,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   bool vibrationEnabled = true;
   bool ambientEnabled = false;
   bool partialPaymentsEnabled = false;
-  bool additionalPaymentOptionsEnabled = false;
   bool biometricAuthenticationEnabled = false;
   String selectedCurrency = 'USD';
   String selectedCountry = 'Estados Unidos';
@@ -184,9 +183,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           partialPaymentsEnabled =
               getProfileBool('partialPaymentsEnabled') ??
                   partialPaymentsEnabled;
-          additionalPaymentOptionsEnabled =
-              getProfileBool('additionalPaymentOptionsEnabled') ??
-                  additionalPaymentOptionsEnabled;
           biometricAuthenticationEnabled =
               getProfileBool('biometricAuthenticationEnabled') ??
                   biometricAuthenticationEnabled;
@@ -396,19 +392,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             onChanged: (value) {
               setState(() => partialPaymentsEnabled = value);
               _updateSettingsSilent(user, partialPaymentsEnabled: value);
-            },
-          ),
-          const SizedBox(height: 18),
-
-          // ADDITIONAL PAYMENT OPTIONS
-          _buildToggleRowWithSubtitle(
-            tr.additionalPaymentOptions,
-            tr.additionalPaymentOptionsSub,
-            additionalPaymentOptionsEnabled,
-            labelFontSize: 14,
-            onChanged: (value) {
-              setState(() => additionalPaymentOptionsEnabled = value);
-              _updateSettingsSilent(user, additionalPaymentOptionsEnabled: value);
             },
           ),
           const SizedBox(height: 18),
@@ -1367,49 +1350,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     );
   }
 
-  Widget _buildToggleRowWithSubtitle(
-    String label,
-    String subtitle,
-    bool value, {
-    double labelFontSize = 16,
-    required ValueChanged<bool> onChanged,
-  }) {
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-      crossAxisAlignment: CrossAxisAlignment.center,
-      children: [
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                label,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  fontSize: labelFontSize,
-                  fontWeight: FontWeight.w500,
-                ),
-              ),
-              const SizedBox(height: 2),
-              Text(
-                subtitle,
-                style: TextStyle(
-                  fontSize: 12,
-                  color: Theme.of(context).colorScheme.onSurfaceVariant,
-                ),
-              ),
-            ],
-          ),
-        ),
-        Switch(
-          value: value,
-          onChanged: onChanged,
-        ),
-      ],
-    );
-  }
-
   Widget _buildProfileField(String label, String value) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 2),
@@ -1565,7 +1505,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   keyboardType: _keyboardTypeForKey(fieldKey),
                   decoration: InputDecoration(hintText: S.of(context).enterField(title.toLowerCase()), errorText: errorText,
                     border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                    focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide(color: Theme.of(ctx).brightness == Brightness.dark ? Theme.of(ctx).colorScheme.primary : const Color(0xFFE05A4F), width: 1.6)),
+                    focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: AppTokens.primaryBlue, width: 1.6)),
                   ),
                   onChanged: (_) { if (errorText != null) setDialogState(() => errorText = null); },
                 ),
@@ -1641,7 +1581,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     bool? vibrationEnabled,
     bool? ambientEnabled,
     bool? partialPaymentsEnabled,
-    bool? additionalPaymentOptionsEnabled,
     bool? biometricAuthenticationEnabled,
     String? currencyCountry,
     String? currencyCode,
@@ -1666,7 +1605,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     // User-level settings → root user doc
     if (soundEnabled != null ||
         vibrationEnabled != null || ambientEnabled != null ||
-        partialPaymentsEnabled != null || additionalPaymentOptionsEnabled != null ||
+        partialPaymentsEnabled != null ||
         biometricAuthenticationEnabled != null ||
         currencyCountry != null || currencyCode != null) {
       futures.add(repo.updateSettings(
@@ -1675,7 +1614,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         vibrationEnabled: vibrationEnabled,
         ambientEnabled: ambientEnabled,
         partialPaymentsEnabled: partialPaymentsEnabled,
-        additionalPaymentOptionsEnabled: additionalPaymentOptionsEnabled,
         biometricAuthenticationEnabled: biometricAuthenticationEnabled,
         currencyCountry: currencyCountry,
         currencyCode: currencyCode,
@@ -1691,7 +1629,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     bool? vibrationEnabled,
     bool? ambientEnabled,
     bool? partialPaymentsEnabled,
-    bool? additionalPaymentOptionsEnabled,
     bool? biometricAuthenticationEnabled,
   }) {
     _updateSettings(
@@ -1700,7 +1637,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       vibrationEnabled: vibrationEnabled,
       ambientEnabled: ambientEnabled,
       partialPaymentsEnabled: partialPaymentsEnabled,
-      additionalPaymentOptionsEnabled: additionalPaymentOptionsEnabled,
       biometricAuthenticationEnabled: biometricAuthenticationEnabled,
     ).catchError((Object e) => debugPrint('toggle updateSettings error: $e'));
   }

@@ -169,8 +169,20 @@ class S {
   String get donateMonthly => _t('Mensual', 'Monthly', 'Mensuel', 'חודשי');
   String get donateMonthlyBtn => _t('Donar mensualmente', 'Donate monthly', 'Faire un don mensuel', 'תרום חודשי');
   String get dedicateDonation => _t('Dedica esta donación', 'Dedicate this donation', 'Dédier ce don', 'הקדש תרומה זו');
-  String get emptyOnce => _t('Vaciar una vez', 'One time', 'Une fois', 'פעם אחת');
-  String get emptyAuto => _t('Vaciar automáticamente', 'Automatic', 'Automatique', 'אוטומטי');
+  String get walletGooglePayBody => _t(
+        'Usá tu cuenta de Google Pay para pagar. Confirmás el pago en el momento de vaciar tu Pushka.',
+        'Use your Google Pay account to pay. You confirm the payment when you empty your Pushka.',
+        'Utilisez votre compte Google Pay pour payer. Vous confirmez le paiement au moment de vider votre Pushka.',
+        'השתמש בחשבון Google Pay שלך לתשלום. אתה מאשר את התשלום בעת ריקון הפושקה.',
+      );
+  String get walletApplePayBody => _t(
+        'Usá tu cuenta de Apple Pay para pagar. Confirmás el pago en el momento de vaciar tu Pushka.',
+        'Use your Apple Pay account to pay. You confirm the payment when you empty your Pushka.',
+        'Utilisez votre compte Apple Pay pour payer. Vous confirmez le paiement au moment de vider votre Pushka.',
+        'השתמש בחשבון Apple Pay שלך לתשלום. אתה מאשר את התשלום בעת ריקון הפושקה.',
+      );
+  String get emptyOnce => _t('Una vez', 'One time', 'Une fois', 'פעם אחת');
+  String get emptyAuto => _t('Automático', 'Automatic', 'Automatique', 'אוטומטי');
   String get emptyFrequencyLabel => _t('Frecuencia', 'Frequency', 'Fréquence', 'תדירות');
   String get emptyAutoBtn => _t('Activar vaciado automático', 'Enable auto-empty', 'Activer le vidage automatique', 'הפעל ריקון אוטומטי');
   String get amount => _t('Monto', 'Amount', 'Montant', 'סכום');
@@ -194,13 +206,6 @@ class S {
   String get donationWithCard => _t('Donación con tarjeta', 'Card donation', 'Don par carte', 'תרומה בכרטיס');
   String paymentProcessedRemaining(String amount) => _t('Pago procesado. Quedaron $amount en la Pushka.', 'Payment processed. $amount remaining in the Pushka.', 'Paiement traité. $amount restant dans la Pushka.', 'התשלום עובד. נותרו $amount בפושקה.');
   String get paymentProcessedHistory => _t('Pago procesado. Se reflejará en el historial pronto.', 'Payment processed. It will appear in your history soon.', "Paiement traité. Il apparaîtra bientôt dans l'historique.", 'התשלום עובד. יופיע בהיסטוריה בקרוב.');
-  String donationPending(String amount) => _t(
-    'Donación de $amount registrada como pendiente. Completa el pago según las instrucciones.',
-    'Donation of $amount registered as pending. Complete payment per instructions.',
-    'Don de $amount enregistré comme en attente. Complétez le paiement selon les instructions.',
-    'תרומה של $amount נרשמה כממתינה. השלם את התשלום לפי ההוראות.',
-  );
-  String get couldNotRegister => _t("No se pudo registrar la donación", "Could not register the donation", "Impossible d'enregistrer le don", 'לא ניתן לרשום את התרומה');
   String get minAmountTitle => _t('Monto mínimo', 'Minimum amount', 'Montant minimum', 'סכום מינימום');
   String minAmountBody(String code, String symbol, String min) => _t(
     'Para procesar pagos en $code, el monto mínimo es de $symbol$min.',
@@ -248,17 +253,6 @@ class S {
   String get paymentCanceled => _t('Pago cancelado', 'Payment canceled', 'Paiement annulé', 'התשלום בוטל');
   String paymentFailed(String msg) => _t('No se pudo completar el pago: $msg', 'Could not complete payment: $msg', 'Impossible de compléter le paiement : $msg', 'לא ניתן להשלים את התשלום: $msg');
   String get couldNotCompleteDonation => _t("No se pudo completar la donación", "Could not complete the donation", "Impossible de compléter le don", 'לא ניתן להשלים את התרומה');
-  String get paymentMethodTitle => _t('Método de pago', 'Payment method', 'Moyen de paiement', 'אמצעי תשלום');
-  String get paymentMethodSubtitle => _t('Selecciona cómo deseas realizar tu donación', 'Select how you want to make your donation', 'Sélectionnez comment vous souhaitez faire votre don', 'בחר כיצד ברצונך לתרום');
-  String get paymentCard => _t('Tarjeta de crédito/débito', 'Credit/debit card', 'Carte de crédit/débit', 'כרטיס אשראי/דביט');
-  String get paymentCardSub => _t('Pago inmediato vía Stripe', 'Instant payment via Stripe', 'Paiement immédiat via Stripe', 'תשלום מיידי דרך Stripe');
-  String get paymentCheck => _t('Cheque', 'Check', 'Chèque', "צ'ק");
-  String get paymentCheckSub => _t('Envía un cheque por correo', 'Send a check by mail', 'Envoyez un chèque par courrier', "שלח צ'ק בדואר");
-  String get paymentTransfer => _t('Transferencia bancaria', 'Bank transfer', 'Virement bancaire', 'העברה בנקאית');
-  String get paymentTransferSub => _t('Transferencia electrónica', 'Electronic transfer', 'Transfert électronique', 'העברה אלקטרונית');
-  String get paymentDaf => _t('DAF', 'DAF', 'DAF', 'DAF');
-  String get paymentDafSub => _t('Donor Advised Fund', 'Donor Advised Fund', 'Donor Advised Fund', 'Donor Advised Fund');
-  String get confirmDonation => _t('Confirmar donación', 'Confirm donation', 'Confirmer le don', 'אשר תרומה');
   String get partialDonationTitle => _t('Donación parcial', 'Partial donation', 'Don partiel', 'תרומה חלקית');
   String availableInPushka(String amount) => _t('Disponible en Pushka: $amount', 'Available in Pushka: $amount', 'Disponible dans la Pushka : $amount', 'זמין בפושקה: $amount');
   String get quickSelect => _t('Selecciona rápido', 'Quick select', 'Sélection rapide', 'בחירה מהירה');
@@ -314,10 +308,6 @@ class S {
   String get dropdownOther => _t('OTRO', 'OTHER', 'AUTRE', 'אחר');
 
   String get pushkaEmptyCardDesc => _t('Pushka vaciada - pago con tarjeta', 'Pushka emptied - card payment', 'Pushka vidée - paiement par carte', 'פושקה רוקנה - תשלום בכרטיס');
-  String donationVia(String method) => _t('Donación vía $method', 'Donation via $method', 'Don via $method', 'תרומה דרך $method');
-  String get methodCheckFull => _t('cheque', 'check', 'chèque', "צ'ק");
-  String get methodTransferFull => _t('transferencia bancaria', 'bank transfer', 'virement bancaire', 'העברה בנקאית');
-  String get methodDafFull => _t('DAF (Donor Advised Fund)', 'DAF (Donor Advised Fund)', 'DAF (Donor Advised Fund)', 'DAF (Donor Advised Fund)');
 
   // ---------------------------------------------------------------------------
   // HOLIDAY NAMES
@@ -326,10 +316,10 @@ class S {
   String get holidayMaotJitim => _t("Ma'ot Jitim", "Ma'ot Chitim", "Ma'ot 'Hitim", "מעות חיטים");
   String get holidayPesaj => _t('Pésaj', 'Pesach', "Pessa'h", 'פסח');
   String get holidayMaotJitimDesc => _t(
-    'Fondos para los necesitados de Israel para sus necesidades de Pésaj',
-    'Funds for the needy of Israel for their Passover needs',
-    'Fonds pour les nécessiteux d\'Israël pour leurs besoins de Pessah',
-    'כספים לנזקקי ישראל לצורכי פסח',
+    'Celebramos la salida de Egipto. Dona tzedaká para una seuda de Pésaj',
+    'We celebrate the Exodus from Egypt. Donate tzedakah for a Pesach seuda',
+    "Nous célébrons la sortie d'Égypte. Faites un don de tsédaka pour une seoudah de Pessah",
+    'אנו חוגגים את יציאת מצרים. תרמו צדקה לסעודת פסח',
   );
   String get holidayShavuot => _t('Shavuot', 'Shavuot', 'Chavouot', 'שבועות');
   String get holidayShavuotDesc => _t(
@@ -362,10 +352,10 @@ class S {
   );
   String get holidayJanuca => _t('Janucá', 'Hanukkah', "'Hanouka", 'חנוכה');
   String get holidayJanucaDesc => _t(
-    'Festival de las Luces. Ilumina vidas con tu donación de tzedaká',
-    'Festival of Lights. Illuminate lives with your tzedakah donation',
-    'Fête des Lumières. Illuminez des vies avec votre don de tsédaka',
-    'חג האורים. האר חיים עם תרומת הצדקה שלך',
+    'En Janucá, cada llama nos recuerda que incluso la luz más pequeña puede vencer la oscuridad… esparce luz con tu donación de tzedaká',
+    'On Hanukkah, each flame reminds us that even the smallest light can overcome darkness… spread light with your tzedakah donation',
+    "À 'Hanouka, chaque flamme nous rappelle que même la plus petite lumière peut vaincre les ténèbres… diffusez la lumière avec votre don de tsédaka",
+    'בחנוכה, כל להבה מזכירה לנו שאפילו האור הקטן ביותר יכול לנצח את החושך… הפיצו אור עם תרומת הצדקה שלכם',
   );
   String get holidayPurim => _t('Purim', 'Purim', 'Pourim', 'פורים');
   String get holidayPurimDesc => _t(
@@ -435,8 +425,6 @@ class S {
   String get ambientMusic => _t('MÚSICA AMBIENTAL', 'AMBIENT MUSIC', 'MUSIQUE AMBIANTE', 'מוזיקת רקע');
   String get ambientMusicSub => _t('Nigunim jasídicos de fondo', 'Hasidic nigunim in the background', 'Nigunim hassidiques en fond', 'ניגונים חסידיים ברקע');
   String get partialPayments => _t('PAGOS PARCIALES', 'PARTIAL PAYMENTS', 'PAIEMENTS PARTIELS', 'תשלומים חלקיים');
-  String get additionalPaymentOptions => _t('OPCIONES DE PAGO ADICIONALES', 'ADDITIONAL PAYMENT OPTIONS', 'OPTIONS DE PAIEMENT SUPPLÉMENTAIRES', 'אפשרויות תשלום נוספות');
-  String get additionalPaymentOptionsSub => _t('Incluyendo cheque, transferencia, DAF', 'Including check, transfer, DAF', 'Y compris chèque, virement, DAF', "כולל צ'ק, העברה, DAF");
   String get biometricAuth => _t('AUTENTICACIÓN BIOMÉTRICA', 'BIOMETRIC AUTHENTICATION', 'AUTHENTIFICATION BIOMÉTRIQUE', 'אימות ביומטרי');
   String get biometricActivated => _t('Autenticación biométrica activada', 'Biometric authentication activated', 'Authentification biométrique activée', 'אימות ביומטרי הופעל');
   String get fingerprint => _t('Huella digital', 'Fingerprint', 'Empreinte digitale', 'טביעת אצבע');
@@ -1015,34 +1003,6 @@ class S {
   );
 
   // ---------------------------------------------------------------------------
-  // PAYMENT INSTRUCTION TEXTS
-  // ---------------------------------------------------------------------------
-
-  String checkInstructions(String amount) => _t(
-    'Envía un cheque por el monto de $amount a:\n\nNombre: Colel Chabad Relief Fund\nDirección: 1408 President Street\nCiudad, Estado, ZIP: Brooklyn, NY 11213\n\nReferencia: Incluye tu email o ID de usuario en el memo del cheque.\n\nUna vez recibido y procesado, la donación se marcará como confirmada en tu historial.',
-    'Send a check for $amount to:\n\nName: Colel Chabad Relief Fund\nAddress: 1408 President Street\nCity, State, ZIP: Brooklyn, NY 11213\n\nReference: Include your email or user ID in the check memo.\n\nOnce received and processed, the donation will be marked as confirmed in your history.',
-    'Envoyez un chèque de $amount à :\n\nNom : Colel Chabad Relief Fund\nAdresse : 1408 President Street\nVille, État, Code postal : Brooklyn, NY 11213\n\nRéférence : Incluez votre e-mail ou ID utilisateur dans le mémo du chèque.\n\nUne fois reçu et traité, le don sera marqué comme confirmé dans votre historique.',
-    "שלח צ'ק על סך $amount לכתובת:\n\nשם: Colel Chabad Relief Fund\nכתובת: 1408 President Street\nעיר, מדינה, מיקוד: Brooklyn, NY 11213\n\nהפניה: כלול את הדוא\"ל או מזהה המשתמש שלך במזכר הצ'ק.\n\nלאחר קבלה ועיבוד, התרומה תסומן כמאושרת בהיסטוריה שלך.",
-  );
-
-  String transferInstructions(String amount) => _t(
-    'Transfiere $amount a la siguiente cuenta:\n\nBeneficiario: Colel Chabad Relief Fund\nBanco: JPMorgan Chase Bank\nNúmero de cuenta: [COMPLETAR]\nRouting / ABA: [COMPLETAR]\n\nReferencia: Usa tu email como referencia de la transferencia.\n\nEl pago se confirmará en 2-3 días hábiles. Para obtener los datos bancarios completos, contacta a app@colelchabad.org.',
-    'Transfer $amount to the following account:\n\nBeneficiary: Colel Chabad Relief Fund\nBank: JPMorgan Chase Bank\nAccount number: [FILL IN]\nRouting / ABA: [FILL IN]\n\nReference: Use your email as transfer reference.\n\nPayment will be confirmed in 2-3 business days. For complete banking details, contact app@colelchabad.org.',
-    'Transférez $amount vers le compte suivant :\n\nBénéficiaire : Colel Chabad Relief Fund\nBanque : JPMorgan Chase Bank\nNuméro de compte : [À COMPLÉTER]\nRouting / ABA : [À COMPLÉTER]\n\nRéférence : Utilisez votre e-mail comme référence de virement.\n\nLe paiement sera confirmé sous 2 à 3 jours ouvrables. Pour les coordonnées bancaires complètes, contactez app@colelchabad.org.',
-    'העבר $amount לחשבון הבא:\n\nמוטב: Colel Chabad Relief Fund\nבנק: JPMorgan Chase Bank\nמספר חשבון: [להשלים]\nRouting / ABA: [להשלים]\n\nהפניה: השתמש בדוא"ל שלך כהפניית ההעברה.\n\nהתשלום יאושר תוך 2-3 ימי עסקים. לפרטי בנק מלאים, פנה לכתובת app@colelchabad.org.',
-  );
-
-  String dafInstructions(String amount) => _t(
-    'Realiza una donación de $amount desde tu DAF a:\n\nOrganización: Colel Chabad Relief Fund, Inc.\nEIN: 13-1628155\nDirección: 1408 President Street, Brooklyn, NY 11213\n\nIndica tu email en el campo de notas del grant.\n\nProveedores comunes: Fidelity Charitable, Schwab Charitable, DAF Direct.\n\nUna vez procesado el grant, la donación se confirmará en tu historial.',
-    'Make a donation of $amount from your DAF to:\n\nOrganization: Colel Chabad Relief Fund, Inc.\nEIN: 13-1628155\nAddress: 1408 President Street, Brooklyn, NY 11213\n\nInclude your email in the grant notes field.\n\nCommon providers: Fidelity Charitable, Schwab Charitable, DAF Direct.\n\nOnce the grant is processed, the donation will be confirmed in your history.',
-    'Faites un don de $amount depuis votre DAF à :\n\nOrganisation : Colel Chabad Relief Fund, Inc.\nEIN : 13-1628155\nAdresse : 1408 President Street, Brooklyn, NY 11213\n\nIndiquez votre e-mail dans le champ notes de la subvention.\n\nFournisseurs courants : Fidelity Charitable, Schwab Charitable, DAF Direct.\n\nUne fois la subvention traitée, le don sera confirmé dans votre historique.',
-    'בצע תרומה של $amount מה-DAF שלך לכתובת:\n\nארגון: Colel Chabad Relief Fund, Inc.\nEIN: 13-1628155\nכתובת: 1408 President Street, Brooklyn, NY 11213\n\nציין את הדוא"ל שלך בשדה הערות המענק.\n\nספקים נפוצים: Fidelity Charitable, Schwab Charitable, DAF Direct.\n\nלאחר עיבוד המענק, התרומה תאושר בהיסטוריה שלך.',
-  );
-
-  String get checkTitle => _t('Pago con Cheque', 'Check Payment', 'Paiement par chèque', "תשלום בצ'ק");
-  String get transferTitle => _t('Transferencia Bancaria', 'Bank Transfer', 'Virement bancaire', 'העברה בנקאית');
-  String get dafTitle => _t('Donor Advised Fund (DAF)', 'Donor Advised Fund (DAF)', 'Donor Advised Fund (DAF)', 'Donor Advised Fund (DAF)');
-
   // ---------------------------------------------------------------------------
   // NAVIGATION TITLES
   // ---------------------------------------------------------------------------

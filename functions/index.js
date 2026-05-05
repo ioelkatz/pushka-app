@@ -1068,7 +1068,12 @@ exports.createDonationSubscription = onCall(
       payment_settings: {
         save_default_payment_method: "on_subscription",
       },
-      expand: ["latest_invoice.payment_intent"],
+      // Stripe API 2024-09-30+ replaced invoice.payment_intent with
+      // invoice.confirmation_secret. Expand both so we work across versions.
+      expand: [
+        "latest_invoice.confirmation_secret",
+        "latest_invoice.payment_intent",
+      ],
       metadata: {
         uid: request.auth.uid,
         tenantId: tenantId || "",
@@ -1115,8 +1120,21 @@ exports.createDonationSubscription = onCall(
       throw new HttpsError("internal", `sub-create: ${stripeErr.message}`);
     }
 
-    const pi = subscription.latest_invoice?.payment_intent;
-    if (!pi?.client_secret) {
+    // Newer Stripe API (2024-09-30+): invoice carries `confirmation_secret`
+    // (an envelope around the same client secret + a `type` discriminator).
+    // Older API: invoice has nested `payment_intent` object. Read both.
+    const invoice = subscription.latest_invoice ?? null;
+    const clientSecret =
+      invoice?.confirmation_secret?.client_secret ??
+      invoice?.payment_intent?.client_secret ??
+      null;
+    if (!clientSecret) {
+      console.error("createDonationSubscription: no client secret", {
+        invoiceKeys: invoice ? Object.keys(invoice) : null,
+        hasConfirmationSecret: !!invoice?.confirmation_secret,
+        hasPaymentIntent: !!invoice?.payment_intent,
+        invoiceStatus: invoice?.status,
+      });
       throw new HttpsError("internal", "Suscripción creada sin payment intent.");
     }
 
@@ -1138,7 +1156,7 @@ exports.createDonationSubscription = onCall(
 
     return {
       subscriptionId: subscription.id,
-      clientSecret: pi.client_secret,
+      clientSecret,
       customerId,
       ephemeralKeySecret,
     };
@@ -2464,18 +2482,7 @@ const AUTO_EMPTY_LOCK_TTL_MS = 10 * 60 * 1000; // 10 min
 // charge meant a single failure silently skipped the entire monthly cycle.
 const AUTO_EMPTY_RETRY_AFTER_FAILURE_HOURS = 24;
 
-exports.processPushkaAutoEmpty = onSchedule(
-  {
-    schedule: "every 60 minutes",
-    timeZone: "Etc/UTC",
-    secrets: [stripeSecret],
-    // Single concurrent invocation prevents overlapping cron runs from
-    // double-processing the same user (the schedule advance now happens AFTER
-    // Stripe responds, so a slow first run + on-time second run could both
-    // grab the same due users without this guard).
-    maxInstances: 1,
-  },
-  async () => {
+async function _runPushkaAutoEmptyTick() {
     if (!stripeSecret.value()) {
       console.error("processPushkaAutoEmpty: STRIPE_SECRET_KEY missing");
       return;
@@ -2596,7 +2603,7 @@ exports.processPushkaAutoEmpty = onSchedule(
             return;
           }
 
-          const currentAmount = Number(state.pushkaAmount || 0);
+          const accumulatedAmount = Number(state.pushkaAmount || 0);
           const weekday = Number(state.autoEmptyWeekday || 1);
           const dayOfMonth = Number(state.autoEmptyDayOfMonth || 1);
 
@@ -2636,7 +2643,17 @@ exports.processPushkaAutoEmpty = onSchedule(
 
           const topOffEnabled = state.autoEmptyTopOffEnabled === true;
           const topOffAmount = topOffEnabled ? Number(state.autoEmptyTopOffAmount || 0) : 0;
-          const newPushkaAmount = topOffEnabled && topOffAmount > 0 ? topOffAmount : 0;
+          // Charge semantics:
+          //   - top-off ON  → charge the recurring amount the donor set
+          //                   (topOffAmount), independent of the accumulated
+          //                   pushka balance.
+          //   - top-off OFF → charge whatever has accumulated in the pushka.
+          // After the charge succeeds the local pushka resets to 0 either way
+          // so the next cycle starts from a clean slate.
+          const currentAmount = topOffEnabled && topOffAmount > 0
+            ? topOffAmount
+            : accumulatedAmount;
+          const newPushkaAmount = 0;
 
           const rawCurrency = String(userData.currencyCode || "usd").toLowerCase().trim();
           if (!SUPPORTED_CURRENCIES.has(rawCurrency)) {
@@ -2909,8 +2926,18 @@ exports.processPushkaAutoEmpty = onSchedule(
     }
 
     console.info("processPushkaAutoEmpty: completed", { processed, failed, skipped });
+}
+
+exports.processPushkaAutoEmpty = onSchedule(
+  {
+    schedule: "every 60 minutes",
+    timeZone: "Etc/UTC",
+    secrets: [stripeSecret],
+    maxInstances: 1,
   },
+  _runPushkaAutoEmptyTick,
 );
+
 
 // ---------------------------------------------------------------------------
 // Currency snapshot helper
