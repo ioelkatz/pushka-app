@@ -3408,6 +3408,10 @@ exports.getRecentTransactions = onCall(
 exports.getFailedPayments = onCall(
   { enforceAppCheck: false },
   async (request) => {
+    const callerUid = request.auth?.uid;
+    if (!callerUid) throw new HttpsError("unauthenticated", "Debes estar autenticado.");
+    await enforceRateLimit(callerUid, "getFailedPayments", 30, 3600);
+
     const callerClaims = request.auth?.token ?? {};
     const isSuper = callerIsSuperAdmin(request);
     const isTenantAdminRole = callerClaims.role === "tenant_admin";
@@ -3495,6 +3499,7 @@ exports.setUserBlocked = onCall(
     if (!isSuper && !isTenantAdminRole) {
       throw new HttpsError("permission-denied", "Solo administradores.");
     }
+    await enforceRateLimit(callerUid, "setUserBlocked", 20, 3600);
 
     const uid = String(request.data?.uid || "").trim();
     const isBlocked = Boolean(request.data?.isBlocked);
