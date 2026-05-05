@@ -11,7 +11,6 @@ import '../../payments/donation_reason_picker.dart';
 import '../../users/data/user_repository.dart';
 import '../../users/presentation/user_profile_provider.dart';
 import '../../tenant/data/tenant_repository.dart';
-import '../../tenant/domain/tenant_config.dart';
 import '../../../core/l10n/s.dart';
 
 class AutoEmptyScreen extends ConsumerStatefulWidget {
@@ -106,12 +105,9 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
           // saved value exists and the schedule is active. Donors prefer
           // an opinionated default over having to opt in to a destination.
           final savedReason = tenantState['autoEmptyDonationReason'] as String?;
-          final cfgReasons =
-              ref.read(tenantConfigProvider).valueOrNull?.donationReasons ?? const <String>[];
+          final defaults = tr.defaultDonationReasons;
           _selectedDonationReason = savedReason ??
-              (_frequency != 'manual' && cfgReasons.isNotEmpty
-                  ? cfgReasons.first
-                  : null);
+              (_frequency != 'manual' ? defaults.first : null);
         });
         if (_frequency != 'manual') _loadCards();
       });
@@ -434,13 +430,10 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
     );
   }
 
-  /// Designación picker for the auto-empty schedule. Hidden entirely when
-  /// the tenant has no `donationReasons` configured. Otherwise shows a
-  /// tap-to-open row that pops the same bottom sheet used elsewhere.
+  /// Designación picker for the auto-empty schedule. Tap-to-open row that
+  /// pops the shared bottom sheet with the fixed app-wide reason set.
   Widget _buildDonationReasonPicker(S tr) {
-    final TenantConfig? cfg = ref.watch(tenantConfigProvider).valueOrNull;
-    final reasons = cfg?.donationReasons ?? const <String>[];
-    if (reasons.isEmpty) return const SizedBox.shrink();
+    final reasons = tr.defaultDonationReasons;
     final cs = Theme.of(context).colorScheme;
     return Padding(
       padding: const EdgeInsets.only(bottom: 20),
@@ -770,8 +763,8 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
             actionsPadding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
             title: Row(
               children: [
-                Icon(Icons.verified_user_rounded,
-                    color: Theme.of(ctx).brightness == Brightness.dark ? Theme.of(ctx).colorScheme.primary : const Color(0xFFE05A4F), size: 22),
+                const Icon(Icons.verified_user_rounded,
+                    color: AppTokens.primaryBlue, size: 22),
                 const SizedBox(width: 10),
                 Expanded(
                   child: Text(
@@ -839,7 +832,7 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
                 width: double.infinity,
                 child: ElevatedButton(
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: Theme.of(ctx).brightness == Brightness.dark ? Theme.of(ctx).colorScheme.primary : const Color(0xFFE05A4F),
+                    backgroundColor: AppTokens.primaryBlue,
                     foregroundColor: Colors.white,
                     padding: const EdgeInsets.symmetric(vertical: 14),
                     shape: RoundedRectangleBorder(

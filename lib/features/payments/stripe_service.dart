@@ -56,6 +56,7 @@ class StripeService {
     String? customerEmail,
     String purpose = 'donation',
     String merchantDisplayName = 'Pushka',
+    String? donorMessage,
   }) async {
     final sw = Stopwatch()..start();
     final callable = FirebaseFunctions.instance.httpsCallable(
@@ -68,6 +69,8 @@ class StripeService {
         'currency': currency.toLowerCase(),
         'customerEmail': customerEmail,
         'purpose': purpose,
+        if (donorMessage != null && donorMessage.isNotEmpty)
+          'donorMessage': donorMessage,
       });
     } on FirebaseFunctionsException {
       rethrow;

@@ -129,7 +129,7 @@ class Pushka3DWidgetState extends State<Pushka3DWidget>
                   right: 0,
                   child: _buildLabel(
                     '${widget.currencySymbol}${formatAmount(widget.amount)}',
-                    Theme.of(context).colorScheme.primary,
+                    AppTokens.primaryBlue,
                   ),
                 ),
               ],
