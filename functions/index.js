@@ -5240,6 +5240,11 @@ exports.getSuperAdminDashboard = onCall(
           revenueLastMonth:       Math.round(revenueLastMonth * 100) / 100,
           revenueLastThreeMonths: Math.round(revenueLastThreeMonths * 100) / 100,
           revenueLastYear:        Math.round(revenueLastYear * 100) / 100,
+          status:                 tenantData.status ?? "active",
+          paymentStatus:          tenantData.paymentStatus ?? null,
+          gracePeriodEndsAt:      tenantData.gracePeriodEndsAt?.toDate?.()?.toISOString() ?? null,
+          stripeConnectStatus:    tenantData.stripeConnectStatus ?? null,
+          commissionRate:         tenantData.commissionRate ?? 0,
         };
       })
     );
