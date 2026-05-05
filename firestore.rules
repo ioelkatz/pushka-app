@@ -532,7 +532,15 @@ service cloud.firestore {
       }
 
       match /transactions/{transactionId} {
-        allow read: if isOwner(uid) || isAdmin();
+        // Tenant members may read transactions that belong to their tenant.
+        // New transactions carry tenantId on the doc itself (cheap check).
+        // Legacy transactions lack tenantId — fall back to the parent user doc.
+        allow read: if isOwner(uid) || isAdmin() ||
+          (isTenantMember() && (
+            'tenantId' in resource.data
+              ? resource.data.tenantId == callerTenantId()
+              : get(/databases/$(database)/documents/users/$(uid)).data.tenantId == callerTenantId()
+          ));
         allow create: if isOwner(uid) && validTransactionDoc();
         allow update, delete: if false;
       }

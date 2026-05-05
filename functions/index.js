@@ -3272,7 +3272,8 @@ exports.listAdmins = onCall(
     const callerClaims = request.auth?.token ?? {};
     const isSuper = callerIsSuperAdmin(request);
     const isTenantAdmin = callerClaims.role === "tenant_admin";
-    if (!isSuper && !isTenantAdmin) {
+    const isTenantMember = isTenantAdmin || callerClaims.role === "tenant_collaborator";
+    if (!isSuper && !isTenantMember) {
       throw new HttpsError("permission-denied", "Solo administradores.");
     }
 
@@ -3304,10 +3305,10 @@ exports.listAdmins = onCall(
       return admins;
     }
 
-    // tenant_admin: return their own org's team
+    // tenant_admin / tenant_collaborator: return their own org's team
     if (!isSuper) {
       const callerTenantId = callerClaims.tenantId;
-      if (!callerTenantId) throw new HttpsError("failed-precondition", "tenant_admin sin tenantId.");
+      if (!callerTenantId) throw new HttpsError("failed-precondition", "Cuenta sin tenantId.");
       return { admins: await buildTenantTeam(callerTenantId) };
     }
 
@@ -3360,14 +3361,14 @@ exports.getAdminStats = onCall(
 
     const callerClaims = request.auth?.token ?? {};
     const isSuper = callerIsSuperAdmin(request);
-    const isTenantAdminRole = callerClaims.role === "tenant_admin";
-    if (!isSuper && !isTenantAdminRole) {
+    const isTenantMember = callerClaims.role === "tenant_admin" || callerClaims.role === "tenant_collaborator";
+    if (!isSuper && !isTenantMember) {
       throw new HttpsError("permission-denied", "Solo administradores.");
     }
 
     // filterTenantId: if super_admin passes a tenantId param, filter to that tenant;
-    // if tenant_admin, always filter to their own tenant.
-    const filterTenantId = isTenantAdminRole
+    // if tenant member (admin or collaborator), always filter to their own tenant.
+    const filterTenantId = isTenantMember
       ? callerClaims.tenantId
       : (request.data?.tenantId ?? null);
 
@@ -3574,12 +3575,12 @@ exports.getRecentTransactions = onCall(
 
     const callerClaims = request.auth?.token ?? {};
     const isSuper = callerIsSuperAdmin(request);
-    const isTenantAdminRole = callerClaims.role === "tenant_admin";
-    if (!isSuper && !isTenantAdminRole) {
+    const isTenantMember = callerClaims.role === "tenant_admin" || callerClaims.role === "tenant_collaborator";
+    if (!isSuper && !isTenantMember) {
       throw new HttpsError("permission-denied", "Solo administradores.");
     }
 
-    const filterTenantId = isTenantAdminRole
+    const filterTenantId = isTenantMember
       ? callerClaims.tenantId
       : (request.data?.tenantId ?? null);
 
@@ -3681,12 +3682,12 @@ exports.getFailedPayments = onCall(
 
     const callerClaims = request.auth?.token ?? {};
     const isSuper = callerIsSuperAdmin(request);
-    const isTenantAdminRole = callerClaims.role === "tenant_admin";
-    if (!isSuper && !isTenantAdminRole) {
+    const isTenantMember = callerClaims.role === "tenant_admin" || callerClaims.role === "tenant_collaborator";
+    if (!isSuper && !isTenantMember) {
       throw new HttpsError("permission-denied", "Solo administradores.");
     }
 
-    const filterTenantId = isTenantAdminRole
+    const filterTenantId = isTenantMember
       ? callerClaims.tenantId
       : (request.data?.tenantId ?? null);
 
