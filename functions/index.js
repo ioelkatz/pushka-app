@@ -365,6 +365,20 @@ async function writeUserPaymentEvent(uid, eventId, data) {
     );
 }
 
+async function writeActivityLog({ type, tenantId, tenantName, severity, requiresAction, data }) {
+  await db.collection("_activityLog").add({
+    type,
+    tenantId: tenantId ?? null,
+    tenantName: tenantName ?? null,
+    severity,          // 'critical' | 'warning' | 'info'
+    requiresAction: requiresAction ?? false,
+    resolved: false,
+    resolvedAt: null,
+    data: data ?? {},
+    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+  });
+}
+
 async function deleteQueryBatch(query) {
   const snap = await query.get();
   if (snap.empty) return 0;
@@ -1970,14 +1984,27 @@ exports.stripeWebhook = onRequest(
 
       if (!tenantsSnap.empty) {
         const tenantRef = tenantsSnap.docs[0].ref;
+        const tenantDocData = tenantsSnap.docs[0].data();
         const chargesEnabled = account.charges_enabled === true;
         const payoutsEnabled = account.payouts_enabled === true;
         const newConnectStatus = chargesEnabled && payoutsEnabled ? "active" : "restricted";
+        const prevConnectStatus = tenantDocData.stripeConnectStatus;
 
         await tenantRef.update({
           stripeConnectStatus: newConnectStatus,
           updatedAt: admin.firestore.FieldValue.serverTimestamp(),
         });
+
+        if (newConnectStatus === "active" && prevConnectStatus !== "active") {
+          await writeActivityLog({
+            type: "stripe_connect_activated",
+            tenantId: tenantsSnap.docs[0].id,
+            tenantName: tenantDocData.name ?? tenantsSnap.docs[0].id,
+            severity: "info",
+            requiresAction: false,
+            data: { accountId },
+          });
+        }
       }
 
       await finalizeWebhookEvent(eventRef, {
@@ -4588,6 +4615,15 @@ exports.createTenant = onCall(
       console.warn("createTenant: welcome email failed:", e.message);
     }
 
+    await writeActivityLog({
+      type: "new_tenant",
+      tenantId: tenantRef.id,
+      tenantName: tenantData.name,
+      severity: "info",
+      requiresAction: false,
+      data: { adminEmail: adminEmail.trim(), appName: tenantData.appName, slug: normalizedSlug },
+    });
+
     return { success: true, tenantId: tenantRef.id, slug: normalizedSlug };
   }
 );
@@ -5625,6 +5661,18 @@ exports.stripeBillingWebhook = onRequest(
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       });
 
+      const tenantSnapPS = await db.collection("tenants").doc(tenantId).get();
+      const tenantNamePS = tenantSnapPS.data()?.name ?? tenantId;
+      const amountPaid = (invoice.amount_paid ?? 0) / 100;
+      await writeActivityLog({
+        type: "payment_succeeded",
+        tenantId,
+        tenantName: tenantNamePS,
+        severity: "info",
+        requiresAction: false,
+        data: { amountUSD: amountPaid, invoiceId: invoice.id, nextDue: nextDue.toISOString() },
+      });
+
       await finalizeWebhookEvent(eventRef, {
         status: "processed",
         tenantId,
@@ -5686,6 +5734,19 @@ exports.stripeBillingWebhook = onRequest(
         console.error("Failed to send grace period alert to super admin:", emailErr);
       }
 
+      await writeActivityLog({
+        type: "payment_failed",
+        tenantId,
+        tenantName: tenantData.name ?? tenantId,
+        severity: "critical",
+        requiresAction: true,
+        data: {
+          adminEmail: tenantData.adminEmail ?? null,
+          gracePeriodEndsAt: gracePeriodEndsAt.toISOString(),
+          invoiceId: invoice.id,
+        },
+      });
+
       await finalizeWebhookEvent(eventRef, {
         status: "processed",
         tenantId,
@@ -5730,6 +5791,15 @@ exports.checkGracePeriods = onSchedule(
           updatedAt: admin.firestore.FieldValue.serverTimestamp(),
         });
         console.log(`Tenant ${doc.id} suspended — grace period expired.`);
+
+        await writeActivityLog({
+          type: "tenant_suspended",
+          tenantId: doc.id,
+          tenantName: tenantName,
+          severity: "critical",
+          requiresAction: true,
+          data: { adminEmail: adminEmail ?? null, reason: "grace_period_expired" },
+        });
 
         try {
           await sendEmail({
@@ -5804,3 +5874,28 @@ exports.assetlinks = onRequest({ cors: true }, (req, res) => {
   res.set("Cache-Control", "no-store");
   res.json(assetLinks);
 });
+
+
+// ---------------------------------------------------------------------------
+// resolveActivityItem — super_admin marks an activity log item as resolved
+// ---------------------------------------------------------------------------
+exports.resolveActivityItem = onCall(
+  { enforceAppCheck: false },
+  async (request) => {
+    if (!callerIsSuperAdmin(request)) {
+      throw new HttpsError("permission-denied", "Solo el super administrador.");
+    }
+    const { id } = request.data ?? {};
+    if (!id || typeof id !== "string") {
+      throw new HttpsError("invalid-argument", "id requerido.");
+    }
+    const ref = db.collection("_activityLog").doc(id);
+    const snap = await ref.get();
+    if (!snap.exists) throw new HttpsError("not-found", "Item no encontrado.");
+    await ref.update({
+      resolved: true,
+      resolvedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+    return { success: true };
+  }
+);

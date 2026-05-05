@@ -486,6 +486,11 @@ service cloud.firestore {
       allow read, write: if isAdmin();
     }
 
+    // Activity log — super_admin read/write only (tenant roles never see this)
+    match /_activityLog/{docId} {
+      allow read, write: if isAdmin();
+    }
+
     match /adminData/{uid} {
       allow read: if isAdmin() || isTenantMember();
       allow write: if isAdmin();
