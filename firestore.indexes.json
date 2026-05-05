@@ -47,13 +47,6 @@
         { "fieldPath": "slug", "order": "ASCENDING" },
         { "fieldPath": "status", "order": "ASCENDING" }
       ]
-    },
-    {
-      "collectionGroup": "tenants",
-      "queryScope": "COLLECTION",
-      "fields": [
-        { "fieldPath": "stripeConnectAccountId", "order": "ASCENDING" }
-      ]
     }
   ],
   "fieldOverrides": [
