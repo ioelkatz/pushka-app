@@ -22,6 +22,8 @@ import '../../history/data/transaction_repository.dart';
 import '../../history/domain/transaction.dart';
 import '../../payments/donation_reason_picker.dart';
 import '../../payments/stripe_service.dart';
+import '../../settings/presentation/auto_empty_screen.dart';
+import '../../../core/widgets/option_picker_sheet.dart';
 import '../../feedback/feedback_service.dart';
 import '../../tenant/data/tenant_repository.dart';
 import '../../users/data/user_repository.dart';
@@ -221,9 +223,6 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
         return;
       }
 
-      final confirmed = await _confirmIfLarge(amountToEmpty);
-      if (!confirmed || !mounted) return;
-
       if (_biometricEnabled()) {
         final authenticated = await BiometricService.instance.authenticate(
           reason: tr.biometricReasonEmpty,
@@ -238,8 +237,19 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
         throw Exception(tr.stripeNotConfigured);
       }
 
-      final (proceed, _) = await _resolveDonationReason();
-      if (!proceed || !mounted) return;
+      final details = await _showEmptyPushkaSheet(amount: amountToEmpty);
+      if (details == null || !mounted) return;
+
+      // Auto branch: skip the immediate charge and route the user to the
+      // Auto Vaciar screen to finish wiring the schedule (card + day +
+      // top-off, etc.). Once the backend supports one-shot subscription
+      // creation we can persist the chosen frequency directly here.
+      if (details.auto) {
+        await Navigator.of(context, rootNavigator: true).push(
+          MaterialPageRoute(builder: (_) => const AutoEmptyScreen()),
+        );
+        return;
+      }
 
       await StripeService.instance.pay(
         amountCents: amountCents,
@@ -247,6 +257,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
         customerEmail: ref.read(currentUserProvider)?.email,
         purpose: 'pushka_empty',
         merchantDisplayName: ref.read(tenantConfigProvider).valueOrNull?.appName ?? 'Pushka',
+        donorMessage: details.message.isEmpty ? null : details.message,
       );
 
       await AnalyticsService.instance.logPushkaEmpty(amountToEmpty);
@@ -286,13 +297,16 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
   Future<void> _donateNow() async {
     if (_isProcessing) return;
     final tr = S.of(context);
-    final reasons = ref.read(tenantConfigProvider).valueOrNull?.donationReasons ?? const [];
+    final reasons = tr.defaultDonationReasons;
     // The amount controller must be disposed when the sheet closes —
     // keeping it alive in function scope without dispose() is a memory
     // leak the Flutter framework will warn about in debug. try/finally below.
     final amountCtrl = TextEditingController();
+    final messageCtrl = TextEditingController();
     Map<String, dynamic>? result;
     String? error;
+    bool monthly = false;
+    bool dedicateOn = false;
     // Inline picker state — defaults to the tenant's first reason so the
     // donor isn't forced to opt in to a destination. They can still choose
     // "Sin designación" from the picker if they want to opt out.
@@ -302,14 +316,48 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
       context: context,
       builder: (ctx, setDialogState) => Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
                       Center(child: Container(width: 36, height: 4, margin: const EdgeInsets.only(bottom: 12), decoration: BoxDecoration(color: Colors.grey.shade300, borderRadius: BorderRadius.circular(2)))),
-                      Center(child: Text(tr.donateNowTitle, style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w700))),
+                      Center(
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const _SecureShieldIcon(size: 26),
+                            const SizedBox(width: 8),
+                            Text(tr.donateNowTitle, style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w700)),
+                          ],
+                        ),
+                      ),
                       const SizedBox(height: 16),
+                      Row(children: [
+                        Expanded(
+                          child: _FrequencyChip(
+                            label: tr.donateOnce,
+                            selected: !monthly,
+                            onTap: () => setDialogState(() => monthly = false),
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: _FrequencyChip(
+                            label: tr.donateMonthly,
+                            selected: monthly,
+                            icon: Icons.favorite,
+                            iconColor: const Color(0xFFE05A8A),
+                            onTap: () => setDialogState(() => monthly = true),
+                          ),
+                        ),
+                      ]),
+                      const SizedBox(height: 14),
                       TextField(
                         controller: amountCtrl,
                         keyboardType: const TextInputType.numberWithOptions(decimal: true),
                         decoration: InputDecoration(
-                          labelText: tr.amount, hintText: '0', prefixText: '\$ ', errorText: error,
-                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                          labelText: tr.amount,
+                          floatingLabelStyle: TextStyle(color: Theme.of(ctx).colorScheme.onSurfaceVariant),
+                          hintText: '0', prefixText: '\$ ', errorText: error,
+                          filled: true,
+                          fillColor: Theme.of(ctx).colorScheme.surface,
+                          enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide(color: Theme.of(ctx).colorScheme.outline)),
+                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide(color: Theme.of(ctx).colorScheme.outline)),
                           focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: AppTokens.primaryBlue, width: 1.6)),
                         ),
                         onChanged: (_) { if (error != null) setDialogState(() => error = null); },
@@ -336,7 +384,10 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                           child: InputDecorator(
                             decoration: InputDecoration(
                               labelText: tr.donationReasonTitle,
-                              border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                              filled: true,
+                              fillColor: Theme.of(ctx).colorScheme.surface,
+                              enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide(color: Theme.of(ctx).colorScheme.outline)),
+                              border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide(color: Theme.of(ctx).colorScheme.outline)),
                             ),
                             child: Row(children: [
                               Expanded(
@@ -355,17 +406,60 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                           ),
                         ),
                       ],
-                      const SizedBox(height: 10),
-                      Text(tr.instantDonationNote, style: const TextStyle(color: Color(0xFF888888), fontSize: 12), textAlign: TextAlign.center),
+                      const SizedBox(height: 12),
+                      InkWell(
+                        borderRadius: BorderRadius.circular(8),
+                        onTap: () => setDialogState(() => dedicateOn = !dedicateOn),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 4),
+                          child: Row(children: [
+                            SizedBox(
+                              width: 22,
+                              height: 22,
+                              child: Checkbox(
+                                value: dedicateOn,
+                                onChanged: (v) => setDialogState(() => dedicateOn = v ?? false),
+                                activeColor: AppTokens.primaryBlue,
+                                materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                visualDensity: VisualDensity.compact,
+                              ),
+                            ),
+                            const SizedBox(width: 10),
+                            Text(
+                              tr.dedicateDonation,
+                              style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w500),
+                            ),
+                          ]),
+                        ),
+                      ),
+                      if (dedicateOn) ...[
+                        const SizedBox(height: 10),
+                        TextField(
+                          controller: messageCtrl,
+                          textCapitalization: TextCapitalization.sentences,
+                          maxLength: 240,
+                          decoration: InputDecoration(
+                            labelText: tr.donationMessageLabel,
+                            floatingLabelStyle: TextStyle(color: Theme.of(ctx).colorScheme.onSurfaceVariant),
+                            hintText: tr.donationMessageHint,
+                            filled: true,
+                            fillColor: Theme.of(ctx).colorScheme.surface,
+                            enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide(color: Theme.of(ctx).colorScheme.outline)),
+                            border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide(color: Theme.of(ctx).colorScheme.outline)),
+                            focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: AppTokens.primaryBlue, width: 1.6)),
+                          ),
+                        ),
+                      ],
                       const SizedBox(height: 14),
                       SizedBox(width: double.infinity, height: 48, child: ElevatedButton(
                         style: ElevatedButton.styleFrom(backgroundColor: AppTokens.primaryBlue, foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
                         onPressed: () {
                           final value = double.tryParse(amountCtrl.text.trim().replaceAll(',', '.'));
                           if (value == null || value <= 0) { setDialogState(() => error = tr.enterValidAmount); return; }
-                          Navigator.pop(ctx, {'amount': value, 'reason': selectedReason});
+                          final msg = dedicateOn ? messageCtrl.text.trim() : '';
+                          Navigator.pop(ctx, {'amount': value, 'reason': selectedReason, 'message': msg, 'monthly': monthly});
                         },
-                        child: Text(tr.donateNowBtn, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 16)),
+                        child: Text(monthly ? tr.donateMonthlyBtn : tr.donate, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 16)),
                       )),
                     ]),
     );
@@ -376,13 +470,12 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
       // "TextEditingController was used after being disposed".
       Future.delayed(const Duration(milliseconds: 400), () {
         amountCtrl.dispose();
+        messageCtrl.dispose();
       });
     }
     if (result == null || !mounted) return;
     final donationAmount = result['amount'] as double;
-
-    final confirmed = await _confirmIfLarge(donationAmount);
-    if (!confirmed || !mounted) return;
+    final donationMessage = (result['message'] as String?)?.trim() ?? '';
 
     setState(() => _isProcessing = true);
     try {
@@ -419,6 +512,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
         customerEmail: ref.read(currentUserProvider)?.email,
         purpose: 'donation',
         merchantDisplayName: ref.read(tenantConfigProvider).valueOrNull?.appName ?? 'Pushka',
+        donorMessage: donationMessage.isEmpty ? null : donationMessage,
       );
 
       await AnalyticsService.instance.logDonation(donationAmount, currency);
@@ -738,11 +832,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                     value: fillPercentage,
                     minHeight: 4,
                     backgroundColor: Theme.of(context).colorScheme.surfaceContainerHighest,
-                    valueColor: AlwaysStoppedAnimation<Color>(
-                      Theme.of(context).brightness == Brightness.dark
-                          ? Theme.of(context).colorScheme.primary
-                          : AppTokens.primaryBlue,
-                    ),
+                    valueColor: const AlwaysStoppedAnimation<Color>(AppTokens.primaryBlue),
                   ),
                 ),
               ),
@@ -1298,8 +1388,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                         },
                         decoration: InputDecoration(
                           labelText: S.of(context).amount,
-                          labelStyle: const TextStyle(color: AppTokens.primaryBlue),
-                          floatingLabelStyle: const TextStyle(color: AppTokens.primaryBlue),
+                          floatingLabelStyle: TextStyle(color: Theme.of(ctx).colorScheme.onSurfaceVariant),
                           hintText: S.of(context).amountHint, prefixText: '\$ ', errorText: error,
                           border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
                           focusedBorder: OutlineInputBorder(
@@ -1334,59 +1423,6 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
   }
 
 
-  /// Returns true if the user confirmed (or amount <= threshold — no dialog needed).
-  Future<bool> _confirmIfLarge(double amount) async {
-    const threshold = 100.0;
-    if (amount <= threshold) return true;
-    if (!mounted) return false;
-    final tr = S.of(context);
-    return await showDialog<bool>(
-          context: context,
-          builder: (ctx) => AlertDialog(
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(20),
-            ),
-            title: Text(
-              tr.confirmPaymentTitle,
-              style: const TextStyle(fontWeight: FontWeight.w700),
-            ),
-            content: Text(
-              tr.confirmPaymentBody(formatMoney(amount)),
-              style: const TextStyle(fontSize: 15, height: 1.5),
-            ),
-            actionsPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-            actions: [
-              OutlinedButton(
-                onPressed: () => Navigator.pop(ctx, false),
-                style: OutlinedButton.styleFrom(
-                  minimumSize: const Size.fromHeight(44),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                ),
-                child: Text(tr.cancel),
-              ),
-              const SizedBox(height: 8),
-              ElevatedButton(
-                onPressed: () => Navigator.pop(ctx, true),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppTokens.primaryBlue,
-                  foregroundColor: Colors.white,
-                  minimumSize: const Size.fromHeight(44),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                ),
-                child: Text(
-                  tr.confirmDonate,
-                  style: const TextStyle(fontWeight: FontWeight.w700),
-                ),
-              ),
-            ],
-          ),
-        ) ??
-        false;
-  }
 
   Future<void> _persistPushkaAmount({
     bool resetToZero = false,
@@ -1551,14 +1587,272 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
   /// the dialog → caller aborts. The picked reason is intentionally discarded:
   /// nothing is sent to Stripe metadata or written to Firestore.
   Future<(bool proceed, String? reason)> _resolveDonationReason() async {
-    final reasons = ref.read(tenantConfigProvider).valueOrNull?.donationReasons ?? const [];
-    if (reasons.isEmpty) return (true, null);
+    final reasons = S.of(context).defaultDonationReasons;
     final result = await showDonationReasonPicker(
       context: context,
       reasons: reasons,
     );
     if (result is DonationReasonSelected) return (true, result.reason);
     return (false, null);
+  }
+
+  /// Confirmation sheet for the Empty-Pushka flow. Mirrors the donate-now
+  /// sheet visually (header + segmented selector + cards). When `auto` is
+  /// chosen the body collapses to a single frequency dropdown; when `once`
+  /// is chosen it surfaces designación + optional dedication.
+  ///
+  /// Returns null if the user dismissed the sheet → caller aborts.
+  Future<({String? reason, String message, bool auto, String? frequency})?>
+      _showEmptyPushkaSheet({required double amount}) async {
+    final tr = S.of(context);
+    final reasons = tr.defaultDonationReasons;
+    final messageCtrl = TextEditingController();
+    String? selectedReason = reasons.first;
+    bool auto = false;
+    bool dedicateOn = false;
+    String selectedFreq = 'weekly';
+    ({String? reason, String message, bool auto, String? frequency})? result;
+
+    Color outline(BuildContext c) => Theme.of(c).colorScheme.outline;
+    Color surface(BuildContext c) => Theme.of(c).colorScheme.surface;
+    OutlineInputBorder defaultBorder(BuildContext c) => OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: BorderSide(color: outline(c)),
+        );
+    OutlineInputBorder focusedBorder() => OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: const BorderSide(color: AppTokens.primaryBlue, width: 1.6),
+        );
+
+    try {
+      result = await showKeyboardSafeSheet<
+          ({String? reason, String message, bool auto, String? frequency})>(
+        context: context,
+        builder: (ctx, setDialogState) => Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Center(
+              child: Container(
+                width: 36,
+                height: 4,
+                margin: const EdgeInsets.only(bottom: 12),
+                decoration: BoxDecoration(
+                  color: Colors.grey.shade300,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+            ),
+            Center(
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const _SecureShieldIcon(size: 26),
+                  const SizedBox(width: 8),
+                  Text(tr.donateNowTitle,
+                      style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w700)),
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
+            Row(children: [
+              Expanded(
+                child: _FrequencyChip(
+                  label: tr.emptyOnce,
+                  selected: !auto,
+                  onTap: () => setDialogState(() => auto = false),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: _FrequencyChip(
+                  label: tr.emptyAuto,
+                  selected: auto,
+                  icon: Icons.autorenew_rounded,
+                  iconColor: AppTokens.primaryBlue,
+                  onTap: () => setDialogState(() => auto = true),
+                ),
+              ),
+            ]),
+            const SizedBox(height: 14),
+            // Amount preview — read-only header line.
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+              decoration: BoxDecoration(
+                color: surface(ctx),
+                border: Border.all(color: outline(ctx)),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Row(children: [
+                Expanded(
+                  child: Text(
+                    formatMoney(amount),
+                    style: TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w600,
+                      color: Theme.of(ctx).colorScheme.onSurface,
+                    ),
+                  ),
+                ),
+                Text(
+                  _currencyCodeFromProfile().toUpperCase(),
+                  style: TextStyle(
+                    fontSize: 14,
+                    color: Theme.of(ctx).colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              ]),
+            ),
+            const SizedBox(height: 14),
+            if (auto) ...[
+              InkWell(
+                borderRadius: BorderRadius.circular(12),
+                onTap: () async {
+                  final picked = await showOptionPickerSheet<String>(
+                    context: ctx,
+                    currentValue: selectedFreq,
+                    options: [
+                      (value: 'weekly', label: tr.freqWeekly),
+                      (value: 'monthly', label: tr.freqMonthly),
+                    ],
+                  );
+                  if (picked != null) {
+                    setDialogState(() => selectedFreq = picked);
+                  }
+                },
+                child: InputDecorator(
+                  decoration: InputDecoration(
+                    labelText: tr.emptyFrequencyLabel,
+                    filled: true,
+                    fillColor: surface(ctx),
+                    enabledBorder: defaultBorder(ctx),
+                    border: defaultBorder(ctx),
+                  ),
+                  child: Row(children: [
+                    Expanded(
+                      child: Text(
+                        selectedFreq == 'weekly' ? tr.freqWeekly : tr.freqMonthly,
+                        style: TextStyle(
+                          fontSize: 16,
+                          color: Theme.of(ctx).colorScheme.onSurface,
+                        ),
+                      ),
+                    ),
+                    Icon(Icons.keyboard_arrow_down_rounded,
+                        color: Theme.of(ctx).colorScheme.onSurfaceVariant),
+                  ]),
+                ),
+              ),
+            ] else ...[
+              InkWell(
+                borderRadius: BorderRadius.circular(12),
+                onTap: () async {
+                  final picked = await showDonationReasonPicker(
+                    context: ctx,
+                    reasons: reasons,
+                    currentSelection: selectedReason,
+                  );
+                  if (picked is DonationReasonSelected) {
+                    setDialogState(() => selectedReason = picked.reason);
+                  }
+                },
+                child: InputDecorator(
+                  decoration: InputDecoration(
+                    labelText: tr.donationReasonTitle,
+                    filled: true,
+                    fillColor: surface(ctx),
+                    enabledBorder: defaultBorder(ctx),
+                    border: defaultBorder(ctx),
+                  ),
+                  child: Row(children: [
+                    Expanded(
+                      child: Text(
+                        selectedReason ?? tr.donationReasonNone,
+                        style: TextStyle(
+                          fontSize: 16,
+                          color: selectedReason == null
+                              ? Theme.of(ctx).colorScheme.onSurfaceVariant
+                              : Theme.of(ctx).colorScheme.onSurface,
+                        ),
+                      ),
+                    ),
+                    Icon(Icons.keyboard_arrow_down_rounded,
+                        color: Theme.of(ctx).colorScheme.onSurfaceVariant),
+                  ]),
+                ),
+              ),
+              const SizedBox(height: 12),
+              InkWell(
+                borderRadius: BorderRadius.circular(8),
+                onTap: () => setDialogState(() => dedicateOn = !dedicateOn),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 4),
+                  child: Row(children: [
+                    SizedBox(
+                      width: 22,
+                      height: 22,
+                      child: Checkbox(
+                        value: dedicateOn,
+                        onChanged: (v) => setDialogState(() => dedicateOn = v ?? false),
+                        activeColor: AppTokens.primaryBlue,
+                        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        visualDensity: VisualDensity.compact,
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Text(tr.dedicateDonation,
+                        style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w500)),
+                  ]),
+                ),
+              ),
+              if (dedicateOn) ...[
+                const SizedBox(height: 10),
+                TextField(
+                  controller: messageCtrl,
+                  textCapitalization: TextCapitalization.sentences,
+                  maxLength: 240,
+                  decoration: InputDecoration(
+                    labelText: tr.donationMessageLabel,
+                    floatingLabelStyle: TextStyle(color: Theme.of(ctx).colorScheme.onSurfaceVariant),
+                    hintText: tr.donationMessageHint,
+                    filled: true,
+                    fillColor: surface(ctx),
+                    enabledBorder: defaultBorder(ctx),
+                    border: defaultBorder(ctx),
+                    focusedBorder: focusedBorder(),
+                  ),
+                ),
+              ],
+            ],
+            const SizedBox(height: 14),
+            SizedBox(
+              width: double.infinity,
+              height: 48,
+              child: ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppTokens.primaryBlue,
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                ),
+                onPressed: () => Navigator.pop(ctx, (
+                  reason: selectedReason,
+                  message: dedicateOn ? messageCtrl.text.trim() : '',
+                  auto: auto,
+                  frequency: auto ? selectedFreq : null,
+                )),
+                child: Text(
+                  auto ? tr.emptyAutoBtn : tr.emptyPushkaBtn,
+                  style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 16),
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+    } finally {
+      Future.delayed(const Duration(milliseconds: 400), messageCtrl.dispose);
+    }
+    return result;
   }
 
   Future<PaymentMethod?> _showPaymentMethodSelector() async {
@@ -1608,8 +1902,8 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
         child: Row(children: [
           Container(
             width: 44, height: 44,
-            decoration: BoxDecoration(color: Theme.of(ctx).colorScheme.primary.withValues(alpha: 0.12), borderRadius: BorderRadius.circular(10)),
-            child: Icon(icon, color: Theme.of(ctx).colorScheme.primary, size: 22),
+            decoration: BoxDecoration(color: AppTokens.primaryBlue.withValues(alpha: 0.12), borderRadius: BorderRadius.circular(10)),
+            child: Icon(icon, color: AppTokens.primaryBlue, size: 22),
           ),
           const SizedBox(width: 14),
           Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -2568,5 +2862,78 @@ class _HexBadge extends StatelessWidget {
   }
 }
 
+/// Pill toggle for the donation-frequency selector ("Donar una vez" /
+/// "Mensual"). Selected state mirrors the rest of the picker convention:
+/// AppTokens.primaryBlue border + tinted background.
+/// Shield-with-lock icon used in the donation-secure header. Sources the
+/// asset bundled at `assets/images/secure_shield.jpeg`.
+class _SecureShieldIcon extends StatelessWidget {
+  const _SecureShieldIcon({this.size = 26});
+  final double size;
 
+  @override
+  Widget build(BuildContext context) {
+    return Image.asset(
+      'assets/images/secure_shield.png',
+      width: size,
+      height: size,
+      fit: BoxFit.contain,
+    );
+  }
+}
+
+class _FrequencyChip extends StatelessWidget {
+  const _FrequencyChip({
+    required this.label,
+    required this.selected,
+    required this.onTap,
+    this.icon,
+    this.iconColor,
+  });
+
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+  final IconData? icon;
+  final Color? iconColor;
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return InkWell(
+      borderRadius: BorderRadius.circular(12),
+      onTap: onTap,
+      child: Container(
+        height: 46,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: selected ? AppTokens.primaryBlue.withValues(alpha: 0.08) : cs.surface,
+          border: Border.all(
+            color: selected ? AppTokens.primaryBlue : cs.outline,
+            width: selected ? 1.6 : 1,
+          ),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (icon != null) ...[
+              Icon(icon, color: iconColor ?? cs.onSurface, size: 18),
+              const SizedBox(width: 6),
+            ],
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 15,
+                fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+                color: cs.onSurface,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
 

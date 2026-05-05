@@ -1,12 +1,10 @@
 import 'package:flutter/material.dart';
 
 import '../../app/theme/app_tokens.dart';
-import '../../core/l10n/s.dart';
 
 /// Result of the donation-reason picker.
 ///
 /// - `cancelled` — user dismissed the sheet (don't proceed with payment)
-/// - `selected(null)` — user explicitly chose "Sin designación" (proceed)
 /// - `selected(reason)` — user picked a designación (proceed with reason)
 sealed class DonationReasonResult {
   const DonationReasonResult();
@@ -47,7 +45,6 @@ Future<DonationReasonResult?> showDonationReasonPicker({
     barrierColor: const Color(0xDD000000),
     builder: (sheetCtx) {
       final cs = Theme.of(sheetCtx).colorScheme;
-      final tr = S.of(sheetCtx);
       return SafeArea(
         top: false,
         child: SingleChildScrollView(
@@ -67,12 +64,6 @@ Future<DonationReasonResult?> showDonationReasonPicker({
                   ),
                 ),
               ),
-              _ReasonTile(
-                label: tr.donationReasonNone,
-                selected: currentSelection == null,
-                onTap: () => Navigator.pop(sheetCtx, ''),
-              ),
-              const SizedBox(height: 8),
               for (final r in reasons) ...[
                 _ReasonTile(
                   label: r,
@@ -89,7 +80,7 @@ Future<DonationReasonResult?> showDonationReasonPicker({
   );
 
   if (selected == null) return const DonationReasonCancelled();
-  return DonationReasonSelected(selected.isEmpty ? null : selected);
+  return DonationReasonSelected(selected);
 }
 
 class _ReasonTile extends StatelessWidget {

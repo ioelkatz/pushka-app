@@ -6,6 +6,7 @@ import '../../../app/theme/app_tokens.dart';
 import '../../../core/l10n/s.dart';
 import '../../users/presentation/user_profile_provider.dart';
 import '../data/tenant_repository.dart';
+import '../domain/tenant_summary.dart';
 
 // Public helper so the sheet can be opened from any screen (Settings,
 // future drawer entry, etc.). Previously this lived inside
@@ -15,7 +16,14 @@ import '../data/tenant_repository.dart';
 void showAccountSwitcher(BuildContext context) {
   showModalBottomSheet<void>(
     context: context,
-    backgroundColor: Colors.transparent,
+    useRootNavigator: true,
+    useSafeArea: true,
+    isScrollControlled: true,
+    backgroundColor: Theme.of(context).colorScheme.surface,
+    shape: const RoundedRectangleBorder(
+      borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
+    ),
+    barrierColor: const Color(0xDD000000),
     builder: (_) => const AccountSwitcherSheet(),
   );
 }
@@ -26,96 +34,161 @@ class AccountSwitcherSheet extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final tr = S.of(context);
+    final cs = Theme.of(context).colorScheme;
     final summaries = ref.watch(userTenantSummariesProvider).valueOrNull ?? [];
     final tenantConfig = ref.watch(tenantConfigProvider).valueOrNull;
     final activeTenantId = tenantConfig?.tenantId;
-    final tt = Theme.of(context).textTheme;
 
-    return Container(
-      decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.surface,
-        borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
-      child: SafeArea(
-        top: false,
+    return SafeArea(
+      top: false,
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.fromLTRB(20, 12, 20, 18),
         child: Column(
           mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Container(
-              width: 36,
-              height: 4,
-              decoration: BoxDecoration(
-                color: Theme.of(context).colorScheme.outline,
-                borderRadius: BorderRadius.circular(2),
-              ),
-            ),
-            const SizedBox(height: 16),
-            Text(
-              tr.myOrganizations,
-              style: tt.titleMedium?.copyWith(fontWeight: FontWeight.w700),
-            ),
-            const SizedBox(height: 12),
-            ...summaries.map((s) {
-              final isActive = s.tenantId == activeTenantId;
-              return ListTile(
-                contentPadding: EdgeInsets.zero,
-                leading: _OrgAvatar(name: s.name, logoUrl: s.logoUrl),
-                title: Text(
-                  s.appName.isNotEmpty ? s.appName : s.name,
-                  style: tt.bodyMedium?.copyWith(
-                    fontWeight: isActive ? FontWeight.w700 : FontWeight.w500,
-                  ),
+            Center(
+              child: Container(
+                width: 36,
+                height: 4,
+                margin: const EdgeInsets.only(bottom: 16),
+                decoration: BoxDecoration(
+                  color: cs.outlineVariant,
+                  borderRadius: BorderRadius.circular(2),
                 ),
-                trailing: isActive
-                    ? const Icon(Icons.check_rounded,
-                        color: AppTokens.primaryBlue)
-                    : null,
-                onTap: isActive
-                    ? null
-                    : () async {
-                        // Capture BEFORE pop — after Navigator.pop the
-                        // sheet's ConsumerWidget is disposed, which
-                        // invalidates its `ref`. We need a stable handle
-                        // that survives the pop. ProviderContainer is
-                        // owned by the root ProviderScope, not by this
-                        // widget, so it stays alive.
-                        final messenger = ScaffoldMessenger.of(context);
-                        final container = ProviderScope.containerOf(context);
-                        Navigator.of(context).pop();
-                        try {
-                          await container
-                              .read(tenantRepositoryProvider)
-                              .switchTenant(s.tenantId);
-                          // Invalidate ALL providers that depend on the
-                          // active tenantId. userProfileProvider is the
-                          // upstream source for tenantStateProvider —
-                          // without forcing it the tenantState may keep
-                          // pointing at the old tenant.
-                          container.invalidate(userProfileProvider);
-                          container.invalidate(tenantConfigProvider);
-                          container.invalidate(tenantStateProvider);
-                        } catch (e) {
-                          debugPrint('switchTenant failed: $e');
-                          messenger.showSnackBar(
-                            SnackBar(content: Text('Error: $e')),
-                          );
-                        }
-                      },
-              );
-            }),
-            const Divider(),
-            ListTile(
-              contentPadding: EdgeInsets.zero,
-              leading: const CircleAvatar(
-                radius: 20,
-                child: Icon(Icons.add_rounded),
               ),
-              title: Text(tr.addOrganization),
+            ),
+            for (var i = 0; i < summaries.length; i++) ...[
+              _OrgTile(
+                summary: summaries[i],
+                selected: summaries[i].tenantId == activeTenantId,
+                onTap: summaries[i].tenantId == activeTenantId
+                    ? null
+                    : () => _switchTo(context, summaries[i].tenantId),
+              ),
+              const SizedBox(height: 8),
+            ],
+            _AddOrgTile(
+              label: tr.addOrganization,
               onTap: () {
                 Navigator.of(context).pop();
                 context.push('/tenant-setup');
               },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _switchTo(BuildContext context, String tenantId) async {
+    // Capture BEFORE pop — after Navigator.pop the sheet's ConsumerWidget
+    // is disposed, which invalidates its `ref`. ProviderContainer is owned
+    // by the root ProviderScope, not by this widget, so it survives.
+    final messenger = ScaffoldMessenger.of(context);
+    final container = ProviderScope.containerOf(context);
+    Navigator.of(context).pop();
+    try {
+      await container.read(tenantRepositoryProvider).switchTenant(tenantId);
+      container.invalidate(userProfileProvider);
+      container.invalidate(tenantConfigProvider);
+      container.invalidate(tenantStateProvider);
+    } catch (e) {
+      debugPrint('switchTenant failed: $e');
+      messenger.showSnackBar(SnackBar(content: Text('Error: $e')));
+    }
+  }
+}
+
+class _OrgTile extends StatelessWidget {
+  const _OrgTile({
+    required this.summary,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final TenantSummary summary;
+  final bool selected;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final label = summary.appName.isNotEmpty ? summary.appName : summary.name;
+    return InkWell(
+      borderRadius: BorderRadius.circular(12),
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        decoration: BoxDecoration(
+          color: selected ? AppTokens.primaryBlue.withValues(alpha: 0.12) : cs.surface,
+          border: Border.all(color: selected ? AppTokens.primaryBlue : cs.outline),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Row(
+          children: [
+            _OrgAvatar(name: summary.name, logoUrl: summary.logoUrl),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                label,
+                style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
+                  color: cs.onSurface,
+                ),
+              ),
+            ),
+            if (selected)
+              const Icon(Icons.check, color: AppTokens.primaryBlue, size: 22),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _AddOrgTile extends StatelessWidget {
+  const _AddOrgTile({required this.label, required this.onTap});
+
+  final String label;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return InkWell(
+      borderRadius: BorderRadius.circular(12),
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        decoration: BoxDecoration(
+          color: cs.surface,
+          border: Border.all(color: cs.outline),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 40,
+              height: 40,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: cs.surfaceContainerHighest,
+                shape: BoxShape.circle,
+              ),
+              child: Icon(Icons.add_rounded, color: cs.onSurfaceVariant),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                label,
+                style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w500,
+                  color: cs.onSurface,
+                ),
+              ),
             ),
           ],
         ),
@@ -132,19 +205,23 @@ class _OrgAvatar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final bg = Theme.of(context).colorScheme.primaryContainer;
-    return CircleAvatar(
-      radius: 20,
-      backgroundColor: bg,
+    final cs = Theme.of(context).colorScheme;
+    return Container(
+      width: 40,
+      height: 40,
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        color: cs.surfaceContainerHighest,
+        shape: BoxShape.circle,
+      ),
+      clipBehavior: Clip.antiAlias,
       child: logoUrl != null && logoUrl!.isNotEmpty
-          ? ClipOval(
-              child: Image.network(
-                logoUrl!,
-                width: 40,
-                height: 40,
-                fit: BoxFit.cover,
-                errorBuilder: (_, _, _) => _initial(context),
-              ),
+          ? Image.network(
+              logoUrl!,
+              width: 40,
+              height: 40,
+              fit: BoxFit.cover,
+              errorBuilder: (_, _, _) => _initial(context),
             )
           : _initial(context),
     );
@@ -155,8 +232,9 @@ class _OrgAvatar extends StatelessWidget {
     return Text(
       initial,
       style: TextStyle(
-        color: Theme.of(context).colorScheme.onPrimaryContainer,
+        color: Theme.of(context).colorScheme.onSurface,
         fontWeight: FontWeight.w700,
+        fontSize: 16,
       ),
     );
   }

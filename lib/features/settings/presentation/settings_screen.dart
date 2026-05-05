@@ -139,9 +139,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   @override
   Widget build(BuildContext context) {
     final tr = S.of(context);
-    final red = Theme.of(context).brightness == Brightness.dark
-        ? Theme.of(context).colorScheme.primary
-        : const Color(0xFFE05A4F);
+    const red = Color(0xFFE05A4F);
     final blue = Theme.of(context).colorScheme.primary;
 
     final user = ref.watch(currentUserProvider);
@@ -986,23 +984,34 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
   Widget _buildPushkaStyleSelector(WidgetRef ref) {
     final style = ref.watch(pushkaStyleProvider);
-    final cs = Theme.of(context).colorScheme;
     final tr = S.of(context);
-    return SegmentedButton<PushkaStyle>(
-      segments: [
-        ButtonSegment(value: PushkaStyle.classic, label: Text(tr.pushkaStyleClassic)),
-        ButtonSegment(value: PushkaStyle.building770, label: Text(tr.pushkaStyleBuilding770)),
-      ],
-      selected: {style},
-      onSelectionChanged: (selection) {
-        ref.read(pushkaStyleProvider.notifier).setStyle(selection.first);
-      },
-      style: SegmentedButton.styleFrom(
-        selectedBackgroundColor: AppTokens.primaryBlue,
-        selectedForegroundColor: Colors.white,
-        foregroundColor: cs.onSurface,
-      ),
+    final label = switch (style) {
+      PushkaStyle.classic => tr.pushkaStyleClassic,
+      PushkaStyle.building770 => tr.pushkaStyleBuilding770,
+    };
+    return _buildActionButton(
+      label,
+      trailingIcon: Icons.keyboard_arrow_down,
+      onTap: () => _showPushkaStylePicker(ref, style),
     );
+  }
+
+  Future<void> _showPushkaStylePicker(
+    WidgetRef ref,
+    PushkaStyle current,
+  ) async {
+    final tr = S.of(context);
+    final picked = await showOptionPickerSheet<PushkaStyle>(
+      context: context,
+      currentValue: current,
+      options: [
+        (value: PushkaStyle.classic, label: tr.pushkaStyleClassic),
+        (value: PushkaStyle.building770, label: tr.pushkaStyleBuilding770),
+      ],
+    );
+    if (picked != null && picked != current) {
+      ref.read(pushkaStyleProvider.notifier).setStyle(picked);
+    }
   }
 
   bool _hasOrgInfo(TenantConfig tenantConfig) {
@@ -1544,7 +1553,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     keyboardType: TextInputType.phone,
                     decoration: InputDecoration(hintText: S.of(context).phoneHint, errorText: errorText,
                       border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                      focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide(color: Theme.of(ctx).brightness == Brightness.dark ? Theme.of(ctx).colorScheme.primary : const Color(0xFFE05A4F), width: 1.6)),
+                      focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: AppTokens.primaryBlue, width: 1.6)),
                     ),
                     onChanged: (_) { if (errorText != null) setDialogState(() => errorText = null); },
                   )),
@@ -1564,7 +1573,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             ]),
             actions: [
               SizedBox(width: double.infinity, height: 48, child: ElevatedButton(
-                style: ElevatedButton.styleFrom(backgroundColor: Theme.of(ctx).brightness == Brightness.dark ? Theme.of(ctx).colorScheme.primary : const Color(0xFFE05A4F), foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
+                style: ElevatedButton.styleFrom(backgroundColor: AppTokens.primaryBlue, foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
                 onPressed: () {
                   final value = isPhone ? '$phonePrefix ${controller.text.trim()}'.trim() : controller.text.trim();
                   final validationError = _validateByKey(fieldKey, value);

@@ -164,7 +164,15 @@ class S {
   String get amountHint => _t('Ej: 12.50', 'E.g.: 12.50', 'Ex : 12,50', 'לדוגמה: 12.50');
   String get pushkaFull => _t('Tu Pushka está llena', 'Your Pushka is full', 'Votre Pushka est pleine', 'הפושקה שלך מלאה');
   String get donationGoalReached => _t('¡Alcanzaste tu Meta de Donación!', 'You reached your Donation Goal!', 'Vous avez atteint votre objectif !', 'הגעת ליעד התרומה שלך!');
-  String get donateNowTitle => _t('Donar Ahora', 'Donate Now', 'Faire un don', 'תרום עכשיו');
+  String get donateNowTitle => _t('Donación segura', 'Secure donation', 'Don sécurisé', 'תרומה מאובטחת');
+  String get donateOnce => _t('Donar una vez', 'One time', 'Une fois', 'פעם אחת');
+  String get donateMonthly => _t('Mensual', 'Monthly', 'Mensuel', 'חודשי');
+  String get donateMonthlyBtn => _t('Donar mensualmente', 'Donate monthly', 'Faire un don mensuel', 'תרום חודשי');
+  String get dedicateDonation => _t('Dedica esta donación', 'Dedicate this donation', 'Dédier ce don', 'הקדש תרומה זו');
+  String get emptyOnce => _t('Vaciar una vez', 'One time', 'Une fois', 'פעם אחת');
+  String get emptyAuto => _t('Vaciar automáticamente', 'Automatic', 'Automatique', 'אוטומטי');
+  String get emptyFrequencyLabel => _t('Frecuencia', 'Frequency', 'Fréquence', 'תדירות');
+  String get emptyAutoBtn => _t('Activar vaciado automático', 'Enable auto-empty', 'Activer le vidage automatique', 'הפעל ריקון אוטומטי');
   String get amount => _t('Monto', 'Amount', 'Montant', 'סכום');
   String get optionalMessage => _t('Mensaje personal (opcional)', 'Personal message (optional)', 'Message personnel (optionnel)', 'הודעה אישית (אופציונלי)');
   String get writeMessage => _t('Escribe un mensaje...', 'Write a message...', 'Écrivez un message...', 'כתוב הודעה...');
@@ -261,6 +269,18 @@ class S {
   String get donationReasonTitle => _t('Designación', 'Designation', 'Désignation', 'ייעוד');
   String get donationReasonSubtitle => _t('Opcional — elegí a qué destino va tu donación.', 'Optional — choose where your donation goes.', 'Optionnel — choisissez la destination de votre don.', 'אופציונלי — בחרו לאן הולכת התרומה.');
   String get donationReasonNone => _t('Sin designación', 'No designation', 'Sans désignation', 'ללא ייעוד');
+  String get donationReasonWhereNeeded => _t('Donde se necesite más', 'Where most needed', 'Là où c\'est le plus nécessaire', 'במקום שהכי נחוץ');
+  String get donationReasonFamilies => _t('Familias necesitadas', 'Families in need', 'Familles dans le besoin', 'משפחות נזקקות');
+  String get donationReasonTorah => _t('Estudio de Torá', 'Torah study', 'Étude de la Torah', 'לימוד תורה');
+  String get donationReasonHolidays => _t('Festividades', 'Holidays', 'Fêtes', 'חגים');
+  String get donationMessageLabel => _t('Mensaje (opcional)', 'Message (optional)', 'Message (optionnel)', 'הודעה (אופציונלי)');
+  String get donationMessageHint => _t('Dejá un mensaje, oración o dedicatoria', 'Leave a message, prayer or dedication', 'Laissez un message, une prière ou une dédicace', 'השאר הודעה, תפילה או הקדשה');
+  List<String> get defaultDonationReasons => [
+        donationReasonWhereNeeded,
+        donationReasonFamilies,
+        donationReasonTorah,
+        donationReasonHolidays,
+      ];
   String get pushkaGoalLabel => _t('META DE PUSHKA', 'PUSHKA GOAL', 'OBJECTIF DE PUSHKA', 'יעד פושקה');
   String get correctAmountLabel => _t('MONTO ACUMULADO', 'ACCUMULATED AMOUNT', 'MONTANT ACCUMULÉ', 'סכום שנצבר');
   String get correctAmountHint => _t('¿Pusiste de más? Corregí el monto acumulado.', 'Added too much? Correct the accumulated amount.', 'Trop ajouté ? Corrigez le montant accumulé.', 'הוספת יותר מדי? תקן את הסכום שנצבר.');

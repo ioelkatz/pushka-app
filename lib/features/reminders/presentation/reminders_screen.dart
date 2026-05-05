@@ -937,8 +937,25 @@ class _ReminderFormPageState extends State<_ReminderFormPage> {
     final time = await showTimePicker(
       context: context,
       initialTime: _selectedTime,
+      builder: _bluePickerBuilder,
     );
     if (time != null && mounted) setState(() => _selectedTime = time);
+  }
+
+  /// Wraps the showTimePicker subtree with an overridden ColorScheme
+  /// so the clock dial, hour/minute selection, and OK button render in
+  /// AppTokens.primaryBlue instead of the tenant primary.
+  Widget _bluePickerBuilder(BuildContext ctx, Widget? child) {
+    final base = Theme.of(ctx);
+    return Theme(
+      data: base.copyWith(
+        colorScheme: base.colorScheme.copyWith(
+          primary: AppTokens.primaryBlue,
+          onPrimary: Colors.white,
+        ),
+      ),
+      child: child!,
+    );
   }
 
   Future<void> _pickDate() async {
@@ -948,6 +965,7 @@ class _ReminderFormPageState extends State<_ReminderFormPage> {
       initialDate: _selectedDate ?? now,
       firstDate: now,
       lastDate: now.add(const Duration(days: 365)),
+      builder: _bluePickerBuilder,
     );
     if (date != null && mounted) setState(() => _selectedDate = date);
   }
@@ -1085,6 +1103,7 @@ class _ReminderFormPageState extends State<_ReminderFormPage> {
     final time = await showTimePicker(
       context: context,
       initialTime: _secondTime ?? const TimeOfDay(hour: 18, minute: 0),
+      builder: _bluePickerBuilder,
     );
     if (time != null && mounted) {
       setState(() {
