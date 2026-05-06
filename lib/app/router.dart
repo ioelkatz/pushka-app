@@ -230,7 +230,14 @@ PreferredSizeWidget? _buildAppBar(BuildContext context, String location) {
       centerTitle: true,
       leading: IconButton(
         icon: Icon(isRtl ? Icons.arrow_forward : Icons.arrow_back),
-        onPressed: () => context.go('/wallet'),
+        onPressed: () {
+          final navigator = Navigator.of(context);
+          if (navigator.canPop()) {
+            navigator.pop();
+          } else {
+            context.go('/wallet');
+          }
+        },
       ),
     );
   } else if (location == '/reminders') {
@@ -246,7 +253,18 @@ PreferredSizeWidget? _buildAppBar(BuildContext context, String location) {
       centerTitle: true,
       leading: IconButton(
         icon: Icon(isRtl ? Icons.arrow_forward : Icons.arrow_back),
-        onPressed: () => context.go('/settings'),
+        onPressed: () {
+          // If a nested screen is pushed on top of Métodos de pago (e.g.
+          // the wallet info detail page for Google/Apple Pay), pop it
+          // first so the back arrow returns to the cards list. Only fall
+          // back to Settings when the cards list itself is on top.
+          final navigator = Navigator.of(context);
+          if (navigator.canPop()) {
+            navigator.pop();
+          } else {
+            context.go('/settings');
+          }
+        },
       ),
     );
   } else if (location == '/prayers') {
