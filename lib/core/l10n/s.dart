@@ -1130,10 +1130,10 @@ class S {
   String get cardSetAsDefault => _t('Tarjeta predeterminada actualizada', 'Default card updated', 'Carte par défaut mise à jour', 'כרטיס ברירת המחדל עודכן');
   String get confirmDeleteCard => _t('Eliminar tarjeta', 'Delete card', 'Supprimer la carte', 'מחק כרטיס');
   String get confirmDeleteCardBody => _t(
-    '¿Seguro que quieres eliminar esta tarjeta? El auto-vaciado y la recarga automática dejarán de funcionar hasta que agregues una nueva.',
-    'Are you sure you want to delete this card? Auto-empty and auto-refill will stop working until you add a new one.',
-    'Voulez-vous vraiment supprimer cette carte ? Le vidage automatique et la recharge automatique cesseront de fonctionner jusqu\'à ce que vous en ajoutiez une nouvelle.',
-    'האם אתה בטוח שברצונך למחוק כרטיס זה? ריקון אוטומטי וטעינה אוטומטית יפסיקו לפעול עד שתוסיף כרטיס חדש.',
+    '¿Seguro que quieres eliminar esta tarjeta?',
+    'Are you sure you want to delete this card?',
+    'Voulez-vous vraiment supprimer cette carte ?',
+    'האם אתה בטוח שברצונך למחוק כרטיס זה?',
   );
   String get deleteConfirm => _t('Eliminar', 'Delete', 'Supprimer', 'מחק');
   String get loadingCards => _t('Cargando tarjetas...', 'Loading cards...', 'Chargement des cartes...', 'טוען כרטיסים...');
