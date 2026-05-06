@@ -8,9 +8,11 @@ import 'package:flutter_stripe/flutter_stripe.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 
 import '../../../app/theme/app_tokens.dart';
+import '../../../core/hive_cache.dart';
 import '../../auth/providers/auth_state_provider.dart';
 import '../../payments/stripe_service.dart';
 import '../../tenant/data/tenant_repository.dart';
+import '../../users/presentation/user_profile_provider.dart';
 import '../../../core/l10n/s.dart';
 
 class SavedCardsScreen extends ConsumerStatefulWidget {
@@ -30,20 +32,38 @@ class _SavedCardsScreenState extends ConsumerState<SavedCardsScreen> {
   @override
   void initState() {
     super.initState();
+    // Hive cache (10 min TTL) — paint immediately if we have a fresh
+    // snapshot, then revalidate via the CF in the background. On first
+    // open or when the cache is stale we fall back to the spinner +
+    // network round trip.
+    final uid = ref.read(currentUserProvider)?.uid;
+    final cached = uid == null ? null : HiveCache.instance.loadSavedCards(uid);
+    if (cached != null) {
+      _cards = cached.cards;
+      _defaultPaymentMethodId = cached.defaultPmId;
+      _loading = false;
+    }
     // autoSetDefault on initial load: cards added via the Stripe Payment
     // Sheet during a payment (Vaciar Pushka) get attached to the customer
     // but don't auto-set as default — so the user doc lacks
     // stripeDefaultPaymentMethodLast4/Brand and the Settings entry shows
     // "no cards" even though there is one. First open of this screen
     // promotes the first card to default and back-fills those fields.
-    _loadCards(autoSetDefault: true);
+    _loadCards(
+      autoSetDefault: true,
+      // Skip the spinner when we already painted from cache; the refresh
+      // happens silently and updates the UI when it lands.
+      silent: cached?.fresh == true,
+    );
   }
 
-  Future<void> _loadCards({bool autoSetDefault = false}) async {
-    setState(() {
-      _loading = true;
-      _error = null;
-    });
+  Future<void> _loadCards({bool autoSetDefault = false, bool silent = false}) async {
+    if (!silent) {
+      setState(() {
+        _loading = true;
+        _error = null;
+      });
+    }
     // Cold-start of the listSavedCards CF (and a flaky cellular hop on the
     // S23 we saw in logs as "Unable to resolve host firestore.googleapis.com")
     // were producing intermittent "Error al cargar las tarjetas". Retry once
@@ -68,6 +88,16 @@ class _SavedCardsScreenState extends ConsumerState<SavedCardsScreen> {
           _loading = false;
         });
 
+        // Persist to Hive so the next open paints instantly.
+        final uid = ref.read(currentUserProvider)?.uid;
+        if (uid != null) {
+          await HiveCache.instance.saveSavedCards(
+            uid: uid,
+            cards: cards,
+            defaultPmId: defaultId,
+          );
+        }
+
         if (autoSetDefault && defaultId == null && cards.isNotEmpty && mounted) {
           await _setDefault(cards.first['id'] as String);
         }
@@ -83,6 +113,10 @@ class _SavedCardsScreenState extends ConsumerState<SavedCardsScreen> {
       }
     }
     if (!mounted) return;
+    // Silent refresh failures keep whatever's already on screen — no need
+    // to wipe the cache-rendered list just because a background refresh
+    // hiccuped.
+    if (silent) return;
     // Treat repeated load errors as empty state — user can still add a card.
     setState(() {
       _cards = [];
@@ -162,6 +196,17 @@ class _SavedCardsScreenState extends ConsumerState<SavedCardsScreen> {
       await callable.call({'paymentMethodId': pmId});
       if (!mounted) return;
       setState(() => _defaultPaymentMethodId = pmId);
+      // Persist the new default to the local cache so the next open
+      // paints with the right indicator instead of the previous default.
+      final uid = ref.read(currentUserProvider)?.uid;
+      if (uid != null) {
+        await HiveCache.instance.saveSavedCards(
+          uid: uid,
+          cards: _cards,
+          defaultPmId: pmId,
+        );
+      }
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(tr.cardSetAsDefault)),
       );
