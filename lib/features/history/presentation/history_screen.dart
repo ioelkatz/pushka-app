@@ -179,36 +179,53 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
                         color: const Color(0xFF2563EB),
                         onRefresh: () async =>
                             ref.invalidate(userTransactionsProvider),
-                        child: ListView.builder(
-                          padding: const EdgeInsets.fromLTRB(18, 4, 18, 18),
-                          itemCount: filtered.length +
-                              // Show footer only when the full unfiltered page
-                              // hit the cap — not when a filter is narrowing.
-                              (selectedFilter == _HistoryFilter.all &&
-                                      transactions.length >= TransactionRepository.pageSize
-                                  ? 1
-                                  : 0),
-                          itemBuilder: (context, index) {
-                            final showFooter = selectedFilter == _HistoryFilter.all &&
-                                transactions.length >= TransactionRepository.pageSize;
-                            if (showFooter && index == filtered.length) {
-                              // Footer notice: data may be truncated
-                              return Padding(
-                                padding: const EdgeInsets.only(top: 8, bottom: 4),
-                                child: Text(
-                                  _tr.showingLastN(TransactionRepository.pageSize),
-                                  textAlign: TextAlign.center,
-                                  style: TextStyle(
-                                    fontSize: 12,
-                                    color: cs.onSurfaceVariant,
-                                  ),
-                                ),
-                              );
-                            }
-                            return GestureDetector(
-                              onTap: () => _showTransactionDetail(
-                                  context, filtered[index], currencySymbol),
-                              child: _buildTransactionItem(filtered[index], cs.onSurface, currencySymbol),
+                        child: Builder(
+                          builder: (_) {
+                            final currentLimit = ref.watch(historyLimitProvider);
+                            // Show the "Cargar más" affordance only when:
+                            //   1. the unfiltered list reached the current limit
+                            //      (more pages may exist), AND
+                            //   2. the user isn't filtering — pagination is on
+                            //      the underlying stream, not the filtered view.
+                            final showLoadMore = selectedFilter == _HistoryFilter.all &&
+                                transactions.length >= currentLimit;
+                            return ListView.builder(
+                              padding: const EdgeInsets.fromLTRB(18, 4, 18, 18),
+                              itemCount: filtered.length + (showLoadMore ? 1 : 0),
+                              itemBuilder: (context, index) {
+                                if (showLoadMore && index == filtered.length) {
+                                  return Padding(
+                                    padding: const EdgeInsets.only(top: 12, bottom: 12),
+                                    child: Center(
+                                      child: OutlinedButton.icon(
+                                        icon: const Icon(Icons.expand_more, size: 18),
+                                        label: Text(_tr.loadMore),
+                                        style: OutlinedButton.styleFrom(
+                                          foregroundColor: AppTokens.primaryBlue,
+                                          side: const BorderSide(color: AppTokens.primaryBlue),
+                                          shape: RoundedRectangleBorder(
+                                            borderRadius: BorderRadius.circular(10),
+                                          ),
+                                        ),
+                                        onPressed: () {
+                                          // Bump the stream's limit by another
+                                          // page. The StreamProvider re-listens
+                                          // on the new query; existing items
+                                          // remain rendered while the older
+                                          // ones stream in.
+                                          ref.read(historyLimitProvider.notifier).state =
+                                              currentLimit + TransactionRepository.pageSize;
+                                        },
+                                      ),
+                                    ),
+                                  );
+                                }
+                                return GestureDetector(
+                                  onTap: () => _showTransactionDetail(
+                                      context, filtered[index], currencySymbol),
+                                  child: _buildTransactionItem(filtered[index], cs.onSurface, currencySymbol),
+                                );
+                              },
                             );
                           },
                         ),
@@ -298,8 +315,12 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
               const SizedBox(height: 8),
               // Details rows
               _detailRow(_tr.historyDate, _formatDate(t.dateTime)),
-              if (t.description != null && t.description!.isNotEmpty)
-                _detailRow(_tr.historyDescription, t.description!),
+              // Descripción slot: prefer the donor's message when they wrote
+              // one (real signal), otherwise hide the row entirely. The
+              // backend-default "Donación Stripe"/"Vaciado de Pushka (Stripe)"
+              // is redundant with the type label rendered under the amount.
+              if (t.donorMessage != null && t.donorMessage!.isNotEmpty)
+                _detailRow(_tr.historyDescription, t.donorMessage!),
               _detailRow(_tr.historyMethod, _methodLabel(t.paymentMethod)),
               _detailRow(
                 _tr.historyStatus,

@@ -27,6 +27,9 @@ class Transaction {
   final PaymentStatus status;
   final String currencyCode;
   final String? tenantId;
+  /// Optional message the donor wrote at payment time. Stamped on the
+  /// Stripe PaymentIntent metadata and persisted by the webhook.
+  final String? donorMessage;
 
   Transaction({
     required this.id,
@@ -38,6 +41,7 @@ class Transaction {
     this.status = PaymentStatus.completed,
     this.currencyCode = 'USD',
     this.tenantId,
+    this.donorMessage,
   });
 
   bool get isPending => status == PaymentStatus.pending;

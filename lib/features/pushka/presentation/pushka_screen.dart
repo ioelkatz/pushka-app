@@ -60,20 +60,32 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
   // window. Using DateTime.now() makes a system clock change (manual or NTP)
   // mis-classify a stale snapshot as recent (or vice versa).
   final Stopwatch _localWriteStopwatch = Stopwatch();
-  // Identity of the last tenantState snapshot we synced to local state.
-  // Lets us short-circuit the rebuild→sync→setState→rebuild loop that
-  // happens when addPostFrameCallback runs in build() on every tick.
-  Object? _lastSyncedTenantState;
+  // Fingerprint of the relevant fields from the last tenantState snapshot
+  // we synced to local state. Compared as a value so two snapshots with
+  // the same numbers but different Map identity (Riverpod re-emits new map
+  // instances frequently — e.g. serverTimestamp resolution, neighbouring
+  // field touches) don't re-enqueue a useless post-frame callback. The
+  // earlier `identical()` check missed those, scheduling work on every
+  // tick even though nothing about pushka had actually changed.
+  String? _lastSyncedTenantStateFingerprint;
+  String? _lastLoadedCacheTenantId;
+
+  // Reference to OUR callback so dispose can compare-and-clear instead of
+  // unconditionally nulling — fixes a subtle race where a fast back+forward
+  // navigation leaves Screen A's pending dispose-microtask nulling Screen
+  // B's callback (B then has a non-functional gear icon until next mount).
+  VoidCallback? _ourSettingsTapCallback;
 
   @override
   void initState() {
     super.initState();
     _loadFromCache();
+    _ourSettingsTapCallback = _showTzedakahSettingsDialog;
     // Wire the home AppBar gear → in-screen settings sheet.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       ref.read(pushkaSettingsTapProvider.notifier).state =
-          _showTzedakahSettingsDialog;
+          _ourSettingsTapCallback;
     });
   }
 
@@ -83,18 +95,51 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
     if (uid == null) return;
     final tenantId = ref.read(userProfileProvider).valueOrNull?['tenantId'] as String?;
     if (tenantId == null || tenantId.isEmpty) return;
-    final cached = HiveCache.instance.loadPushkaAmount(uid, tenantId);
-    final cachedGoal = HiveCache.instance.loadPushkaGoal(uid, tenantId);
-    if (cached != null) setState(() => pushkaAmount = cached);
-    if (cachedGoal != null) setState(() => pushkaGoal = cachedGoal);
+    _loadFromCacheFor(uid, tenantId);
+  }
+
+  /// Reads the (uid, tenantId)-scoped cached pushka amount + goal into
+  /// local state. Called on first mount AND whenever the active tenantId
+  /// changes (via the listener wired in build()), so switching tenants
+  /// repaints from the new tenant's cache instead of leaking the old
+  /// tenant's numbers onto the screen.
+  void _loadFromCacheFor(String uid, String tenantId) {
+    if (_lastLoadedCacheTenantId == tenantId) return;
+    _lastLoadedCacheTenantId = tenantId;
+    double? cached;
+    double? cachedGoal;
+    try {
+      cached = HiveCache.instance.loadPushkaAmount(uid, tenantId);
+      cachedGoal = HiveCache.instance.loadPushkaGoal(uid, tenantId);
+    } catch (e, st) {
+      // Hive box not opened, corrupted, or platform IO failure. Defaults
+      // below paint a clean state and the network stream will repopulate.
+      // Surface to Crashlytics so we notice if it happens systematically.
+      _reportError(e, st, op: 'loadFromCacheFor');
+    }
+    setState(() {
+      // Reset to defaults when no cache exists for the new tenant —
+      // otherwise we'd inherit the previous tenant's values until the
+      // network catches up.
+      pushkaAmount = cached ?? 0;
+      pushkaGoal = cachedGoal ?? 3600;
+    });
   }
 
   @override
   void dispose() {
     _confettiController.dispose();
+    final ours = _ourSettingsTapCallback;
     Future.microtask(() {
       try {
-        ref.read(pushkaSettingsTapProvider.notifier).state = null;
+        // Compare-and-clear: only null the provider if it still points at
+        // OUR callback. Without this, a successor PushkaScreen that mounted
+        // before our microtask ran would have its freshly-set callback
+        // wiped out (gear icon would silently no-op until next mount).
+        final notifier = ref.read(pushkaSettingsTapProvider.notifier);
+        if (notifier.state == ours) {
+          notifier.state = null;
+        }
       } catch (_) {}
     });
     super.dispose();
@@ -254,6 +299,14 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
         throw Exception(tr.stripeNotConfigured);
       }
 
+      // Compute the post-charge pushka value here and stamp it via the
+      // CF metadata so the WEBHOOK writes it (atomic with the txn record).
+      // Previously the client wrote pushkaAmount locally — but if Stripe
+      // succeeded and the webhook never fired, money was charged with no
+      // txn record AND pushka shown as empty. The webhook is now the
+      // single owner of this write.
+      final remaining = (pushkaAmount - amountToEmpty).clamp(0.0, double.infinity);
+
       await StripeService.instance.pay(
         amountCents: amountCents,
         currency: currency,
@@ -261,20 +314,16 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
         purpose: 'pushka_empty',
         merchantDisplayName: ref.read(tenantConfigProvider).valueOrNull?.appName ?? 'Pushka',
         donorMessage: details.message.isEmpty ? null : details.message,
+        pushkaAmountAfter: remaining,
       );
 
       await AnalyticsService.instance.logPushkaEmpty(amountToEmpty);
-      // Transaction is written server-side by the Stripe webhook (payment_intent.succeeded).
-      // Writing here too with the same docId causes a race condition when the webhook fires
-      // first — the client's set() would be an update, denied by Firestore rules.
+      // Transaction + pushkaAmount reset are written server-side by the
+      // Stripe webhook (payment_intent.succeeded). The tenantStateProvider
+      // listener will refresh the UI as soon as Firestore propagates the
+      // new pushkaAmount.
 
-      final remaining = (pushkaAmount - amountToEmpty).clamp(0.0, double.infinity);
       if (!mounted) return;
-      // Persist FIRST then update local — close the race where the app
-      // is killed between optimistic setState and Firestore write.
-      await _persistPushkaAmount(overrideAmount: remaining);
-      if (!mounted) return;
-      setState(() => pushkaAmount = remaining);
       FeedbackService.instance.vibratePushkaEmpty();
       FeedbackService.instance.playSuccess();
       ScaffoldMessenger.of(context).showSnackBar(
@@ -629,6 +678,18 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
   Widget build(BuildContext context) {
     final tr = S.of(context);
 
+    // React to tenant switches: when userProfile.tenantId changes (via
+    // account_switcher_sheet → switchTenant), repaint from the new
+    // tenant's local cache so we don't display the previous tenant's
+    // pushka amount + goal during the network refresh window.
+    ref.listen<AsyncValue<Map<String, dynamic>?>>(userProfileProvider, (prev, next) {
+      final newTenantId = next.valueOrNull?['tenantId'] as String?;
+      final uid = ref.read(currentUserProvider)?.uid;
+      if (uid != null && newTenantId != null && newTenantId.isNotEmpty) {
+        _loadFromCacheFor(uid, newTenantId);
+      }
+    });
+
     final userProfile = ref.watch(userProfileProvider).valueOrNull;
     final tenantState = ref.watch(tenantStateProvider).valueOrNull;
     final pushkaStyle = ref.watch(pushkaStyleProvider);
@@ -637,13 +698,16 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
     final remoteAmount = tenantState?['pushkaAmount'];
     final remotePresets = tenantState?['presetAmounts'];
 
-    if (tenantState != null && !identical(tenantState, _lastSyncedTenantState)) {
-      // Guard with identity check on the snapshot map so this only runs
-      // when Riverpod hands us a NEW tenantState — not on every unrelated
-      // rebuild (preset tap, animation tick). Without this, the
-      // addPostFrameCallback was being re-enqueued on every build, and the
-      // setState() inside re-triggered build → infinite micro-rebuilds.
-      _lastSyncedTenantState = tenantState;
+    // Build a value-fingerprint of the fields we actually consume. Two
+    // snapshots with the same fingerprint produce no observable change on
+    // this screen, so we skip the post-frame entirely.
+    final tenantStateFingerprint = tenantState == null
+        ? null
+        : '${tenantState['pushkaAmount']}|${tenantState['pushkaGoal']}|'
+          '${tenantState['streakCount']}|'
+          '${(tenantState['presetAmounts'] as List?)?.join(",") ?? ""}';
+    if (tenantState != null && tenantStateFingerprint != _lastSyncedTenantStateFingerprint) {
+      _lastSyncedTenantStateFingerprint = tenantStateFingerprint;
       final uid = ref.read(currentUserProvider)?.uid;
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
@@ -1501,7 +1565,10 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
           tr.errorPaymentServer,
         'unavailable' =>
           tr.errorServerUnavailable,
-        _ => error.message ?? tr.couldNotStartPayment,
+        // Unknown codes: surface the message but sanitize first — backend
+        // could in theory throw `HttpsError("foo", err.stack)` which would
+        // dump a multi-line trace into a SnackBar otherwise.
+        _ => _sanitizeUserFacingError(error.message) ?? tr.couldNotStartPayment,
       };
     }
     if (error is StripeServiceException) {
@@ -1509,12 +1576,29 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
       return tr.couldNotStartPayment;
     }
     if (error is Exception) {
-      final msg = error.toString().replaceFirst('Exception: ', '');
-      if (msg.isNotEmpty && msg != 'null') {
-        return msg;
-      }
+      final raw = error.toString().replaceFirst('Exception: ', '');
+      final sanitized = _sanitizeUserFacingError(raw);
+      if (sanitized != null) return sanitized;
     }
     return tr.couldNotCompleteDonation;
+  }
+
+  /// Strips control chars + newlines + caps at 200 chars so a backend stack
+  /// trace can never reach a SnackBar. Returns null when the input is empty
+  /// or looks unsafe (very long, contains "/home/" or "node_modules" or
+  /// "package:" path markers) so the caller falls back to a generic message.
+  String? _sanitizeUserFacingError(String? raw) {
+    if (raw == null) return null;
+    final stripped = raw
+        .replaceAll(RegExp(r'[\x00-\x1F\x7F]'), ' ')
+        .trim();
+    if (stripped.isEmpty || stripped == 'null') return null;
+    final looksLikeStack = stripped.contains('/home/') ||
+        stripped.contains('node_modules') ||
+        stripped.contains('package:') ||
+        stripped.length > 400;
+    if (looksLikeStack) return null;
+    return stripped.length > 200 ? '${stripped.substring(0, 200)}…' : stripped;
   }
 
   String _currencyCodeFromProfile() {

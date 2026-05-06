@@ -37,6 +37,14 @@ async function enforceRateLimit(uid, action, maxCalls, windowSeconds) {
 
     if (recentCalls.length >= maxCalls) {
       const retryAfter = Math.ceil((recentCalls[0] + windowSeconds * 1000 - now) / 1000);
+      // Structured warn so a Cloud Logging metric ("rate_limit_hit") +
+      // alert policy can fire when N callers hit limits in a short window —
+      // a spike usually means an upstream incident (Stripe outage, panic
+      // tap-spam, scraper) rather than ordinary user behavior. Without
+      // this log the only signal was a silent 429 to the client.
+      console.warn("rate_limit_hit", {
+        uid, action, maxCalls, windowSeconds, callsInWindow: recentCalls.length, retryAfter,
+      });
       throw new HttpsError(
         "resource-exhausted",
         `Demasiadas solicitudes. Intenta de nuevo en ${retryAfter} segundos.`
@@ -98,9 +106,46 @@ function validateCurrency(currency) {
   return code;
 }
 
+/**
+ * Defensive read for tenant commission rate. Tenants are written with a
+ * validated commissionRate (0-10%), but historical rows or manual console
+ * edits can corrupt the field. We treat any value outside the safe range
+ * as 0.03 (the documented default) and log loudly so ops sees the bad row.
+ *
+ * Critical: if this returns >= 1.0 the Stripe call would route ALL the
+ * donor's money to the platform — clamping at the read site is a
+ * second line of defense behind the write-time validation in createTenant.
+ */
+function safeTenantCommissionRate(rawRate, tenantIdForLog) {
+  const r = typeof rawRate === "number" ? rawRate : NaN;
+  if (Number.isFinite(r) && r >= 0 && r <= 0.10) return r;
+  console.warn("safeTenantCommissionRate: invalid rate, falling back to 0.03", {
+    tenantId: tenantIdForLog,
+    rawRate,
+    typeofRawRate: typeof rawRate,
+  });
+  return 0.03;
+}
+
 function minAmountForCurrency(currency) {
   const code = String(currency || "usd").toLowerCase();
   return CURRENCY_MINIMUMS[code] ?? 100;
+}
+
+// Sanitize donor messages before they enter Stripe metadata or our Firestore
+// records. Strips C0/C1 control chars (which can break log parsers, render
+// HTML-injection vectors in any future web admin view, or trigger Stripe's
+// metadata-value rejection of certain bytes). Caps at 240 chars (Stripe's
+// metadata-value limit is 500; 240 leaves headroom for any prefix we add
+// later). Returns "" — never null/undefined — so callers can store it
+// without separate null guards.
+function sanitizeDonorMessage(raw) {
+  if (raw === undefined || raw === null) return "";
+  // Strip all C0 + C1 control chars except plain space (0x20). Newlines,
+  // tabs, BEL etc. all go — donor messages are short single-line strings.
+  // eslint-disable-next-line no-control-regex
+  const stripped = String(raw).replace(/[\x00-\x1F\x7F-\x9F]/g, " ");
+  return stripped.trim().slice(0, 240);
 }
 
 // Stripe currency precisions. ZERO-decimal currencies (CLP, JPY, KRW, etc.)
@@ -269,7 +314,17 @@ async function sendToUser(uid, payload) {
 const WEBHOOK_PROCESSING_TTL_MS = 5 * 60 * 1000; // 5 minutes — well over function timeout
 
 async function reserveWebhookEvent(event) {
-  const eventRef = db.collection("_stripeWebhookEvents").doc(event.id);
+  // Validate event id shape before using it as a Firestore doc ID. Stripe
+  // event IDs are always `evt_` + 24+ alphanumeric chars. Anything else is
+  // forged (signature check should have caught it; belt + suspenders) or a
+  // future Stripe API change we want to notice loudly. An empty/whitespace
+  // id would also collapse the dedup key (every malformed event would map
+  // to the same doc and silently be skipped as duplicate).
+  const id = typeof event?.id === "string" ? event.id : "";
+  if (!/^evt_[A-Za-z0-9]{16,}$/.test(id)) {
+    throw new Error(`reserveWebhookEvent: invalid event id "${id}"`);
+  }
+  const eventRef = db.collection("_stripeWebhookEvents").doc(id);
   let alreadyProcessed = false;
   let recoveredFromStuck = false;
 
@@ -313,6 +368,17 @@ async function reserveWebhookEvent(event) {
       livemode: !!event.livemode,
       status: "processing",
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      // Stamp a TTL so the _stripeWebhookEvents collection doesn't grow
+      // unbounded (Stripe sends thousands of events monthly). Firestore
+      // auto-deletes docs whose `expiresAt` is in the past IF a TTL policy
+      // is configured on this collection — must be enabled once via the
+      // Firebase Console (Firestore → TTL) on `_stripeWebhookEvents.expiresAt`.
+      // 90 days is enough for ops to investigate any failed event before
+      // it's purged; idempotency dedup only needs the recent (< 3-day) past
+      // since Stripe stops retrying after 3 days.
+      expiresAt: admin.firestore.Timestamp.fromMillis(
+        Date.now() + 90 * 24 * 60 * 60 * 1000,
+      ),
     });
   });
 
@@ -485,6 +551,13 @@ exports.createPaymentIntent = onCall(
     throw new HttpsError("failed-precondition", "Stripe no configurado.");
   }
 
+  // Validate purpose up-front — needed below before tenantState lock
+  // acquisition for purpose === "pushka_empty".
+  const purpose = String(request.data?.purpose || "donation").toLowerCase();
+  if (purpose !== "donation" && purpose !== "pushka_empty") {
+    throw new HttpsError("invalid-argument", "Propósito de pago inválido.");
+  }
+
   // Parallelize the two independent Firestore reads (block check + user
   // doc) — they were sequential and added ~150-300ms of avoidable latency.
   const [adminDataSnap, userSnap] = await Promise.all([
@@ -511,15 +584,53 @@ exports.createPaymentIntent = onCall(
     ]);
 
     // Auto-empty cron lock: refuse if a scheduled charge is mid-flight for
-    // this (uid, tenantId) — prevents double-charge from a "Vaciar Pushka"
-    // tap that races the cron. Lock TTL is 10 minutes (cron releases on
+    // this (uid, tenantId). Lock TTL is 10 minutes (cron releases on
     // success/failure within ~30s; the longer window catches crashes).
+    //
+    // For purpose === "pushka_empty" we ALSO acquire the same lock
+    // transactionally, so a cron tick that lands a few hundred ms later
+    // sees our lock and skips. Without this, the cron would set its lock
+    // INSIDE its own transaction *after* we'd already passed our parallel
+    // read, and both paths would call Stripe with different idempotency
+    // keys → double-charge.
     if (stateSnap.exists) {
       const _autoLockAt = stateSnap.data()?._autoEmptyChargeLockAt?.toMillis?.() ?? null;
       if (_autoLockAt && (Date.now() - _autoLockAt) < (10 * 60 * 1000)) {
         throw new HttpsError(
           "aborted",
           "Tu Pushka se está vaciando automáticamente en este momento. Esperá unos segundos y volvé a intentar.",
+        );
+      }
+    }
+    if (purpose === "pushka_empty") {
+      const stateRef = db.collection("users").doc(request.auth.uid)
+        .collection("tenantState").doc(tenantId);
+      try {
+        await db.runTransaction(async (tx) => {
+          const fresh = await tx.get(stateRef);
+          const lockAt = fresh.data()?._autoEmptyChargeLockAt?.toMillis?.() ?? null;
+          if (lockAt && (Date.now() - lockAt) < (10 * 60 * 1000)) {
+            throw new HttpsError(
+              "aborted",
+              "Tu Pushka se está vaciando automáticamente en este momento. Esperá unos segundos y volvé a intentar.",
+            );
+          }
+          tx.set(stateRef, {
+            _autoEmptyChargeLockAt: admin.firestore.FieldValue.serverTimestamp(),
+            _autoEmptyChargeLockSource: "manual",
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          }, { merge: true });
+        });
+      } catch (e) {
+        if (e instanceof HttpsError) throw e;
+        // Anything else from the transaction — refuse the payment rather
+        // than risk a double-charge.
+        console.error("createPaymentIntent: lock_tx_failed", {
+          uid: request.auth.uid, tenantId, err: e?.message,
+        });
+        throw new HttpsError(
+          "aborted",
+          "No pudimos asegurar tu Pushka. Intentá de nuevo en unos segundos.",
         );
       }
     }
@@ -534,9 +645,10 @@ exports.createPaymentIntent = onCall(
       const connectAccountId = tenantData.stripeConnectAccountId;
       if (connectStatus === "active" && connectAccountId) {
         tenantConnectAccountId = connectAccountId;
-        tenantCommissionRate = typeof tenantData.commissionRate === "number"
-          ? tenantData.commissionRate
-          : 0.03;
+        tenantCommissionRate = safeTenantCommissionRate(
+          tenantData.commissionRate,
+          tenantId,
+        );
       } else if (connectAccountId && connectStatus !== "active") {
         // Stripe Connect account exists but is not "active" (likely "restricted"
         // or "pending"). Refusing the payment is safer than silently routing
@@ -562,16 +674,32 @@ exports.createPaymentIntent = onCall(
   const customerEmail = request.auth.token?.email
     ? String(request.auth.token.email).slice(0, 254)
     : null;
-  const purpose = String(request.data?.purpose || "donation").toLowerCase();
-  if (purpose !== "donation" && purpose !== "pushka_empty") {
-    throw new HttpsError("invalid-argument", "Propósito de pago inválido.");
-  }
 
   if (!Number.isFinite(amount) || amount <= 0) {
     throw new HttpsError("invalid-argument", "Monto inválido.");
   }
   if (amount > 99999999) {
     throw new HttpsError("invalid-argument", "El monto excede el límite permitido.");
+  }
+
+  // Donor message — sanitized (control chars stripped, 240-char cap) so it's
+  // safe to round-trip through Stripe metadata + render in the admin web
+  // dashboard. Optional; "" when omitted.
+  const donorMessage = sanitizeDonorMessage(request.data?.donorMessage);
+
+  // For pushka_empty the client passes the value to set pushkaAmount to
+  // AFTER the charge confirms (webhook owns this write — see C1 audit
+  // fix). Validated as a non-negative number; default 0 (full empty).
+  let pushkaAmountAfter = 0;
+  if (purpose === "pushka_empty") {
+    const raw = request.data?.pushkaAmountAfter;
+    if (raw !== undefined && raw !== null) {
+      const v = Number(raw);
+      if (!Number.isFinite(v) || v < 0 || v > 99999999) {
+        throw new HttpsError("invalid-argument", "pushkaAmountAfter inválido.");
+      }
+      pushkaAmountAfter = v;
+    }
   }
   const minAmount = minAmountForCurrency(currency);
   if (amount < minAmount) {
@@ -586,7 +714,17 @@ exports.createPaymentIntent = onCall(
   // where two clicks at 12:00:59.500 and 12:01:00.300 land in different buckets
   // and create two PaymentIntents. With 5-min buckets, the worst-case duplicate
   // window is one straddle per 5 minutes, which is acceptable for donations.
-  const idempotencyKey = `pi_${request.auth.uid}_${purpose}_${currency}_${amount}_${Math.floor(Date.now() / 300000)}`;
+  // Idempotency key: uid + purpose + amount + currency + 60-minute bucket.
+  // The bucket size used to be 5 minutes, but the boundary race
+  // (12:04:59.500 vs 12:05:00.500 land in different buckets and produce
+  // two distinct PaymentIntents → potential double-charge under retry
+  // spam) was easier to trigger than expected. 60 minutes makes the
+  // probability of a legitimate retry crossing a bucket negligible
+  // while still letting a donor make two distinct same-amount donations
+  // within a single hour (Stripe will dedupe via idempotency only the
+  // first; the second errors with "already used", which the client
+  // surfaces as "intentá de nuevo en unos segundos").
+  const idempotencyKey = `pi_${request.auth.uid}_${purpose}_${currency}_${amount}_${Math.floor(Date.now() / 3600000)}`;
 
   // Build Stripe Connect params — only when the tenant has an active Connect account.
   // Clamp app fee defensively: a misconfigured commissionRate >= 1 would cause
@@ -800,6 +938,23 @@ exports.createPaymentIntent = onCall(
         amount: String(amount),
         purpose,
         ...(tenantId ? { tenantId } : {}),
+        // Stamp the Connect destination so the webhook can detect
+        // routing drift (admin re-linked Stripe Connect mid-flight) and
+        // refuse to attribute the donation to the wrong tenant.
+        ...(tenantConnectAccountId
+          ? { connectAccountId: tenantConnectAccountId }
+          : {}),
+        // For pushka_empty the webhook owns the pushkaAmount reset (avoids
+        // the client-side race where the charge succeeds but the webhook
+        // fails — money would be charged with no transaction record AND
+        // pushka shown as empty).
+        ...(purpose === "pushka_empty"
+          ? { pushkaAmountAfter: String(pushkaAmountAfter) }
+          : {}),
+        // Donor message — only stamped when the donor wrote something. The
+        // webhook copies this onto the persisted transaction so it appears
+        // in History + admin dashboards.
+        ...(donorMessage ? { donorMessage } : {}),
       },
   };
 
@@ -946,7 +1101,7 @@ exports.createDonationSubscription = onCall(
         const cid = td.stripeConnectAccountId;
         if (cs === "active" && cid) {
           tenantConnectAccountId = cid;
-          tenantCommissionRate = typeof td.commissionRate === "number" ? td.commissionRate : 0.03;
+          tenantCommissionRate = safeTenantCommissionRate(td.commissionRate, tenantId);
         } else if (cid && cs !== "active") {
           throw new HttpsError(
             "failed-precondition",
@@ -1010,7 +1165,7 @@ exports.createDonationSubscription = onCall(
       }
     }
 
-    const donorMessage = String(request.data?.donorMessage || "").slice(0, 240);
+    const donorMessage = sanitizeDonorMessage(request.data?.donorMessage);
 
     // Stripe subscription items.price_data accepts a `product` ID (not the
     // top-level `product_data` shortcut). Get-or-create a single shared
@@ -1581,6 +1736,30 @@ exports.deletePaymentMethod = onCall(
       _lastPmDedupePassAt: admin.firestore.FieldValue.delete(),
     }, { merge: true }).catch(() => {});
 
+    // Clear the deleted PM from any tenantState that pinned it as the
+    // auto-empty card. Without this, the cron keeps trying to charge a
+    // detached PM (Stripe responds resource_missing) and the user gets
+    // misleading "card declined" notifications when the truth is they
+    // deleted the card. Best-effort, fire-and-forget — the cron-side
+    // resource_missing handler also tolerates this state.
+    db.collection("users").doc(uid).collection("tenantState")
+      .where("autoEmptyPaymentMethodId", "==", pmId)
+      .get()
+      .then((snap) => {
+        if (snap.empty) return;
+        const batch = db.batch();
+        for (const d of snap.docs) {
+          batch.set(d.ref, {
+            autoEmptyPaymentMethodId: admin.firestore.FieldValue.delete(),
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          }, { merge: true });
+        }
+        return batch.commit();
+      })
+      .catch((err) => console.warn("deletePaymentMethod: failed to clear tenantState pmId", {
+        uid, pmId, err: err?.message,
+      }));
+
     return { success: true, newDefault };
   }
 );
@@ -1679,7 +1858,19 @@ exports.stripeWebhook = onRequest(
     return;
   }
 
-  const { eventRef, alreadyProcessed } = await reserveWebhookEvent(event);
+  let eventRef, alreadyProcessed;
+  try {
+    ({ eventRef, alreadyProcessed } = await reserveWebhookEvent(event));
+  } catch (reserveErr) {
+    // Malformed event id — refuse to process (would otherwise pollute the
+    // dedup table). 400 stops Stripe's retry loop; signature already
+    // validated above, so this is a Stripe API anomaly we want eyes on.
+    console.error("stripeWebhook: reserveWebhookEvent failed", {
+      eventId: event?.id, type: event?.type, err: reserveErr?.message,
+    });
+    res.status(400).send("Invalid event id format.");
+    return;
+  }
   if (alreadyProcessed) {
     res.json({ received: true, duplicate: true });
     return;
@@ -1756,6 +1947,34 @@ exports.stripeWebhook = onRequest(
             eventId: event.id,
           });
         }
+        // Drift detection: if the tenant's Connect account changed between
+        // createPaymentIntent and this webhook, log so ops can manually
+        // reconcile (the funds went to the OLD destination but the
+        // transaction would otherwise be attributed to the new one). We
+        // still write the txn — money already moved — but flag it.
+        const stampedConnect = intent.metadata?.connectAccountId
+          ? String(intent.metadata.connectAccountId)
+          : null;
+        if (stampedConnect && txTenantId) {
+          try {
+            const tenantSnap = await db.collection("tenants").doc(txTenantId).get();
+            const currentConnect = tenantSnap.data()?.stripeConnectAccountId ?? null;
+            if (currentConnect && currentConnect !== stampedConnect) {
+              console.error("stripeWebhook: connectAccountId DRIFT", {
+                uid,
+                tenantId: txTenantId,
+                paymentIntentId: docId,
+                eventId: event.id,
+                stampedConnect,
+                currentConnect,
+              });
+            }
+          } catch (driftErr) {
+            console.warn("stripeWebhook: drift check failed", {
+              tenantId: txTenantId, err: driftErr?.message,
+            });
+          }
+        }
         const txRates = await getExchangeRates(null);
         const txSnap = buildCurrencySnapshot(amount, txCurrency, txRates);
         await db
@@ -1772,11 +1991,48 @@ exports.stripeWebhook = onRequest(
             description: txDesc,
             paymentMethod: txPaymentMethod,
             status: 'completed',
+            // donorMessage was sanitized in createPaymentIntent before being
+            // stamped on the PI metadata; re-sanitize defensively here so a
+            // forged event (theoretical — Stripe signature blocks this) can't
+            // smuggle control chars into Firestore.
+            ...(intent.metadata?.donorMessage
+              ? { donorMessage: sanitizeDonorMessage(intent.metadata.donorMessage) }
+              : {}),
             createdAt: admin.firestore.FieldValue.serverTimestamp(),
           });
 
         // Update pre-aggregated revenue counters on tenant doc (non-blocking)
         if (txTenantId) await incrementTenantRevenue(txTenantId, txSnap.amountUSD);
+
+        // For pushka_empty (manual flow) the webhook owns:
+        //   1. resetting pushkaAmount to the value the client computed
+        //      (`pushkaAmountAfter` in metadata) — avoids the client-side
+        //      race where Stripe charged but Firestore never saw it.
+        //   2. releasing the manual lock acquired by createPaymentIntent.
+        // Both writes happen in a single Firestore set so the donor sees
+        // the new pushka balance + lock release atomically. Best-effort —
+        // the 10-minute TTL on the lock catches Firestore failures.
+        if (txTenantId && purpose === "pushka_empty") {
+          const rawAfter = intent.metadata?.pushkaAmountAfter;
+          const parsedAfter = rawAfter !== undefined && rawAfter !== null
+            ? Number(rawAfter)
+            : 0;
+          const newPushkaAmount =
+            Number.isFinite(parsedAfter) && parsedAfter >= 0
+              ? parsedAfter
+              : 0;
+          await db.collection("users").doc(uid)
+            .collection("tenantState").doc(txTenantId)
+            .set({
+              pushkaAmount: newPushkaAmount,
+              _autoEmptyChargeLockAt: admin.firestore.FieldValue.delete(),
+              _autoEmptyChargeLockSource: admin.firestore.FieldValue.delete(),
+              updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            }, { merge: true })
+            .catch((err) => console.warn("stripeWebhook: pushkaAmount reset failed", {
+              uid, txTenantId, err: err?.message,
+            }));
+        }
 
         await finalizeWebhookEvent(eventRef, {
           status: "processed",
@@ -1797,6 +2053,10 @@ exports.stripeWebhook = onRequest(
     } else if (event.type === "payment_intent.payment_failed") {
       const intent = event.data.object;
       const uid = intent.metadata?.uid;
+      const purpose = String(intent.metadata?.purpose || "donation");
+      const tenantIdMeta = intent.metadata?.tenantId
+        ? String(intent.metadata.tenantId)
+        : null;
       const amount = (intent.amount || 0) / currencyUnitDivisor(intent.currency || "usd");
       const reason = intent.last_payment_error?.message || "payment_failed";
 
@@ -1810,6 +2070,20 @@ exports.stripeWebhook = onRequest(
           message: reason,
           livemode: !!event.livemode,
         });
+      }
+
+      // Release the manual pushka_empty lock on failure too — otherwise a
+      // declined card would keep the user blocked from retrying for the
+      // full 10-minute TTL.
+      if (uid && tenantIdMeta && purpose === "pushka_empty") {
+        await db.collection("users").doc(uid)
+          .collection("tenantState").doc(tenantIdMeta)
+          .set({
+            _autoEmptyChargeLockAt: admin.firestore.FieldValue.delete(),
+            _autoEmptyChargeLockSource: admin.firestore.FieldValue.delete(),
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          }, { merge: true })
+          .catch(() => {});
       }
 
       await finalizeWebhookEvent(eventRef, {
@@ -1844,6 +2118,25 @@ exports.stripeWebhook = onRequest(
         // after a full refund). docId namespaced by `_refund_<eventId>` so
         // duplicate webhook deliveries don't double-count.
         if (paymentIntentId && refundedAmount > 0) {
+          // Out-of-order guard: Stripe doesn't guarantee that
+          // payment_intent.succeeded arrives before charge.refunded for the
+          // same charge (rare but observed under Stripe webhook backlog).
+          // Without this check, the refund handler writes a negative tx for
+          // a PI whose original positive tx was never written — a permanent
+          // orphan in user history. Tag the row with `originalMissing` so
+          // ops can spot it; admin aggregates can choose to exclude.
+          const originalTxRef = db
+            .collection("users").doc(uid)
+            .collection("transactions").doc(paymentIntentId);
+          const originalTxSnap = await originalTxRef.get();
+          const originalMissing = !originalTxSnap.exists;
+          if (originalMissing) {
+            console.warn("stripeWebhook: refund_before_original", {
+              uid, paymentIntentId, chargeId: charge.id, eventId: event.id,
+              note: "negating tx written with originalMissing flag — ops should reconcile",
+            });
+          }
+
           const txRates = await getExchangeRates(null);
           const txSnap = buildCurrencySnapshot(refundedAmount, currency, txRates);
           // Negate snapshot fields too — buildCurrencySnapshot returns positive
@@ -1865,6 +2158,7 @@ exports.stripeWebhook = onRequest(
               description: "Reembolso Stripe",
               originalPaymentIntentId: paymentIntentId,
               originalChargeId: charge.id,
+              ...(originalMissing ? { originalMissing: true } : {}),
               skipNotification: true, // user already sees the refund in their bank
               createdAt: admin.firestore.FieldValue.serverTimestamp(),
             }, { merge: true });
@@ -2161,6 +2455,106 @@ exports.stripeWebhook = onRequest(
         subscriptionId: sub.id,
         outcome: `subscription_${status}`,
       });
+    } else if (event.type === "invoice.payment_succeeded") {
+      // Donor recurring donation invoice — write the txn from the
+      // subscription's metadata. (Tenant SaaS billing invoices have their
+      // own dedicated handler in stripeBillingWebhook; we only act on
+      // donation_recurring.)
+      const invoice = event.data.object;
+      const subMeta = invoice.subscription_details?.metadata
+        ?? invoice.parent?.subscription_details?.metadata
+        ?? null;
+      const purpose = subMeta?.purpose ?? null;
+      if (purpose !== "donation_recurring") {
+        await finalizeWebhookEvent(eventRef, { status: "ignored", reason: "not_donation_recurring", invoiceId: invoice.id });
+      } else {
+        const uid = subMeta?.uid ? String(subMeta.uid) : null;
+        const tenantId = subMeta?.tenantId ? String(subMeta.tenantId) : null;
+        const subId = invoice.subscription
+          ? (typeof invoice.subscription === "string" ? invoice.subscription : invoice.subscription.id)
+          : null;
+        const amountPaid = (invoice.amount_paid ?? 0) / currencyUnitDivisor(invoice.currency || "usd");
+        const txCurrency = String(invoice.currency || "usd").toUpperCase();
+        const docId = `inv_${invoice.id}`;
+        if (uid) {
+          const txRates = await getExchangeRates(null);
+          const txSnap = buildCurrencySnapshot(amountPaid, txCurrency, txRates);
+          await db.collection("users").doc(uid)
+            .collection("transactions").doc(docId).set({
+              type: "tzedaka",
+              amount: amountPaid,
+              currencyCode: txCurrency,
+              ...txSnap,
+              ...(tenantId ? { tenantId } : {}),
+              description: "Donación recurrente (Stripe)",
+              paymentMethod: "card",
+              status: "completed",
+              subscriptionId: subId,
+              // Carry the donor's recurring-subscription message onto each
+              // generated invoice tx so History + admin views show it.
+              // Re-sanitize defensively in case a future code path skips
+              // sanitization on the way in.
+              ...(subMeta?.donorMessage
+                ? { donorMessage: sanitizeDonorMessage(subMeta.donorMessage) }
+                : {}),
+              createdAt: admin.firestore.FieldValue.serverTimestamp(),
+            });
+          if (tenantId) await incrementTenantRevenue(tenantId, txSnap.amountUSD);
+        } else {
+          console.warn("stripeWebhook: invoice.payment_succeeded without uid in subscription metadata", {
+            invoiceId: invoice.id, subId,
+          });
+        }
+        await finalizeWebhookEvent(eventRef, {
+          status: "processed",
+          uid: uid || null,
+          tenantId,
+          subscriptionId: subId,
+          invoiceId: invoice.id,
+          amount: amountPaid,
+          outcome: "donation_recurring_invoice_paid",
+        });
+      }
+    } else if (event.type === "invoice.payment_failed") {
+      // Donor recurring donation invoice failure — log a payment_event so
+      // the client can surface a "tu donación recurrente falló — actualizá
+      // tu tarjeta" UI. (cleanupIncompleteDonationSubscriptions sweeps the
+      // dead subscriptions after 7 days.)
+      const invoice = event.data.object;
+      const subMeta = invoice.subscription_details?.metadata
+        ?? invoice.parent?.subscription_details?.metadata
+        ?? null;
+      const purpose = subMeta?.purpose ?? null;
+      if (purpose !== "donation_recurring") {
+        await finalizeWebhookEvent(eventRef, { status: "ignored", reason: "not_donation_recurring", invoiceId: invoice.id });
+      } else {
+        const uid = subMeta?.uid ? String(subMeta.uid) : null;
+        const subId = invoice.subscription
+          ? (typeof invoice.subscription === "string" ? invoice.subscription : invoice.subscription.id)
+          : null;
+        const amount = (invoice.amount_due ?? 0) / currencyUnitDivisor(invoice.currency || "usd");
+        if (uid) {
+          await writeUserPaymentEvent(uid, event.id, {
+            kind: "donation_recurring_failed",
+            provider: "stripe",
+            subscriptionId: subId,
+            invoiceId: invoice.id,
+            amount,
+            currencyCode: String(invoice.currency || "usd").toUpperCase(),
+            message: invoice.last_finalization_error?.message
+              ?? invoice.last_payment_error?.message
+              ?? "payment_failed",
+            livemode: !!event.livemode,
+          });
+        }
+        await finalizeWebhookEvent(eventRef, {
+          status: "processed",
+          uid: uid || null,
+          subscriptionId: subId,
+          invoiceId: invoice.id,
+          outcome: "donation_recurring_invoice_failed",
+        });
+      }
     } else {
       await finalizeWebhookEvent(eventRef, {
         status: "ignored",
@@ -2350,6 +2744,67 @@ exports.resetMonthlyActiveUsers = onSchedule(
       hasMore = snap.size === 400;
     }
     console.info("resetMonthlyActiveUsers: complete", { tenantsReset: tenantsSnap.size, monthlyActiveDeleted: deleted });
+  },
+);
+
+/**
+ * Cancel donor recurring subscriptions that never made it past the
+ * "incomplete" first-invoice payment. Default Stripe behavior is to leave
+ * them in "incomplete" forever — the donor sees nothing happen, the org
+ * sees nothing collect, and the subscription rots. We sweep daily and
+ * cancel anything that's been incomplete for more than 7 days. The
+ * webhook for invoice.payment_failed already notifies the user; this
+ * cleans up the trail.
+ *
+ * Scoped to subscriptions with metadata.purpose === "donation_recurring"
+ * so we don't touch SaaS billing subscriptions.
+ */
+exports.cleanupIncompleteDonationSubscriptions = onSchedule(
+  {
+    schedule: "every day 03:30",
+    timeZone: "Etc/UTC",
+    secrets: [stripeSecret],
+    timeoutSeconds: 540,
+  },
+  async () => {
+    if (!stripeSecret.value()) {
+      console.error("cleanupIncompleteDonationSubscriptions: STRIPE_SECRET_KEY missing");
+      return;
+    }
+    const stripe = require("stripe")(stripeSecret.value(), { timeout: 15000 });
+    const cutoffSec = Math.floor((Date.now() - 7 * 24 * 60 * 60 * 1000) / 1000);
+    let canceled = 0;
+    let scanned = 0;
+    let skipped = 0;
+    let cursor;
+    do {
+      const page = await stripe.subscriptions.list({
+        status: "incomplete",
+        limit: 100,
+        ...(cursor ? { starting_after: cursor } : {}),
+      });
+      for (const sub of page.data) {
+        scanned += 1;
+        if (sub.created > cutoffSec) { skipped += 1; continue; }
+        if (sub.metadata?.purpose !== "donation_recurring") { skipped += 1; continue; }
+        try {
+          await stripe.subscriptions.cancel(sub.id);
+          canceled += 1;
+          console.info("cleanupIncompleteDonationSubscriptions: canceled", {
+            subId: sub.id, uid: sub.metadata?.uid, ageDays:
+              Math.floor((Date.now() / 1000 - sub.created) / 86400),
+          });
+        } catch (e) {
+          console.warn("cleanupIncompleteDonationSubscriptions: cancel failed", {
+            subId: sub.id, err: e?.message,
+          });
+        }
+      }
+      cursor = page.has_more ? page.data[page.data.length - 1].id : undefined;
+    } while (cursor);
+    console.info("cleanupIncompleteDonationSubscriptions: completed", {
+      scanned, canceled, skipped,
+    });
   },
 );
 
@@ -2559,6 +3014,14 @@ function computeNextErevRoshChodesh(baseDate) {
 // transaction and the success-finalize transaction, the lock is considered
 // abandoned after this and the (uid, tenantId) pair becomes eligible again.
 // Tuned generously to outlast any realistic Stripe retry window.
+//
+// SAFETY: Even if this TTL fires while an in-flight Stripe charge is still
+// processing (theoretical 10-min stall), the Stripe idempotencyKey on the
+// charge call (`pushka_auto_empty_${uid}_${tenantId}_${nextRunDateKey}`)
+// guarantees Stripe returns the SAME PaymentIntent on the retry — no
+// double-charge. The lock is best-effort coordination, not the safety net.
+// If you ever shorten the idempotency key window or change its inputs to
+// include something more volatile than nextRunAt, this assumption breaks.
 const AUTO_EMPTY_LOCK_TTL_MS = 10 * 60 * 1000; // 10 min
 
 // Short retry interval when a charge fails (decline, suspended tenant, blocked
@@ -2756,9 +3219,10 @@ async function _runPushkaAutoEmptyTick() {
           const connectAccountId = tenantData.stripeConnectAccountId;
           if (connectStatus === "active" && connectAccountId) {
             tenantConnectAccountId = connectAccountId;
-            tenantCommissionRate = typeof tenantData.commissionRate === "number"
-              ? tenantData.commissionRate
-              : 0.03;
+            tenantCommissionRate = safeTenantCommissionRate(
+              tenantData.commissionRate,
+              tenantId,
+            );
           } else if (connectAccountId && connectStatus !== "active") {
             console.warn("processPushkaAutoEmpty: connect_not_active", {
               uid, tenantId, connectStatus,
@@ -2767,6 +3231,12 @@ async function _runPushkaAutoEmptyTick() {
               autoEmptyNextRunAt: admin.firestore.Timestamp.fromDate(
                 new Date(Date.now() + AUTO_EMPTY_RETRY_AFTER_FAILURE_HOURS * 3600 * 1000),
               ),
+              // Surface a payment_event the client can read to show a
+              // banner: "tu organización está desconectada del procesador
+              // de pagos — el vaciado automático no corrió". Without this
+              // the donor sees nothing happen for weeks.
+              _lastAutoEmptySkipReason: "tenant_connect_not_active",
+              _lastAutoEmptySkipAt: admin.firestore.FieldValue.serverTimestamp(),
               updatedAt: admin.firestore.FieldValue.serverTimestamp(),
             }, { merge: true });
             return;
@@ -2847,6 +3317,9 @@ async function _runPushkaAutoEmptyTick() {
             source: "pushka",
             purpose: "pushka_auto_empty",
             tenantId: plan.tenantId,
+            ...(plan.tenantConnectAccountId
+              ? { connectAccountId: plan.tenantConnectAccountId }
+              : {}),
             ...(plan.donationReason ? { donationReason: plan.donationReason } : {}),
           },
         };
@@ -2874,6 +3347,21 @@ async function _runPushkaAutoEmptyTick() {
             type: stripeErr?.type,
           });
 
+          // PM was deleted between schedule-set and cron tick: clear the
+          // pinned PM so the user's NEW default takes over on the next run
+          // (otherwise the cron keeps charging a ghost PM forever and the
+          // user gets misleading "card declined" notifications).
+          // Triggered for both Stripe error codes Stripe uses for missing
+          // resources (`resource_missing`) and the legacy `payment_method_unactivated`.
+          const pmGone = stripeErr?.code === "resource_missing" ||
+            stripeErr?.code === "payment_method_unactivated";
+          if (pmGone) {
+            await stateRef.set({
+              autoEmptyPaymentMethodId: admin.firestore.FieldValue.delete(),
+              updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            }, { merge: true });
+          }
+
           // ===== Failure path: release lock + 24h retry on stateRef =====
           await stateRef.set({
             _autoEmptyChargeLockAt: admin.firestore.FieldValue.delete(),
@@ -2882,7 +3370,9 @@ async function _runPushkaAutoEmptyTick() {
             ),
             autoEmptyConsecutiveFailures: admin.firestore.FieldValue.increment(1),
             autoEmptyLastFailureAt: admin.firestore.FieldValue.serverTimestamp(),
-            autoEmptyLastFailureCode: String(stripeErr?.code || "unknown"),
+            autoEmptyLastFailureCode: pmGone
+              ? "pm_deleted"
+              : String(stripeErr?.code || "unknown"),
             updatedAt: admin.firestore.FieldValue.serverTimestamp(),
           }, { merge: true });
 
@@ -3534,12 +4024,20 @@ exports.getAdminStats = onCall(
     // accurate since the dashboard already only charts 12 months.
     const sinceTs = admin.firestore.Timestamp.fromDate(startOf12Months);
     const TX_HARD_CAP = 50000; // safety cap; alerts if hit so we know to migrate to aggregation
+    // Push the tenantId filter down to Firestore when scoped — without this
+    // the dashboard reads every tenant's transactions then filters in-memory
+    // by tenantUserIds, which scales O(total_txs) instead of O(tenant_txs).
+    // Composite index (tenantId + createdAt DESC) is declared in
+    // firestore.indexes.json. Falls back to the unscoped read for super_admin
+    // viewing the global dashboard.
+    let txQuery = db.collectionGroup("transactions")
+      .where("createdAt", ">=", sinceTs);
+    if (filterTenantId) {
+      txQuery = txQuery.where("tenantId", "==", filterTenantId);
+    }
     const [usersSnap, txSnap] = await Promise.all([
       usersQuery.get(),
-      db.collectionGroup("transactions")
-        .where("createdAt", ">=", sinceTs)
-        .limit(TX_HARD_CAP)
-        .get(),
+      txQuery.limit(TX_HARD_CAP).get(),
     ]);
     if (txSnap.size >= TX_HARD_CAP) {
       console.warn(`getAdminStats: hit TX_HARD_CAP=${TX_HARD_CAP} for tenant=${filterTenantId ?? "all"} — totals are truncated; migrate to pre-aggregated counters`);
@@ -4559,6 +5057,35 @@ exports.createTenant = onCall(
       throw new HttpsError("invalid-argument", "name, slug y adminEmail son requeridos.");
     }
 
+    // commissionRate is the slice the platform keeps off each donation
+    // (e.g. 0.03 = 3 %). The Stripe API max for application_fee_percent
+    // is 100 %, but real platforms never get close. Cap at 10 % defensively
+    // — anything above that is almost certainly a misconfiguration that
+    // would silently siphon donor money to the platform.
+    if (commissionRate !== undefined && commissionRate !== null) {
+      if (
+        typeof commissionRate !== "number" ||
+        !Number.isFinite(commissionRate) ||
+        commissionRate < 0 ||
+        commissionRate > 0.10
+      ) {
+        throw new HttpsError(
+          "invalid-argument",
+          "commissionRate debe ser un número entre 0 y 0.10 (0 a 10 %).",
+        );
+      }
+    }
+    if (planPrice !== undefined && planPrice !== null) {
+      if (
+        typeof planPrice !== "number" ||
+        !Number.isFinite(planPrice) ||
+        planPrice < 0 ||
+        planPrice > 100000
+      ) {
+        throw new HttpsError("invalid-argument", "planPrice inválido.");
+      }
+    }
+
     const normalizedSlug = normalizeSlug(slug);
 
     const now = admin.firestore.FieldValue.serverTimestamp();
@@ -4776,6 +5303,20 @@ exports.backfillTenantSlugs = onCall(
       throw new HttpsError("permission-denied", "Solo super_admin.");
     }
 
+    // Sentinel: write a doc when this completes successfully so a later
+    // operator can see it has already run (and ops can grep
+    // `_backfillRuns/tenantSlugs` to confirm pre-launch readiness).
+    // Idempotent: re-running is harmless because the per-slug check below
+    // skips already-correct entries; the sentinel just records the latest run.
+    const sentinelRef = db.collection("_backfillRuns").doc("tenantSlugs");
+    const sentinelSnap = await sentinelRef.get();
+    const previousRun = sentinelSnap.exists
+      ? {
+          completedAt: sentinelSnap.data()?.completedAt?.toDate?.()?.toISOString() ?? null,
+          createdLastRun: sentinelSnap.data()?.created ?? null,
+        }
+      : null;
+
     const tenantsSnap = await db.collection("tenants").get();
     let scanned = 0;
     let created = 0;
@@ -4819,8 +5360,22 @@ exports.backfillTenantSlugs = onCall(
       skippedAlreadyExists: skipped,
       skippedNoSlug,
       conflicts,
+      previousRun, // null on first run; otherwise prior completedAt/created
     };
     console.info("backfillTenantSlugs: completed", summary);
+    // Stamp sentinel — only if there were no conflicts (a conflicting slug
+    // means the backfill is incomplete; keep the prior sentinel state so
+    // ops know reconciliation is still pending).
+    if (conflicts.length === 0) {
+      await sentinelRef.set({
+        completedAt: admin.firestore.FieldValue.serverTimestamp(),
+        scanned,
+        created,
+        skippedAlreadyExists: skipped,
+        skippedNoSlug,
+        runByUid: request.auth?.uid ?? null,
+      }, { merge: true });
+    }
     return summary;
   },
 );
@@ -5025,6 +5580,14 @@ exports.updateTenant = onCall(
 exports.getTenantBySlug = onCall(
   { enforceAppCheck: true },
   async (request) => {
+    // Rate-limit by IP to slow slug enumeration. App Check alone isn't a
+    // brute-force defense — a determined attacker with a valid debug token
+    // could iterate dictionary slugs ("jabad", "jabadmexico", ...) and
+    // discover tenant existence. 60/5min is generous for legit join flows
+    // (a user typically tries 1–3 slugs before giving up) but caps a
+    // scraping client at ~17k attempts/day per IP.
+    await enforceRateLimitByIp(request, "getTenantBySlug", 60, 300);
+
     const slug = String(request.data?.slug || "")
       .toLowerCase()
       .replace(/[^a-z0-9]/g, "");
@@ -5371,7 +5934,11 @@ exports.createStripeConnectLink = onCall(
     await enforceRateLimit(callerUid, "createStripeConnectLink", 10, 3600);
 
     const callerClaims = request.auth?.token ?? {};
-    const isSuperAdminCaller = callerIsSuperAdmin(request);
+    // Write path (creates a Stripe Connect OAuth link tied to a tenant) —
+    // must reject a recently-demoted super_admin immediately, not after the
+    // 1h ID-token cache expires. Fresh check reads customClaims directly
+    // from Auth.
+    const isSuperAdminCaller = await callerIsSuperAdminFresh(request);
     const isTenantAdminCaller = callerClaims.role === "tenant_admin";
 
     if (!isSuperAdminCaller && !isTenantAdminCaller) {
@@ -5746,7 +6313,15 @@ exports.stripeBillingWebhook = onRequest(
     // Idempotency — Stripe retries failed webhooks for up to 3 days. Without
     // this, retried `invoice.payment_failed` events would re-send dunning
     // emails (to admin AND super_admin) on every retry.
-    const { eventRef, alreadyProcessed } = await reserveWebhookEvent(event);
+    let eventRef, alreadyProcessed;
+    try {
+      ({ eventRef, alreadyProcessed } = await reserveWebhookEvent(event));
+    } catch (reserveErr) {
+      console.error("stripeBillingWebhook: reserveWebhookEvent failed", {
+        eventId: event?.id, type: event?.type, err: reserveErr?.message,
+      });
+      return res.status(400).send("Invalid event id format.");
+    }
     if (alreadyProcessed) {
       console.info("stripeBillingWebhook: duplicate event skipped", { id: event.id, type: event.type });
       return res.json({ received: true, duplicate: true });
@@ -5994,7 +6569,9 @@ exports.assetlinks = onRequest({ cors: true }, (req, res) => {
 exports.resolveActivityItem = onCall(
   { enforceAppCheck: false },
   async (request) => {
-    if (!callerIsSuperAdmin(request)) {
+    // Write path — use the Auth-fresh check so a recently-demoted admin
+    // can't keep marking activity items resolved during the ID-token TTL.
+    if (!(await callerIsSuperAdminFresh(request))) {
       throw new HttpsError("permission-denied", "Solo el super administrador.");
     }
     const { id } = request.data ?? {};

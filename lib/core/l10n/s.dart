@@ -629,6 +629,13 @@ class S {
         'Affichage des $n dernières transactions',
         'מציג $n עסקאות אחרונות',
       );
+  String get loadMore => _t('Cargar más', 'Load more', 'Charger plus', 'טען עוד');
+  String get deviceClockSkewError => _t(
+        'La hora de tu dispositivo parece incorrecta. Ajustá la fecha y hora y volvé a intentar.',
+        "Your device's date/time looks wrong. Fix it and try again.",
+        "L'heure de votre appareil semble incorrecte. Corrigez-la et réessayez.",
+        'תאריך/שעה של המכשיר שגויים. תקן ונסה שוב.',
+      );
 
   // ---------------------------------------------------------------------------
   // TRANSACTION DOMAIN

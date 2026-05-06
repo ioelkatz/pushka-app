@@ -884,6 +884,29 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
     if (tenantId == null || tenantId.isEmpty) return;
     final repo = ref.read(userRepositoryProvider);
     final nextRunAt = _frequency == 'manual' ? null : _computeNextRunAt();
+
+    // Defensive sanity check: nextRunAt is computed using the device clock.
+    // A user with a badly-skewed clock (set to year 2099, or stuck in 1980)
+    // would otherwise write a `nextRunAt` that the cron either fires
+    // immediately on or never fires on. Bound to "within the next 18 months"
+    // (covers monthly/erev-rosh-chodesh max gap of ~30-60 days with margin)
+    // and refuse to save otherwise — better to surface a clock issue early
+    // than silently break their auto-empty schedule for years.
+    if (nextRunAt != null) {
+      final now = DateTime.now().toUtc();
+      final maxFuture = now.add(const Duration(days: 540));
+      if (nextRunAt.isBefore(now) || nextRunAt.isAfter(maxFuture)) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(S.of(context).deviceClockSkewError),
+            ),
+          );
+        }
+        return;
+      }
+    }
+
     await repo.updateTenantState(
       uid: uid,
       tenantId: tenantId,

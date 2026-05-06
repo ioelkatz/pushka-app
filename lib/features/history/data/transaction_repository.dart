@@ -12,14 +12,18 @@ class TransactionRepository {
     return _firestore.collection('users').doc(uid).collection('transactions');
   }
 
-  /// Maximum number of transactions fetched per query. Used by the UI to
-  /// show a "showing last N" notice when this limit is reached.
+  /// Default page size for the initial history load. Pagination grows by
+  /// this increment each time the user taps "Cargar más".
   static const int pageSize = 100;
 
-  Stream<List<Transaction>> watchTransactions(String uid, {String? tenantId}) {
+  Stream<List<Transaction>> watchTransactions(
+    String uid, {
+    String? tenantId,
+    int limit = pageSize,
+  }) {
     var query = _collection(uid)
         .orderBy('createdAt', descending: true)
-        .limit(pageSize);
+        .limit(limit);
     if (tenantId != null && tenantId.isNotEmpty) {
       query = query.where('tenantId', isEqualTo: tenantId);
     }
@@ -106,6 +110,7 @@ class TransactionRepository {
       orElse: () => PaymentStatus.completed,
     );
 
+    final donorMessageRaw = data['donorMessage'] as String?;
     return Transaction(
       id: doc.id,
       type: type,
@@ -118,6 +123,9 @@ class TransactionRepository {
       status: paymentStatus,
       currencyCode: (data['currencyCode'] as String?) ?? 'USD',
       tenantId: data['tenantId'] as String?,
+      donorMessage: (donorMessageRaw == null || donorMessageRaw.trim().isEmpty)
+          ? null
+          : donorMessageRaw,
     );
   }
 }
