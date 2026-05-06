@@ -2263,6 +2263,25 @@ exports.onTransactionCreated = onDocumentCreated(
       notification: { title: "Pushka", body },
       data: { type, amount: String(amount), tenantId },
     });
+
+    // Track monthly active user — best-effort, non-blocking
+    if (tenantId && uid) {
+      try {
+        const now = new Date();
+        const monthKey = `${now.getUTCFullYear()}_${String(now.getUTCMonth() + 1).padStart(2, "0")}`;
+        const seenRef = db.collection("_monthlyActive").doc(`${monthKey}_${tenantId}_${uid}`);
+        await db.runTransaction(async (tx) => {
+          const snap = await tx.get(seenRef);
+          if (snap.exists) return; // already counted this month
+          tx.set(seenRef, { tenantId, uid, month: monthKey });
+          tx.update(db.collection("tenants").doc(tenantId), {
+            activeUsersThisMonth: admin.firestore.FieldValue.increment(1),
+          });
+        });
+      } catch (err) {
+        console.warn("activeUsersThisMonth: update failed (non-fatal)", String(err?.message || err));
+      }
+    }
   },
 );
 
@@ -2294,6 +2313,43 @@ exports.cleanupStaleFcmTokens = onSchedule(
     }
 
     console.info("cleanupStaleFcmTokens: completed", { totalDeleted });
+  },
+);
+
+// Reset activeUsersThisMonth counter on all tenants on the 1st of each month.
+// Also deletes _monthlyActive docs from 2 months ago to keep the collection lean.
+exports.resetMonthlyActiveUsers = onSchedule(
+  { schedule: "0 0 1 * *", timeZone: "Etc/UTC" },
+  async () => {
+    const tenantsSnap = await db.collection("tenants").get();
+    const BATCH_SIZE = 400;
+    let batch = db.batch();
+    let count = 0;
+    for (const doc of tenantsSnap.docs) {
+      batch.update(doc.ref, { activeUsersThisMonth: 0 });
+      if (++count % BATCH_SIZE === 0) { await batch.commit(); batch = db.batch(); }
+    }
+    if (count % BATCH_SIZE !== 0) await batch.commit();
+
+    // Clean up _monthlyActive docs from 2 months ago
+    const now = new Date();
+    const twoMonthsAgo = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 2, 1));
+    const oldKey = `${twoMonthsAgo.getUTCFullYear()}_${String(twoMonthsAgo.getUTCMonth() + 1).padStart(2, "0")}`;
+    let deleted = 0;
+    let hasMore = true;
+    while (hasMore) {
+      const snap = await db.collection("_monthlyActive")
+        .where("month", "==", oldKey)
+        .limit(400)
+        .get();
+      if (snap.empty) { hasMore = false; break; }
+      const b = db.batch();
+      snap.docs.forEach((d) => b.delete(d.ref));
+      await b.commit();
+      deleted += snap.size;
+      hasMore = snap.size === 400;
+    }
+    console.info("resetMonthlyActiveUsers: complete", { tenantsReset: tenantsSnap.size, monthlyActiveDeleted: deleted });
   },
 );
 
@@ -4329,6 +4385,11 @@ exports.joinTenant = onCall(
           tx.set(userRef, { autoEmptyNextRunAt: null }, { merge: true });
         }
       }
+
+      // Atomic totalUsers counter — only for genuinely new members
+      tx.update(db.collection("tenants").doc(tenantId), {
+        totalUsers: admin.firestore.FieldValue.increment(1),
+      });
     });
 
     return { success: true, tenantId };
@@ -4392,6 +4453,7 @@ exports.leaveTenant = onCall(
 
       const userData = userSnap.data();
       const existing = userData.tenantIds || (userData.tenantId ? [userData.tenantId] : []);
+      const wasMember = existing.includes(tenantId);
       const newTenantIds = existing.filter((t) => t !== tenantId);
       const currentTenantId = userData.tenantId;
 
@@ -4408,6 +4470,13 @@ exports.leaveTenant = onCall(
         }
       }
       tx.set(userRef, patch, { merge: true });
+
+      // Decrement totalUsers only if user was actually a member
+      if (wasMember) {
+        tx.update(db.collection("tenants").doc(tenantId), {
+          totalUsers: admin.firestore.FieldValue.increment(-1),
+        });
+      }
     });
 
     return { success: true };
@@ -5235,8 +5304,6 @@ exports.getSuperAdminDashboard = onCall(
     await enforceRateLimit(callerUid, "getSuperAdminDashboard", 60, 3600);
 
     const now = new Date();
-    const startOfThisMonth = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
-    const thisMonthTs      = admin.firestore.Timestamp.fromDate(startOfThisMonth);
 
     const tenantsSnap = await db.collection("tenants").get();
 
@@ -5260,38 +5327,17 @@ exports.getSuperAdminDashboard = onCall(
         const appName    = tenantData.appName ?? tenantName;
         const revenueStats = tenantData.revenueStats || {};
 
-        // Only query this month's transactions — to count unique active users.
-        // Revenue is read from pre-aggregated counters, not from transactions.
-        let usersSnap, thisMonthTxsDocs = [];
-        try {
-          [usersSnap] = await Promise.all([
-            db.collection("users").where("tenantId", "==", tid).get(),
-          ]);
-          const txSnap = await db.collectionGroup("transactions")
-            .where("tenantId", "==", tid)
-            .where("createdAt", ">=", thisMonthTs)
-            .limit(5000)
-            .get();
-          thisMonthTxsDocs = txSnap.docs;
-        } catch (qErr) {
-          // Index may still be building — degrade gracefully
-          console.warn(`getSuperAdminDashboard: query failed for tenant ${tid} (index building?)`, String(qErr?.message || qErr));
-          if (!usersSnap) usersSnap = { size: 0 };
-        }
-
-        const totalUsers = usersSnap.size;
-        const activeThisMonthSet = new Set();
-        for (const txDoc of thisMonthTxsDocs) {
-          const uid = txDoc.ref.parent.parent?.id;
-          if (uid) activeThisMonthSet.add(uid);
-        }
+        // totalUsers and activeUsersThisMonth are pre-aggregated on the tenant doc —
+        // no user/transaction queries needed. O(1) per tenant.
+        const totalUsers      = typeof tenantData.totalUsers === "number" ? tenantData.totalUsers : 0;
+        const activeThisMonth = typeof tenantData.activeUsersThisMonth === "number" ? tenantData.activeUsersThisMonth : 0;
 
         return {
           tenantId:   tid,
           tenantName,
           appName,
           totalUsers,
-          activeThisMonth:           activeThisMonthSet.size,
+          activeThisMonth,
           revenueLastMonth:          Math.round(sumMonths(revenueStats, 1)  * 100) / 100,
           revenueLastThreeMonths:    Math.round(sumMonths(revenueStats, 3)  * 100) / 100,
           revenueLastSixMonths:      Math.round(sumMonths(revenueStats, 6)  * 100) / 100,

@@ -480,6 +480,9 @@ service cloud.firestore {
     match /_stripeWebhookEvents/{document=**} {
       allow read, write: if false;
     }
+    match /_monthlyActive/{document=**} {
+      allow read, write: if false;
+    }
 
     // Admin-only config and notes collections
     match /adminConfig/{document} {
