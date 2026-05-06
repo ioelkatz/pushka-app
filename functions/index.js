@@ -1279,22 +1279,22 @@ exports.createDonationSubscription = onCall(
       subParams.transfer_data = { destination: tenantConnectAccountId };
     }
 
-    // Pre-cleanup: cancel any existing donation_recurring subscriptions on
-    // this customer before creating a new one. Two reasons:
-    //   1. Stripe rejects new subs in a different currency when the customer
-    //      has any active/incomplete sub in another currency:
-    //        "You cannot combine currencies on a single customer."
-    //      A donor who switched their preferred currency (e.g. USD → EUR)
-    //      otherwise can't ever donate recurring again until the existing
-    //      sub fully expires.
-    //   2. We don't want two simultaneous donation subs anyway — the donor
-    //      pressing "Donar mensual" while already subscribed expects to
-    //      REPLACE the previous amount, not stack a second monthly charge.
+    // Pre-cleanup: clean up ABANDONED prior attempts so a stuck `incomplete`
+    // sub from a previous tap doesn't block the new create with Stripe's
+    // "cannot combine currencies" error.
+    //   - `incomplete` / `incomplete_expired`: the donor opened PaymentSheet
+    //     once and dismissed it without confirming. The sub never charged a
+    //     cent. Safe to cancel — we're freeing the abandoned attempt so the
+    //     donor can retry (potentially in a different currency).
+    //   - `active` / `trialing` / `past_due`: REAL ongoing donation. We do
+    //     NOT silently cancel — that would surprise the donor (they think
+    //     they're still subscribed, money keeps flowing, then suddenly
+    //     stops). Surface a clear error instead so the donor knows to
+    //     cancel manually first.
+    //   - `canceled` / other terminal: skip, no action needed.
     // Scope tightly to subs whose metadata.purpose === "donation_recurring"
     // so SaaS billing subscriptions or any other subs on this customer are
-    // untouched. Best-effort: errors during cancel don't block the new sub
-    // (Stripe will reject with a clearer "combine currencies" error if the
-    // cleanup partially fails, which we surface back to the client).
+    // untouched.
     try {
       const existing = await stripe.subscriptions.list({
         customer: customerId,
@@ -1303,30 +1303,43 @@ exports.createDonationSubscription = onCall(
       });
       for (const oldSub of existing.data) {
         if (oldSub.metadata?.purpose !== "donation_recurring") continue;
-        if (oldSub.status === "canceled" || oldSub.status === "incomplete_expired") continue;
+        const status = oldSub.status;
+        if (status === "active" || status === "trialing" || status === "past_due") {
+          // Active — refuse to silently end it. The donor must cancel
+          // manually if they want to start a new one.
+          throw new HttpsError(
+            "failed-precondition",
+            "Ya tenés una donación mensual activa. Cancelala primero desde tus suscripciones antes de crear una nueva.",
+          );
+        }
+        if (status !== "incomplete" && status !== "incomplete_expired") {
+          continue; // canceled, paused, unpaid, or unknown — leave alone
+        }
         try {
           await stripe.subscriptions.cancel(oldSub.id, {
             invoice_now: false,
             prorate: false,
           });
-          console.info("createDonationSubscription: cancelled prior donation sub", {
+          console.info("createDonationSubscription: cancelled abandoned incomplete sub", {
             uid: request.auth.uid,
             subId: oldSub.id,
-            priorStatus: oldSub.status,
+            priorStatus: status,
             priorCurrency: oldSub.currency,
           });
         } catch (cancelErr) {
-          console.warn("createDonationSubscription: failed to cancel prior donation sub", {
+          console.warn("createDonationSubscription: failed to cancel incomplete sub", {
             uid: request.auth.uid,
             subId: oldSub.id,
             err: cancelErr.message,
           });
         }
       }
-    } catch (listErr) {
-      console.warn("createDonationSubscription: failed to list prior subs", {
+    } catch (cleanupErr) {
+      // Re-throw HttpsError (the active-sub guard); only swallow Stripe API errors.
+      if (cleanupErr instanceof HttpsError) throw cleanupErr;
+      console.warn("createDonationSubscription: cleanup pass failed", {
         uid: request.auth.uid,
-        err: listErr.message,
+        err: cleanupErr.message,
       });
     }
 
