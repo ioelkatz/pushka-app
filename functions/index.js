@@ -382,7 +382,7 @@ async function writeActivityLog({ type, tenantId, tenantName, severity, requires
 // Atomic counter increment on tenant doc — called after every confirmed donation.
 // Non-blocking: failures are logged but never propagate to the caller.
 async function incrementTenantRevenue(tenantId, amountUSD) {
-  if (!tenantId || !amountUSD || amountUSD <= 0) return;
+  if (!tenantId || !Number.isFinite(amountUSD) || amountUSD <= 0) return;
   const now = new Date();
   const monthKey = `${now.getUTCFullYear()}_${String(now.getUTCMonth() + 1).padStart(2, "0")}`;
   try {
@@ -5233,11 +5233,11 @@ exports.getSuperAdminDashboard = onCall(
 
     const tenantsSnap = await db.collection("tenants").get();
 
-    // Helper: sum revenueStats monthly buckets going back N months (inclusive of current).
-    // Matches the original semantics: "since the first day of N months ago".
+    // Helper: sum revenueStats monthly buckets for the last N months (current month = i=0).
+    // monthsBack=1 → current month only, monthsBack=3 → current + 2 back, etc.
     function sumMonths(revenueStats, monthsBack) {
       let total = 0;
-      for (let i = 0; i <= monthsBack; i++) {
+      for (let i = 0; i < monthsBack; i++) {
         const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - i, 1));
         const key = `${d.getUTCFullYear()}_${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
         total += (revenueStats[key]?.revenue || 0);
@@ -5255,18 +5255,26 @@ exports.getSuperAdminDashboard = onCall(
 
         // Only query this month's transactions — to count unique active users.
         // Revenue is read from pre-aggregated counters, not from transactions.
-        const [usersSnap, thisMonthTxsSnap] = await Promise.all([
-          db.collection("users").where("tenantId", "==", tid).get(),
-          db.collectionGroup("transactions")
+        let usersSnap, thisMonthTxsDocs = [];
+        try {
+          [usersSnap] = await Promise.all([
+            db.collection("users").where("tenantId", "==", tid).get(),
+          ]);
+          const txSnap = await db.collectionGroup("transactions")
             .where("tenantId", "==", tid)
             .where("createdAt", ">=", thisMonthTs)
             .limit(5000)
-            .get(),
-        ]);
+            .get();
+          thisMonthTxsDocs = txSnap.docs;
+        } catch (qErr) {
+          // Index may still be building — degrade gracefully
+          console.warn(`getSuperAdminDashboard: query failed for tenant ${tid} (index building?)`, String(qErr?.message || qErr));
+          if (!usersSnap) usersSnap = { size: 0 };
+        }
 
         const totalUsers = usersSnap.size;
         const activeThisMonthSet = new Set();
-        for (const txDoc of thisMonthTxsSnap.docs) {
+        for (const txDoc of thisMonthTxsDocs) {
           const uid = txDoc.ref.parent.parent?.id;
           if (uid) activeThisMonthSet.add(uid);
         }
@@ -5280,7 +5288,7 @@ exports.getSuperAdminDashboard = onCall(
           revenueLastMonth:          Math.round(sumMonths(revenueStats, 1)  * 100) / 100,
           revenueLastThreeMonths:    Math.round(sumMonths(revenueStats, 3)  * 100) / 100,
           revenueLastSixMonths:      Math.round(sumMonths(revenueStats, 6)  * 100) / 100,
-          revenueLastYear:           Math.round(sumMonths(revenueStats, 11) * 100) / 100,
+          revenueLastYear:           Math.round(sumMonths(revenueStats, 12) * 100) / 100,
           revenueAllTime:            Math.round((revenueStats.allTime?.revenue || 0) * 100) / 100,
           status:                    tenantData.status ?? "active",
           paymentStatus:             tenantData.paymentStatus ?? null,
