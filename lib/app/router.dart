@@ -35,6 +35,10 @@ import '../core/l10n/s.dart';
 final _auth = FirebaseAuth.instance;
 final _firestore = FirebaseFirestore.instance;
 final navigatorKey = GlobalKey<NavigatorState>();
+// ShellRoute's nested navigator — used by the shell AppBar to pop screens
+// pushed locally (e.g. the wallet info detail page) before falling back
+// to a top-level go_router navigation.
+final shellNavigatorKey = GlobalKey<NavigatorState>();
 
 // Cache tenantId per uid to avoid a Firestore read on every navigation event.
 String? _cachedTenantCheckUid;
@@ -131,6 +135,7 @@ final router = GoRouter(
       },
     ),
     ShellRoute(
+      navigatorKey: shellNavigatorKey,
       pageBuilder: (context, state, child) {
         final loc = state.uri.toString();
         final current = _drawerItemFromLocation(loc);
@@ -231,9 +236,9 @@ PreferredSizeWidget? _buildAppBar(BuildContext context, String location) {
       leading: IconButton(
         icon: Icon(isRtl ? Icons.arrow_forward : Icons.arrow_back),
         onPressed: () {
-          final navigator = Navigator.of(context);
-          if (navigator.canPop()) {
-            navigator.pop();
+          final shellNav = shellNavigatorKey.currentState;
+          if (shellNav != null && shellNav.canPop()) {
+            shellNav.pop();
           } else {
             context.go('/wallet');
           }
@@ -255,12 +260,13 @@ PreferredSizeWidget? _buildAppBar(BuildContext context, String location) {
         icon: Icon(isRtl ? Icons.arrow_forward : Icons.arrow_back),
         onPressed: () {
           // If a nested screen is pushed on top of Métodos de pago (e.g.
-          // the wallet info detail page for Google/Apple Pay), pop it
-          // first so the back arrow returns to the cards list. Only fall
-          // back to Settings when the cards list itself is on top.
-          final navigator = Navigator.of(context);
-          if (navigator.canPop()) {
-            navigator.pop();
+          // the wallet info detail page for Google/Apple Pay), pop the
+          // shell navigator first so the back arrow returns to the cards
+          // list. Only fall back to Settings when the cards list itself
+          // is on top of the shell.
+          final shellNav = shellNavigatorKey.currentState;
+          if (shellNav != null && shellNav.canPop()) {
+            shellNav.pop();
           } else {
             context.go('/settings');
           }
