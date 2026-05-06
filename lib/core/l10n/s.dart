@@ -67,16 +67,16 @@ class S {
   String get skip => _t('Omitir', 'Skip', 'Ignorer', 'דלג');
 
   String get deleteCardLinkedAutoEmptyTitle => _t(
-    'Esta tarjeta tiene vaciado automático activo',
-    'This card has auto-empty active',
-    'Cette carte a un vidage automatique actif',
-    'לכרטיס זה יש ריקון אוטומטי פעיל',
+    'Eliminar tarjeta',
+    'Delete card',
+    'Supprimer la carte',
+    'מחק כרטיס',
   );
   String get deleteCardLinkedAutoEmptyBody => _t(
-    'Si eliminás esta tarjeta, el vaciado automático que la usa se desactivará. Vas a tener que elegir otra tarjeta para reactivarlo. ¿Querés continuar?',
-    'If you delete this card, the auto-empty using it will be turned off. You will need to pick another card to re-enable it. Continue?',
-    'Si vous supprimez cette carte, le vidage automatique qui l\'utilise sera désactivé. Vous devrez choisir une autre carte pour le réactiver. Continuer ?',
-    'אם תמחק את הכרטיס, הריקון האוטומטי שמשתמש בו יושבת. תצטרך לבחור כרטיס אחר כדי להפעיל אותו מחדש. להמשיך?',
+    '¿Seguro que quieres eliminar esta tarjeta? Esta tarjeta tiene el vaciado automático activado.',
+    'Are you sure you want to delete this card? This card has auto-empty enabled.',
+    'Voulez-vous vraiment supprimer cette carte ? Cette carte a le vidage automatique activé.',
+    'האם אתה בטוח שברצונך למחוק כרטיס זה? הכרטיס הזה מוגדר לריקון אוטומטי.',
   );
 
   String get cardAlreadySaved => _t(
