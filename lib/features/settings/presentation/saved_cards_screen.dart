@@ -224,30 +224,23 @@ class _SavedCardsScreenState extends ConsumerState<SavedCardsScreen> {
     if (_processing) return;
     final tr = S.of(context);
 
-    // Pre-flight: is this card linked to any tenant's auto-empty schedule?
-    // If yes, the cron will silently fail to charge after deletion. Warn the
-    // user and clear the schedule (they'll need to pick another card or
-    // re-enable auto-empty later). The query stays scoped to the user's
-    // own tenantState subcollection — Firestore rules forbid cross-user reads.
-    final user = ref.read(firebaseAuthProvider).currentUser;
-    QuerySnapshot<Map<String, dynamic>>? linkedTenantStates;
-    if (user != null) {
-      try {
-        linkedTenantStates = await FirebaseFirestore.instance
-            .collection('users')
-            .doc(user.uid)
-            .collection('tenantState')
-            .where('autoEmptyPaymentMethodId', isEqualTo: pmId)
-            .get();
-      } catch (_) {
-        // Lookup failure → fall through to the standard delete dialog.
-        // Worst case: a linked auto-empty silently breaks until the user
-        // re-picks a card. Better than blocking the delete on a transient
-        // Firestore error.
-      }
-    }
+    // Pre-flight: is this card pinned as the auto-empty PM on the user's
+    // CURRENT tenantState? If yes, the cron will silently fail to charge
+    // after deletion. Warn the user and clear the pin. We deliberately
+    // scope this to the active tenant only — a card might be pinned on
+    // some other tenant the user belongs to, but the modal is about the
+    // tenant they're configuring right now. Being the user's default PM
+    // (`stripeDefaultPaymentMethodId`) does NOT trigger this warning;
+    // only an exact match against `autoEmptyPaymentMethodId` does.
+    final tenantState = ref.read(tenantStateProvider).valueOrNull;
+    final pinnedAutoEmptyPmId =
+        (tenantState?['autoEmptyPaymentMethodId'] as String?)?.trim();
     final hasLinkedAutoEmpty =
-        (linkedTenantStates?.docs.isNotEmpty ?? false);
+        pinnedAutoEmptyPmId != null && pinnedAutoEmptyPmId == pmId;
+    final currentTenantId = ref
+        .read(userProfileProvider)
+        .valueOrNull?['tenantId'] as String?;
+    final user = ref.read(firebaseAuthProvider).currentUser;
 
     if (!mounted) return;
     final bool confirmed;
@@ -307,17 +300,25 @@ class _SavedCardsScreenState extends ConsumerState<SavedCardsScreen> {
 
     setState(() => _processing = true);
     try {
-      // Clear the now-stale autoEmptyPaymentMethodId from any tenantState
-      // that referenced this card BEFORE deleting the PM. If we deleted
-      // first and the cron fired in the gap, it would attempt to charge a
-      // detached PM and fail loudly. Best-effort batch — even if some
-      // updates fail, the actual delete still proceeds.
-      if (hasLinkedAutoEmpty && linkedTenantStates != null) {
-        await Future.wait(linkedTenantStates.docs.map((d) =>
-          d.reference.set({
-            'autoEmptyPaymentMethodId': null,
-            'updatedAt': FieldValue.serverTimestamp(),
-          }, SetOptions(merge: true))));
+      // Clear the now-stale autoEmptyPaymentMethodId on the current
+      // tenantState BEFORE deleting the PM. If we deleted first and the
+      // cron fired in the gap, it would attempt to charge a detached PM
+      // and fail loudly. Best-effort — even if the update fails, the
+      // actual delete still proceeds.
+      if (hasLinkedAutoEmpty && user != null && currentTenantId != null) {
+        try {
+          await FirebaseFirestore.instance
+              .collection('users')
+              .doc(user.uid)
+              .collection('tenantState')
+              .doc(currentTenantId)
+              .set({
+                'autoEmptyPaymentMethodId': null,
+                'updatedAt': FieldValue.serverTimestamp(),
+              }, SetOptions(merge: true));
+        } catch (_) {
+          // Swallow — the delete proceeds either way.
+        }
       }
       // Optimistic UI: drop the card from the local list immediately so the
       // user sees the deletion land instantly, instead of waiting for the

@@ -1279,6 +1279,57 @@ exports.createDonationSubscription = onCall(
       subParams.transfer_data = { destination: tenantConnectAccountId };
     }
 
+    // Pre-cleanup: cancel any existing donation_recurring subscriptions on
+    // this customer before creating a new one. Two reasons:
+    //   1. Stripe rejects new subs in a different currency when the customer
+    //      has any active/incomplete sub in another currency:
+    //        "You cannot combine currencies on a single customer."
+    //      A donor who switched their preferred currency (e.g. USD → EUR)
+    //      otherwise can't ever donate recurring again until the existing
+    //      sub fully expires.
+    //   2. We don't want two simultaneous donation subs anyway — the donor
+    //      pressing "Donar mensual" while already subscribed expects to
+    //      REPLACE the previous amount, not stack a second monthly charge.
+    // Scope tightly to subs whose metadata.purpose === "donation_recurring"
+    // so SaaS billing subscriptions or any other subs on this customer are
+    // untouched. Best-effort: errors during cancel don't block the new sub
+    // (Stripe will reject with a clearer "combine currencies" error if the
+    // cleanup partially fails, which we surface back to the client).
+    try {
+      const existing = await stripe.subscriptions.list({
+        customer: customerId,
+        status: "all",
+        limit: 100,
+      });
+      for (const oldSub of existing.data) {
+        if (oldSub.metadata?.purpose !== "donation_recurring") continue;
+        if (oldSub.status === "canceled" || oldSub.status === "incomplete_expired") continue;
+        try {
+          await stripe.subscriptions.cancel(oldSub.id, {
+            invoice_now: false,
+            prorate: false,
+          });
+          console.info("createDonationSubscription: cancelled prior donation sub", {
+            uid: request.auth.uid,
+            subId: oldSub.id,
+            priorStatus: oldSub.status,
+            priorCurrency: oldSub.currency,
+          });
+        } catch (cancelErr) {
+          console.warn("createDonationSubscription: failed to cancel prior donation sub", {
+            uid: request.auth.uid,
+            subId: oldSub.id,
+            err: cancelErr.message,
+          });
+        }
+      }
+    } catch (listErr) {
+      console.warn("createDonationSubscription: failed to list prior subs", {
+        uid: request.auth.uid,
+        err: listErr.message,
+      });
+    }
+
     console.info("createDonationSubscription: creating sub", {
       uid: request.auth.uid,
       customerId,
@@ -1303,6 +1354,18 @@ exports.createDonationSubscription = onCall(
         code: stripeErr.code,
         param: stripeErr.param,
       });
+      // Translate the most common Stripe rejections to user-friendly Spanish
+      // so the client can render a clean message instead of leaking raw
+      // English Stripe text. Pre-cleanup above usually prevents the
+      // currency-mix error, but a half-cancelled sub or one outside the
+      // donation_recurring scope could still trip it.
+      const msg = String(stripeErr.message || "").toLowerCase();
+      if (msg.includes("combine currencies on a single customer")) {
+        throw new HttpsError(
+          "failed-precondition",
+          "Tenés una suscripción activa en otra moneda. Cancelala desde tu cuenta antes de crear una nueva.",
+        );
+      }
       throw new HttpsError("internal", `sub-create: ${stripeErr.message}`);
     }
 
