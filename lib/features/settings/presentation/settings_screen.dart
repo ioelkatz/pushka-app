@@ -769,8 +769,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   Future<void> _showEditNameSheet(String current, String uid, S tr) async {
     final ctrl = TextEditingController(text: current);
     String? error;
-
-    await showModalBottomSheet<void>(
+    try {
+      await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
       useSafeArea: true,
@@ -876,6 +876,13 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         );
       },
     );
+    } finally {
+      // Delay disposal so the sheet's close animation can finish referencing
+      // the controller. Disposing immediately throws "controller used after
+      // dispose" assertions in debug when the TextField is still in the
+      // dismissal transition.
+      Future.delayed(const Duration(milliseconds: 400), ctrl.dispose);
+    }
   }
 
   /// Preview row for the user's default saved card. Renders the same
@@ -1449,22 +1456,28 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   Future<void> _showEditDialog(String title, String currentValue, Future<void> Function(String) onSave, {String fieldKey = ''}) async {
     final isPhone = fieldKey == 'phone';
 
-    final result = await showDialog<String>(
+    // Hoisted to function scope so the controller can be disposed in finally
+    // — previously created inside the showDialog builder, where it leaked on
+    // dialog dismissal.
+    final controller = TextEditingController(text: currentValue == '-' ? '' : currentValue);
+    String phonePrefix = '+1';
+    String phoneFlag = '\u{1F1FA}\u{1F1F8}';
+
+    if (isPhone) {
+      final match = RegExp(r'^\+\d+').firstMatch(controller.text.trim());
+      if (match != null) {
+        phonePrefix = match.group(0) ?? '+1';
+        controller.text = controller.text.trim().replaceFirst(phonePrefix, '').trim();
+      }
+    }
+
+    String? result;
+    try {
+      result = await showDialog<String>(
       context: context,
       barrierDismissible: true,
       builder: (ctx) {
-        final controller = TextEditingController(text: currentValue == '-' ? '' : currentValue);
         String? errorText;
-        String phonePrefix = '+1';
-        String phoneFlag = '\u{1F1FA}\u{1F1F8}';
-
-        if (isPhone) {
-          final match = RegExp(r'^\+\d+').firstMatch(controller.text.trim());
-          if (match != null) {
-            phonePrefix = match.group(0) ?? '+1';
-            controller.text = controller.text.trim().replaceFirst(phonePrefix, '').trim();
-          }
-        }
 
         return StatefulBuilder(
           builder: (ctx, setDialogState) => AlertDialog(
@@ -1531,6 +1544,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         );
       },
     );
+    } finally {
+      Future.delayed(const Duration(milliseconds: 400), controller.dispose);
+    }
 
     if (result != null) {
       try {
@@ -1716,7 +1732,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     String? errorText;
     bool loading = false;
 
-    final result = await showDialog<bool>(
+    bool? result;
+    try {
+      result = await showDialog<bool>(
       context: context,
       barrierDismissible: true,
       builder: (ctx) => StatefulBuilder(
@@ -1818,8 +1836,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         },
       ),
     );
-
-    ctrl.dispose();
+    } finally {
+      Future.delayed(const Duration(milliseconds: 400), ctrl.dispose);
+    }
     return result == true;
   }
 
@@ -2057,6 +2076,16 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     if (uid != null && tenantId != null && tenantId.isNotEmpty) {
       ref.read(userRepositoryProvider).updatePushkaAmount(uid: uid, tenantId: tenantId, amount: 0)
           .catchError((Object e) => debugPrint('resetPushkaAmount error: $e'));
+      // Currency changed → any saved auto-empty top-off amount is now in
+      // the wrong currency (e.g. saved as 100 MXN, user switches to USD,
+      // cron would charge $100 instead of ~$5). Clear it so the user
+      // re-enters in the new currency before the next cron tick.
+      ref.read(userRepositoryProvider).updateTenantState(
+            uid: uid,
+            tenantId: tenantId,
+            autoEmptyTopOffAmount: 0,
+            autoEmptyTopOffEnabled: false,
+          ).catchError((Object e) => debugPrint('clearTopOff on currency change error: $e'));
     }
     final newPresets = _presetsForCurrency(newCurrency);
     _updateSettings(

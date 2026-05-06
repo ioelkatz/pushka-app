@@ -57,6 +57,12 @@ class StripeService {
     String purpose = 'donation',
     String merchantDisplayName = 'Pushka',
     String? donorMessage,
+    /// For purpose=='pushka_empty' only — the value the donor's pushka
+    /// should be set to AFTER the charge confirms. The webhook (not the
+    /// client) writes this to Firestore atomically with the transaction
+    /// record. Defaults to 0 (full empty); pass a non-zero number for
+    /// partial payments where the leftover stays in the pushka.
+    double? pushkaAmountAfter,
   }) async {
     final sw = Stopwatch()..start();
     final callable = FirebaseFunctions.instance.httpsCallable(
@@ -71,6 +77,8 @@ class StripeService {
         'purpose': purpose,
         if (donorMessage != null && donorMessage.isNotEmpty)
           'donorMessage': donorMessage,
+        if (purpose == 'pushka_empty')
+          'pushkaAmountAfter': pushkaAmountAfter ?? 0,
       });
     } on FirebaseFunctionsException {
       rethrow;

@@ -297,9 +297,15 @@ service cloud.firestore {
           (!('email' in request.resource.data) ||
               (request.resource.data.email is string &&
                   request.resource.data.email.size() <= 254)) &&
+          // displayName: cap length AND require at least one non-whitespace
+          // char. A name of "   " passes the size check but renders as a blank
+          // chip across the UI (donor lists, top-donors leaderboard, history
+          // attribution). Trim happens client-side as cleanup; the rule is
+          // the authoritative server-side floor.
           (!('displayName' in request.resource.data) ||
               (request.resource.data.displayName is string &&
-                  request.resource.data.displayName.size() <= 100)) &&
+                  request.resource.data.displayName.size() <= 100 &&
+                  request.resource.data.displayName.trim().size() >= 1)) &&
           (!('billingEmail' in request.resource.data) ||
               (request.resource.data.billingEmail is string &&
                   request.resource.data.billingEmail.size() <= 254)) &&
@@ -483,6 +489,9 @@ service cloud.firestore {
     match /_monthlyActive/{document=**} {
       allow read, write: if false;
     }
+    match /_backfillRuns/{document=**} {
+      allow read, write: if false;
+    }
 
     // Admin-only config and notes collections
     match /adminConfig/{document} {
@@ -495,7 +504,13 @@ service cloud.firestore {
     }
 
     match /adminData/{uid} {
-      allow read: if isAdmin() || isTenantMember();
+      // adminData stores per-user moderation state (isBlocked, admin notes).
+      // Tenant_admin/collaborator from tenant A previously could read
+      // adminData for users in tenant B (cross-tenant moderation leak).
+      // Tightened to: the user themselves OR super_admin only. Tenant
+      // admins read this via the listAdmins / per-user lookup CFs which
+      // scope by tenant on the server.
+      allow read: if isOwner(uid) || isAdmin();
       allow write: if isAdmin();
     }
 

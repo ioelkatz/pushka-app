@@ -106,7 +106,17 @@ class UserRepository {
       'updatedAt': FieldValue.serverTimestamp(),
     };
 
-    if (displayName != null) data['displayName'] = displayName;
+    if (displayName != null) {
+      // Firestore rule rejects whitespace-only displayName (renders as a
+      // blank chip across leaderboards). Trim here so the rule never fires
+      // for a benign typo and the user gets a clear client-side error
+      // instead of a permission-denied surprise.
+      final trimmed = displayName.trim();
+      if (trimmed.isEmpty) {
+        throw ArgumentError('displayName cannot be empty or whitespace-only.');
+      }
+      data['displayName'] = trimmed;
+    }
     if (billingEmail != null) data['billingEmail'] = billingEmail;
     if (phoneNumber != null) data['phoneNumber'] = phoneNumber;
     if (mailingAddress != null) data['mailingAddress'] = mailingAddress;
