@@ -61,9 +61,13 @@ Future<void> _performDeferredInit() async {
       try {
         final repo = ReminderRepository(FirebaseFirestore.instance);
         final reminders = await repo.fetchAll(user.uid);
-        for (final r in reminders) {
-          await NotificationService.instance.scheduleReminder(r);
-        }
+        // Fan out per-reminder scheduling — each scheduleReminder is itself
+        // a parallelized batch of cancel + zonedSchedule calls. Across many
+        // reminders the outer for-await previously serialized everything
+        // and pushed ~hundreds of milliseconds onto cold start.
+        await Future.wait(
+          reminders.map(NotificationService.instance.scheduleReminder),
+        );
       } catch (e) {
         debugPrint('appDeferredInit: reminder resync failed: $e');
       }

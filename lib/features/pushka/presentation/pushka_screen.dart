@@ -677,6 +677,14 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
   @override
   Widget build(BuildContext context) {
     final tr = S.of(context);
+    // Cache Theme + ColorScheme + brightness once per build. Theme.of() is
+    // an InheritedWidget lookup — cheap, but called 6+ times in this build
+    // tree, and a few of the call sites previously did `Theme.of(context).
+    // colorScheme...Theme.of(context).colorScheme...` patterns that read
+    // worse than just having `cs` and `isDark` available.
+    final theme = Theme.of(context);
+    final cs = theme.colorScheme;
+    final isDark = theme.brightness == Brightness.dark;
 
     // React to tenant switches: when userProfile.tenantId changes (via
     // account_switcher_sheet → switchTenant), repaint from the new
@@ -804,7 +812,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                 style: TextStyle(
                   fontSize: titleSize,
                   fontWeight: FontWeight.w700,
-                  color: Theme.of(context).colorScheme.onSurface,
+                  color: cs.onSurface,
                 ),
                 textAlign: TextAlign.center,
               ),
@@ -812,9 +820,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
               Text(
                 tr.donationGoalReached,
                 style: TextStyle(
-                  color: Theme.of(context).brightness == Brightness.dark
-                      ? Theme.of(context).colorScheme.onSurfaceVariant
-                      : AppTokens.mutedText,
+                  color: isDark ? cs.onSurfaceVariant : AppTokens.mutedText,
                   fontSize: subtitleSize,
                 ),
                 textAlign: TextAlign.center,
@@ -826,7 +832,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                 style: TextStyle(
                   fontSize: titleSize,
                   fontWeight: FontWeight.w700,
-                  color: Theme.of(context).colorScheme.onSurface,
+                  color: cs.onSurface,
                 ),
               ),
               const SizedBox(height: 6),
@@ -835,7 +841,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                 style: TextStyle(
                   fontSize: 13,
                   fontWeight: FontWeight.w500,
-                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  color: cs.onSurfaceVariant,
                 ),
               ),
               const SizedBox(height: 8),
@@ -846,7 +852,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                   child: LinearProgressIndicator(
                     value: fillPercentage,
                     minHeight: 4,
-                    backgroundColor: Theme.of(context).colorScheme.surfaceContainerHighest,
+                    backgroundColor: cs.surfaceContainerHighest,
                     valueColor: const AlwaysStoppedAnimation<Color>(AppTokens.primaryBlue),
                   ),
                 ),

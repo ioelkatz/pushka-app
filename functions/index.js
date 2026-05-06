@@ -687,6 +687,17 @@ exports.createPaymentIntent = onCall(
   // dashboard. Optional; "" when omitted.
   const donorMessage = sanitizeDonorMessage(request.data?.donorMessage);
 
+  // Client-supplied correlation ID — 16-char hex (8 random bytes). Threaded
+  // onto Stripe metadata + every log line emitted from this function so a
+  // single donation can be traced end-to-end (client → CF → Stripe → webhook
+  // → Firestore tx). Validated to a strict shape so it can't smuggle
+  // injection patterns through to log parsers. Generated server-side if
+  // missing — older clients won't break.
+  const rawCid = request.data?.correlationId;
+  const correlationId = (typeof rawCid === "string" && /^[a-f0-9]{16}$/.test(rawCid))
+    ? rawCid
+    : require("crypto").randomBytes(8).toString("hex");
+
   // For pushka_empty the client passes the value to set pushkaAmount to
   // AFTER the charge confirms (webhook owns this write — see C1 audit
   // fix). Validated as a non-negative number; default 0 (full empty).
@@ -955,6 +966,7 @@ exports.createPaymentIntent = onCall(
         // webhook copies this onto the persisted transaction so it appears
         // in History + admin dashboards.
         ...(donorMessage ? { donorMessage } : {}),
+        correlationId,
       },
   };
 
@@ -1997,6 +2009,13 @@ exports.stripeWebhook = onRequest(
             // smuggle control chars into Firestore.
             ...(intent.metadata?.donorMessage
               ? { donorMessage: sanitizeDonorMessage(intent.metadata.donorMessage) }
+              : {}),
+            // Persist the correlation ID stamped by createPaymentIntent so
+            // ops can grep `[cid:xxx]` across CF logs AND find the
+            // associated tx doc in Firestore. Validated shape on read.
+            ...(intent.metadata?.correlationId &&
+              /^[a-f0-9]{16}$/.test(intent.metadata.correlationId)
+              ? { correlationId: intent.metadata.correlationId }
               : {}),
             createdAt: admin.firestore.FieldValue.serverTimestamp(),
           });
@@ -3317,6 +3336,11 @@ async function _runPushkaAutoEmptyTick() {
             source: "pushka",
             purpose: "pushka_auto_empty",
             tenantId: plan.tenantId,
+            // Per-tick correlation ID so ops can grep a single auto-empty
+            // run across processPushkaAutoEmpty + stripeWebhook +
+            // Firestore tx writes. Generated server-side (no client
+            // involved in this flow).
+            correlationId: require("crypto").randomBytes(8).toString("hex"),
             ...(plan.tenantConnectAccountId
               ? { connectAccountId: plan.tenantConnectAccountId }
               : {}),
@@ -3347,14 +3371,41 @@ async function _runPushkaAutoEmptyTick() {
             type: stripeErr?.type,
           });
 
-          // PM was deleted between schedule-set and cron tick: clear the
-          // pinned PM so the user's NEW default takes over on the next run
-          // (otherwise the cron keeps charging a ghost PM forever and the
-          // user gets misleading "card declined" notifications).
-          // Triggered for both Stripe error codes Stripe uses for missing
-          // resources (`resource_missing`) and the legacy `payment_method_unactivated`.
-          const pmGone = stripeErr?.code === "resource_missing" ||
-            stripeErr?.code === "payment_method_unactivated";
+          // PM was deleted/detached/tainted between schedule-set and cron
+          // tick: clear the pinned PM so the user's NEW default takes over
+          // on the next run (otherwise the cron keeps charging a ghost PM
+          // forever and the user gets misleading "card declined" notifications).
+          //
+          // Detect three flavors:
+          //   - `resource_missing` — PM was detached/deleted via Stripe API
+          //   - `payment_method_unactivated` — legacy code, same idea
+          //   - StripeInvalidRequestError with a message indicating the PM
+          //     is unusable off-session because it was used in a destination
+          //     charge to a Connect account WITHOUT being pre-attached to a
+          //     Customer (Stripe taints the PM after such a charge). Real
+          //     prod log seen 2026-05-06 on tenant 'chabad-buenosaires':
+          //     "...shared with a connected account without Customer
+          //     attachment, or was detached from a Customer..." — code is
+          //     undefined for this case so we have to substring-match.
+          const pmGoneMsg = String(stripeErr?.message || "").toLowerCase();
+          // Specific failure-reason label so dashboards / metrics can
+          // distinguish "user deleted card" from "card tainted by prior
+          // Connect destination charge". Both remediate the same way
+          // (clear pinned PM) but the second case requires the user to
+          // re-save the card via SetupIntent — generic "card declined"
+          // notification is misleading.
+          let pmGoneReason = null;
+          if (stripeErr?.code === "resource_missing") {
+            pmGoneReason = "pm_deleted";
+          } else if (stripeErr?.code === "payment_method_unactivated") {
+            pmGoneReason = "pm_unactivated";
+          } else if (
+            pmGoneMsg.includes("detached from a customer") ||
+            pmGoneMsg.includes("without customer attachment")
+          ) {
+            pmGoneReason = "pm_unusable_offsession";
+          }
+          const pmGone = pmGoneReason !== null;
           if (pmGone) {
             await stateRef.set({
               autoEmptyPaymentMethodId: admin.firestore.FieldValue.delete(),
@@ -3370,16 +3421,24 @@ async function _runPushkaAutoEmptyTick() {
             ),
             autoEmptyConsecutiveFailures: admin.firestore.FieldValue.increment(1),
             autoEmptyLastFailureAt: admin.firestore.FieldValue.serverTimestamp(),
-            autoEmptyLastFailureCode: pmGone
-              ? "pm_deleted"
-              : String(stripeErr?.code || "unknown"),
+            autoEmptyLastFailureCode: pmGoneReason ?? String(stripeErr?.code || "unknown"),
             updatedAt: admin.firestore.FieldValue.serverTimestamp(),
           }, { merge: true });
 
           // Notify user once per failure.
           const failLang = await getUserLanguage(uid);
           const failTitles = { es: "Vaciado fallido", en: "Empty failed", fr: "Vidage échoué", he: "הריקון נכשל" };
-          const failBodies = {
+          // Two distinct messages — the generic one for declines/expired
+          // cards, and a more specific one for "your card cannot be reused
+          // off-session" (Stripe Connect PM-tainting). The latter requires
+          // the user to re-save their card via the Saved Cards screen so
+          // it gets attached to the Customer with `usage: 'off_session'`.
+          const failBodies = pmGone ? {
+            es: "Tu tarjeta no se puede usar para vaciados automáticos. Volvé a guardarla en Configuración → Tarjetas guardadas.",
+            en: "Your card can't be used for automatic empties. Please re-save it via Settings → Saved Cards.",
+            fr: "Votre carte ne peut pas être utilisée pour les vidages automatiques. Réenregistrez-la via Paramètres → Cartes enregistrées.",
+            he: "לא ניתן להשתמש בכרטיס שלך לריקונים אוטומטיים. שמור אותו מחדש דרך הגדרות → כרטיסים שמורים.",
+          } : {
             es: "No pudimos cobrar tu tarjeta para el vaciado automático. Revisá tu tarjeta en Configuración.",
             en: "We couldn't charge your card for the automatic empty. Please check your card in Settings.",
             fr: "Nous n'avons pas pu débiter votre carte pour le vidage automatique. Vérifiez votre carte dans Paramètres.",
@@ -5528,6 +5587,22 @@ exports.updateTenant = onCall(
         val = val.trim();
         if (nullableStringFields.has(key) && val === "") val = null;
         if (hexColorFields.has(key) && !hexRe.test(val)) continue; // skip invalid hex
+      }
+      // Mirror createTenant's defensive bounds on financial fields. A
+      // commissionRate >= 1 would let the platform skim 100 %+ of donations;
+      // an unbounded planPrice could be set to e.g. 10 ** 9 by accident.
+      // Tenant_admin already can't write these (filtered by `allowed`), but
+      // a super_admin typo here would silently corrupt billing for every
+      // donor of this tenant — fail loud instead.
+      if (key === "commissionRate") {
+        if (typeof val !== "number" || !Number.isFinite(val) || val < 0 || val > 0.10) {
+          throw new HttpsError("invalid-argument", "commissionRate debe ser un número entre 0 y 0.10 (0 a 10 %).");
+        }
+      }
+      if (key === "planPrice" || key === "setupFee" || key === "subscriptionMonthlyAmount") {
+        if (val !== null && (typeof val !== "number" || !Number.isFinite(val) || val < 0 || val > 100000)) {
+          throw new HttpsError("invalid-argument", `${key} inválido.`);
+        }
       }
       patch[key] = val;
     }

@@ -236,9 +236,34 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
             },
             loading: () => const ShimmerTileList(count: 8),
             error: (error, _) => Center(
-              child: Text(
-                _tr.errorLoadingHistory,
-                style: TextStyle(color: cs.onSurfaceVariant),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 32),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.cloud_off_rounded, size: 48, color: cs.onSurfaceVariant),
+                    const SizedBox(height: 12),
+                    Text(
+                      _tr.errorLoadingHistory,
+                      style: TextStyle(color: cs.onSurfaceVariant),
+                      textAlign: TextAlign.center,
+                    ),
+                    const SizedBox(height: 16),
+                    OutlinedButton.icon(
+                      icon: const Icon(Icons.refresh, size: 18),
+                      label: Text(_tr.retry),
+                      // Invalidate forces the StreamProvider to re-subscribe
+                      // to Firestore. The old stream's error state is
+                      // cleared and the loading shimmer paints while the
+                      // new connection settles. Without this, a transient
+                      // network failure leaves the user stuck on the error
+                      // pane until they manually navigate away.
+                      onPressed: () {
+                        ref.invalidate(userTransactionsProvider);
+                      },
+                    ),
+                  ],
+                ),
               ),
             ),
           ),
