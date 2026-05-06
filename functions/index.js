@@ -654,10 +654,11 @@ exports.createPaymentIntent = onCall(
   // (customers.retrieve + paymentMethods.list) plus N more updates/detaches —
   // ~400-800ms on the critical path. State only changes when a card is
   // added or removed, so we cache `_lastPmDedupePassAt` on the user doc and
-  // skip if < 6h old. Card add/remove flows clear the cache so the next
-  // payment re-runs the pass.
+  // skip if < 2h old (was 6h — too long for power users adding multiple
+  // cards in a session). Card add/remove flows clear the cache so the
+  // next payment re-runs the pass.
   const lastDedupeAt = userData._lastPmDedupePassAt?.toMillis?.() ?? 0;
-  const dedupeStale = (Date.now() - lastDedupeAt) > (6 * 60 * 60 * 1000);
+  const dedupeStale = (Date.now() - lastDedupeAt) > (2 * 60 * 60 * 1000);
   if (dedupeStale) try {
     const [customer, pmList] = await Promise.all([
       stripe.customers.retrieve(customerId),
@@ -1369,7 +1370,7 @@ exports.listSavedCards = onCall(
     // detach calls (in-memory dedupe still runs above for safety against
     // races, but it's a no-op when state is clean).
     const lastDedupeAt = userData._lastPmDedupePassAt?.toMillis?.() ?? 0;
-    const dedupeStale = (Date.now() - lastDedupeAt) > (6 * 60 * 60 * 1000);
+    const dedupeStale = (Date.now() - lastDedupeAt) > (2 * 60 * 60 * 1000);
     if (detachQueue.length > 0 && dedupeStale) {
       console.info("listSavedCards: deduping fingerprint dupes", {
         uid, customerId,
@@ -1546,19 +1547,24 @@ exports.deletePaymentMethod = onCall(
         .slice()
         .sort((a, b) => (b.created || 0) - (a.created || 0))[0] || null;
 
+      // Run Stripe + Firestore promotion writes in parallel — they're
+      // independent, each ~300-600ms; serial execution adds an avoidable
+      // round trip to the delete-default-card flow.
+      const promotions = [];
       if (wasStripeDefault) {
-        await stripe.customers.update(customerId, {
+        promotions.push(stripe.customers.update(customerId, {
           invoice_settings: { default_payment_method: next?.id || null },
-        });
+        }));
       }
       if (wasFirestoreDefault) {
-        await userRef.set({
+        promotions.push(userRef.set({
           stripeDefaultPaymentMethodId: next?.id || null,
           stripeDefaultPaymentMethodLast4: next?.card?.last4 || null,
           stripeDefaultPaymentMethodBrand: next?.card?.brand || null,
           updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-        }, { merge: true });
+        }, { merge: true }));
       }
+      if (promotions.length > 0) await Promise.all(promotions);
       if (next) {
         newDefault = {
           id: next.id,
@@ -1615,23 +1621,24 @@ exports.setDefaultPaymentMethod = onCall(
       throw new HttpsError("permission-denied", "Este método de pago no pertenece a tu cuenta.");
     }
 
-    // Update Stripe Customer's default payment method
-    await stripe.customers.update(customerId, {
-      invoice_settings: { default_payment_method: pmId },
-    });
-
-    // Cache brand/last4 in Firestore for display in settings.
-    // Also clear the dedupe cache: the dedupe pass picks a "winner" per
-    // fingerprint group based on which card is the default — switching
-    // defaults can change the winner, so the next createPaymentIntent
-    // should re-run the pass instead of relying on the cached state.
-    await userRef.set({
-      stripeDefaultPaymentMethodId: pmId,
-      stripeDefaultPaymentMethodLast4: pm.card?.last4 || null,
-      stripeDefaultPaymentMethodBrand: pm.card?.brand || null,
-      _lastPmDedupePassAt: admin.firestore.FieldValue.delete(),
-      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-    }, { merge: true });
+    // Stripe customer update + Firestore cache write are independent and
+    // each ~300-600ms; running them in parallel saves a full round trip
+    // off the critical path. The dedupe cache is cleared because the
+    // dedupe pass picks a "winner" per fingerprint group based on which
+    // card is the default — switching defaults can change the winner, so
+    // the next createPaymentIntent re-runs the pass.
+    await Promise.all([
+      stripe.customers.update(customerId, {
+        invoice_settings: { default_payment_method: pmId },
+      }),
+      userRef.set({
+        stripeDefaultPaymentMethodId: pmId,
+        stripeDefaultPaymentMethodLast4: pm.card?.last4 || null,
+        stripeDefaultPaymentMethodBrand: pm.card?.brand || null,
+        _lastPmDedupePassAt: admin.firestore.FieldValue.delete(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      }, { merge: true }),
+    ]);
 
     return { success: true };
   }

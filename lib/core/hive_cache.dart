@@ -164,4 +164,70 @@ class HiveCache {
     if (v is String) return v;
     return null;
   }
+
+  // ---------------------------------------------------------------------------
+  // Saved cards (per-uid) — short-lived cache so reopening Métodos de pago
+  // doesn't pay the full Stripe round trip every time. The CF call still
+  // happens in the background to refresh the list; the cache just lets
+  // the UI render immediately on the second+ visit within the TTL window.
+  // ---------------------------------------------------------------------------
+
+  static const _keySavedCards = 'saved_cards';
+  static const _keySavedCardsAt = 'saved_cards_at';
+  static const _keySavedCardsDefault = 'saved_cards_default';
+  static const Duration savedCardsTtl = Duration(minutes: 10);
+
+  Future<void> saveSavedCards({
+    required String uid,
+    required List<Map<String, dynamic>> cards,
+    required String? defaultPmId,
+  }) async {
+    if (!_initialized) return;
+    // Hive stores raw maps; strip non-primitive values to avoid type errors
+    // on read-back.
+    final clean = cards
+        .map((c) => <String, dynamic>{
+              for (final e in c.entries)
+                if (e.value == null ||
+                    e.value is num ||
+                    e.value is String ||
+                    e.value is bool)
+                  e.key: e.value,
+            })
+        .toList();
+    await _box!.put('${uid}_$_keySavedCards', clean);
+    await _box!.put('${uid}_$_keySavedCardsAt', DateTime.now().millisecondsSinceEpoch);
+    await _box!.put('${uid}_$_keySavedCardsDefault', defaultPmId);
+  }
+
+  /// Returns (cards, defaultPmId, fresh) or null if no cache.
+  /// `fresh` is true when the cache was written within [savedCardsTtl].
+  ({List<Map<String, dynamic>> cards, String? defaultPmId, bool fresh})?
+      loadSavedCards(String uid) {
+    if (!_initialized) return null;
+    final raw = _box!.get('${uid}_$_keySavedCards');
+    final atMs = _box!.get('${uid}_$_keySavedCardsAt');
+    final defaultPmId = _box!.get('${uid}_$_keySavedCardsDefault');
+    if (raw is! List || atMs is! int) return null;
+    final cards = raw
+        .whereType<Map>()
+        .map((m) => <String, dynamic>{
+              for (final e in m.entries)
+                if (e.key is String) e.key as String: e.value,
+            })
+        .toList();
+    final ageMs = DateTime.now().millisecondsSinceEpoch - atMs;
+    return (
+      cards: cards,
+      defaultPmId: defaultPmId is String ? defaultPmId : null,
+      fresh: ageMs < savedCardsTtl.inMilliseconds,
+    );
+  }
+
+  Future<void> clearSavedCards(String uid) async {
+    if (!_initialized) return;
+    await _box!.delete('${uid}_$_keySavedCards');
+    await _box!.delete('${uid}_$_keySavedCardsAt');
+    await _box!.delete('${uid}_$_keySavedCardsDefault');
+  }
 }

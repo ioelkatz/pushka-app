@@ -1302,19 +1302,15 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
   }
 
   Expanded _moneyBtn(String label, VoidCallback onTap) {
-    final cs = Theme.of(context).colorScheme;
-    final isDark = Theme.of(context).brightness == Brightness.dark;
     return Expanded(
-      child: InkWell(
-        borderRadius: BorderRadius.circular(12),
-        onTap: onTap,
-        child: Container(
-          alignment: Alignment.center,
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 14),
-          decoration: BoxDecoration(
-            color: isDark ? cs.surface : Colors.white,
-            border: Border.all(color: cs.outline),
-            borderRadius: BorderRadius.circular(12),
+      child: SizedBox(
+        height: 44,
+        child: OutlinedButton(
+          onPressed: onTap,
+          style: OutlinedButton.styleFrom(
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            textStyle: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14),
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
           ),
           child: FittedBox(
             fit: BoxFit.scaleDown,
@@ -1322,11 +1318,6 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
               label,
               maxLines: 1,
               softWrap: false,
-              style: const TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.w500,
-                color: AppTokens.primaryBlue,
-              ),
             ),
           ),
         ),
