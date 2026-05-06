@@ -78,7 +78,6 @@ void main() {
 
       final data = (await fakeFirestore.collection('users').doc(mockUser.uid).get()).data()!;
       expect(data['soundEnabled'], true);
-      expect(data['coinJingleEnabled'], true);
       expect(data['vibrationEnabled'], true);
       expect(data['partialPaymentsEnabled'], false);
       expect(data['biometricAuthenticationEnabled'], false);
@@ -303,7 +302,6 @@ void main() {
       expect(data['pushkaGoal'], 7200.0);
       expect(data['presetAmount'], 18.0);
       expect(data['soundEnabled'], false);
-      expect(data['coinJingleEnabled'], false);
       expect(data['vibrationEnabled'], true);
       expect(data['partialPaymentsEnabled'], true);
       expect(data['currencyCountry'], 'Israel');
