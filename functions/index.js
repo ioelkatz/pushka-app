@@ -1304,17 +1304,17 @@ exports.createDonationSubscription = onCall(
       for (const oldSub of existing.data) {
         if (oldSub.metadata?.purpose !== "donation_recurring") continue;
         const status = oldSub.status;
-        if (status === "active" || status === "trialing" || status === "past_due") {
-          // Active — refuse to silently end it. The donor must cancel
-          // manually if they want to start a new one.
-          throw new HttpsError(
-            "failed-precondition",
-            "Ya tenés una donación mensual activa. Cancelala primero desde tus suscripciones antes de crear una nueva.",
-          );
-        }
+        // Active subs: leave alone. The donor explicitly chose to add another
+        // recurring donation (e.g. to a different tenant, or a top-up to the
+        // same one) — that's their right. The "Mis donaciones recurrentes"
+        // screen lets them cancel any unwanted ones.
         if (status !== "incomplete" && status !== "incomplete_expired") {
-          continue; // canceled, paused, unpaid, or unknown — leave alone
+          continue;
         }
+        // Abandoned attempts: the donor opened PaymentSheet once and dismissed
+        // it without confirming. Safe to cancel — frees the slot so retries
+        // (potentially in a different currency) don't trip "cannot combine
+        // currencies".
         try {
           await stripe.subscriptions.cancel(oldSub.id, {
             invoice_now: false,
@@ -1335,8 +1335,6 @@ exports.createDonationSubscription = onCall(
         }
       }
     } catch (cleanupErr) {
-      // Re-throw HttpsError (the active-sub guard); only swallow Stripe API errors.
-      if (cleanupErr instanceof HttpsError) throw cleanupErr;
       console.warn("createDonationSubscription: cleanup pass failed", {
         uid: request.auth.uid,
         err: cleanupErr.message,
@@ -1422,6 +1420,127 @@ exports.createDonationSubscription = onCall(
       customerId,
       ephemeralKeySecret,
     };
+  },
+);
+
+// ---------------------------------------------------------------------------
+// Donation subscriptions — list + cancel for the calling user
+// ---------------------------------------------------------------------------
+
+exports.listDonationSubscriptions = onCall(
+  { secrets: [stripeSecret], enforceAppCheck: true },
+  async (request) => {
+    if (!request.auth?.uid) {
+      throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
+    }
+    if (!stripeSecret.value()) {
+      throw new HttpsError("failed-precondition", "Stripe no configurado.");
+    }
+
+    const userSnap = await db.collection("users").doc(request.auth.uid).get();
+    const customerId = String(userSnap.data()?.stripeCustomerId || "").trim();
+    if (!customerId) return { subscriptions: [] };
+
+    const stripe = require("stripe")(stripeSecret.value(), { timeout: 15000 });
+    const subs = await stripe.subscriptions.list({
+      customer: customerId,
+      status: "all",
+      limit: 100,
+    });
+
+    const ACTIVE_STATUSES = new Set(["active", "trialing", "past_due"]);
+    const tenantCache = new Map();
+    const out = [];
+    for (const s of subs.data) {
+      if (s.metadata?.purpose !== "donation_recurring") continue;
+      if (!ACTIVE_STATUSES.has(s.status)) continue;
+      const item = s.items?.data?.[0];
+      const price = item?.price;
+      const tenantId = s.metadata?.tenantId || "";
+      let tenantName = "";
+      let tenantAppName = "";
+      if (tenantId) {
+        if (!tenantCache.has(tenantId)) {
+          try {
+            const tSnap = await db.collection("tenants").doc(tenantId).get();
+            const td = tSnap.data() || {};
+            tenantCache.set(tenantId, {
+              name: String(td.name || ""),
+              appName: String(td.appName || ""),
+            });
+          } catch (_) {
+            tenantCache.set(tenantId, { name: "", appName: "" });
+          }
+        }
+        const c = tenantCache.get(tenantId);
+        tenantName = c.name;
+        tenantAppName = c.appName;
+      }
+      out.push({
+        id: s.id,
+        status: s.status,
+        currency: (price?.currency || s.currency || "").toLowerCase(),
+        amount: Number(price?.unit_amount || 0),
+        interval: price?.recurring?.interval || "month",
+        currentPeriodEnd: s.current_period_end ? s.current_period_end * 1000 : null,
+        tenantId,
+        tenantName,
+        tenantAppName,
+        cancelAtPeriodEnd: !!s.cancel_at_period_end,
+      });
+    }
+    return { subscriptions: out };
+  },
+);
+
+exports.cancelDonationSubscription = onCall(
+  { secrets: [stripeSecret], enforceAppCheck: true },
+  async (request) => {
+    if (!request.auth?.uid) {
+      throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
+    }
+    if (!stripeSecret.value()) {
+      throw new HttpsError("failed-precondition", "Stripe no configurado.");
+    }
+    await enforceRateLimit(request.auth.uid, "cancelDonationSubscription", 20, 3600);
+
+    const subId = String(request.data?.subscriptionId || "").trim();
+    if (!subId.startsWith("sub_")) {
+      throw new HttpsError("invalid-argument", "ID de suscripción inválido.");
+    }
+
+    const stripe = require("stripe")(stripeSecret.value(), { timeout: 15000 });
+    let sub;
+    try {
+      sub = await stripe.subscriptions.retrieve(subId);
+    } catch (e) {
+      throw new HttpsError("not-found", "Suscripción no encontrada.");
+    }
+
+    // Ownership + scope guard: only the owner can cancel, and only
+    // donation_recurring subs (never tenant SaaS subs) via this endpoint.
+    if (sub.metadata?.uid !== request.auth.uid) {
+      throw new HttpsError("permission-denied", "No tenés permiso para cancelar esta suscripción.");
+    }
+    if (sub.metadata?.purpose !== "donation_recurring") {
+      throw new HttpsError("failed-precondition", "Esta suscripción no se puede cancelar desde acá.");
+    }
+
+    if (sub.status === "canceled") {
+      return { ok: true, alreadyCanceled: true };
+    }
+
+    try {
+      await stripe.subscriptions.cancel(subId, { invoice_now: false, prorate: false });
+    } catch (e) {
+      console.error("cancelDonationSubscription: stripe cancel failed", {
+        uid: request.auth.uid,
+        subId,
+        err: e.message,
+      });
+      throw new HttpsError("internal", "No se pudo cancelar la suscripción.");
+    }
+    return { ok: true };
   },
 );
 
