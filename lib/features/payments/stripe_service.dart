@@ -1,9 +1,21 @@
+import 'dart:math';
+
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_stripe/flutter_stripe.dart';
 
 import '../../config/stripe_config.dart';
 import '../../firebase_options.dart';
+
+/// 16-char hex correlation ID — generated client-side at the start of a
+/// payment flow and threaded through createPaymentIntent → Stripe metadata
+/// → webhook → Firestore tx doc. Lets ops trace a single donation across
+/// every layer in Cloud Logging by grepping `[cid:abcd1234ef567890]`.
+String _newCorrelationId() {
+  final r = Random.secure();
+  final bytes = List<int>.generate(8, (_) => r.nextInt(256));
+  return bytes.map((b) => b.toRadixString(16).padLeft(2, '0')).join();
+}
 
 class StripeServiceException implements Exception {
   final String code;
@@ -65,6 +77,7 @@ class StripeService {
     double? pushkaAmountAfter,
   }) async {
     final sw = Stopwatch()..start();
+    final cid = _newCorrelationId();
     final callable = FirebaseFunctions.instance.httpsCallable(
       'createPaymentIntent',
     );
@@ -75,6 +88,7 @@ class StripeService {
         'currency': currency.toLowerCase(),
         'customerEmail': customerEmail,
         'purpose': purpose,
+        'correlationId': cid,
         if (donorMessage != null && donorMessage.isNotEmpty)
           'donorMessage': donorMessage,
         if (purpose == 'pushka_empty')
@@ -85,7 +99,7 @@ class StripeService {
     } catch (_) {
       throw const StripeServiceException('network-error');
     }
-    debugPrint('StripeService.pay: createPaymentIntent CF returned in ${sw.elapsedMilliseconds}ms');
+    debugPrint('StripeService.pay[cid:$cid]: createPaymentIntent CF returned in ${sw.elapsedMilliseconds}ms');
     sw.reset();
 
     final clientSecret = result.data['clientSecret'] as String?;

@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import 'package:cached_network_image/cached_network_image.dart';
+
 import '../../../app/theme/app_tokens.dart';
 import '../../../core/hive_cache.dart';
 import '../../../core/l10n/s.dart';
@@ -248,12 +250,16 @@ class _OrgAvatar extends StatelessWidget {
       ),
       clipBehavior: Clip.antiAlias,
       child: logoUrl != null && logoUrl!.isNotEmpty
-          ? Image.network(
-              logoUrl!,
+          ? CachedNetworkImage(
+              imageUrl: logoUrl!,
               width: 40,
               height: 40,
               fit: BoxFit.cover,
-              errorBuilder: (_, _, _) => _initial(context),
+              errorWidget: (_, _, _) => _initial(context),
+              // Don't show a placeholder spinner — for a 40px circle the
+              // flicker between fallback initial and decoded image is more
+              // jarring than just showing the initial briefly.
+              placeholder: (_, _) => _initial(context),
             )
           : _initial(context),
     );

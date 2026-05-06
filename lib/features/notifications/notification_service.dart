@@ -386,6 +386,14 @@ class NotificationService {
         ? reminder.subtitleSecondaryFor(tr)
         : reminder.subtitleSecondary;
 
+    // Build the schedule plan up-front (cheap, in-memory) then fan out the
+    // platform-channel calls in parallel. Sequential awaits used to take
+    // ~7×2 = 14 round-trips per reminder; with several reminders + multi-
+    // language scheduling each containing inner loops, the cumulative wait
+    // dominated app start. Future.wait fans them out in one batch — the
+    // plugin's underlying NotificationManager handles concurrent inserts
+    // safely (each notification has a distinct integer ID via _notificationId).
+    final futures = <Future<void>>[];
     var index = 0;
     for (final weekday in reminder.days) {
       final scheduleTime = _nextInstanceOfWeekday(
@@ -393,14 +401,13 @@ class NotificationService {
         reminder.time,
         reminder.minutesBefore,
       );
-      await _safeZonedSchedule(
+      futures.add(_safeZonedSchedule(
         id: _notificationId(reminder.id, index++),
         title: reminder.title,
         body: body,
         when: scheduleTime,
-      );
+      ));
     }
-
     if (reminder.secondTime != null && reminder.secondDays.isNotEmpty) {
       for (final weekday in reminder.secondDays) {
         final scheduleTime = _nextInstanceOfWeekday(
@@ -408,14 +415,15 @@ class NotificationService {
           reminder.secondTime!,
           null,
         );
-        await _safeZonedSchedule(
+        futures.add(_safeZonedSchedule(
           id: _notificationId(reminder.id, index++),
           title: reminder.title,
           body: bodySecondary ?? body,
           when: scheduleTime,
-        );
+        ));
       }
     }
+    await Future.wait(futures);
   }
 
   /// Wraps `zonedSchedule` so an `exact_alarms_not_permitted` PlatformException
@@ -466,10 +474,16 @@ class NotificationService {
   }
 
   Future<void> cancelReminder(Reminder reminder) async {
-    const maxSlots = 14; // 7 dias x 2 horarios
-    for (var i = 0; i < maxSlots; i++) {
-      await _localNotifications.cancel(_notificationId(reminder.id, i));
-    }
+    // 14 (7 days × 2 horarios) cancel calls fanned out in parallel — saves
+    // ~14× the per-call platform-channel latency on app start, where the
+    // app_initializer rescheduler cancels-then-reschedules every saved
+    // reminder. cancel() is idempotent on a non-existent id, so concurrent
+    // calls are safe.
+    const maxSlots = 14;
+    await Future.wait([
+      for (var i = 0; i < maxSlots; i++)
+        _localNotifications.cancel(_notificationId(reminder.id, i)),
+    ]);
   }
 
   int _notificationId(String reminderId, int index) {

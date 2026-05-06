@@ -1,3 +1,4 @@
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -171,10 +172,11 @@ class _OrgLogo extends StatelessWidget {
       ),
       clipBehavior: Clip.antiAlias,
       child: (config.logoUrl != null && config.logoUrl!.isNotEmpty)
-          ? Image.network(
-              config.logoUrl!,
+          ? CachedNetworkImage(
+              imageUrl: config.logoUrl!,
               fit: BoxFit.cover,
-              errorBuilder: (_, _, _) => _initial(config.appName.isNotEmpty ? config.appName : config.name, size),
+              errorWidget: (_, _, _) => _initial(config.appName.isNotEmpty ? config.appName : config.name, size),
+              placeholder: (_, _) => _initial(config.appName.isNotEmpty ? config.appName : config.name, size),
             )
           : _initial(config.appName.isNotEmpty ? config.appName : config.name, size),
     );

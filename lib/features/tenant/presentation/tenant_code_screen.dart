@@ -1,3 +1,4 @@
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -367,10 +368,11 @@ class _Logo extends StatelessWidget {
       ),
       clipBehavior: Clip.antiAlias,
       child: tenant.logoUrl != null
-          ? Image.network(
-              tenant.logoUrl!,
+          ? CachedNetworkImage(
+              imageUrl: tenant.logoUrl!,
               fit: BoxFit.cover,
-              errorBuilder: (_, _, _) => _LogoFallback(name: tenant.name, size: size),
+              errorWidget: (_, _, _) => _LogoFallback(name: tenant.name, size: size),
+              placeholder: (_, _) => _LogoFallback(name: tenant.name, size: size),
             )
           : _LogoFallback(name: tenant.name, size: size),
     );
@@ -687,10 +689,16 @@ class _PreviewCard extends StatelessWidget {
             ),
             clipBehavior: Clip.antiAlias,
             child: (config.logoUrl != null && config.logoUrl!.isNotEmpty)
-                ? Image.network(config.logoUrl!, fit: BoxFit.cover,
-                    errorBuilder: (ctx, err, st) => const Icon(
+                ? CachedNetworkImage(
+                    imageUrl: config.logoUrl!,
+                    fit: BoxFit.cover,
+                    errorWidget: (_, _, _) => const Icon(
                       Icons.business_rounded, color: Colors.white, size: 26,
-                    ))
+                    ),
+                    placeholder: (_, _) => const Icon(
+                      Icons.business_rounded, color: Colors.white, size: 26,
+                    ),
+                  )
                 : const Icon(Icons.business_rounded, color: Colors.white, size: 26),
           ),
           const SizedBox(width: AppTokens.spaceLg),
