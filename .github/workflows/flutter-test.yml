@@ -24,6 +24,39 @@ jobs:
       - name: Install dependencies
         run: flutter pub get
 
+      # The per-env Firebase option files are gitignored (each dev generates
+      # their own with flutterfire configure — see CLAUDE.md). CI doesn't
+      # need real keys to run static analysis or unit tests, just files that
+      # expose the symbols `lib/firebase_options.dart` imports. Stubs do.
+      - name: Generate Firebase option stubs for analysis
+        run: |
+          cat > lib/firebase_options_dev.dart <<'STUB'
+          import 'package:firebase_core/firebase_core.dart' show FirebaseOptions;
+
+          class DevFirebaseOptions {
+            static const FirebaseOptions _stub = FirebaseOptions(
+              apiKey: 'ci-stub',
+              appId: 'ci-stub',
+              messagingSenderId: 'ci-stub',
+              projectId: 'ci-stub',
+            );
+            static FirebaseOptions get currentPlatform => _stub;
+          }
+          STUB
+          cat > lib/firebase_options_prod.dart <<'STUB'
+          import 'package:firebase_core/firebase_core.dart' show FirebaseOptions;
+
+          class ProdFirebaseOptions {
+            static const FirebaseOptions _stub = FirebaseOptions(
+              apiKey: 'ci-stub',
+              appId: 'ci-stub',
+              messagingSenderId: 'ci-stub',
+              projectId: 'ci-stub',
+            );
+            static FirebaseOptions get currentPlatform => _stub;
+          }
+          STUB
+
       - name: Verify formatting
         run: dart format --output=none --set-exit-if-changed lib test
         continue-on-error: true # warning-only for now; remove once codebase is fully formatted
