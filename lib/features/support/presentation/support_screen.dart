@@ -4,6 +4,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../../../app/theme/app_tokens.dart';
 import '../../../core/l10n/s.dart';
+import '../../pushka/presentation/building_770_widget.dart';
 
 class SupportScreen extends StatelessWidget {
   const SupportScreen({super.key});
@@ -14,7 +15,6 @@ class SupportScreen extends StatelessWidget {
     final cs = Theme.of(context).colorScheme;
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final red = isDark ? cs.primary : const Color(0xFFE05A4F);
-    const green = Color(0xFF25D366);
 
     return SingleChildScrollView(
       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
@@ -73,7 +73,7 @@ class SupportScreen extends StatelessWidget {
                     const SizedBox(height: 16),
                     Align(
                       alignment: AlignmentDirectional.centerEnd,
-                      child: _buildPushkaIllustration(),
+                      child: const SizedBox(width: 80, height: 80, child: Building770Widget(fillFraction: 0)),
                     ),
                   ],
                 );
@@ -84,7 +84,7 @@ class SupportScreen extends StatelessWidget {
                 children: [
                   Expanded(child: textBlock),
                   const SizedBox(width: 16),
-                  _buildPushkaIllustration(),
+                  const SizedBox(width: 80, height: 80, child: Building770Widget(fillFraction: 0)),
                 ],
               );
             },
@@ -131,49 +131,7 @@ class SupportScreen extends StatelessWidget {
             onTap: () => _launchEmail(context),
             child: Text(
               'jymmexico@gmail.com',
-              style: TextStyle(
-                fontSize: 16,
-                color: red,
-                decoration: TextDecoration.underline,
-              ),
-            ),
-          ),
-          const SizedBox(height: 12),
-
-          // Phone
-          Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              InkWell(
-                onTap: () => _launchPhone(context),
-                child: Text(
-                  '+1 (718) 774-5446',
-                  style: TextStyle(
-                    fontSize: 16,
-                    color: red,
-                    decoration: TextDecoration.underline,
-                  ),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 16),
-
-          // WhatsApp Icon
-          InkWell(
-            onTap: () => _launchWhatsApp(context),
-            child: Container(
-              width: 40,
-              height: 40,
-              decoration: BoxDecoration(
-                color: green,
-                shape: BoxShape.circle,
-              ),
-              child: const Icon(
-                Icons.chat,
-                color: Colors.white,
-                size: 24,
-              ),
+              style: TextStyle(fontSize: 16, color: red),
             ),
           ),
 
@@ -185,11 +143,7 @@ class SupportScreen extends StatelessWidget {
             child: Text(
               tr.learnMoreColel,
               textAlign: TextAlign.center,
-              style: TextStyle(
-                fontSize: 14,
-                color: cs.primary,
-                decoration: TextDecoration.underline,
-              ),
+              style: TextStyle(fontSize: 14, color: cs.primary),
             ),
           ),
 
@@ -205,137 +159,19 @@ class SupportScreen extends StatelessWidget {
               color: cs.onSurface,
             ),
           ),
-          const SizedBox(height: 16),
-
-          // GorinSystems Logo
-          Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              // Logo S estilizado
-              Container(
-                width: 32,
-                height: 32,
-                decoration: BoxDecoration(
-                  color: const Color(0xFF6B46C1), // Púrpura
-                  borderRadius: BorderRadius.circular(6),
-                ),
-                child: const Center(
-                  child: Text(
-                    'S',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 20,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                ),
-              ),
-              const SizedBox(width: 8),
-              Text(
-                'GorinSystems',
-                style: TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.w600,
-                  color: cs.onSurface,
-                ),
-              ),
-            ],
+          const SizedBox(height: 12),
+          Text(
+            'Ioel Katz',
+            style: TextStyle(
+              fontSize: 18,
+              fontWeight: FontWeight.w700,
+              color: cs.onSurface,
+            ),
           ),
 
           const SizedBox(height: 20),
         ],
       ),
-    );
-  }
-
-  Widget _buildPushkaIllustration() {
-    return Container(
-      width: 60,
-      height: 80,
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: AppTokens.border),
-      ),
-      child: Stack(
-        children: [
-          // Cuerpo de la pushka
-          Positioned(
-            bottom: 0,
-            left: 8,
-            right: 8,
-            child: Container(
-              height: 60,
-              decoration: BoxDecoration(
-                color: const Color(0xFFF5F5F5),
-                borderRadius: const BorderRadius.only(
-                  bottomLeft: Radius.circular(8),
-                  bottomRight: Radius.circular(8),
-                ),
-                border: Border.all(color: AppTokens.border, width: 1.5),
-              ),
-              child: Stack(
-                children: [
-                  // Ranura en la parte superior
-                  Positioned(
-                    top: 4,
-                    left: 12,
-                    right: 12,
-                    child: Container(
-                      height: 3,
-                      decoration: BoxDecoration(
-                        color: Colors.grey.shade500,
-                        borderRadius: BorderRadius.circular(2),
-                      ),
-                    ),
-                  ),
-                  // Texto hebreo "צדקה" vertical con colores
-                  Center(
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        _buildColoredLetter('צ', Colors.blue),
-                        _buildColoredLetter('ד', Colors.yellow.shade700),
-                        _buildColoredLetter('ק', Colors.orange),
-                        _buildColoredLetter('ה', Colors.red),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-          // Tapa superior
-          Positioned(
-            top: 0,
-            left: 10,
-            right: 10,
-            child: Container(
-              height: 12,
-              decoration: BoxDecoration(
-                color: Colors.grey.shade400,
-                borderRadius: const BorderRadius.only(
-                  topLeft: Radius.circular(4),
-                  topRight: Radius.circular(4),
-                ),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildColoredLetter(String letter, Color color) {
-    return Text(
-      letter,
-      style: TextStyle(
-        fontSize: 9,
-        fontWeight: FontWeight.w700,
-        color: color,
-        height: 0.9,
-      ),
-      textDirection: TextDirection.rtl,
     );
   }
 
@@ -359,15 +195,6 @@ class SupportScreen extends StatelessWidget {
 
   Future<void> _launchEmail(BuildContext context) async {
     await _launchSafe(context, Uri.parse('mailto:jymmexico@gmail.com'));
-  }
-
-  Future<void> _launchPhone(BuildContext context) async {
-    await _launchSafe(context, Uri.parse('tel:+17187745446'));
-  }
-
-  Future<void> _launchWhatsApp(BuildContext context) async {
-    await _launchSafe(context, Uri.parse('https://wa.me/17187745446'),
-        mode: LaunchMode.externalApplication);
   }
 
   Future<void> _launchLearnMore(BuildContext context) async {
