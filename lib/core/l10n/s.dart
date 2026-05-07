@@ -454,7 +454,7 @@ class S {
   String get addPushkaBtn => _t('+ Agregar Pushka', '+ Add Pushka', '+ Ajouter Pushka', '+ הוסף פושקה');
   String get signInToSeePushkas => _t('Inicia sesión para ver tus Pushkas', 'Sign in to see your Pushkas', 'Connectez-vous pour voir vos Pushkas', 'התחבר כדי לראות את הפושקות שלך');
   String get errorLoadingPushkas => _t('No se pudieron cargar las Pushkas', 'Could not load Pushkas', 'Impossible de charger les Pushkas', 'לא ניתן לטעון את הפושקות');
-  String get defaultPushkaName => _t('Colel Jabad Pushka', 'Colel Chabad Pushka', "Colel 'Habad Pushka", 'פושקה של כולל חב"ד');
+  String get defaultPushkaName => _t('Pushka Jabad en Campus', 'Chabad on Campus Pushka', 'Pushka Habad sur le Campus', 'פושקה חב"ד בקמפוס');
   String get profileSection => _t('PERFIL', 'PROFILE', 'PROFIL', 'פרופיל');
   String get nameLabel => _t('NOMBRE', 'NAME', 'NOM', 'שם');
   String get emailLabel => _t('CORREO ELECTRÓNICO', 'EMAIL', 'E-MAIL', 'דוא"ל');
@@ -777,20 +777,20 @@ class S {
   // ---------------------------------------------------------------------------
 
   String get supportHebrewTitle => 'צדקת רבי מאיר בעל הנס';
-  String get colelJabad => _t('Colel Jabad', 'Colel Chabad', "Colel 'Habad", 'כולל חב"ד');
+  String get colelJabad => _t('Jabad en Campus', 'Chabad on Campus', 'Habad sur le Campus', 'חב"ד בקמפוס');
   String get tagline1788 => _t(
-    'Cuidando a los necesitados de Israel desde 1788',
-    'Caring for the needy of Israel since 1788',
-    "Prendre soin des nécessiteux d'Israël depuis 1788",
-    'דואג לנזקקי ישראל מאז 1788',
+    'Rab Menachem Mendel Meer — Jabad en Campus',
+    'Rabbi Menachem Mendel Meer — Chabad on Campus',
+    'Rabbin Menahem Mendel Meer — Habad sur le Campus',
+    'הרב מנחם מענדל מאיר — חב"ד בקמפוס',
   );
   String get appVersionSection => _t('VERSIÓN DE LA APP', 'APP VERSION', "VERSION DE L'APP", 'גרסת האפליקציה');
   String get supportSection => _t('SOPORTE', 'SUPPORT', 'ASSISTANCE', 'תמיכה');
   String get learnMoreColel => _t(
-    'Aprende más sobre Colel Jabad y la Pushka de Colel Jabad.',
-    'Learn more about Colel Chabad and the Colel Chabad Pushka.',
-    "En savoir plus sur Colel 'Habad et la Pushka de Colel 'Habad.",
-    'למד עוד על כולל חב"ד והפושקה של כולל חב"ד.',
+    'Contactate con Jabad en Campus para más información sobre esta Pushka.',
+    'Contact Chabad on Campus for more information about this Pushka.',
+    'Contactez Habad sur le Campus pour plus d\'informations sur cette Pushka.',
+    'צרו קשר עם חב"ד בקמפוס למידע נוסף על הפושקה הזו.',
   );
   String get developedBy => _t('DESARROLLADO POR', 'DEVELOPED BY', 'DÉVELOPPÉ PAR', 'פותח על ידי');
 
@@ -798,34 +798,34 @@ class S {
   // ABOUT SCREEN
   // ---------------------------------------------------------------------------
 
-  String get aboutBreadcrumb => _t('Acerca de | Colel Jabad', 'About | Colel Chabad', "À propos | Colel 'Habad", 'אודות | כולל חב"ד');
-  String get aboutTitle => _t('Colel Jabad', 'Colel Chabad', "Colel 'Habad", 'כולל חב"ד');
+  String get aboutBreadcrumb => _t('Acerca de | Jabad en Campus', 'About | Chabad on Campus', 'À propos | Habad sur le Campus', 'אודות | חב"ד בקמפוס');
+  String get aboutTitle => _t('Jabad en Campus', 'Chabad on Campus', 'Habad sur le Campus', 'חב"ד בקמפוס');
   String get aboutSection => _t('Acerca de', 'About', 'À propos', 'אודות');
   String get aboutP1 => _t(
-    'Bienvenido a Colel Jabad. Somos la organización benéfica en funcionamiento continuo más antigua de Israel, dedicada a brindar asistencia a quienes la necesitan sin importar su origen.',
-    'Welcome to Colel Chabad. We are the oldest continuously operating charity in Israel, dedicated to providing assistance to those in need regardless of their background.',
-    "Bienvenue à Colel 'Habad. Nous sommes l'organisme caritatif le plus ancien en activité continue en Israël, dédié à fournir une assistance à ceux qui en ont besoin, quel que soit leur origine.",
-    'ברוכים הבאים לכולל חב"ד. אנו ארגון הצדקה הפועל ברציפות הוותיק ביותר בישראל, המוקדש לסיוע לנזקקים ללא הבדל מוצא.',
+    'Bienvenido a Jabad en Campus. Esta aplicación fue creada para facilitar la tzedaká en nuestra comunidad, liderada por el Rabino Menachem Mendel Meer.',
+    'Welcome to Chabad on Campus. This app was created to facilitate tzedakah in our community, led by Rabbi Menachem Mendel Meer.',
+    "Bienvenue à Habad sur le Campus. Cette application a été créée pour faciliter la tsedaka dans notre communauté, dirigée par le Rabbin Menahem Mendel Meer.",
+    'ברוכים הבאים לחב"ד בקמפוס. אפליקציה זו נוצרה כדי להקל על הצדקה בקהילתנו, בהנהגת הרב מנחם מענדל מאיר.',
   );
   String get aboutP2 => _t(
-    'Nuestra misión es alimentar a los hambrientos, apoyar a viudas y huérfanos, y elevar comunidades a través de una variedad de programas arraigados en los valores atemporales de compasión y dignidad.',
-    'Our mission is to feed the hungry, support widows and orphans, and uplift communities through a variety of programs rooted in timeless values of compassion and dignity.',
-    "Notre mission est de nourrir les affamés, soutenir les veuves et les orphelins, et élever les communautés à travers des programmes enracinés dans les valeurs intemporelles de compassion et de dignité.",
-    'שליחותנו היא להאכיל את הרעבים, לתמוך באלמנות וביתומים, ולרומם קהילות דרך תוכניות המושרשות בערכי חמלה וכבוד.',
+    'Nuestra misión es acercar la luz de la Torá y la tzedaká a cada persona, creando una comunidad unida y comprometida con los valores judíos de compasión y generosidad.',
+    'Our mission is to bring the light of Torah and tzedakah to every person, building a united community committed to Jewish values of compassion and generosity.',
+    "Notre mission est d'apporter la lumière de la Torah et de la tsedaka à chaque personne, en construisant une communauté unie et engagée dans les valeurs juives de compassion et de générosité.",
+    'שליחותנו להביא את אור התורה והצדקה לכל אחד, ולבנות קהילה מאוחדת ומחויבת לערכי החמלה והנדיבות היהודיים.',
   );
   String get aboutP3 => _t(
-    'Desde nuestra fundación en 1788, Colel Jabad ha expandido sus servicios en todo Israel, operando bancos de alimentos, comedores comunitarios, programas de asistencia médica y más.',
-    'Since our founding in 1788, Colel Chabad has expanded its services throughout Israel, operating food banks, community kitchens, medical assistance programs and more.',
-    "Depuis notre fondation en 1788, Colel 'Habad a étendu ses services à travers tout Israël, opérant des banques alimentaires, des cuisines communautaires, des programmes d'assistance médicale et plus encore.",
-    'מאז ייסודנו ב-1788, הרחיב כולל חב"ד את שירותיו בכל רחבי ישראל, ומפעיל בנקי מזון, מטבחים קהילתיים, תוכניות סיוע רפואי ועוד.',
+    'Cada donación que realizas a través de esta Pushka contribuye directamente a las actividades de Jabad en Campus y al apoyo de nuestra comunidad.',
+    'Every donation you make through this Pushka directly contributes to Chabad on Campus activities and the support of our community.',
+    "Chaque don que vous effectuez via cette Pushka contribue directement aux activités de Habad sur le Campus et au soutien de notre communauté.",
+    'כל תרומה שאתם תורמים דרך הפושקה הזו תורמת ישירות לפעילויות חב"ד בקמפוס ולתמיכה בקהילתנו.',
   );
   String get privacyPolicy => _t('Política de Privacidad', 'Privacy Policy', 'Politique de confidentialité', 'מדיניות פרטיות');
   String get termsOfService => _t('Términos de Servicio', 'Terms of Service', "Conditions d'utilisation", 'תנאי שימוש');
   String get copyright => _t(
-    '© 2026 Colel Jabad. Todos los derechos reservados.',
-    '© 2026 Colel Chabad. All rights reserved.',
-    "© 2026 Colel 'Habad. Tous droits réservés.",
-    '© 2026 כולל חב"ד. כל הזכויות שמורות.',
+    '© 2026 Jabad en Campus. Todos los derechos reservados.',
+    '© 2026 Chabad on Campus. All rights reserved.',
+    '© 2026 Habad sur le Campus. Tous droits réservés.',
+    '© 2026 חב"ד בקמפוס. כל הזכויות שמורות.',
   );
 
   // ---------------------------------------------------------------------------
@@ -1074,10 +1074,10 @@ class S {
   String get onboardingDone => _t('¡Comenzar!', 'Get started!', 'Commencer !', 'בואו נתחיל!');
   String get onboarding1Title => _t('Bienvenido a Pushka', 'Welcome to Pushka', 'Bienvenue sur Pushka', 'ברוכים הבאים לפושקה');
   String get onboarding1Body => _t(
-    'La app oficial de Colel Jabad para tu Tzedaká digital. Acumula donaciones como en una pushka real, y vacíala cuando estés listo.',
-    'The official Colel Chabad app for your digital Tzedakah. Accumulate donations like a real pushka, and empty it when you\'re ready.',
-    "L'application officielle de Colel 'Habad pour votre Tsédaka numérique. Accumulez des dons comme dans une vraie pushka, et videz-la quand vous êtes prêt.",
-    'האפליקציה הרשמית של כולל חב"ד לצדקה הדיגיטלית שלך. צבור תרומות כמו בפושקה אמיתית, ורוקן אותה כשתהיה מוכן.',
+    'La app de Tzedaká de Jabad en Campus. Acumula donaciones como en una pushka real, y vacíala cuando estés listo.',
+    'The Chabad on Campus Tzedakah app. Accumulate donations like a real pushka, and empty it when you\'re ready.',
+    "L'application Tsédaka de Habad sur le Campus. Accumulez des dons comme dans une vraie pushka, et videz-la quand vous êtes prêt.",
+    'אפליקציית הצדקה של חב"ד בקמפוס. צבור תרומות כמו בפושקה אמיתית, ורוקן אותה כשתהיה מוכן.',
   );
   String get onboarding2Title => _t('Acumula Tzedaká', 'Accumulate Tzedakah', 'Accumulez de la Tsédaka', 'צבור צדקה');
   String get onboarding2Body => _t(
@@ -1281,10 +1281,10 @@ class S {
   );
 
   String get appShareText => _t(
-    'He estado usando esta increíble app Pushka de Tzedaká. ¡Funciona igual que una pushka real! Con solo un toque puedes "poner una moneda" y cuando estés listo, "vaciarla" para hacer una donación.\n\nToda la Tzedaká va directamente a Colel Chabad, que hace una labor increíble ayudando a los pobres en Israel.\n\nMírala aquí: https://pushkapp.cc/share',
-    'I\'ve been using this amazing Tzedakah Pushka app. It works just like a real pushka! With one tap you can "drop a coin" and when ready, "empty it" to make a donation.\n\nAll Tzedakah goes directly to Colel Chabad, doing incredible work helping the poor in Israel.\n\nCheck it out: https://pushkapp.cc/share',
-    'J\'utilise cette incroyable app Pushka de Tsédaka. Elle fonctionne comme une vraie pushka ! D\'un simple clic, vous pouvez "mettre une pièce" et quand vous êtes prêt, "la vider" pour faire un don.\n\nToute la Tsédaka va directement à Colel \'Habad, qui fait un travail incroyable pour aider les pauvres en Israël.\n\nDécouvrez-la ici : https://pushkapp.cc/share',
-    'אני משתמש באפליקציית הפושקה המדהימה לצדקה. היא עובדת בדיוק כמו פושקה אמיתית! בלחיצה אחת אפשר "להכניס מטבע" וכשמוכנים, "לרוקן אותה" לתרומה.\n\nכל הצדקה הולכת ישירות לכולל חב"ד, הפועל ללא לאות לסיוע לעניי ישראל.\n\nגלה אותה כאן: https://pushkapp.cc/share',
+    'He estado usando esta increíble app Pushka de Tzedaká de Jabad en Campus. ¡Funciona igual que una pushka real! Con solo un toque puedes "poner una moneda" y cuando estés listo, "vaciarla" para hacer una donación.\n\nMírala aquí: https://pushkapp.cc/share',
+    'I\'ve been using this amazing Chabad on Campus Tzedakah Pushka app. It works just like a real pushka! With one tap you can "drop a coin" and when ready, "empty it" to make a donation.\n\nCheck it out: https://pushkapp.cc/share',
+    'J\'utilise cette incroyable app Pushka de Tsédaka de Habad sur le Campus. Elle fonctionne comme une vraie pushka ! D\'un simple clic, vous pouvez "mettre une pièce" et quand vous êtes prêt, "la vider" pour faire un don.\n\nDécouvrez-la ici : https://pushkapp.cc/share',
+    'אני משתמש באפליקציית הפושקה המדהימה לצדקה של חב"ד בקמפוס. היא עובדת בדיוק כמו פושקה אמיתית! בלחיצה אחת אפשר "להכניס מטבע" וכשמוכנים, "לרוקן אותה" לתרומה.\n\nגלה אותה כאן: https://pushkapp.cc/share',
   );
 }
 

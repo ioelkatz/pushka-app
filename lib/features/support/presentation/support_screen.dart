@@ -130,7 +130,7 @@ class SupportScreen extends StatelessWidget {
           InkWell(
             onTap: () => _launchEmail(context),
             child: Text(
-              'app@colelchabad.org',
+              'jymmexico@gmail.com',
               style: TextStyle(
                 fontSize: 16,
                 color: red,
@@ -358,7 +358,7 @@ class SupportScreen extends StatelessWidget {
   }
 
   Future<void> _launchEmail(BuildContext context) async {
-    await _launchSafe(context, Uri.parse('mailto:app@colelchabad.org'));
+    await _launchSafe(context, Uri.parse('mailto:jymmexico@gmail.com'));
   }
 
   Future<void> _launchPhone(BuildContext context) async {
@@ -371,7 +371,7 @@ class SupportScreen extends StatelessWidget {
   }
 
   Future<void> _launchLearnMore(BuildContext context) async {
-    await _launchSafe(context, Uri.parse('https://www.colelchabad.org'),
+    await _launchSafe(context, Uri.parse('https://jabad.mx'),
         mode: LaunchMode.externalApplication);
   }
 }

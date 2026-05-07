@@ -219,7 +219,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
       _reportError(e, st, op: 'updateStreak');
     }
   }
-  Future<void> addAmount(double amount) async {
+  Future<void> addAmount(double amount, {bool skipBillAnimation = false}) async {
     // Prevent adding to a full pushka (already reached goal).
     if (pushkaGoal > 0 && pushkaAmount >= pushkaGoal) return;
     // Clamp so we never exceed the goal.
@@ -233,11 +233,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
     final goalJustReached = !wasFull && nowFull;
     if (goalJustReached) {
       _triggerCelebration();
-    } else {
-      // Coin drop animation + jingle sound were removed by product decision —
-      // only the bill animation remains. The slot in the pushka 3D model is
-      // still drawn (visual identity), but nothing falls through it except
-      // bills now.
+    } else if (!skipBillAnimation) {
       FeedbackService.instance.playBillFall();
       final titleBox = _fillItTitleKey.currentContext?.findRenderObject() as RenderBox?;
       final stackBox = _stackKey.currentContext?.findRenderObject() as RenderBox?;
@@ -776,6 +772,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
     final quickAmounts = _buildQuickAmounts();
 
     return SafeArea(
+      maintainBottomViewPadding: true,
       child: Padding(
         padding: const EdgeInsets.fromLTRB(16, 20, 16, 10),
         child: LayoutBuilder(
@@ -935,9 +932,13 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                           borderRadius: BorderRadius.circular(12),
                         ),
                       ),
-                      child: Text(
-                        tr.donateNowBtn,
-                        style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15),
+                      child: FittedBox(
+                        fit: BoxFit.scaleDown,
+                        child: Text(
+                          tr.donateNowBtn,
+                          maxLines: 1,
+                          style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15),
+                        ),
                       ),
                     ),
                   ),
@@ -955,9 +956,13 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                           borderRadius: BorderRadius.circular(12),
                         ),
                       ),
-                      child: Text(
-                        tr.emptyPushkaBtn,
-                        style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15),
+                      child: FittedBox(
+                        fit: BoxFit.scaleDown,
+                        child: Text(
+                          tr.emptyPushkaBtn,
+                          maxLines: 1,
+                          style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15),
+                        ),
                       ),
                     ),
                   ),
@@ -1019,7 +1024,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
     const double badgeSize = 34.0;
     final double pillW = MediaQuery.of(context).size.width - 32;
     final bool isEn = Localizations.localeOf(context).languageCode == 'en';
-    final double streakW = pillW - (holiday?.key == 'roshHashana' ? (isEn ? 130 : 125) : holiday?.key == 'januca' && isEn ? 130 : holiday?.key == 'yomKippur' ? 135 : 120);
+    final double streakW = pillW - (holiday?.key == 'roshHashana' ? (isEn ? 142 : 137) : holiday?.key == 'januca' && isEn ? 142 : holiday?.key == 'yomKippur' ? 147 : 132);
     const double holidayW = 168.0;
 
     // Both together: full pill. Solo: the individual width, centered.
@@ -1097,8 +1102,8 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                       width: both ? streakW : containerW,
                       child: Container(
                         padding: holiday?.key == 'yomKippur' && both
-                            ? const EdgeInsetsDirectional.fromSTEB(44, 0, 12, 0)
-                            : const EdgeInsetsDirectional.fromSTEB(50, 0, 20, 0),
+                            ? const EdgeInsetsDirectional.fromSTEB(36, 0, 8, 0)
+                            : const EdgeInsetsDirectional.fromSTEB(38, 0, 12, 0),
                         decoration: BoxDecoration(
                           gradient: LinearGradient(
                             colors: [sc.$1, sc.$2],
@@ -1412,7 +1417,10 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                         textInputAction: TextInputAction.done,
                         onSubmitted: (_) {
                           final value = double.tryParse(controller.text.trim().replaceAll(',', '.'));
-                          if (value != null && value > 0) Navigator.pop(ctx, value);
+                          if (value != null && value > 0) {
+                            FocusScope.of(ctx).unfocus();
+                            Navigator.pop(ctx, value);
+                          }
                         },
                         decoration: InputDecoration(
                           labelText: S.of(context).amount,
@@ -1436,6 +1444,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                         onPressed: () {
                           final value = double.tryParse(controller.text.trim().replaceAll(',', '.'));
                           if (value == null || value <= 0) { setDialogState(() => error = S.of(context).enterValidAmount); return; }
+                          FocusScope.of(ctx).unfocus();
                           Navigator.pop(ctx, value);
                         },
                         child: Text(S.of(context).add, style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
@@ -1447,7 +1456,23 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
     }
 
     if (!mounted || result == null) return;
-    await addAmount(result);
+    // Update amount immediately so the fill animation plays during sheet dismiss.
+    await addAmount(result, skipBillAnimation: true);
+    // Wait until keyboard is fully dismissed before showing the bill animation.
+    final deadline = DateTime.now().add(const Duration(milliseconds: 600));
+    while (mounted && DateTime.now().isBefore(deadline)) {
+      await Future.delayed(const Duration(milliseconds: 16));
+      if (!mounted) break;
+      if (MediaQuery.of(context).viewInsets.bottom == 0) break;
+    }
+    if (!mounted) return;
+    FeedbackService.instance.playBillFall();
+    final titleBox = _fillItTitleKey.currentContext?.findRenderObject() as RenderBox?;
+    final stackBox = _stackKey.currentContext?.findRenderObject() as RenderBox?;
+    final startY = (titleBox != null && stackBox != null)
+        ? stackBox.globalToLocal(titleBox.localToGlobal(Offset(0, titleBox.size.height))).dy + 8
+        : -90.0;
+    setState(() { _showBill = true; _billKey++; _billStartY = startY; });
   }
 
 
