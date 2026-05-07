@@ -157,7 +157,7 @@ class S {
   String get history => _t('Historial', 'History', 'Historique', 'היסטוריה');
   String get settings => _t('Configuración', 'Settings', 'Paramètres', 'הגדרות');
   String get prayersAndSegulot => _t('Segulot y Rezos', 'Segulot & Prayers', 'Segoulot et Prières', 'סגולות ותפילות');
-  String get support => _t('Soporte', 'Support', 'Assistance', 'תמיכה');
+  String get support => _t('Rab Menachem Mendel Meer', 'Rab Menachem Mendel Meer', 'Rab Menachem Mendel Meer', 'רב מנחם מנדל מיר');
   String get about => _t('Acerca de', 'About', 'À propos', 'אודות');
   String version(String v) => _t('Versión $v', 'Version $v', 'Version $v', 'גרסה $v');
   String get sponsoredBy => _t('Patrocinado por', 'Sponsored by', 'Parrainé par', 'בחסות');
@@ -779,18 +779,18 @@ class S {
   String get supportHebrewTitle => 'צדקת רבי מאיר בעל הנס';
   String get colelJabad => _t('Jabad en Campus', 'Chabad on Campus', 'Habad sur le Campus', 'חב"ד בקמפוס');
   String get tagline1788 => _t(
-    'Rab Menachem Mendel Meer — Jabad en Campus',
-    'Rabbi Menachem Mendel Meer — Chabad on Campus',
-    'Rabbin Menahem Mendel Meer — Habad sur le Campus',
-    'הרב מנחם מענדל מאיר — חב"ד בקמפוס',
+    'Rab Menachem Mendel Meer',
+    'Rabbi Menachem Mendel Meer',
+    'Rabbin Menahem Mendel Meer',
+    'הרב מנחם מענדל מאיר',
   );
   String get appVersionSection => _t('VERSIÓN DE LA APP', 'APP VERSION', "VERSION DE L'APP", 'גרסת האפליקציה');
   String get supportSection => _t('SOPORTE', 'SUPPORT', 'ASSISTANCE', 'תמיכה');
   String get learnMoreColel => _t(
-    'Contactate con Jabad en Campus para más información sobre esta Pushka.',
-    'Contact Chabad on Campus for more information about this Pushka.',
-    'Contactez Habad sur le Campus pour plus d\'informations sur cette Pushka.',
-    'צרו קשר עם חב"ד בקמפוס למידע נוסף על הפושקה הזו.',
+    'Conoce más de Jabad en Campus',
+    'Learn more about Chabad on Campus',
+    'En savoir plus sur Habad sur le Campus',
+    'גלה עוד על חב"ד בקמפוס',
   );
   String get developedBy => _t('DESARROLLADO POR', 'DEVELOPED BY', 'DÉVELOPPÉ PAR', 'פותח על ידי');
 
@@ -1039,7 +1039,7 @@ class S {
   String get navHistory => _t('Historial', 'History', 'Historique', 'היסטוריה');
   String get navSettings => _t('Configuración', 'Settings', 'Paramètres', 'הגדרות');
   String get navPrayers => _t('Segulot y Rezos', 'Prayers & Blessings', 'Prières et Bénédictions', 'סגולות ותפילות');
-  String get navSupport => _t('Soporte', 'Support', 'Assistance', 'תמיכה');
+  String get navSupport => _t('Rab Menachem Mendel Meer', 'Rab Menachem Mendel Meer', 'Rab Menachem Mendel Meer', 'רב מנחם מנדל מיר');
 
   // ---------------------------------------------------------------------------
   // ACCOUNT SWITCHER
