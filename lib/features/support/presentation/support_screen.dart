@@ -41,7 +41,7 @@ class SupportScreen extends StatelessWidget {
                 borderRadius: BorderRadius.circular(12),
                 child: Image.asset(
                   'assets/images/mendy_meer.png',
-                  height: 160,
+                  height: 112,
                   fit: BoxFit.cover,
                   alignment: Alignment.topCenter,
                 ),
