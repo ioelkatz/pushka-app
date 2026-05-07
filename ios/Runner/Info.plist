@@ -88,5 +88,20 @@
 			<key>NSAllowsArbitraryLoads</key>
 			<false/>
 		</dict>
+		<!-- Background modes — required for FCM push delivery while the app
+		     is in background or terminated. `remote-notification` lets iOS
+		     wake the app on a silent push to refresh content; `fetch` is used
+		     by `flutter_local_notifications` for scheduled reminders that
+		     fire while the app is suspended. -->
+		<key>UIBackgroundModes</key>
+		<array>
+			<string>remote-notification</string>
+			<string>fetch</string>
+		</array>
+		<!-- Firebase Messaging swizzling — ON by default, but we set it
+		     explicitly for clarity. Lets FCM intercept the device token +
+		     push delivery without us writing AppDelegate plumbing. -->
+		<key>FirebaseAppDelegateProxyEnabled</key>
+		<true/>
 	</dict>
 </plist>

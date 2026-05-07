@@ -2,9 +2,45 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<!-- Universal Links — must match a domain serving
+	     /.well-known/apple-app-site-association. Both pushka-app-ioel.web.app
+	     and (when DNS is mapped) pushkaapp.com serve the same AASA file. -->
 	<key>com.apple.developer.associated-domains</key>
 	<array>
 		<string>applinks:pushka-app-ioel.web.app</string>
+		<string>applinks:www.pushkaapp.com</string>
+		<string>applinks:pushkaapp.com</string>
+	</array>
+
+	<!-- Apple Pay merchant ID. Must be created in Apple Developer Portal
+	     (Identifiers → Merchant IDs) before the build will sign. The value
+	     here is also passed to Stripe via the MERCHANT_IDENTIFIER dart-define
+	     so flutter_stripe activates the wallet sheet. -->
+	<key>com.apple.developer.in-app-payments</key>
+	<array>
+		<string>merchant.com.pushka.app</string>
+	</array>
+
+	<!-- Push Notifications. `production` covers TestFlight + App Store
+	     builds. Debug builds run via Xcode use `development` automatically
+	     when CODE_SIGN_STYLE is Automatic. For Codemagic-managed signing
+	     this stays `production`. -->
+	<key>aps-environment</key>
+	<string>production</string>
+
+	<!-- App Attest — backs Firebase App Check on iOS 14+. `production`
+	     for distributed builds; iOS auto-falls-back to DeviceCheck on older
+	     devices. Sandbox-only attestation runs when `development` is set,
+	     which we don't ship. -->
+	<key>com.apple.developer.devicecheck.appattest-environment</key>
+	<string>production</string>
+
+	<!-- Sign in with Apple. Required by App Store review (4.8 Login
+	     Services) any time we offer Google or Facebook sign-in. The package
+	     `sign_in_with_apple` is in pubspec — this entitlement turns it on. -->
+	<key>com.apple.developer.applesignin</key>
+	<array>
+		<string>Default</string>
 	</array>
 </dict>
 </plist>

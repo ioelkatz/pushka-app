@@ -1,0 +1,222 @@
+# Codemagic CI workflows for Pushka iOS builds.
+#
+# Two workflows:
+#   - ios-testflight-dev  → Stripe test keys + Firebase test project +
+#                           TestFlight upload. Daily-driver for QA on
+#                           iPhone without owning a Mac.
+#   - ios-testflight-prod → Stripe live keys + Firebase prod project +
+#                           TestFlight upload. Last stop before App Store.
+#
+# Both workflows produce the same bundle ID (`com.pushka.app`). Codemagic
+# manages the iOS distribution cert + provisioning profile via the Apple
+# Developer integration. Per-Firebase-project secrets are bound through
+# environment groups so the same source tree can target either project.
+#
+# ---------------------------------------------------------------------------
+# Setup checklist (one-time, in the Codemagic web UI)
+# ---------------------------------------------------------------------------
+#
+# 1. Codemagic → Apps → Add app → connect this GitHub repo.
+#
+# 2. Generate an App Store Connect API key:
+#    App Store Connect → Users and Access → Keys → "+" → role "App Manager".
+#    Download the .p8 file, note Key ID + Issuer ID.
+#    Codemagic → Teams → Integrations → Apple Developer Portal → "Connect"
+#    and paste the three values.
+#
+# 3. Codemagic → Code signing identities → "Apple Developer Portal API"
+#    integration. Codemagic auto-creates an iOS distribution certificate
+#    + provisioning profile when the workflow runs.
+#
+# 4. Generate firebase_options_{dev,prod}.dart locally on Windows:
+#       dart pub global activate flutterfire_cli
+#       flutterfire configure --project=pushka-app-ioel-test \
+#         --platforms=ios,android --out=lib/firebase_options_dev.dart --yes
+#       # rename class `DefaultFirebaseOptions` → `DevFirebaseOptions`
+#       flutterfire configure --project=pushka-app-ioel \
+#         --platforms=ios,android --out=lib/firebase_options_prod.dart --yes
+#       # rename class `DefaultFirebaseOptions` → `ProdFirebaseOptions`
+#    Base64-encode each:
+#       certutil -encode lib/firebase_options_dev.dart  dev_b64.txt   # Windows
+#       certutil -encode lib/firebase_options_prod.dart prod_b64.txt
+#    (or `base64 -i lib/firebase_options_dev.dart` on Mac/Linux)
+#
+# 5. Download GoogleService-Info.plist from Firebase Console for BOTH
+#    iOS apps (one per project). Base64-encode each.
+#
+# 6. Codemagic → App settings → Environment variables → create groups:
+#
+#    `pushka_dev_secrets` (bound to ios-testflight-dev):
+#      STRIPE_PUBLISHABLE_KEY  pk_test_…
+#      STRIPE_MERCHANT_ID      merchant.com.pushka.app
+#      GOOGLE_SERVICE_INFO_PLIST_B64  <base64 of test project plist>
+#      FIREBASE_OPTIONS_DEV_DART_B64  <base64 of firebase_options_dev.dart>
+#      FIREBASE_OPTIONS_PROD_DART_B64 <base64 of firebase_options_prod.dart>
+#
+#    `pushka_prod_secrets` (bound to ios-testflight-prod):
+#      STRIPE_PUBLISHABLE_KEY  pk_live_…
+#      STRIPE_MERCHANT_ID      merchant.com.pushka.app
+#      GOOGLE_SERVICE_INFO_PLIST_B64  <base64 of prod project plist>
+#      FIREBASE_OPTIONS_DEV_DART_B64  <base64 of firebase_options_dev.dart>
+#      FIREBASE_OPTIONS_PROD_DART_B64 <base64 of firebase_options_prod.dart>
+#
+#    Both _DART_B64 vars exist in both groups because the source tree
+#    imports both files unconditionally — the workflow's ENV dart-define
+#    decides which one is loaded at runtime.
+#
+# 7. First push to `dev` branch triggers `ios-testflight-dev` automatically.
+#    Build → upload to TestFlight → install on iPhone via TestFlight app.
+#    `ios-testflight-prod` is manual-trigger only.
+#
+# References:
+#   https://docs.codemagic.io/yaml-quick-start/building-a-flutter-app/
+#   https://docs.codemagic.io/yaml-publishing/app-store-connect/
+
+definitions:
+  scripts:
+    - &decode_secret_files
+      name: Decode Firebase + Dart files from secure env
+      script: |
+        set -e
+        if [ -z "$GOOGLE_SERVICE_INFO_PLIST_B64" ]; then
+          echo "ERROR: GOOGLE_SERVICE_INFO_PLIST_B64 missing — check env group binding."
+          exit 1
+        fi
+        echo "$GOOGLE_SERVICE_INFO_PLIST_B64"   | base64 --decode > ios/Runner/GoogleService-Info.plist
+        echo "$FIREBASE_OPTIONS_DEV_DART_B64"   | base64 --decode > lib/firebase_options_dev.dart
+        echo "$FIREBASE_OPTIONS_PROD_DART_B64"  | base64 --decode > lib/firebase_options_prod.dart
+        ls -la ios/Runner/GoogleService-Info.plist lib/firebase_options_dev.dart lib/firebase_options_prod.dart
+        # Sanity check: classes must be present so the build compiles.
+        grep -q "class DevFirebaseOptions"  lib/firebase_options_dev.dart  || { echo "DevFirebaseOptions missing"; exit 1; }
+        grep -q "class ProdFirebaseOptions" lib/firebase_options_prod.dart || { echo "ProdFirebaseOptions missing"; exit 1; }
+
+    - &flutter_pub_get
+      name: Install Flutter dependencies
+      script: |
+        flutter --version
+        flutter pub get
+
+    - &cocoapods_install
+      name: Install CocoaPods
+      script: |
+        # First-build path: Flutter generates `ios/Podfile` lazily as part
+        # of `flutter build ipa`. If the file isn't there yet, skip the
+        # manual `pod install` and let the build step handle pods. On
+        # subsequent runs Codemagic's caches will have the Podfile +
+        # repos warmed up so `pod install --repo-update` is fast.
+        if [ -f ios/Podfile ]; then
+          cd ios && pod install --repo-update
+        else
+          echo "ios/Podfile not present yet — flutter build will generate it."
+        fi
+
+    - &codemagic_signing
+      name: Set up Codemagic-managed iOS signing
+      script: |
+        # Auto-issues an App Store distribution cert + provisioning profile
+        # for $BUNDLE_ID via the App Store Connect API integration.
+        keychain initialize
+        app-store-connect fetch-signing-files \
+          "$BUNDLE_ID" --type IOS_APP_STORE \
+          --create
+        keychain add-certificates
+        xcode-project use-profiles
+
+    - &bump_build_number
+      name: Bump build number from App Store Connect
+      script: |
+        BUILD_NUMBER=$(($(app-store-connect get-latest-app-store-build-number "$BUNDLE_ID") + 1))
+        echo "Using build number $BUILD_NUMBER"
+        echo "BUILD_NUMBER=$BUILD_NUMBER" >> $CM_ENV
+
+workflows:
+  ios-testflight-dev:
+    name: iOS TestFlight (dev — Stripe test, Firebase test)
+    instance_type: mac_mini_m2
+    max_build_duration: 60
+    environment:
+      flutter: stable
+      xcode: latest
+      cocoapods: default
+      groups:
+        - pushka_dev_secrets
+      vars:
+        BUNDLE_ID: com.pushka.app
+        XCODE_PROJECT: ios/Runner.xcodeproj
+        XCODE_SCHEME: Runner
+    triggering:
+      events:
+        - push
+      branch_patterns:
+        - pattern: dev
+          include: true
+          source: true
+      cancel_previous_builds: true
+    integrations:
+      app_store_connect: codemagic
+    scripts:
+      - *flutter_pub_get
+      - *decode_secret_files
+      - *cocoapods_install
+      - *codemagic_signing
+      - *bump_build_number
+      - name: Build IPA (dev — test Stripe + test Firebase)
+        script: |
+          flutter build ipa --release \
+            --build-number="$BUILD_NUMBER" \
+            --dart-define=ENV=dev \
+            --dart-define=STRIPE_PUBLISHABLE_KEY="$STRIPE_PUBLISHABLE_KEY" \
+            --dart-define=STRIPE_MERCHANT_ID="$STRIPE_MERCHANT_ID" \
+            --export-options-plist=/Users/builder/export_options.plist
+    artifacts:
+      - build/ios/ipa/*.ipa
+      - /tmp/xcodebuild_logs/*.log
+    publishing:
+      app_store_connect:
+        auth: integration
+        submit_to_testflight: true
+        beta_groups:
+          - Internal Testers
+
+  ios-testflight-prod:
+    name: iOS TestFlight (prod — Stripe live, Firebase prod)
+    instance_type: mac_mini_m2
+    max_build_duration: 60
+    environment:
+      flutter: stable
+      xcode: latest
+      cocoapods: default
+      groups:
+        - pushka_prod_secrets
+      vars:
+        BUNDLE_ID: com.pushka.app
+        XCODE_PROJECT: ios/Runner.xcodeproj
+        XCODE_SCHEME: Runner
+    triggering:
+      # Manual-trigger only. Avoids auto-uploading a "prod" build on every
+      # commit to dev — promotion to prod is a deliberate action.
+      events: []
+    integrations:
+      app_store_connect: codemagic
+    scripts:
+      - *flutter_pub_get
+      - *decode_secret_files
+      - *cocoapods_install
+      - *codemagic_signing
+      - *bump_build_number
+      - name: Build IPA (prod — live Stripe + prod Firebase)
+        script: |
+          flutter build ipa --release \
+            --build-number="$BUILD_NUMBER" \
+            --dart-define=STRIPE_PUBLISHABLE_KEY="$STRIPE_PUBLISHABLE_KEY" \
+            --dart-define=STRIPE_MERCHANT_ID="$STRIPE_MERCHANT_ID" \
+            --export-options-plist=/Users/builder/export_options.plist
+    artifacts:
+      - build/ios/ipa/*.ipa
+      - /tmp/xcodebuild_logs/*.log
+    publishing:
+      app_store_connect:
+        auth: integration
+        submit_to_testflight: true
+        beta_groups:
+          - Internal Testers
