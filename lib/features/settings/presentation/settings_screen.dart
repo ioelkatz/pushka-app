@@ -597,20 +597,17 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               ),
             ),
           ),
-          // POWERED BY footer — visible only when tenant has showPoweredBy: true
-          if (tenantConfig != null && tenantConfig.showPoweredBy) ...[
-            const SizedBox(height: 20),
-            Center(
-              child: Text(
-                '${tenantConfig.appName} · Powered by Pushka',
-                style: TextStyle(
-                  fontSize: 12,
-                  color: Theme.of(context).colorScheme.onSurfaceVariant,
-                  fontWeight: FontWeight.w400,
-                ),
+          const SizedBox(height: 20),
+          const Center(
+            child: Text(
+              'Jabad en Campus',
+              style: TextStyle(
+                fontSize: 12,
+                color: Color(0xFF9E9E9E),
+                fontWeight: FontWeight.w400,
               ),
             ),
-          ],
+          ),
           const SizedBox(height: 24),
         ],
       ),
