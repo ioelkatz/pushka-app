@@ -88,7 +88,7 @@ class _DonationChartState extends State<DonationChart> {
             padding: const EdgeInsets.fromLTRB(18, 0, 18, 14),
             child: Text(
               tr.chartNoData,
-              style: TextStyle(fontSize: 13, color: Colors.grey.shade500),
+              style: TextStyle(fontSize: 13, color: Theme.of(context).colorScheme.onSurfaceVariant),
             ),
           )
         else
@@ -139,7 +139,7 @@ class _DonationChartState extends State<DonationChart> {
                               buckets[idx].label,
                               style: TextStyle(
                                 fontSize: 10,
-                                color: Colors.grey.shade500,
+                                color: Theme.of(context).colorScheme.onSurfaceVariant,
                                 fontWeight: FontWeight.w500,
                               ),
                             ),
@@ -162,7 +162,7 @@ class _DonationChartState extends State<DonationChart> {
                     drawVerticalLine: false,
                     horizontalInterval: maxVal > 0 ? maxVal / 4 : 1,
                     getDrawingHorizontalLine: (_) => FlLine(
-                      color: Colors.grey.shade200,
+                      color: Theme.of(context).colorScheme.outlineVariant,
                       strokeWidth: 1,
                     ),
                   ),
@@ -192,7 +192,7 @@ class _DonationChartState extends State<DonationChart> {
               ),
             ),
           ),
-        Divider(height: 1, thickness: 1, color: Colors.grey.shade200),
+        Divider(height: 1, thickness: 1, color: Theme.of(context).colorScheme.outlineVariant),
       ],
     );
   }

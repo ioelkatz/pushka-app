@@ -1543,7 +1543,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               )),
               SizedBox(width: double.infinity, height: 44, child: TextButton(
                 onPressed: () => Navigator.pop(ctx),
-                child: Text(S.of(context).cancel, style: TextStyle(color: Colors.grey.shade600, fontWeight: FontWeight.w500)),
+                child: Text(S.of(context).cancel, style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant, fontWeight: FontWeight.w500)),
               )),
             ],
           ),
@@ -1834,7 +1834,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 height: 44,
                 child: TextButton(
                   onPressed: loading ? null : () => Navigator.pop(ctx, false),
-                  child: Text(tr.cancel, style: TextStyle(color: Colors.grey.shade600, fontWeight: FontWeight.w500)),
+                  child: Text(tr.cancel, style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant, fontWeight: FontWeight.w500)),
                 ),
               ),
             ],
@@ -2053,7 +2053,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               height: 44,
               child: TextButton(
                 onPressed: () => Navigator.pop(ctx, false),
-                child: Text(tr.cancel, style: TextStyle(color: Colors.grey.shade600, fontWeight: FontWeight.w500)),
+                child: Text(tr.cancel, style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant, fontWeight: FontWeight.w500)),
               ),
             ),
           ],
@@ -2240,7 +2240,7 @@ class _DeleteConfirmDialogState extends State<_DeleteConfirmDialog> {
           height: 44,
           child: TextButton(
             onPressed: () => Navigator.pop(context, false),
-            child: Text(widget.cancelLabel, style: TextStyle(color: Colors.grey.shade600, fontWeight: FontWeight.w500)),
+            child: Text(widget.cancelLabel, style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant, fontWeight: FontWeight.w500)),
           ),
         ),
       ],

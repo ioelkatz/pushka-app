@@ -1269,7 +1269,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
               Text(
                 holiday.localizedDescription(S.of(context)),
                 textAlign: TextAlign.center,
-                style: const TextStyle(color: AppTokens.mutedText, fontSize: 14),
+                style: TextStyle(color: cs.onSurfaceVariant, fontSize: 14),
               ),
               const SizedBox(height: 18),
               // Amount field — same shape as the donate-now sheet.
@@ -1554,13 +1554,13 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
             Text(
               tr.minAmountBody(code, symbol, minAmount),
               textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 14, color: Colors.grey.shade700, height: 1.4),
+              style: TextStyle(fontSize: 14, color: Theme.of(context).colorScheme.onSurface, height: 1.4),
             ),
             const SizedBox(height: 6),
             Text(
               tr.minAmountHint,
               textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 13, color: Colors.grey.shade500, height: 1.4),
+              style: TextStyle(fontSize: 13, color: Theme.of(context).colorScheme.onSurfaceVariant, height: 1.4),
             ),
             const SizedBox(height: 20),
             SizedBox(

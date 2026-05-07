@@ -743,7 +743,7 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
             onPressed: () => Navigator.pop(ctx),
             child: Text(
               tr.cancelBtn,
-              style: TextStyle(color: Colors.grey.shade600),
+              style: TextStyle(color: Theme.of(ctx).colorScheme.onSurfaceVariant),
             ),
           ),
           ElevatedButton.icon(
