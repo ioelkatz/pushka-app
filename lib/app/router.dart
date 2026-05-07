@@ -220,7 +220,7 @@ class _TenantMainAppBar extends ConsumerWidget implements PreferredSizeWidget {
       centerTitle: true,
       actions: [
         IconButton(
-          icon: const Icon(Icons.settings_outlined),
+          icon: const Icon(Icons.settings),
           onPressed: onSettingsTap,
         ),
       ],
