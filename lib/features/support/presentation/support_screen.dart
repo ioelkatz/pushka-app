@@ -14,7 +14,9 @@ class SupportScreen extends StatelessWidget {
     final tr = S.of(context);
     final cs = Theme.of(context).colorScheme;
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final red = isDark ? cs.primary : const Color(0xFFE05A4F);
+    // Fixed link color: sky blue in dark mode (same as toggles), platform blue in light mode.
+    // NOT derived from tenant primaryColor so it can't be overridden by branding.
+    final linkColor = isDark ? const Color(0xFF60A5FA) : AppTokens.primaryBlue;
 
     return SingleChildScrollView(
       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
@@ -94,7 +96,7 @@ class SupportScreen extends StatelessWidget {
             onTap: () => _launchEmail(context),
             child: Text(
               'jymmexico@gmail.com',
-              style: TextStyle(fontSize: 16, color: red),
+              style: TextStyle(fontSize: 16, color: linkColor),
             ),
           ),
 
@@ -106,7 +108,7 @@ class SupportScreen extends StatelessWidget {
             child: Text(
               tr.learnMoreColel,
               textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 14, color: cs.primary),
+              style: TextStyle(fontSize: 14, color: linkColor),
             ),
           ),
 
