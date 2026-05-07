@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:google_fonts/google_fonts.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../../app/theme/app_tokens.dart';
@@ -127,9 +128,9 @@ class SupportScreen extends StatelessWidget {
           const SizedBox(height: 12),
           Text(
             'Ioel Katz',
-            style: TextStyle(
+            style: GoogleFonts.ibmPlexSans(
               fontSize: 18,
-              fontWeight: FontWeight.w700,
+              fontWeight: FontWeight.w300,
               color: cs.onSurface,
             ),
           ),
