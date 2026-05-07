@@ -338,7 +338,13 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           _buildLabel(tr.language),
           const SizedBox(height: 6),
           _buildLanguageSelector(),
-          const SizedBox(height: 30),
+          const SizedBox(height: 18),
+
+          // PUSHKA STYLE
+          _buildLabel(tr.pushkaStyleLabel),
+          const SizedBox(height: 8),
+          _buildPushkaStyleSelector(ref),
+          const SizedBox(height: 18),
 
           // APPEARANCE
           Row(
@@ -443,12 +449,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 },
               ),
             ),
-          const SizedBox(height: 18),
-
-          // PUSHKA STYLE
-          _buildLabel('Estilo de pantalla principal'),
-          const SizedBox(height: 8),
-          _buildPushkaStyleSelector(ref),
           const SizedBox(height: 18),
           Container(
             height: 5,

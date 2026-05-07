@@ -1258,6 +1258,7 @@ class S {
   String get tenantJoining => _t('Uniéndote...', 'Joining...', 'Adhésion...', 'מצטרף...');
   String get goHome => _t('Ir al inicio', 'Go home', "Aller à l'accueil", 'עבור לדף הבית');
 
+  String get pushkaStyleLabel => _t('Estilo de pantalla principal', 'Main screen style', 'Style de l\'écran principal', 'סגנון המסך הראשי');
   String get pushkaStyleClassic => _t('Pushka', 'Pushka', 'Pushka', 'פושקה');
   String get pushkaStyleBuilding770 => _t('Edificio 770', 'Building 770', 'Bâtiment 770', 'בניין 770');
 
