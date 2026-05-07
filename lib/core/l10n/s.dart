@@ -38,6 +38,7 @@ class S {
   String get close => _t('Cerrar', 'Close', 'Fermer', 'סגור');
   String get add => _t('Agregar', 'Add', 'Ajouter', 'הוסף');
   String get accept => _t('Aceptar', 'Accept', 'Accepter', 'אישור');
+  String get confirm => _t('Confirmar', 'Confirm', 'Confirmer', 'אישור');
   String get or_ => _t('o', 'or', 'ou', 'או');
   String get enterValidAmount => _t('Ingresa un monto válido', 'Enter a valid amount', 'Entrez un montant valide', 'הכנס סכום תקין');
   String get signInToContinue => _t('Inicia sesión para continuar', 'Sign in to continue', 'Connectez-vous pour continuer', 'התחבר כדי להמשיך');
@@ -77,6 +78,25 @@ class S {
     'Are you sure you want to delete this card? This card has auto-empty enabled.',
     'Voulez-vous vraiment supprimer cette carte ? Cette carte a le vidage automatique activé.',
     'האם אתה בטוח שברצונך למחוק כרטיס זה? הכרטיס הזה מוגדר לריקון אוטומטי.',
+  );
+  /// Used when deleting the auto-empty pinned card AND another saved card
+  /// is available — that card auto-pins to the auto-empty after deletion,
+  /// so the donor knows exactly which card future ticks will charge.
+  String deleteCardLinkedAutoEmptySwitchBody(String brandLastFour) => _t(
+    'El vaciado automático va a pasar a usar tu $brandLastFour a partir del próximo cobro. ¿Querés continuar?',
+    'Auto-empty will switch to your $brandLastFour from the next charge. Continue?',
+    'Le vidage automatique passera à votre $brandLastFour à partir du prochain prélèvement. Continuer ?',
+    'הריקון האוטומטי יעבור להשתמש ב-$brandLastFour שלך מהחיוב הבא. להמשיך?',
+  );
+  /// Used when deleting the auto-empty pinned card AND it's the only card
+  /// left — auto-empty gets fully disabled (frequency switched to manual)
+  /// since there's nothing left to charge from. The donor must reconfigure
+  /// after adding a new card.
+  String get deleteCardLinkedAutoEmptyDisableBody => _t(
+    'El vaciado automático se va a desactivar. ¿Querés continuar?',
+    'Auto-empty will be disabled. Continue?',
+    'Le vidage automatique sera désactivé. Continuer ?',
+    'הריקון האוטומטי יושבת. להמשיך?',
   );
 
   String get cardAlreadySaved => _t(
@@ -1138,6 +1158,65 @@ class S {
   String get deleteConfirm => _t('Eliminar', 'Delete', 'Supprimer', 'מחק');
   String get loadingCards => _t('Cargando tarjetas...', 'Loading cards...', 'Chargement des cartes...', 'טוען כרטיסים...');
   String get errorLoadingCards => _t('Error al cargar las tarjetas', 'Error loading cards', 'Erreur lors du chargement des cartes', 'שגיאה בטעינת כרטיסים');
+
+  // ---------------------------------------------------------------------------
+  // DONATION SUBSCRIPTIONS
+  // ---------------------------------------------------------------------------
+
+  String get mySubscriptions => _t(
+    'Mis donaciones recurrentes',
+    'My recurring donations',
+    'Mes dons récurrents',
+    'התרומות הקבועות שלי',
+  );
+  String get noActiveSubscriptions => _t(
+    'No tenés donaciones recurrentes activas.',
+    "You don't have any active recurring donations.",
+    "Vous n'avez aucun don récurrent actif.",
+    'אין לך תרומות קבועות פעילות.',
+  );
+  String get cancelSubscription => _t(
+    'Cancelar donación',
+    'Cancel donation',
+    'Annuler le don',
+    'ביטול תרומה',
+  );
+  String get cancelSubscriptionConfirmTitle => _t(
+    'Cancelar donación',
+    'Cancel donation',
+    'Annuler le don',
+    'ביטול תרומה',
+  );
+  String get cancelSubscriptionConfirmBody => _t(
+    'Podés volver cuando quieras, muchas gracias por aportar.',
+    'You can come back whenever you want, thank you for contributing.',
+    "Vous pouvez revenir quand vous voulez, merci pour votre contribution.",
+    'תוכל לחזור מתי שתרצה, תודה רבה על תרומתך.',
+  );
+  String get subscriptionCanceled => _t(
+    'Donación cancelada',
+    'Donation canceled',
+    'Don annulé',
+    'התרומה בוטלה',
+  );
+  String get subscriptionCancelFailed => _t(
+    'No se pudo cancelar. Intentá de nuevo.',
+    "Couldn't cancel. Please try again.",
+    "Annulation impossible. Veuillez réessayer.",
+    'לא ניתן לבטל. נסה שוב.',
+  );
+  String nextChargeOn(String date) => _t(
+    'Próximo cobro: $date',
+    'Next charge: $date',
+    'Prochain prélèvement : $date',
+    'חיוב הבא: $date',
+  );
+  String get errorLoadingSubscriptions => _t(
+    'Error al cargar las donaciones',
+    'Error loading donations',
+    'Erreur lors du chargement des dons',
+    'שגיאה בטעינת התרומות',
+  );
 
   // ---------------------------------------------------------------------------
   // AUTO REFILL CONSENT

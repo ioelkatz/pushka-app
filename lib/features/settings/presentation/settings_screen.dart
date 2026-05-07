@@ -298,6 +298,15 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           _buildSavedCardPreview(userProfile, tr),
           const SizedBox(height: 18),
 
+          // RECURRING DONATIONS
+          _buildLabel(tr.mySubscriptions),
+          const SizedBox(height: 6),
+          _buildActionButton(
+            tr.mySubscriptions,
+            onTap: () => context.go('/settings/donation-subs'),
+          ),
+          const SizedBox(height: 18),
+
           // MULTI-TENANT ORGANIZATIONS
           // Moved here from the home AppBar — the home screen now shows
           // a fixed "Mi Pushka" title and the tenant switcher lives in

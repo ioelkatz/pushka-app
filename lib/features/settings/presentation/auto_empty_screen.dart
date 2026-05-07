@@ -67,6 +67,22 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
       final rawCards = data['cards'] as List<dynamic>? ?? [];
       setState(() {
         _cards = rawCards.map((c) => Map<String, dynamic>.from(c as Map)).toList();
+        // Sync `_selectedCardId` with the visible "selected" card. The card
+        // selector UI falls back to the default-flagged card (or first in
+        // list) when _selectedCardId is null — without this sync, that
+        // fallback is purely visual. _saveConfig sends `_selectedCardId`
+        // unchanged into updateTenantState, which only writes the field
+        // when it's non-null. Result before this fix: opening the screen
+        // with no pin set + tapping Guardar (or even just changing
+        // frequency) stored `autoEmptyPaymentMethodId: null` instead of
+        // the visible card. Now the visible card IS the saved card.
+        if (_selectedCardId == null && _frequency != 'manual' && _cards.isNotEmpty) {
+          final defaultCard = _cards.firstWhere(
+            (c) => c['isDefault'] == true,
+            orElse: () => _cards.first,
+          );
+          _selectedCardId = defaultCard['id'] as String?;
+        }
       });
     } catch (_) {
       // Si falla la carga de tarjetas, el selector simplemente no aparece.

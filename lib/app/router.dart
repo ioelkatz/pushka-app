@@ -25,6 +25,7 @@ import '../features/reminders/presentation/reminders_screen.dart';
 import '../features/history/presentation/history_screen.dart';
 import '../features/settings/presentation/settings_screen.dart';
 import '../features/settings/presentation/saved_cards_screen.dart';
+import '../features/payments/presentation/donation_subscriptions_screen.dart';
 import '../features/prayers/presentation/prayers_screen.dart';
 import '../features/support/presentation/support_screen.dart';
 import '../features/about/presentation/about_screen.dart';
@@ -171,6 +172,11 @@ final router = GoRouter(
               path: 'saved-cards',
               pageBuilder: (context, state) => _slidePage(state, const SavedCardsScreen()),
             ),
+            GoRoute(
+              path: 'donation-subs',
+              pageBuilder: (context, state) =>
+                  _slidePage(state, const DonationSubscriptionsScreen()),
+            ),
           ],
         ),
         GoRoute(path: '/prayers', pageBuilder: (context, state) => _slidePage(state, const PrayersScreen())),
@@ -251,6 +257,23 @@ PreferredSizeWidget? _buildAppBar(BuildContext context, String location) {
     return AppBar(title: Text(tr.navHistory), centerTitle: true);
   } else if (location == '/settings') {
     return AppBar(title: Text(tr.navSettings), centerTitle: true);
+  } else if (location == '/settings/donation-subs') {
+    final isRtl = Directionality.of(context) == TextDirection.rtl;
+    return AppBar(
+      title: Text(tr.mySubscriptions),
+      centerTitle: true,
+      leading: IconButton(
+        icon: Icon(isRtl ? Icons.arrow_forward : Icons.arrow_back),
+        onPressed: () {
+          final shellNav = shellNavigatorKey.currentState;
+          if (shellNav != null && shellNav.canPop()) {
+            shellNav.pop();
+          } else {
+            context.go('/settings');
+          }
+        },
+      ),
+    );
   } else if (location == '/settings/saved-cards') {
     final isRtl = Directionality.of(context) == TextDirection.rtl;
     return AppBar(

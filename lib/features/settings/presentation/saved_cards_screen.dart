@@ -149,13 +149,47 @@ class _SavedCardsScreenState extends ConsumerState<SavedCardsScreen> {
           content: Text(isDuplicate ? tr.cardAlreadySaved : tr.cardAdded),
         ),
       );
-      // Post-add: prompt for optional nickname only when the add was a
-      // net-new card (skip on duplicate where the dedupe kept the prior
-      // entry — there's no new card to label).
+      // Post-add: promote the just-added card to default + prompt for an
+      // optional nickname. Both skipped on duplicate (the dedupe kept the
+      // prior entry, no new card to act on).
+      //
+      // Auto-default: donors expect the latest-added card to be the one
+      // Pushka charges by default (matches Apple Pay / Google Wallet UX
+      // where adding a card promotes it to top of stack). Without this
+      // promotion, a donor who adds a new card to "use this one going
+      // forward" still gets charged on the old default until they
+      // manually tap "set as default" — a hidden step many miss.
+      //
+      // Important: we can't call `_setDefault` here because it short-
+      // circuits while `_processing == true` (which we set at the top of
+      // _addCard). Call the CF directly + mirror state inline.
       if (!isDuplicate && _cards.isNotEmpty && mounted) {
         final newest = _cards.first;
         final newPmId = newest['id'] as String?;
-        if (newPmId != null) {
+        if (newPmId != null && _defaultPaymentMethodId != newPmId) {
+          try {
+            final setDefaultCallable = FirebaseFunctions.instance
+                .httpsCallable('setDefaultPaymentMethod');
+            await setDefaultCallable.call({'paymentMethodId': newPmId});
+            if (!mounted) return;
+            setState(() => _defaultPaymentMethodId = newPmId);
+            // Mirror the new default into the Hive cache so the next
+            // open of this screen paints with the correct indicator.
+            final uid = ref.read(currentUserProvider)?.uid;
+            if (uid != null) {
+              await HiveCache.instance.saveSavedCards(
+                uid: uid,
+                cards: _cards,
+                defaultPmId: newPmId,
+              );
+            }
+          } catch (e) {
+            // Log silently; the card is added either way and the donor can
+            // tap "set as default" manually if needed.
+            debugPrint('addCard auto-default failed: $e');
+          }
+        }
+        if (newPmId != null && mounted) {
           await _promptNickname(newPmId, initial: null);
         }
       }
@@ -242,15 +276,54 @@ class _SavedCardsScreenState extends ConsumerState<SavedCardsScreen> {
         .valueOrNull?['tenantId'] as String?;
     final user = ref.read(firebaseAuthProvider).currentUser;
 
+    // Auto-empty consequences split into three buckets:
+    //   1. Deleted card is pinned AND there's a survivor → migrate the
+    //      pin onto the survivor (silent UX continuity).
+    //   2. This delete leaves ZERO cards AND auto-empty is currently
+    //      active (frequency != 'manual') — regardless of whether the
+    //      deleted card was the pinned one. With no card left, neither
+    //      the explicit pin nor the silent fallback to default can work,
+    //      so flip frequency to manual + clear the scheduled run. The
+    //      donor must reconfigure after adding a new card. This catches
+    //      the case where a previous delete already cleared the pin and
+    //      now the donor is removing their last card — earlier code
+    //      missed this because it only triggered when the deleted card
+    //      was directly pinned.
+    //   3. Otherwise → plain delete-confirm with no auto-empty mention.
+    final autoEmptyFrequencyNow =
+        (tenantState?['autoEmptyFrequency'] as String?) ?? 'manual';
+    final autoEmptyIsActive = autoEmptyFrequencyNow != 'manual';
+    final isLastCard = _cards.length <= 1;
+    Map<String, dynamic>? replacementCard;
+    if (hasLinkedAutoEmpty) {
+      for (final c in _cards) {
+        if (c['id'] != pmId) {
+          replacementCard = Map<String, dynamic>.from(c);
+          break;
+        }
+      }
+    }
+    final shouldDisableAutoEmpty = isLastCard && autoEmptyIsActive;
+    final shouldSwitchAutoEmpty =
+        hasLinkedAutoEmpty && !isLastCard && replacementCard != null;
+    final showAutoEmptyDialog =
+        shouldDisableAutoEmpty || shouldSwitchAutoEmpty;
+
     if (!mounted) return;
     final bool confirmed;
-    if (hasLinkedAutoEmpty) {
+    if (showAutoEmptyDialog) {
+      final dialogBody = shouldDisableAutoEmpty
+          ? tr.deleteCardLinkedAutoEmptyDisableBody
+          : tr.deleteCardLinkedAutoEmptySwitchBody(
+              '${_brandLabel(replacementCard!['brand'] as String? ?? 'card')}'
+              ' •••• ${replacementCard['last4'] as String? ?? '••••'}',
+            );
       final result = await showDialog<bool>(
         context: context,
         builder: (ctx) => AlertDialog(
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
           title: Text(tr.deleteCardLinkedAutoEmptyTitle),
-          content: Text(tr.deleteCardLinkedAutoEmptyBody),
+          content: Text(dialogBody),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(ctx, false),
@@ -346,6 +419,48 @@ class _SavedCardsScreenState extends ConsumerState<SavedCardsScreen> {
         setState(() {
           _defaultPaymentMethodId = newDefault['id'] as String?;
         });
+      }
+      // Finalize the auto-empty consequence we promised in the dialog:
+      //   - shouldSwitchAutoEmpty → pin the server-promoted new default
+      //     to autoEmpty so the donor sees it explicitly in Settings →
+      //     Vaciado automático instead of relying on the server-side
+      //     fallback at cron time (which is invisible until the next
+      //     charge).
+      //   - shouldDisableAutoEmpty → flip frequency to 'manual' + clear
+      //     the scheduled run + clear the pin. Auto-empty stays off
+      //     until the donor reconfigures (matches the dialog promise of
+      //     "se va a desactivar"). Triggers whether or not the deleted
+      //     card was the pinned one — what matters is that no card is
+      //     left to charge from.
+      if (user != null && currentTenantId != null) {
+        final stateRef = FirebaseFirestore.instance
+            .collection('users')
+            .doc(user.uid)
+            .collection('tenantState')
+            .doc(currentTenantId);
+        try {
+          if (shouldDisableAutoEmpty) {
+            await stateRef.set({
+              'autoEmptyFrequency': 'manual',
+              'autoEmptyNextRunAt': FieldValue.delete(),
+              'autoEmptyPaymentMethodId': FieldValue.delete(),
+              'autoEmptyTopOffEnabled': false,
+              'updatedAt': FieldValue.serverTimestamp(),
+            }, SetOptions(merge: true));
+          } else if (shouldSwitchAutoEmpty) {
+            final newDefaultId = newDefault?['id'] as String?;
+            if (newDefaultId != null && newDefaultId.isNotEmpty) {
+              await stateRef.set({
+                'autoEmptyPaymentMethodId': newDefaultId,
+                'updatedAt': FieldValue.serverTimestamp(),
+              }, SetOptions(merge: true));
+            }
+          }
+        } catch (_) {
+          // Swallow — the card was already deleted on Stripe + Firestore.
+          // Worst case: state.autoEmpty* fields stay as-is and the cron
+          // skips with no_saved_card on the next tick.
+        }
       }
       // Skip the autoSetDefault round-trip — server already promoted.
       await _loadCards();
