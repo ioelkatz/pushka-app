@@ -17,41 +17,6 @@ class AboutScreen extends StatelessWidget {
         children: [
           const SizedBox(height: 12),
 
-          // Breadcrumb
-          Text(
-            tr.aboutBreadcrumb,
-            style: TextStyle(
-              fontSize: 13,
-              color: cs.onSurfaceVariant,
-              fontWeight: FontWeight.w400,
-            ),
-          ),
-
-          const SizedBox(height: 24),
-
-          // Título principal
-          Text(
-            tr.aboutTitle,
-            style: TextStyle(
-              fontSize: 30,
-              fontWeight: FontWeight.w700,
-              color: cs.onSurface,
-              letterSpacing: 0.5,
-            ),
-          ),
-
-          const SizedBox(height: 26),
-
-          // Sección "Acerca de"
-          Text(
-            tr.aboutSection,
-            style: TextStyle(
-              fontSize: 22,
-              fontWeight: FontWeight.w700,
-              color: cs.onSurface,
-            ),
-          ),
-
           const SizedBox(height: 18),
 
           // Párrafo 1
