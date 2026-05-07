@@ -52,7 +52,11 @@ class _JoinViaLinkScreenState extends ConsumerState<JoinViaLinkScreen> {
     final tr = S.of(context);
     setState(() => _state = const _Joining());
     try {
-      await ref.read(tenantRepositoryProvider).joinTenant(config.tenantId);
+      final repo = ref.read(tenantRepositoryProvider);
+      await repo.joinTenant(config.tenantId);
+      try {
+        await repo.switchTenant(config.tenantId);
+      } catch (_) {}
       ref.invalidate(tenantConfigProvider);
       ref.invalidate(tenantStateProvider);
       ref.invalidate(userTenantSummariesProvider);

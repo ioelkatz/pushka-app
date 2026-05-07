@@ -13,7 +13,6 @@ import '../../users/data/user_repository.dart';
 import '../../users/presentation/user_profile_provider.dart';
 import '../../tenant/data/tenant_repository.dart';
 import '../../tenant/domain/tenant_config.dart';
-import '../../tenant/presentation/account_switcher_sheet.dart';
 import '../../../core/l10n/locale_provider.dart';
 import '../../../core/widgets/option_picker_sheet.dart';
 import 'package:go_router/go_router.dart';
@@ -304,23 +303,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           _buildActionButton(
             tr.mySubscriptions,
             onTap: () => context.go('/settings/donation-subs'),
-          ),
-          const SizedBox(height: 18),
-
-          // MULTI-TENANT ORGANIZATIONS
-          // Moved here from the home AppBar — the home screen now shows
-          // a fixed "Mi Pushka" title and the tenant switcher lives in
-          // Settings. Tap opens the same bottom sheet as before
-          // (active tenant + others + "add organization" CTA).
-          _buildLabel(tr.myOrganizations),
-          const SizedBox(height: 6),
-          _buildActionButton(
-            _activeOrgLabel(),
-            onTap: () => showAccountSwitcher(context),
-            // Down-chevron because tapping opens a bottom sheet (picker),
-            // not a navigation to a new screen — matches the convention
-            // used by the Auto Vaciar selector tiles.
-            trailingIcon: Icons.keyboard_arrow_down,
           ),
           const SizedBox(height: 18),
 
@@ -969,13 +951,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         ),
       ),
     );
-  }
-
-  String _activeOrgLabel() {
-    final tenantConfig = ref.watch(tenantConfigProvider).valueOrNull;
-    return (tenantConfig?.appName.isNotEmpty == true)
-        ? tenantConfig!.appName
-        : tenantConfig?.name ?? '';
   }
 
   Widget _buildPushkaStyleSelector(WidgetRef ref) {
