@@ -429,6 +429,7 @@ class S {
   // ---------------------------------------------------------------------------
 
   String get general => _t('GENERAL', 'GENERAL', 'GÉNÉRAL', 'כללי');
+  String get appearance => _t('APARIENCIA', 'APPEARANCE', 'APPARENCE', 'מראה');
   String get pushkaGoalSetting => _t('META DE PUSHKA', 'PUSHKA GOAL', 'OBJECTIF DE PUSHKA', 'יעד פושקה');
   String get presetAmount => _t('MONTO PREESTABLECIDO', 'PRESET AMOUNT', 'MONTANT PRÉDÉFINI', 'סכום קבוע מראש');
   String get emptyPushkaSetting => _t('VACIAR PUSHKA', 'EMPTY PUSHKA', 'VIDER LA PUSHKA', 'רוקן פושקה');

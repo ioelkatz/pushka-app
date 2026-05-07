@@ -343,10 +343,10 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           // APPEARANCE
           Row(
             children: [
-              const Expanded(
+              Expanded(
                 child: Text(
-                  'APARIENCIA',
-                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w500),
+                  tr.appearance,
+                  style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w500),
                 ),
               ),
               const SizedBox(width: 8),
