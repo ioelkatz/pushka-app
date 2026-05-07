@@ -850,7 +850,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                     value: fillPercentage,
                     minHeight: 4,
                     backgroundColor: cs.surfaceContainerHighest,
-                    valueColor: const AlwaysStoppedAnimation<Color>(AppTokens.primaryBlue),
+                    valueColor: AlwaysStoppedAnimation<Color>(isDark ? Colors.white : AppTokens.primaryBlue),
                   ),
                 ),
               ),
