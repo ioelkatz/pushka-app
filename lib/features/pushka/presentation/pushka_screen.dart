@@ -926,8 +926,8 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                     child: OutlinedButton(
                       onPressed: _donateNow,
                       style: OutlinedButton.styleFrom(
-                        foregroundColor: AppTokens.primaryBlue,
-                        side: const BorderSide(color: AppTokens.primaryBlue, width: 1.6),
+                        foregroundColor: isDark ? Colors.white : AppTokens.primaryBlue,
+                        side: BorderSide(color: isDark ? Colors.white : AppTokens.primaryBlue, width: 1.6),
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(12),
                         ),
@@ -950,8 +950,8 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                     child: ElevatedButton(
                       onPressed: emptyPushka,
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: AppTokens.primaryBlue,
-                        foregroundColor: Colors.white,
+                        backgroundColor: isDark ? Colors.white : AppTokens.primaryBlue,
+                        foregroundColor: isDark ? cs.surface : Colors.white,
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(12),
                         ),
