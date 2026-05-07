@@ -7,10 +7,10 @@ import 'package:go_router/go_router.dart';
 import '../../../app/router.dart';
 import '../../../app/theme/app_tokens.dart';
 import '../data/tenant_repository.dart';
-import '../domain/tenant_config.dart';
+// Join code: "770-JYM". 6 OTP boxes split [7][7][0]–[J][Y][M].
+// Dash is a fixed visual separator. One-tap flow: validate → auto-join.
 
-// Join code: "770-JYM". User types/pastes into 6 boxes split as [7][7][0]–[J][Y][M].
-// The dash is a fixed visual separator — never typed by the user.
+const _kRed = Color(0xFFf82c4a);
 
 class TenantCodeScreen extends ConsumerStatefulWidget {
   const TenantCodeScreen({super.key});
@@ -25,7 +25,6 @@ class _TenantCodeScreenState extends ConsumerState<TenantCodeScreen> {
 
   bool _loading = false;
   String? _error;
-  TenantConfig? _preview;
 
   @override
   void dispose() {
@@ -64,7 +63,7 @@ class _TenantCodeScreenState extends ConsumerState<TenantCodeScreen> {
     } else {
       _focusNodes[index].unfocus();
       if (_allFilled) {
-        _validate();
+        _joinWithCode();
       }
     }
   }
@@ -80,48 +79,15 @@ class _TenantCodeScreenState extends ConsumerState<TenantCodeScreen> {
     setState(() => _error = null);
     if (clean.length >= 6) {
       _focusNodes[5].unfocus();
-      _validate();
+      _joinWithCode();
     } else {
       _focusNodes[clean.length < 6 ? clean.length : 5].requestFocus();
     }
   }
 
-  Future<void> _validate() async {
-    if (!_allFilled) {
-      return;
-    }
-    setState(() {
-      _loading = true;
-      _error = null;
-      _preview = null;
-    });
-    try {
-      final config = await ref.read(tenantRepositoryProvider).validateSlug(_fullCode);
-      if (mounted) {
-        setState(() => _preview = config);
-      }
-    } on FirebaseFunctionsException catch (e) {
-      if (mounted) {
-        setState(() {
-          _error = e.code == 'not-found'
-              ? 'Código no encontrado. Verificá que sea correcto.'
-              : 'Error al validar. Intentá de nuevo.';
-        });
-      }
-    } catch (_) {
-      if (mounted) {
-        setState(() => _error = 'Error al validar. Intentá de nuevo.');
-      }
-    } finally {
-      if (mounted) {
-        setState(() => _loading = false);
-      }
-    }
-  }
-
-  Future<void> _join() async {
-    final config = _preview;
-    if (config == null) {
+  // Single-step flow: validate slug then immediately join.
+  Future<void> _joinWithCode() async {
+    if (!_allFilled || _loading) {
       return;
     }
     setState(() {
@@ -130,6 +96,7 @@ class _TenantCodeScreenState extends ConsumerState<TenantCodeScreen> {
     });
     try {
       final repo = ref.read(tenantRepositoryProvider);
+      final config = await repo.validateSlug(_fullCode);
       await repo.joinTenant(config.tenantId);
       try {
         await repo.switchTenant(config.tenantId);
@@ -141,11 +108,20 @@ class _TenantCodeScreenState extends ConsumerState<TenantCodeScreen> {
       if (mounted) {
         context.go('/');
       }
+    } on FirebaseFunctionsException catch (e) {
+      if (mounted) {
+        setState(() {
+          _loading = false;
+          _error = e.code == 'not-found'
+              ? 'Código no encontrado. Verificá que sea correcto.'
+              : 'Error al validar. Intentá de nuevo.';
+        });
+      }
     } catch (_) {
       if (mounted) {
         setState(() {
           _loading = false;
-          _error = 'No se pudo unir. Intentá de nuevo.';
+          _error = 'Error al unirse. Intentá de nuevo.';
         });
       }
     }
@@ -156,7 +132,7 @@ class _TenantCodeScreenState extends ConsumerState<TenantCodeScreen> {
     return Theme(
       data: ThemeData.light(useMaterial3: true).copyWith(
         colorScheme: ColorScheme.fromSeed(
-          seedColor: const Color(0xFFE8394B),
+          seedColor: _kRed,
           brightness: Brightness.light,
         ),
       ),
@@ -165,17 +141,17 @@ class _TenantCodeScreenState extends ConsumerState<TenantCodeScreen> {
         body: SafeArea(
           child: Center(
             child: SingleChildScrollView(
-              padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 24),
+              padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 24),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Image.asset(
                     'assets/images/jabad_campus_logo.png',
-                    width: 110,
-                    height: 110,
+                    width: 100,
+                    height: 100,
                     fit: BoxFit.contain,
                   ),
-                  const SizedBox(height: 20),
+                  const SizedBox(height: 18),
                   const Text(
                     'Jabad en Campus',
                     style: TextStyle(
@@ -185,15 +161,7 @@ class _TenantCodeScreenState extends ConsumerState<TenantCodeScreen> {
                       letterSpacing: -0.3,
                     ),
                   ),
-                  const SizedBox(height: 6),
-                  const Text(
-                    'Ciudad de México',
-                    style: TextStyle(
-                      fontSize: 14,
-                      color: Color(0xFF64748B),
-                    ),
-                  ),
-                  const SizedBox(height: 40),
+                  const SizedBox(height: 36),
                   const Text(
                     'Ingresá el código de invitación',
                     style: TextStyle(
@@ -213,12 +181,17 @@ class _TenantCodeScreenState extends ConsumerState<TenantCodeScreen> {
                     ),
                   ),
                   const SizedBox(height: 28),
-                  _OtpRow(
-                    controllers: _controllers,
-                    focusNodes: _focusNodes,
-                    onCharInput: _onCharInput,
-                    onPaste: _onPaste,
-                    hasError: _error != null,
+                  LayoutBuilder(
+                    builder: (context, constraints) {
+                      return _OtpRow(
+                        controllers: _controllers,
+                        focusNodes: _focusNodes,
+                        onCharInput: _onCharInput,
+                        onPaste: _onPaste,
+                        hasError: _error != null,
+                        availableWidth: constraints.maxWidth,
+                      );
+                    },
                   ),
                   if (_error != null) ...[
                     const SizedBox(height: 10),
@@ -227,31 +200,20 @@ class _TenantCodeScreenState extends ConsumerState<TenantCodeScreen> {
                       textAlign: TextAlign.center,
                       style: const TextStyle(
                         fontSize: 13,
-                        color: Color(0xFFE8394B),
+                        color: _kRed,
                       ),
                     ),
-                  ],
-                  if (_preview != null) ...[
-                    const SizedBox(height: 16),
-                    _PreviewBanner(config: _preview!),
                   ],
                   const SizedBox(height: 28),
                   SizedBox(
                     width: double.infinity,
                     height: 52,
                     child: ElevatedButton(
-                      onPressed: _loading
-                          ? null
-                          : _preview != null
-                              ? _join
-                              : _allFilled
-                                  ? _validate
-                                  : null,
+                      onPressed: (_loading || !_allFilled) ? null : _joinWithCode,
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFFE8394B),
+                        backgroundColor: _kRed,
                         foregroundColor: Colors.white,
-                        disabledBackgroundColor:
-                            const Color(0xFFE8394B).withValues(alpha: 0.4),
+                        disabledBackgroundColor: _kRed.withValues(alpha: 0.4),
                         disabledForegroundColor: Colors.white70,
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(AppTokens.radiusMd),
@@ -267,9 +229,9 @@ class _TenantCodeScreenState extends ConsumerState<TenantCodeScreen> {
                                 color: Colors.white,
                               ),
                             )
-                          : Text(
-                              _preview != null ? 'Unirse' : 'Buscar',
-                              style: const TextStyle(
+                          : const Text(
+                              'Unirse',
+                              style: TextStyle(
                                 fontSize: 16,
                                 fontWeight: FontWeight.w600,
                               ),
@@ -286,7 +248,7 @@ class _TenantCodeScreenState extends ConsumerState<TenantCodeScreen> {
   }
 }
 
-// ── OTP row: three boxes, dash, three boxes ──────────────────────────────────
+// ── OTP row ──────────────────────────────────────────────────────────────────
 
 class _OtpRow extends StatelessWidget {
   const _OtpRow({
@@ -295,6 +257,7 @@ class _OtpRow extends StatelessWidget {
     required this.onCharInput,
     required this.onPaste,
     required this.hasError,
+    required this.availableWidth,
   });
 
   final List<TextEditingController> controllers;
@@ -302,50 +265,60 @@ class _OtpRow extends StatelessWidget {
   final void Function(int index, String value) onCharInput;
   final void Function(String pasted) onPaste;
   final bool hasError;
+  final double availableWidth;
 
   @override
   Widget build(BuildContext context) {
+    // Available width shared between 6 boxes + 5 gaps (8px each) + dash area (44px)
+    final boxWidth = ((availableWidth - 5 * 8 - 44) / 6).clamp(36.0, 52.0);
+    final boxHeight = boxWidth * 1.22;
+
     return Row(
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
         _OtpBox(
           controller: controllers[0], focusNode: focusNodes[0],
-          index: 0, onCharInput: onCharInput, onPaste: onPaste, hasError: hasError,
+          index: 0, onCharInput: onCharInput, onPaste: onPaste,
+          hasError: hasError, width: boxWidth, height: boxHeight,
         ),
-        const SizedBox(width: 8),
+        SizedBox(width: boxWidth * 0.18),
         _OtpBox(
           controller: controllers[1], focusNode: focusNodes[1],
-          index: 1, onCharInput: onCharInput, onPaste: onPaste, hasError: hasError,
+          index: 1, onCharInput: onCharInput, onPaste: onPaste,
+          hasError: hasError, width: boxWidth, height: boxHeight,
         ),
-        const SizedBox(width: 8),
+        SizedBox(width: boxWidth * 0.18),
         _OtpBox(
           controller: controllers[2], focusNode: focusNodes[2],
-          index: 2, onCharInput: onCharInput, onPaste: onPaste, hasError: hasError,
+          index: 2, onCharInput: onCharInput, onPaste: onPaste,
+          hasError: hasError, width: boxWidth, height: boxHeight,
         ),
-        const Padding(
-          padding: EdgeInsets.symmetric(horizontal: 10),
-          child: Text(
-            '—',
-            style: TextStyle(
-              fontSize: 22,
-              color: Color(0xFF94A3B8),
-              fontWeight: FontWeight.w300,
-            ),
+        SizedBox(width: boxWidth * 0.3),
+        Text(
+          '—',
+          style: TextStyle(
+            fontSize: boxWidth * 0.45,
+            color: const Color(0xFF94A3B8),
+            fontWeight: FontWeight.w300,
           ),
         ),
+        SizedBox(width: boxWidth * 0.3),
         _OtpBox(
           controller: controllers[3], focusNode: focusNodes[3],
-          index: 3, onCharInput: onCharInput, onPaste: onPaste, hasError: hasError,
+          index: 3, onCharInput: onCharInput, onPaste: onPaste,
+          hasError: hasError, width: boxWidth, height: boxHeight,
         ),
-        const SizedBox(width: 8),
+        SizedBox(width: boxWidth * 0.18),
         _OtpBox(
           controller: controllers[4], focusNode: focusNodes[4],
-          index: 4, onCharInput: onCharInput, onPaste: onPaste, hasError: hasError,
+          index: 4, onCharInput: onCharInput, onPaste: onPaste,
+          hasError: hasError, width: boxWidth, height: boxHeight,
         ),
-        const SizedBox(width: 8),
+        SizedBox(width: boxWidth * 0.18),
         _OtpBox(
           controller: controllers[5], focusNode: focusNodes[5],
-          index: 5, onCharInput: onCharInput, onPaste: onPaste, hasError: hasError,
+          index: 5, onCharInput: onCharInput, onPaste: onPaste,
+          hasError: hasError, width: boxWidth, height: boxHeight,
         ),
       ],
     );
@@ -362,6 +335,8 @@ class _OtpBox extends StatefulWidget {
     required this.onCharInput,
     required this.onPaste,
     required this.hasError,
+    required this.width,
+    required this.height,
   });
 
   final TextEditingController controller;
@@ -370,6 +345,8 @@ class _OtpBox extends StatefulWidget {
   final void Function(int index, String value) onCharInput;
   final void Function(String pasted) onPaste;
   final bool hasError;
+  final double width;
+  final double height;
 
   @override
   State<_OtpBox> createState() => _OtpBoxState();
@@ -394,14 +371,14 @@ class _OtpBoxState extends State<_OtpBox> {
   Widget build(BuildContext context) {
     final filled = widget.controller.text.isNotEmpty;
     final borderColor = widget.hasError
-        ? const Color(0xFFE8394B)
+        ? _kRed
         : filled
-            ? const Color(0xFFE8394B)
+            ? _kRed
             : const Color(0xFFCBD5E1);
 
     return SizedBox(
-      width: 44,
-      height: 54,
+      width: widget.width,
+      height: widget.height,
       child: KeyboardListener(
         focusNode: FocusNode(),
         onKeyEvent: (event) {
@@ -424,16 +401,16 @@ class _OtpBoxState extends State<_OtpBox> {
           inputFormatters: [
             FilteringTextInputFormatter.allow(RegExp(r'[a-zA-Z0-9]')),
           ],
-          style: const TextStyle(
-            fontSize: 20,
+          style: TextStyle(
+            fontSize: widget.width * 0.44,
             fontWeight: FontWeight.w700,
-            color: Color(0xFF1E293B),
+            color: const Color(0xFF1E293B),
           ),
           decoration: InputDecoration(
             counterText: '',
             filled: true,
             fillColor: filled
-                ? const Color(0xFFE8394B).withValues(alpha: 0.07)
+                ? _kRed.withValues(alpha: 0.07)
                 : const Color(0xFFF1F5F9),
             contentPadding: EdgeInsets.zero,
             border: OutlineInputBorder(
@@ -446,7 +423,7 @@ class _OtpBoxState extends State<_OtpBox> {
             ),
             focusedBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(10),
-              borderSide: const BorderSide(color: Color(0xFFE8394B), width: 2),
+              borderSide: const BorderSide(color: _kRed, width: 2),
             ),
           ),
           onChanged: (value) {
@@ -457,43 +434,6 @@ class _OtpBoxState extends State<_OtpBox> {
             widget.onCharInput(widget.index, value);
           },
         ),
-      ),
-    );
-  }
-}
-
-// ── Preview banner shown after successful slug validation ─────────────────────
-
-class _PreviewBanner extends StatelessWidget {
-  const _PreviewBanner({required this.config});
-
-  final TenantConfig config;
-
-  @override
-  Widget build(BuildContext context) {
-    final label = config.appName.isNotEmpty ? config.appName : config.name;
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-      decoration: BoxDecoration(
-        color: const Color(0xFFE8394B).withValues(alpha: 0.07),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0xFFE8394B).withValues(alpha: 0.25)),
-      ),
-      child: Row(
-        children: [
-          const Icon(Icons.check_circle_rounded, color: Color(0xFFE8394B), size: 20),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Text(
-              label,
-              style: const TextStyle(
-                fontSize: 14,
-                fontWeight: FontWeight.w600,
-                color: Color(0xFF1E293B),
-              ),
-            ),
-          ),
-        ],
       ),
     );
   }

@@ -81,7 +81,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                 onPressed: _completing ? null : _complete,
                 child: Text(
                   tr.onboardingSkip,
-                  style: TextStyle(color: Colors.grey.shade500, fontSize: 14),
+                  style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant, fontSize: 14),
                 ),
               ),
             ),
@@ -207,7 +207,7 @@ class _OnboardingPage extends StatelessWidget {
             textAlign: TextAlign.center,
             style: TextStyle(
               fontSize: 16,
-              color: Colors.grey.shade600,
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
               height: 1.6,
             ),
           ),
