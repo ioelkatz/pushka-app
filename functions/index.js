@@ -4740,45 +4740,6 @@ exports.setUserBlocked = onCall(
 // same email can be detected, and so legal/compliance has a retention record
 // (uid + deletedAt + reason) for the statutory period without the PII.
 // ---------------------------------------------------------------------------
-// TEMP DEBUG: caller inspects their own Stripe customer's payment-method
-// list as Stripe sees it right now. Used to diagnose discrepancies between
-// listSavedCards and PaymentSheet's saved-cards listing. Remove once the
-// off-session-cards bug is closed.
-exports.debugInspectCustomerPMs = onCall(
-  { secrets: [stripeSecret], enforceAppCheck: true },
-  async (request) => {
-    const uid = request.auth?.uid;
-    if (!uid) throw new HttpsError("unauthenticated", "auth requerido");
-    const userSnap = await db.collection("users").doc(uid).get();
-    const customerId = userSnap.data()?.stripeCustomerId || null;
-    if (!customerId) return { customerId: null, error: "no_customer" };
-    const stripe = require("stripe")(stripeSecret.value());
-    const customer = await stripe.customers.retrieve(customerId);
-    const defaultPmId = customer && !customer.deleted
-      ? customer.invoice_settings?.default_payment_method || null
-      : null;
-    const pmList = await stripe.paymentMethods.list({
-      customer: customerId, type: "card", limit: 100,
-    });
-    return {
-      customerId,
-      customerDeleted: customer && customer.deleted ? true : false,
-      defaultPmId,
-      pmCount: pmList.data.length,
-      pms: pmList.data.map((pm) => ({
-        id: pm.id,
-        brand: pm.card?.brand || null,
-        last4: pm.card?.last4 || null,
-        fingerprint: pm.card?.fingerprint || null,
-        expMonth: pm.card?.exp_month || null,
-        expYear: pm.card?.exp_year || null,
-        created: pm.created,
-        isDefault: pm.id === defaultPmId,
-      })),
-    };
-  },
-);
-
 exports.deleteAccount = onCall(
   { secrets: [stripeSecret], enforceAppCheck: true },
   async (request) => {
