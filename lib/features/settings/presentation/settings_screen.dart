@@ -12,12 +12,9 @@ import '../../auth/providers/auth_controller.dart';
 import '../../users/data/user_repository.dart';
 import '../../users/presentation/user_profile_provider.dart';
 import '../../tenant/data/tenant_repository.dart';
-import '../../tenant/domain/tenant_config.dart';
 import '../../../core/l10n/locale_provider.dart';
 import '../../../core/widgets/option_picker_sheet.dart';
 import 'package:go_router/go_router.dart';
-
-import 'package:url_launcher/url_launcher.dart';
 
 import 'auto_empty_action_row.dart';
 import 'auto_empty_screen.dart';
@@ -143,7 +140,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     final user = ref.watch(currentUserProvider);
     final userProfile = ref.watch(userProfileProvider).valueOrNull;
     final tenantState = ref.watch(tenantStateProvider).valueOrNull;
-    final tenantConfig = ref.watch(tenantConfigProvider).valueOrNull;
 
     String? getProfileString(String key) {
       if (userProfile == null) return null;
@@ -491,55 +487,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             color: Theme.of(context).colorScheme.surfaceContainerHighest,
           ),
           const SizedBox(height: 22),
-
-          // ORG INFO Section — visible only when tenant has info to show
-          if (tenantConfig != null && _hasOrgInfo(tenantConfig)) ...[
-            _buildSectionTitle(tenantConfig.appName),
-            const SizedBox(height: 12),
-            if (tenantConfig.welcomeText != null && tenantConfig.welcomeText!.isNotEmpty)
-              Padding(
-                padding: const EdgeInsets.only(bottom: 12),
-                child: Text(
-                  tenantConfig.welcomeText!,
-                  style: TextStyle(
-                    fontSize: 14,
-                    color: Theme.of(context).colorScheme.onSurfaceVariant,
-                    height: 1.5,
-                  ),
-                ),
-              ),
-            if (tenantConfig.contactEmail != null)
-              _buildOrgLink(
-                icon: Icons.email_outlined,
-                label: tenantConfig.contactEmail!,
-                onTap: () => _launchUrl('mailto:${tenantConfig.contactEmail}'),
-              ),
-            if (tenantConfig.contactPhone != null)
-              _buildOrgLink(
-                icon: Icons.phone_outlined,
-                label: tenantConfig.contactPhone!,
-                onTap: () => _launchUrl('tel:${tenantConfig.contactPhone}'),
-              ),
-            if (tenantConfig.privacyPolicyUrl != null)
-              _buildOrgLink(
-                icon: Icons.privacy_tip_outlined,
-                label: 'Política de privacidad',
-                onTap: () => _launchUrl(tenantConfig.privacyPolicyUrl!),
-              ),
-            if (tenantConfig.termsUrl != null)
-              _buildOrgLink(
-                icon: Icons.description_outlined,
-                label: 'Términos y condiciones',
-                onTap: () => _launchUrl(tenantConfig.termsUrl!),
-              ),
-            const SizedBox(height: 16),
-            Container(
-              height: 5,
-              width: double.infinity,
-              color: Theme.of(context).colorScheme.surfaceContainerHighest,
-            ),
-            const SizedBox(height: 22),
-          ],
 
           // MANAGE ACCOUNT Section
           _buildSectionTitle(tr.manageAccount),
@@ -989,49 +936,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     if (picked != null && picked != current) {
       ref.read(pushkaStyleProvider.notifier).setStyle(picked);
     }
-  }
-
-  bool _hasOrgInfo(TenantConfig tenantConfig) {
-    return (tenantConfig.welcomeText != null && tenantConfig.welcomeText!.isNotEmpty) ||
-        tenantConfig.contactEmail != null ||
-        tenantConfig.contactPhone != null ||
-        tenantConfig.privacyPolicyUrl != null ||
-        tenantConfig.termsUrl != null;
-  }
-
-  Future<void> _launchUrl(String url) async {
-    final uri = Uri.tryParse(url);
-    if (uri == null) return;
-    if (await canLaunchUrl(uri)) {
-      await launchUrl(uri, mode: LaunchMode.externalApplication);
-    }
-  }
-
-  Widget _buildOrgLink({required IconData icon, required String label, required VoidCallback onTap}) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(12),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 10),
-        child: Row(
-          children: [
-            Icon(icon, size: 18, color: Theme.of(context).colorScheme.primary),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Text(
-                label,
-                style: TextStyle(
-                  fontSize: 15,
-                  color: Theme.of(context).colorScheme.primary,
-                  fontWeight: FontWeight.w500,
-                ),
-              ),
-            ),
-            Icon(Icons.open_in_new, size: 14, color: Theme.of(context).colorScheme.onSurfaceVariant),
-          ],
-        ),
-      ),
-    );
   }
 
   Widget _buildSectionTitle(String title) {
