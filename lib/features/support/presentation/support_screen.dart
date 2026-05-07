@@ -23,71 +23,34 @@ class SupportScreen extends StatelessWidget {
         children: [
           const SizedBox(height: 12),
 
-          // Logo y branding de Colel Jabad
-          LayoutBuilder(
-            builder: (context, constraints) {
-              final isNarrow = constraints.maxWidth < 360;
-              final textBlock = Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  // Texto hebreo
-                  const Text(
-                    'צדקת רבי מאיר בעל הנס',
-                    style: TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w500,
-                      height: 1.4,
-                    ),
-                    textDirection: TextDirection.rtl,
-                    textAlign: TextAlign.right,
-                  ),
-                  const SizedBox(height: 4),
-                  // Colel Jabad
-                  Text(
-                    tr.colelJabad,
-                    style: TextStyle(
-                      fontSize: 30,
-                      fontWeight: FontWeight.w700,
-                      color: cs.onSurface,
-                      letterSpacing: 0.5,
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  // Tagline
-                  Text(
-                    tr.tagline1788,
-                    style: TextStyle(
-                      fontSize: 14,
-                      color: cs.onSurfaceVariant,
-                      fontWeight: FontWeight.w400,
-                    ),
-                  ),
-                ],
-              );
-
-              if (isNarrow) {
-                return Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    textBlock,
-                    const SizedBox(height: 16),
-                    Align(
-                      alignment: AlignmentDirectional.centerEnd,
-                      child: const SizedBox(width: 80, height: 80, child: Building770Widget(fillFraction: 0)),
-                    ),
-                  ],
-                );
-              }
-
-              return Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Expanded(child: textBlock),
-                  const SizedBox(width: 16),
-                  const SizedBox(width: 80, height: 80, child: Building770Widget(fillFraction: 0)),
-                ],
-              );
-            },
+          // Branding header
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                tr.colelJabad,
+                style: TextStyle(fontSize: 30, fontWeight: FontWeight.w700, color: cs.onSurface, letterSpacing: 0.5),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                tr.tagline1788,
+                style: TextStyle(fontSize: 14, color: cs.onSurfaceVariant, fontWeight: FontWeight.w400),
+              ),
+              const SizedBox(height: 16),
+              ClipRRect(
+                borderRadius: BorderRadius.circular(12),
+                child: Image.asset(
+                  'assets/images/mendy_meer.png',
+                  height: 160,
+                  fit: BoxFit.cover,
+                  alignment: Alignment.topCenter,
+                ),
+              ),
+              const SizedBox(height: 40),
+              const Center(
+                child: SizedBox(width: 80, height: 80, child: Building770Widget(fillFraction: 0)),
+              ),
+            ],
           ),
 
           const SizedBox(height: 32),
