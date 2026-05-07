@@ -220,3 +220,80 @@ workflows:
         submit_to_testflight: true
         beta_groups:
           - Internal Testers
+
+  # ---------------------------------------------------------------------------
+  # ios-altstore-debug — UI-only smoke test path (no Apple Developer needed)
+  # ---------------------------------------------------------------------------
+  #
+  # Builds a DEBUG, UNSIGNED IPA pointing at the dev Firebase project + Stripe
+  # test keys. The IPA is published as a build artifact. From there:
+  #
+  #   1. Download the .ipa from the Codemagic build page.
+  #   2. Install AltServer for Windows (https://altstore.io) + iCloud +
+  #      iTunes (Microsoft Store version both work).
+  #   3. Connect the iPhone via USB, trust the computer.
+  #   4. Drag the .ipa onto AltStore. Sign in with your free Apple ID when
+  #      prompted — AltStore re-signs with a free 7-day provisioning profile
+  #      and pushes the install to the phone.
+  #   5. Re-sign every 7 days (AltServer auto-refreshes while the iPhone is
+  #      on the same Wi-Fi network as the Windows machine).
+  #
+  # WHAT WORKS on this path:
+  #   - Auth (email/password, Apple Sign-In)
+  #   - Firestore reads/writes
+  #   - All UI / navigation / settings
+  #   - Donations via the credit-card form
+  #   - App Check via the debug provider (debug build → AppleDebugProvider
+  #     prints a token; register it at Firebase Console → App Check →
+  #     Manage debug tokens for `pushka-app-ioel-test`).
+  #
+  # WHAT DOESN'T WORK with a free Apple ID:
+  #   - Apple Pay (needs paid merchant ID — sheet still shows but charge fails)
+  #   - Push notifications (needs APNs cert)
+  #   - Google Sign-In (its OAuth callback URL scheme requires a registered
+  #     provisioning profile that free signing strips out)
+  #   - App Attest production attestation (sandbox only, debug provider used
+  #     instead — that's fine for testing)
+  #
+  # Triggered MANUALLY from the Codemagic UI. Avoid auto-triggering on push
+  # so we don't burn free-tier macOS minutes on every commit.
+
+  ios-altstore-debug:
+    name: iOS unsigned debug IPA (AltStore sideload, no Apple Developer)
+    instance_type: mac_mini_m2
+    max_build_duration: 60
+    environment:
+      flutter: stable
+      xcode: latest
+      cocoapods: default
+      groups:
+        - pushka_dev_secrets   # STRIPE_PUBLISHABLE_KEY (pk_test),
+                               # GOOGLE_SERVICE_INFO_PLIST_B64 (test project),
+                               # FIREBASE_OPTIONS_*_DART_B64
+      vars:
+        BUNDLE_ID: com.pushka.app
+        XCODE_PROJECT: ios/Runner.xcodeproj
+        XCODE_SCHEME: Runner
+    triggering:
+      events: []
+    scripts:
+      - *flutter_pub_get
+      - *decode_secret_files
+      - *cocoapods_install
+      - name: Build unsigned debug IPA (AltStore sideload target)
+        script: |
+          # `--no-codesign` skips signing entirely; AltStore re-signs on the
+          # Windows side with the user's free Apple ID. `--debug` makes the
+          # app use the App Check debug provider (AppleDebugProvider), which
+          # is what we want here — App Attest doesn't work with free Apple
+          # IDs anyway. `STRIPE_MERCHANT_ID` is intentionally NOT passed:
+          # without a merchant ID Apple Pay is silently disabled and the
+          # sheet falls back to credit-card-only, which is what AltStore
+          # builds support.
+          flutter build ipa --debug --no-codesign \
+            --dart-define=ENV=dev \
+            --dart-define=STRIPE_PUBLISHABLE_KEY="$STRIPE_PUBLISHABLE_KEY"
+          ls -la build/ios/ipa/
+    artifacts:
+      - build/ios/ipa/*.ipa
+      - /tmp/xcodebuild_logs/*.log
