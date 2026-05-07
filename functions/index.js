@@ -432,6 +432,13 @@ async function writeUserPaymentEvent(uid, eventId, data) {
 }
 
 async function writeActivityLog({ type, tenantId, tenantName, severity, requiresAction, data }) {
+  // ttlAt: lets us flip on a Firestore TTL policy without code changes.
+  // Critical / requires-action entries are kept indefinitely (set null) so
+  // ops never lose an unresolved alert. Everything else expires after 90
+  // days — plenty for audit + reconciliation, beyond which Cloud Logging
+  // (1y default) is the long-term record.
+  const isPermanent = severity === "critical" || requiresAction === true;
+  const ninetyDaysMs = 90 * 24 * 60 * 60 * 1000;
   await db.collection("_activityLog").add({
     type,
     tenantId: tenantId ?? null,
@@ -442,6 +449,7 @@ async function writeActivityLog({ type, tenantId, tenantName, severity, requires
     resolvedAt: null,
     data: data ?? {},
     createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    ttlAt: isPermanent ? null : admin.firestore.Timestamp.fromMillis(Date.now() + ninetyDaysMs),
   });
 }
 
@@ -2929,15 +2937,30 @@ exports.cleanupStaleFcmTokens = onSchedule(
 exports.resetMonthlyActiveUsers = onSchedule(
   { schedule: "0 0 1 * *", timeZone: "Etc/UTC" },
   async () => {
-    const tenantsSnap = await db.collection("tenants").get();
+    // Page through tenants instead of `.get()` on the whole collection —
+    // safe at 100s of tenants today, but a single unbounded scan would
+    // start hitting timeouts / memory ceilings around 10k+ tenants. Reads
+    // are batched at 500 and writes at 400 (Firestore batch limit).
+    const PAGE_SIZE = 500;
     const BATCH_SIZE = 400;
-    let batch = db.batch();
-    let count = 0;
-    for (const doc of tenantsSnap.docs) {
-      batch.update(doc.ref, { activeUsersThisMonth: 0 });
-      if (++count % BATCH_SIZE === 0) { await batch.commit(); batch = db.batch(); }
+    let totalReset = 0;
+    let lastDoc = null;
+    while (true) {
+      let q = db.collection("tenants").orderBy(admin.firestore.FieldPath.documentId()).limit(PAGE_SIZE);
+      if (lastDoc) q = q.startAfter(lastDoc);
+      const tenantsSnap = await q.get();
+      if (tenantsSnap.empty) break;
+      let batch = db.batch();
+      let count = 0;
+      for (const doc of tenantsSnap.docs) {
+        batch.update(doc.ref, { activeUsersThisMonth: 0 });
+        if (++count % BATCH_SIZE === 0) { await batch.commit(); batch = db.batch(); }
+      }
+      if (count % BATCH_SIZE !== 0) await batch.commit();
+      totalReset += tenantsSnap.size;
+      lastDoc = tenantsSnap.docs[tenantsSnap.docs.length - 1];
+      if (tenantsSnap.size < PAGE_SIZE) break;
     }
-    if (count % BATCH_SIZE !== 0) await batch.commit();
 
     // Clean up _monthlyActive docs from 2 months ago
     const now = new Date();
@@ -2957,7 +2980,7 @@ exports.resetMonthlyActiveUsers = onSchedule(
       deleted += snap.size;
       hasMore = snap.size === 400;
     }
-    console.info("resetMonthlyActiveUsers: complete", { tenantsReset: tenantsSnap.size, monthlyActiveDeleted: deleted });
+    console.info("resetMonthlyActiveUsers: complete", { tenantsReset: totalReset, monthlyActiveDeleted: deleted });
   },
 );
 
@@ -3938,21 +3961,6 @@ function defaultGoalForCurrency(currency) {
     MXN: 1800, BRL: 770, ARS: 180000, CLP: 180000, COP: 770000,
   };
   return goals[String(currency || "USD").toUpperCase()] ?? 180;
-}
-
-/**
- * Given an amount in `currencyCode` (uppercase), returns the equivalent in USD.
- */
-async function convertToUSD(amount, currencyCode) {
-  const code = String(currencyCode || "USD").toUpperCase();
-  if (code === "USD") return amount;
-  const rates = await getExchangeRates(null);
-  const rate = rates[code];
-  if (!rate) {
-    console.warn(`convertToUSD: no exchange rate for currency "${code}", returning null`);
-    return null;
-  }
-  return amount / rate;
 }
 
 // ---------------------------------------------------------------------------
@@ -5353,8 +5361,8 @@ exports.createTenant = onCall(
       // Branding
       appName: String(appName || name).trim(),
       welcomeText: String(welcomeText || "").trim() || null,
-      primaryColor: /^#[0-9A-Fa-f]{6}$/.test(String(primaryColor || "")) ? String(primaryColor).trim() : "#E8A87C",
-      secondaryColor: /^#[0-9A-Fa-f]{6}$/.test(String(secondaryColor || "")) ? String(secondaryColor).trim() : "#D4A843",
+      primaryColor: /^#[0-9A-Fa-f]{6}$/.test(String(primaryColor || "")) ? String(primaryColor).trim().toLowerCase() : "#e8a87c",
+      secondaryColor: /^#[0-9A-Fa-f]{6}$/.test(String(secondaryColor || "")) ? String(secondaryColor).trim().toLowerCase() : "#d4a843",
       logoUrl: String(logoUrl || "").trim() || null,
       showPoweredBy: true,
 
@@ -5781,7 +5789,10 @@ exports.updateTenant = onCall(
       if (typeof val === "string") {
         val = val.trim();
         if (nullableStringFields.has(key) && val === "") val = null;
-        if (hexColorFields.has(key) && !hexRe.test(val)) continue; // skip invalid hex
+        if (hexColorFields.has(key)) {
+          if (!hexRe.test(val)) continue; // skip invalid hex
+          val = val.toLowerCase(); // normalize to lowercase for consistent storage
+        }
       }
       // Mirror createTenant's defensive bounds on financial fields. A
       // commissionRate >= 1 would let the platform skim 100 %+ of donations;
@@ -6098,7 +6109,21 @@ exports.listTenants = onCall(
       throw new HttpsError("permission-denied", "Solo el super administrador.");
     }
 
-    const snap = await db.collection("tenants").orderBy("createdAt", "desc").limit(1000).get();
+    // Cursor pagination — at 1k+ tenants the unbounded `.limit(1000).get()`
+    // becomes slow + expensive on every dashboard open. Caller passes
+    // `cursor` (createdAt ISO string) from the previous response to fetch
+    // the next page. `limit` clamps to [1, 200].
+    const requestedLimit = Number(request.data?.limit ?? 100);
+    const limit = Math.min(200, Math.max(1, Number.isFinite(requestedLimit) ? requestedLimit : 100));
+    const cursorRaw = request.data?.cursor;
+    let q = db.collection("tenants").orderBy("createdAt", "desc");
+    if (cursorRaw && typeof cursorRaw === "string") {
+      const cursorDate = new Date(cursorRaw);
+      if (!isNaN(cursorDate.getTime())) {
+        q = q.startAfter(admin.firestore.Timestamp.fromDate(cursorDate));
+      }
+    }
+    const snap = await q.limit(limit).get();
 
     const tenants = snap.docs.map((d) => {
       const data = d.data();
@@ -6121,7 +6146,11 @@ exports.listTenants = onCall(
       };
     });
 
-    return { tenants };
+    const nextCursor = snap.size === limit && tenants.length > 0
+        ? tenants[tenants.length - 1].createdAt
+        : null;
+
+    return { tenants, nextCursor };
   }
 );
 
@@ -6234,7 +6263,13 @@ exports.createStripeConnectLink = onCall(
       stripeConnectOAuthStateCreatedAt: admin.firestore.FieldValue.serverTimestamp(),
     });
 
-    const redirectUri = `https://us-central1-pushka-app-ioel.cloudfunctions.net/handleStripeConnectOAuth`;
+    // Dynamically derive the project ID so prod and dev deployments each
+    // round-trip to their own callback. Both URLs must be added to the
+    // Stripe Connect dashboard's allowed redirect URIs.
+    const projectId = process.env.GCLOUD_PROJECT ||
+        process.env.GOOGLE_CLOUD_PROJECT ||
+        "pushka-app-ioel";
+    const redirectUri = `https://us-central1-${projectId}.cloudfunctions.net/handleStripeConnectOAuth`;
     const params = new URLSearchParams({
       response_type: "code",
       client_id: clientId,
@@ -6407,8 +6442,13 @@ function _redactEmail(email) {
 }
 
 async function sendEmail({ to, subject, html }) {
-  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-  if (!to || !emailRegex.test(to)) {
+  // Stricter than the previous /[^\s@]+@[^\s@]+\.[^\s@]+/: requires at
+  // least one alphanumeric in the local + domain start, and a TLD of 2+
+  // alpha chars. Catches "a@-b.com" / "a@b.c" which the loose form let
+  // through. Firebase Auth is the canonical email gate; this is defense
+  // in depth before we hit SendGrid (and waste an API call on garbage).
+  const emailRegex = /^[A-Za-z0-9._%+\-]+@[A-Za-z0-9][A-Za-z0-9.\-]*\.[A-Za-z]{2,}$/;
+  if (!to || to.length > 254 || !emailRegex.test(to)) {
     console.warn("sendEmail: invalid or missing recipient address, skipping:", _redactEmail(to));
     return;
   }
@@ -6814,6 +6854,12 @@ exports.checkGracePeriods = onSchedule(
 // Reachable at https://pushka-app-ioel.web.app/.well-known/assetlinks.json
 // ---------------------------------------------------------------------------
 exports.assetlinks = onRequest({ cors: true }, (req, res) => {
+  // GET-only. The endpoint serves a public Android App Links manifest;
+  // anything else is a misuse — fail fast so we don't waste CF time.
+  if (req.method !== "GET" && req.method !== "HEAD") {
+    res.set("Allow", "GET, HEAD");
+    return res.status(405).send("Method Not Allowed");
+  }
   // SHA-256 certificate fingerprints for both prod and dev release keystores.
   // Add debug keystores here during development if needed.
   const assetLinks = [
@@ -6828,7 +6874,9 @@ exports.assetlinks = onRequest({ cors: true }, (req, res) => {
       },
     },
   ];
-  res.set("Cache-Control", "no-store");
+  // Manifest is stable for the keystore lifetime (years). Cache 1h at
+  // edges/clients to cut bandwidth + CF invocations from verifier polls.
+  res.set("Cache-Control", "public, max-age=3600, s-maxage=3600");
   res.json(assetLinks);
 });
 
