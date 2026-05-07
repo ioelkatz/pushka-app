@@ -156,7 +156,7 @@ class S {
   String get reminders => _t('Recordatorios', 'Reminders', 'Rappels', 'תזכורות');
   String get history => _t('Historial', 'History', 'Historique', 'היסטוריה');
   String get settings => _t('Configuración', 'Settings', 'Paramètres', 'הגדרות');
-  String get prayersAndSegulot => _t('Segulot y Rezos', 'Segulot & Prayers', 'Segoulot et Prières', 'סגולות ותפילות');
+  String get prayersAndSegulot => _t('Segulot y Rezos', 'Prayers & Blessings', 'Prières et Bénédictions', 'סגולות ותפילות');
   String get support => _t('Soporte', 'Support', 'Assistance', 'תמיכה');
   String get about => _t('Acerca de', 'About', 'À propos', 'אודות');
   String version(String v) => _t('Versión $v', 'Version $v', 'Version $v', 'גרסה $v');
@@ -781,8 +781,8 @@ class S {
   String get tagline1788 => _t(
     'Rab Menachem Mendel Meer',
     'Rabbi Menachem Mendel Meer',
-    'Rabbin Menahem Mendel Meer',
-    'הרב מנחם מענדל מאיר',
+    'Rabbin Menachem Mendel Meer',
+    'הרב מנחם מנדל מיר',
   );
   String get appVersionSection => _t('VERSIÓN DE LA APP', 'APP VERSION', "VERSION DE L'APP", 'גרסת האפליקציה');
   String get supportSection => _t('SOPORTE', 'SUPPORT', 'ASSISTANCE', 'תמיכה');
@@ -804,7 +804,7 @@ class S {
   String get aboutP1 => _t(
     'Bienvenido a Jabad en Campus. Esta aplicación fue creada para facilitar la tzedaká en nuestra comunidad, liderada por el Rabino Menachem Mendel Meer.',
     'Welcome to Chabad on Campus. This app was created to facilitate tzedakah in our community, led by Rabbi Menachem Mendel Meer.',
-    "Bienvenue à Habad sur le Campus. Cette application a été créée pour faciliter la tsedaka dans notre communauté, dirigée par le Rabbin Menahem Mendel Meer.",
+    "Bienvenue à Habad sur le Campus. Cette application a été créée pour faciliter la tsedaka dans notre communauté, dirigée par le Rabbin Menachem Mendel Meer.",
     'ברוכים הבאים לחב"ד בקמפוס. אפליקציה זו נוצרה כדי להקל על הצדקה בקהילתנו, בהנהגת הרב מנחם מענדל מאיר.',
   );
   String get aboutP2 => _t(
