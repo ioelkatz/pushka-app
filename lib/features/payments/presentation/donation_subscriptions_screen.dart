@@ -401,7 +401,7 @@ class _DonationSubscriptionsScreenState
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(Icons.favorite_outline, size: 56, color: cs.onSurfaceVariant),
+            Icon(Icons.favorite_outline, size: 56, color: const Color(0xFFCC2936)),
             const SizedBox(height: 14),
             Text(
               tr.noActiveSubscriptions,

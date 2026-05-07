@@ -136,111 +136,143 @@ class _TenantCodeScreenState extends ConsumerState<TenantCodeScreen> {
         ),
       ),
       child: Scaffold(
-        backgroundColor: AppTokens.surface,
-        body: SafeArea(
-          child: Center(
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 24),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const Text(
-                    'Jabad en Campus',
-                    style: TextStyle(
-                      fontSize: 22,
-                      fontWeight: FontWeight.w700,
-                      color: Color(0xFF1E293B),
-                      letterSpacing: -0.3,
-                    ),
-                  ),
-                  const SizedBox(height: 20),
-                  Image.asset(
-                    'assets/images/jabad_campus_logo.png',
-                    width: 100,
-                    height: 100,
-                    fit: BoxFit.contain,
-                  ),
-                  const SizedBox(height: 36),
-                  const Text(
-                    'Ingresá el código de invitación',
-                    style: TextStyle(
-                      fontSize: 15,
-                      fontWeight: FontWeight.w600,
-                      color: Color(0xFF1E293B),
-                    ),
-                  ),
-                  const SizedBox(height: 6),
-                  const Text(
-                    'Tu rab te lo compartió por mensaje.',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                      fontSize: 13,
-                      color: Color(0xFF64748B),
-                      height: 1.45,
-                    ),
-                  ),
-                  const SizedBox(height: 28),
-                  LayoutBuilder(
+        backgroundColor: Colors.white,
+        body: Stack(
+          children: [
+            // Building image: hidden when keyboard is open to avoid layout jump
+            if (MediaQuery.of(context).viewInsets.bottom == 0)
+              Align(
+                alignment: Alignment.bottomCenter,
+                child: Image.asset(
+                  'assets/images/jabad_campus_building.png',
+                  height: MediaQuery.of(context).size.height * 0.30,
+                  fit: BoxFit.fitHeight,
+                ),
+              ),
+            // Main content
+            SafeArea(
+              child: Center(
+                child: SingleChildScrollView(
+                  padding:
+                      const EdgeInsets.fromLTRB(28, 34, 28, 24),
+                  child: LayoutBuilder(
                     builder: (context, constraints) {
-                      return _OtpRow(
-                        controllers: _controllers,
-                        focusNodes: _focusNodes,
-                        onCharInput: _onCharInput,
-                        onPaste: _onPaste,
-                        hasError: _error != null,
-                        availableWidth: constraints.maxWidth,
+                      final availableWidth = constraints.maxWidth;
+                      // Same formula as _OtpRow to compute box width
+                      final boxWidth =
+                          ((availableWidth - 5 * 8 - 44) / 6).clamp(36.0, 52.0);
+                      // Approximate OTP row visual width:
+                      // 6 boxes + 4 small gaps (×0.18) + 2 wide gaps (×0.3) + dash (~×0.45)
+                      final otpRowWidth = boxWidth * 7.62;
+
+                      return Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Text(
+                            'Jabad en Campus',
+                            style: TextStyle(
+                              fontSize: 26,
+                              fontWeight: FontWeight.w800,
+                              color: Color(0xFF1E293B),
+                              letterSpacing: -0.4,
+                            ),
+                          ),
+                          const SizedBox(height: 20),
+                          Image.asset(
+                            'assets/images/jabad_campus_logo.png',
+                            width: 90,
+                            height: 90,
+                            fit: BoxFit.contain,
+                          ),
+                          const SizedBox(height: 32),
+                          const Text(
+                            'Ingresá el código de invitación',
+                            style: TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w600,
+                              color: Color(0xFF1E293B),
+                            ),
+                          ),
+                          const SizedBox(height: 6),
+                          const Text(
+                            'Tu rab te lo compartió por mensaje.',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              fontSize: 13,
+                              color: Color(0xFF64748B),
+                              height: 1.45,
+                            ),
+                          ),
+                          const SizedBox(height: 28),
+                          _OtpRow(
+                            controllers: _controllers,
+                            focusNodes: _focusNodes,
+                            onCharInput: _onCharInput,
+                            onPaste: _onPaste,
+                            hasError: _error != null,
+                            availableWidth: availableWidth,
+                          ),
+                          if (_error != null) ...[
+                            const SizedBox(height: 10),
+                            Text(
+                              _error!,
+                              textAlign: TextAlign.center,
+                              style: const TextStyle(
+                                fontSize: 13,
+                                color: _kRed,
+                              ),
+                            ),
+                          ],
+                          const SizedBox(height: 24),
+                          // Button aligned to OTP row width
+                          SizedBox(
+                            width: otpRowWidth,
+                            height: 52,
+                            child: ElevatedButton(
+                              onPressed: (_loading || !_allFilled)
+                                  ? null
+                                  : _joinWithCode,
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: _kRed,
+                                foregroundColor: Colors.white,
+                                disabledBackgroundColor:
+                                    _kRed.withValues(alpha: 0.4),
+                                disabledForegroundColor: Colors.white70,
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(
+                                      AppTokens.radiusMd),
+                                ),
+                                elevation: 6,
+                                shadowColor: _kRed.withValues(alpha: 0.45),
+                              ),
+                              child: _loading
+                                  ? const SizedBox(
+                                      width: 22,
+                                      height: 22,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2.5,
+                                        color: Colors.white,
+                                      ),
+                                    )
+                                  : const Text(
+                                      'Unirse',
+                                      style: TextStyle(
+                                        fontSize: 16,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                            ),
+                          ),
+                          // Reserve space so building image doesn't overlap content
+                          const SizedBox(height: 220),
+                        ],
                       );
                     },
                   ),
-                  if (_error != null) ...[
-                    const SizedBox(height: 10),
-                    Text(
-                      _error!,
-                      textAlign: TextAlign.center,
-                      style: const TextStyle(
-                        fontSize: 13,
-                        color: _kRed,
-                      ),
-                    ),
-                  ],
-                  const SizedBox(height: 28),
-                  SizedBox(
-                    width: double.infinity,
-                    height: 52,
-                    child: ElevatedButton(
-                      onPressed: (_loading || !_allFilled) ? null : _joinWithCode,
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: _kRed,
-                        foregroundColor: Colors.white,
-                        disabledBackgroundColor: _kRed.withValues(alpha: 0.4),
-                        disabledForegroundColor: Colors.white70,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(AppTokens.radiusMd),
-                        ),
-                        elevation: 0,
-                      ),
-                      child: _loading
-                          ? const SizedBox(
-                              width: 22,
-                              height: 22,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2.5,
-                                color: Colors.white,
-                              ),
-                            )
-                          : const Text(
-                              'Unirse',
-                              style: TextStyle(
-                                fontSize: 16,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                    ),
-                  ),
-                ],
+                ),
               ),
             ),
-          ),
+          ],
         ),
       ),
     );
@@ -276,21 +308,36 @@ class _OtpRow extends StatelessWidget {
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
         _OtpBox(
-          controller: controllers[0], focusNode: focusNodes[0],
-          index: 0, onCharInput: onCharInput, onPaste: onPaste,
-          hasError: hasError, width: boxWidth, height: boxHeight,
+          controller: controllers[0],
+          focusNode: focusNodes[0],
+          index: 0,
+          onCharInput: onCharInput,
+          onPaste: onPaste,
+          hasError: hasError,
+          width: boxWidth,
+          height: boxHeight,
         ),
         SizedBox(width: boxWidth * 0.18),
         _OtpBox(
-          controller: controllers[1], focusNode: focusNodes[1],
-          index: 1, onCharInput: onCharInput, onPaste: onPaste,
-          hasError: hasError, width: boxWidth, height: boxHeight,
+          controller: controllers[1],
+          focusNode: focusNodes[1],
+          index: 1,
+          onCharInput: onCharInput,
+          onPaste: onPaste,
+          hasError: hasError,
+          width: boxWidth,
+          height: boxHeight,
         ),
         SizedBox(width: boxWidth * 0.18),
         _OtpBox(
-          controller: controllers[2], focusNode: focusNodes[2],
-          index: 2, onCharInput: onCharInput, onPaste: onPaste,
-          hasError: hasError, width: boxWidth, height: boxHeight,
+          controller: controllers[2],
+          focusNode: focusNodes[2],
+          index: 2,
+          onCharInput: onCharInput,
+          onPaste: onPaste,
+          hasError: hasError,
+          width: boxWidth,
+          height: boxHeight,
         ),
         SizedBox(width: boxWidth * 0.3),
         Text(
@@ -303,21 +350,36 @@ class _OtpRow extends StatelessWidget {
         ),
         SizedBox(width: boxWidth * 0.3),
         _OtpBox(
-          controller: controllers[3], focusNode: focusNodes[3],
-          index: 3, onCharInput: onCharInput, onPaste: onPaste,
-          hasError: hasError, width: boxWidth, height: boxHeight,
+          controller: controllers[3],
+          focusNode: focusNodes[3],
+          index: 3,
+          onCharInput: onCharInput,
+          onPaste: onPaste,
+          hasError: hasError,
+          width: boxWidth,
+          height: boxHeight,
         ),
         SizedBox(width: boxWidth * 0.18),
         _OtpBox(
-          controller: controllers[4], focusNode: focusNodes[4],
-          index: 4, onCharInput: onCharInput, onPaste: onPaste,
-          hasError: hasError, width: boxWidth, height: boxHeight,
+          controller: controllers[4],
+          focusNode: focusNodes[4],
+          index: 4,
+          onCharInput: onCharInput,
+          onPaste: onPaste,
+          hasError: hasError,
+          width: boxWidth,
+          height: boxHeight,
         ),
         SizedBox(width: boxWidth * 0.18),
         _OtpBox(
-          controller: controllers[5], focusNode: focusNodes[5],
-          index: 5, onCharInput: onCharInput, onPaste: onPaste,
-          hasError: hasError, width: boxWidth, height: boxHeight,
+          controller: controllers[5],
+          focusNode: focusNodes[5],
+          index: 5,
+          onCharInput: onCharInput,
+          onPaste: onPaste,
+          hasError: hasError,
+          width: boxWidth,
+          height: boxHeight,
         ),
       ],
     );
@@ -356,6 +418,7 @@ class _OtpBoxState extends State<_OtpBox> {
   void initState() {
     super.initState();
     widget.controller.addListener(_rebuild);
+    widget.focusNode.addListener(_rebuild);
   }
 
   void _rebuild() => setState(() {});
@@ -363,21 +426,41 @@ class _OtpBoxState extends State<_OtpBox> {
   @override
   void dispose() {
     widget.controller.removeListener(_rebuild);
+    widget.focusNode.removeListener(_rebuild);
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     final filled = widget.controller.text.isNotEmpty;
+    final focused = widget.focusNode.hasFocus;
+
     final borderColor = widget.hasError
         ? _kRed
-        : filled
+        : focused
             ? _kRed
-            : const Color(0xFFCBD5E1);
+            : filled
+                ? _kRed
+                : const Color(0xFFE2E8F0);
 
-    return SizedBox(
+    final borderWidth = focused ? 2.0 : 1.5;
+
+    return Container(
       width: widget.width,
       height: widget.height,
+      decoration: BoxDecoration(
+        color: filled ? _kRed.withValues(alpha: 0.06) : Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: borderColor, width: borderWidth),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.18),
+            blurRadius: 6,
+            spreadRadius: 0,
+            offset: const Offset(0, 3),
+          ),
+        ],
+      ),
       child: KeyboardListener(
         focusNode: FocusNode(),
         onKeyEvent: (event) {
@@ -405,25 +488,14 @@ class _OtpBoxState extends State<_OtpBox> {
             fontWeight: FontWeight.w700,
             color: const Color(0xFF1E293B),
           ),
-          decoration: InputDecoration(
+          decoration: const InputDecoration(
             counterText: '',
-            filled: true,
-            fillColor: filled
-                ? _kRed.withValues(alpha: 0.07)
-                : const Color(0xFFF1F5F9),
+            border: InputBorder.none,
+            enabledBorder: InputBorder.none,
+            focusedBorder: InputBorder.none,
+            errorBorder: InputBorder.none,
+            filled: false,
             contentPadding: EdgeInsets.zero,
-            border: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(10),
-              borderSide: BorderSide(color: borderColor, width: 1.5),
-            ),
-            enabledBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(10),
-              borderSide: BorderSide(color: borderColor, width: 1.5),
-            ),
-            focusedBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(10),
-              borderSide: const BorderSide(color: _kRed, width: 2),
-            ),
           ),
           onChanged: (value) {
             if (value.length > 1) {

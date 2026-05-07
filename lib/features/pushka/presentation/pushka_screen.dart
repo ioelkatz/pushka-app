@@ -389,7 +389,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                             label: tr.donateMonthly,
                             selected: monthly,
                             icon: Icons.favorite,
-                            iconColor: const Color(0xFFE05A8A),
+                            iconColor: const Color(0xFFCC2936),
                             onTap: () => setDialogState(() => monthly = true),
                           ),
                         ),
