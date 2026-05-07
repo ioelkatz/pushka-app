@@ -514,6 +514,12 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 label: tenantConfig.contactEmail!,
                 onTap: () => _launchUrl('mailto:${tenantConfig.contactEmail}'),
               ),
+            if (tenantConfig.contactPhone != null)
+              _buildOrgLink(
+                icon: Icons.phone_outlined,
+                label: tenantConfig.contactPhone!,
+                onTap: () => _launchUrl('tel:${tenantConfig.contactPhone}'),
+              ),
             if (tenantConfig.privacyPolicyUrl != null)
               _buildOrgLink(
                 icon: Icons.privacy_tip_outlined,
@@ -988,6 +994,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   bool _hasOrgInfo(TenantConfig tenantConfig) {
     return (tenantConfig.welcomeText != null && tenantConfig.welcomeText!.isNotEmpty) ||
         tenantConfig.contactEmail != null ||
+        tenantConfig.contactPhone != null ||
         tenantConfig.privacyPolicyUrl != null ||
         tenantConfig.termsUrl != null;
   }

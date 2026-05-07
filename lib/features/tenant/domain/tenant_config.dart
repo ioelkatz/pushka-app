@@ -14,6 +14,7 @@ class TenantConfig {
     this.defaultCurrency,
     this.defaultCountry,
     this.contactEmail,
+    this.contactPhone,
     this.privacyPolicyUrl,
     this.termsUrl,
     this.donationReasons = const [],
@@ -31,6 +32,7 @@ class TenantConfig {
   final String? defaultCurrency;
   final String? defaultCountry;
   final String? contactEmail;
+  final String? contactPhone;
   final String? privacyPolicyUrl;
   final String? termsUrl;
   /// Optional per-tenant list of donation reasons ("designaciones") shown
@@ -51,6 +53,7 @@ class TenantConfig {
       defaultCurrency: _nonEmpty(data['defaultCurrency'] as String?),
       defaultCountry: _nonEmpty(data['defaultCountry'] as String?),
       contactEmail: _nonEmpty(data['contactEmail'] as String?),
+      contactPhone: _nonEmpty(data['contactPhone'] as String?),
       privacyPolicyUrl: _nonEmpty(data['privacyPolicyUrl'] as String?),
       termsUrl: _nonEmpty(data['termsUrl'] as String?),
       donationReasons: _stringList(data['donationReasons']),
@@ -73,6 +76,7 @@ class TenantConfig {
       if (defaultCurrency != null) 'defaultCurrency': defaultCurrency,
       if (defaultCountry != null) 'defaultCountry': defaultCountry,
       if (contactEmail != null) 'contactEmail': contactEmail,
+      if (contactPhone != null) 'contactPhone': contactPhone,
       if (privacyPolicyUrl != null) 'privacyPolicyUrl': privacyPolicyUrl,
       if (termsUrl != null) 'termsUrl': termsUrl,
       if (donationReasons.isNotEmpty) 'donationReasons': donationReasons,
@@ -134,6 +138,7 @@ class TenantConfig {
           defaultCurrency == other.defaultCurrency &&
           defaultCountry == other.defaultCountry &&
           contactEmail == other.contactEmail &&
+          contactPhone == other.contactPhone &&
           privacyPolicyUrl == other.privacyPolicyUrl &&
           termsUrl == other.termsUrl &&
           _listEquals(donationReasons, other.donationReasons);
@@ -151,7 +156,7 @@ class TenantConfig {
         tenantId, name, appName, showPoweredBy, welcomeText,
         primaryColor, secondaryColor, logoUrl,
         defaultLanguage, defaultCurrency, defaultCountry,
-        contactEmail, privacyPolicyUrl, termsUrl,
+        contactEmail, contactPhone, privacyPolicyUrl, termsUrl,
         Object.hashAll(donationReasons),
       );
 }

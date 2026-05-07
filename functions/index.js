@@ -5671,11 +5671,14 @@ exports.getTenantBranding = onCall(
       "primaryColor", "secondaryColor", "logoUrl", "showPoweredBy",
       "defaultLanguage", "defaultCurrency", "defaultCountry",
       "contactEmail", "contactPhone", "privacyPolicyUrl", "termsUrl",
-      "city", "country",
+      "city", "country", "donationReasons",
     ];
     const branding = { tenantId: snap.id };
     for (const f of fields) {
       if (data[f] !== undefined) branding[f] = data[f];
+    }
+    if (!Array.isArray(branding.donationReasons) || branding.donationReasons.length === 0) {
+      branding.donationReasons = DEFAULT_CHABAD_DONATION_REASONS;
     }
     return branding;
   }
@@ -5722,6 +5725,7 @@ exports.updateTenant = onCall(
       "defaultLanguage", "defaultCurrency", "defaultCountry",
       "contactEmail", "contactPhone", "privacyPolicyUrl", "termsUrl",
       "city", "country",
+      "donationReasons",
     ];
     const superOnlyFields = [
       "name", "status", "commissionRate", "planPrice",
@@ -5747,6 +5751,16 @@ exports.updateTenant = onCall(
     for (const key of allowed) {
       if (!(key in updates)) continue;
       let val = updates[key];
+      // donationReasons is an array of strings — validate and clean each entry
+      if (key === "donationReasons") {
+        if (!Array.isArray(val)) continue;
+        val = val
+          .filter((r) => typeof r === "string" && r.trim().length > 0)
+          .map((r) => r.trim())
+          .slice(0, 30); // cap at 30 items
+        patch[key] = val;
+        continue;
+      }
       if (typeof val === "string") {
         val = val.trim();
         if (nullableStringFields.has(key) && val === "") val = null;

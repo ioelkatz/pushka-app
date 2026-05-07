@@ -145,13 +145,6 @@ class _TenantCodeScreenState extends ConsumerState<TenantCodeScreen> {
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Image.asset(
-                    'assets/images/jabad_campus_logo.png',
-                    width: 100,
-                    height: 100,
-                    fit: BoxFit.contain,
-                  ),
-                  const SizedBox(height: 18),
                   const Text(
                     'Jabad en Campus',
                     style: TextStyle(
@@ -160,6 +153,13 @@ class _TenantCodeScreenState extends ConsumerState<TenantCodeScreen> {
                       color: Color(0xFF1E293B),
                       letterSpacing: -0.3,
                     ),
+                  ),
+                  const SizedBox(height: 20),
+                  Image.asset(
+                    'assets/images/jabad_campus_logo.png',
+                    width: 100,
+                    height: 100,
+                    fit: BoxFit.contain,
                   ),
                   const SizedBox(height: 36),
                   const Text(
@@ -172,7 +172,7 @@ class _TenantCodeScreenState extends ConsumerState<TenantCodeScreen> {
                   ),
                   const SizedBox(height: 6),
                   const Text(
-                    'Tu administrador te lo compartió\npor mensaje o por link.',
+                    'Tu rabino te lo compartió por mensaje.',
                     textAlign: TextAlign.center,
                     style: TextStyle(
                       fontSize: 13,
