@@ -157,12 +157,12 @@ class S {
   String get history => _t('Historial', 'History', 'Historique', 'היסטוריה');
   String get settings => _t('Configuración', 'Settings', 'Paramètres', 'הגדרות');
   String get prayersAndSegulot => _t('Segulot y Rezos', 'Segulot & Prayers', 'Segoulot et Prières', 'סגולות ותפילות');
-  String get support => _t('Rab Menachem Mendel Meer', 'Rab Menachem Mendel Meer', 'Rab Menachem Mendel Meer', 'רב מנחם מנדל מיר');
+  String get support => _t('Soporte', 'Support', 'Assistance', 'תמיכה');
   String get about => _t('Acerca de', 'About', 'À propos', 'אודות');
   String version(String v) => _t('Versión $v', 'Version $v', 'Version $v', 'גרסה $v');
   String get sponsoredBy => _t('Patrocinado por', 'Sponsored by', 'Parrainé par', 'בחסות');
-  String get sponsorLine1 => _t('Rabino Dovid (Roberto)', 'Rabbi Dovid (Roberto)', 'Rabbin Dovid (Roberto)', 'הרב דוד (רוברטו)');
-  String get sponsorLine2 => _t('y Margie Szerer', 'and Margie Szerer', 'et Margie Szerer', 'ומרגי שזרר');
+  String get sponsorLine1 => _t('Rabino Menachem Mendel Meer', 'Rabbi Menachem Mendel Meer', 'Rabbin Menachem Mendel Meer', 'הרב מנחם מנדל מיר');
+  String get sponsorLine2 => _t('', '', '', '');
   String get defaultUser => _t('Usuario', 'User', 'Utilisateur', 'משתמש');
   String get noEmail => _t('Sin correo', 'No email', 'Sans e-mail', 'ללא דוא"ל');
 
@@ -1039,7 +1039,7 @@ class S {
   String get navHistory => _t('Historial', 'History', 'Historique', 'היסטוריה');
   String get navSettings => _t('Configuración', 'Settings', 'Paramètres', 'הגדרות');
   String get navPrayers => _t('Segulot y Rezos', 'Prayers & Blessings', 'Prières et Bénédictions', 'סגולות ותפילות');
-  String get navSupport => _t('Rab Menachem Mendel Meer', 'Rab Menachem Mendel Meer', 'Rab Menachem Mendel Meer', 'רב מנחם מנדל מיר');
+  String get navSupport => _t('Soporte', 'Support', 'Assistance', 'תמיכה');
 
   // ---------------------------------------------------------------------------
   // ACCOUNT SWITCHER

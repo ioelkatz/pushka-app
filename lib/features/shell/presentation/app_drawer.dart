@@ -107,7 +107,7 @@ class AppDrawer extends ConsumerWidget {
 
           // Footer con versión y patrocinadores
           Container(
-            padding: const EdgeInsets.all(20),
+            padding: const EdgeInsets.fromLTRB(24, 16, 20, 16),
             decoration: BoxDecoration(
               border: Border(top: BorderSide(color: Theme.of(context).colorScheme.outlineVariant)),
             ),
@@ -134,14 +134,6 @@ class AppDrawer extends ConsumerWidget {
                 const SizedBox(height: 4),
                 Text(
                   tr.sponsorLine1,
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: Theme.of(context).colorScheme.onSurface,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-                Text(
-                  tr.sponsorLine2,
                   style: TextStyle(
                     fontSize: 12,
                     color: Theme.of(context).colorScheme.onSurface,
