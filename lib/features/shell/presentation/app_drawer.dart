@@ -107,7 +107,7 @@ class AppDrawer extends ConsumerWidget {
 
           // Footer con versión y patrocinadores
           Container(
-            padding: const EdgeInsets.fromLTRB(24, 16, 20, 16),
+            padding: const EdgeInsets.fromLTRB(16, 16, 20, 16),
             decoration: BoxDecoration(
               border: Border(top: BorderSide(color: Theme.of(context).colorScheme.outlineVariant)),
             ),
