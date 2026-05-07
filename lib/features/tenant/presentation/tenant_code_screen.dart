@@ -38,9 +38,8 @@ class _TenantCodeScreenState extends ConsumerState<TenantCodeScreen> {
   }
 
   String get _fullCode {
-    final left = _controllers.take(3).map((c) => c.text).join();
-    final right = _controllers.skip(3).map((c) => c.text).join();
-    return '$left-$right'.toLowerCase();
+    // CF normalizeSlug strips dashes — send without dash so it matches stored slug
+    return _controllers.map((c) => c.text).join().toLowerCase();
   }
 
   bool get _allFilled => _controllers.every((c) => c.text.isNotEmpty);
@@ -172,7 +171,7 @@ class _TenantCodeScreenState extends ConsumerState<TenantCodeScreen> {
                   ),
                   const SizedBox(height: 6),
                   const Text(
-                    'Tu rabino te lo compartió por mensaje.',
+                    'Tu rab te lo compartió por mensaje.',
                     textAlign: TextAlign.center,
                     style: TextStyle(
                       fontSize: 13,
