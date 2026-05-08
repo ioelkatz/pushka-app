@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../app/theme/app_tokens.dart';
 import '../../../core/l10n/s.dart';
 import '../../users/presentation/user_profile_provider.dart';
 import '../data/legal_content.dart';
@@ -147,9 +148,13 @@ class _JumpPill extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
+    // Static color (not tied to tenant primaryColor) so the legal page reads
+    // as a Pushka surface, not a tenant-branded one. Light mode → app blue,
+    // dark mode → sky blue (matches the rest of the app's accent system).
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final accent = isDark ? AppTokens.skyBlue : AppTokens.primaryBlue;
     return Material(
-      color: cs.primary.withValues(alpha: 0.08),
+      color: accent.withValues(alpha: 0.08),
       borderRadius: BorderRadius.circular(12),
       child: InkWell(
         borderRadius: BorderRadius.circular(12),
@@ -159,7 +164,7 @@ class _JumpPill extends StatelessWidget {
           child: Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Icon(icon, size: 18, color: cs.primary),
+              Icon(icon, size: 18, color: accent),
               const SizedBox(width: 8),
               Flexible(
                 child: Text(
@@ -169,7 +174,7 @@ class _JumpPill extends StatelessWidget {
                   style: TextStyle(
                     fontSize: 13,
                     fontWeight: FontWeight.w600,
-                    color: cs.primary,
+                    color: accent,
                   ),
                 ),
               ),

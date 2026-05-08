@@ -4210,6 +4210,60 @@ function defaultGoalForCurrency(currency) {
 }
 
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// bootstrapSuperAdmin — first-time claim assignment for SUPER_ADMIN_EMAIL.
+// ---------------------------------------------------------------------------
+// Catch-22 problem: setAdminClaim requires the caller to already be super_admin
+// (or tenant_admin). On a fresh project deploy nobody has the claim yet — so
+// the SUPER_ADMIN_EMAIL account can sign up but the admin web shows them as a
+// regular user. This endpoint solves it: the canonical super-admin email can
+// promote ITSELF, exactly once, when no super_admin claim is present.
+//
+// Safety:
+//   - Caller must be authenticated AND have request.auth.token.email match
+//     SUPER_ADMIN_EMAIL exactly (constant in this file).
+//   - We re-fetch the auth record to read the email server-side (token can lag
+//     1h but the email matching is verified again against admin SDK truth).
+//   - Refuse if the caller already has a super_admin claim — this endpoint is
+//     ONLY for bootstrap, never for "refresh" or "fix" of an existing claim.
+//   - Idempotent: a second call after the claim is set returns the existing
+//     claim, doesn't error, doesn't overwrite.
+// Rate limited so a compromised email cannot spam Auth.
+exports.bootstrapSuperAdmin = onCall(
+  { enforceAppCheck: false },
+  async (request) => {
+    if (!request.auth?.uid) {
+      throw new HttpsError("unauthenticated", "Debes estar autenticado.");
+    }
+    await enforceRateLimit(request.auth.uid, "bootstrapSuperAdmin", 10, 3600);
+
+    const callerRecord = await admin.auth().getUser(request.auth.uid);
+    const callerEmail = callerRecord.email;
+    if (callerEmail !== SUPER_ADMIN_EMAIL) {
+      throw new HttpsError(
+        "permission-denied",
+        "Solo el super administrador canónico puede inicializar este claim."
+      );
+    }
+    const existing = callerRecord.customClaims || {};
+    if (existing.role === "super_admin") {
+      // Idempotent — already done. Tell the caller so the UI can update.
+      return { alreadySet: true, role: "super_admin" };
+    }
+
+    await admin.auth().setCustomUserClaims(request.auth.uid, {
+      role: "super_admin",
+      admin: true,
+    });
+
+    console.info("bootstrapSuperAdmin: claim granted", {
+      uid: request.auth.uid,
+      email: callerEmail,
+    });
+    return { alreadySet: false, role: "super_admin" };
+  },
+);
+
 // Admin: setAdminClaim — grant or revoke admin/tenant access
 // ---------------------------------------------------------------------------
 
@@ -6035,6 +6089,31 @@ exports.updateTenant = onCall(
         }
       }
       patch[key] = val;
+    }
+
+    // Auto-resolve adminUid when super_admin transfers adminEmail. The field
+    // is in superOnlyFields so a tenant_admin can never reach this branch.
+    // We resolve via Auth admin SDK so the client doesn't need to know the
+    // uid — it just sends the new email. If the new email doesn't yet have
+    // an Auth account, we null out adminUid so the field becomes accurate
+    // (the next time that user signs up, they'll be the canonical admin).
+    if (isSuper && "adminEmail" in updates && typeof patch.adminEmail === "string" && patch.adminEmail.length > 0) {
+      const oldEmail = (snap.data()?.adminEmail ?? "").toLowerCase();
+      const newEmail = patch.adminEmail.toLowerCase();
+      patch.adminEmail = newEmail; // normalize storage to lowercase
+      if (newEmail !== oldEmail) {
+        try {
+          const targetRecord = await admin.auth().getUserByEmail(newEmail);
+          patch.adminUid = targetRecord.uid;
+        } catch (lookupErr) {
+          // user-not-found → null out adminUid; the new admin can sign up
+          // later and the team subcollection sweep will reconcile.
+          patch.adminUid = null;
+          console.info("updateTenant: adminEmail target has no auth account yet", {
+            tenantId, newEmail,
+          });
+        }
+      }
     }
 
     if (updates.slug) {
