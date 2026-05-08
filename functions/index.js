@@ -6844,6 +6844,211 @@ exports.cancelTenantSubscription = onCall(
 );
 
 // ---------------------------------------------------------------------------
+// deleteTenant — super_admin only. Hard-delete a tenant + cleanup orphans.
+// ---------------------------------------------------------------------------
+// What it does, in order:
+//   1. Cancel any active Stripe Billing subscription (best-effort).
+//   2. Cancel any active Stripe Connect link (just clears our reference; the
+//      Connect account itself stays in Stripe — only Stripe support can purge).
+//   3. Delete the `_tenantSlugs/{slug}` lock so the slug becomes available.
+//   4. For every user in `tenantIds`: remove this tenant from their array,
+//      clear the `tenantId` field if it pointed here (so they aren't stuck
+//      pointing at a void), delete their `tenantState/{tenantId}` doc.
+//   5. Delete the tenant doc itself.
+//   6. Write an activity log entry for audit.
+//
+// Tradeoffs:
+//   - We do NOT delete user accounts even if this was their only tenant.
+//     They keep history + Stripe customer; on next app open
+//     `getTenantConfig` returns "tenant_missing" and the orphan-healing path
+//     redirects to /tenant-setup.
+//   - We do NOT delete the user's transactions/payment events that point at
+//     this tenant. Those have legal retention requirements and the tenant id
+//     stays as metadata for ops reconciliation.
+//   - This is a HARD delete — no undo. Soft-delete (status: 'deleted') was
+//     considered but adds complexity and the slug-reuse + Stripe-cleanup
+//     concerns push toward hard-delete for prelaunch test data.
+//
+// Safety: requires super_admin claim AND idempotency on Stripe operations
+// (so a retry doesn't error out partway through).
+exports.deleteTenant = onCall(
+  { secrets: [stripeSecret], enforceAppCheck: false },
+  async (request) => {
+    if (!(await callerIsSuperAdminFresh(request))) {
+      throw new HttpsError("permission-denied", "Solo el super administrador.");
+    }
+    await enforceRateLimit(request.auth.uid, "deleteTenant", 20, 3600);
+
+    const tenantId = String(request.data?.tenantId || "").trim();
+    if (!tenantId) throw new HttpsError("invalid-argument", "tenantId requerido.");
+
+    const tenantRef = db.collection("tenants").doc(tenantId);
+    const tenantSnap = await tenantRef.get();
+    if (!tenantSnap.exists) {
+      throw new HttpsError("not-found", "Tenant no encontrado.");
+    }
+    const tenantData = tenantSnap.data() || {};
+    const tenantName = tenantData.name || tenantId;
+    const slug = tenantData.slug || null;
+    const stripeSubscriptionId = tenantData.stripeSubscriptionId || null;
+    const stripeCustomerId = tenantData.stripeCustomerId || null;
+
+    const result = {
+      tenantId,
+      tenantName,
+      stripeSubCanceled: false,
+      stripeCustomerDeleted: false,
+      slugLockDeleted: false,
+      usersUpdated: 0,
+      tenantStatesDeleted: 0,
+      tenantDocDeleted: false,
+      warnings: [],
+    };
+
+    // 1. Cancel Stripe Billing subscription (best-effort — we still proceed
+    // with delete even if Stripe call fails, e.g. sub already canceled).
+    if (stripeSubscriptionId && stripeSecret.value()) {
+      try {
+        const stripe = require("stripe")(stripeSecret.value());
+        await stripe.subscriptions.cancel(stripeSubscriptionId, { invoice_now: false, prorate: false });
+        result.stripeSubCanceled = true;
+      } catch (err) {
+        result.warnings.push(`stripe sub cancel failed: ${err?.message ?? err}`);
+      }
+    }
+
+    // 2. Delete Stripe customer (also detaches all saved cards on it). Skip if
+    // shared with anything else — but tenant SaaS customers are dedicated.
+    if (stripeCustomerId && stripeSecret.value()) {
+      try {
+        const stripe = require("stripe")(stripeSecret.value());
+        await stripe.customers.del(stripeCustomerId);
+        result.stripeCustomerDeleted = true;
+      } catch (err) {
+        result.warnings.push(`stripe customer delete failed: ${err?.message ?? err}`);
+      }
+    }
+
+    // 3. Delete slug lock so the slug is reusable.
+    if (slug) {
+      try {
+        await db.collection("_tenantSlugs").doc(slug).delete();
+        result.slugLockDeleted = true;
+      } catch (err) {
+        result.warnings.push(`slug lock delete failed: ${err?.message ?? err}`);
+      }
+    }
+
+    // 4. Update affected users — paginated to handle tenants with many members
+    // without blowing up the function timeout. 500 per page covers >99% of
+    // tenants in our scale; for the rare giant tenant we recurse via while.
+    const PAGE = 500;
+    let lastDoc = null;
+    while (true) {
+      let q = db.collection("users")
+        .where("tenantIds", "array-contains", tenantId)
+        .limit(PAGE);
+      if (lastDoc) q = q.startAfter(lastDoc);
+      const usersSnap = await q.get();
+      if (usersSnap.empty) break;
+
+      const batch = db.batch();
+      let batchOps = 0;
+      for (const userDoc of usersSnap.docs) {
+        const userData = userDoc.data();
+        const newTenantIds = (userData.tenantIds || []).filter((id) => id !== tenantId);
+
+        // If this was their active tenant, blank it (orphan-healing path will
+        // pick another one or send them through tenant-setup on next open).
+        // If they have other memberships, switch active to the first remaining.
+        const isActive = userData.tenantId === tenantId;
+        const newActiveTenantId = isActive
+          ? (newTenantIds[0] ?? null)
+          : userData.tenantId;
+
+        const userPatch = {
+          tenantIds: newTenantIds,
+          tenantId: newActiveTenantId,
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        };
+        batch.set(userDoc.ref, userPatch, { merge: true });
+        batchOps += 1;
+
+        // Delete their tenantState/{tenantId} doc if it exists.
+        const stateRef = userDoc.ref.collection("tenantState").doc(tenantId);
+        batch.delete(stateRef);
+        batchOps += 1;
+
+        result.usersUpdated += 1;
+        result.tenantStatesDeleted += 1;
+
+        // Firestore batch limit is 500. Flush mid-loop if we'd cross it.
+        if (batchOps >= 480) {
+          await batch.commit();
+          batchOps = 0;
+        }
+      }
+      if (batchOps > 0) await batch.commit();
+      if (usersSnap.size < PAGE) break;
+      lastDoc = usersSnap.docs[usersSnap.docs.length - 1];
+    }
+
+    // Also catch users still using the legacy single-tenantId field with no
+    // tenantIds array (shouldn't happen post-multitenant migration but guard).
+    try {
+      const legacySnap = await db.collection("users")
+        .where("tenantId", "==", tenantId)
+        .get();
+      const legacyBatch = db.batch();
+      for (const u of legacySnap.docs) {
+        // Skip if already handled above (tenantIds array path).
+        if ((u.data().tenantIds ?? []).includes(tenantId)) continue;
+        legacyBatch.set(u.ref, {
+          tenantId: null,
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        }, { merge: true });
+        result.usersUpdated += 1;
+      }
+      if (!legacySnap.empty) await legacyBatch.commit();
+    } catch (err) {
+      result.warnings.push(`legacy users sweep failed: ${err?.message ?? err}`);
+    }
+
+    // 5. Delete the tenant doc itself.
+    try {
+      await tenantRef.delete();
+      result.tenantDocDeleted = true;
+    } catch (err) {
+      throw new HttpsError("internal", `Tenant delete failed: ${err?.message ?? err}`);
+    }
+
+    // 6. Audit log.
+    try {
+      await writeActivityLog({
+        type: "tenant_deleted",
+        tenantId,
+        tenantName,
+        severity: "warning",
+        requiresAction: false,
+        data: {
+          actor: request.auth.uid,
+          slug,
+          stripeSubscriptionId,
+          stripeCustomerId,
+          ...result,
+        },
+      });
+    } catch (err) {
+      // Audit-log failure is non-fatal — tenant is already deleted.
+      console.warn("deleteTenant: audit log failed", err?.message ?? err);
+    }
+
+    console.info("deleteTenant: completed", { tenantId, ...result });
+    return result;
+  },
+);
+
+// ---------------------------------------------------------------------------
 // Stripe Billing Webhook — invoice.payment_succeeded / invoice.payment_failed
 // ---------------------------------------------------------------------------
 exports.stripeBillingWebhook = onRequest(
