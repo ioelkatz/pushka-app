@@ -6,6 +6,7 @@ import 'package:cloud_functions/cloud_functions.dart';
 import '../../../app/theme/app_tokens.dart';
 import 'card_brand_box.dart';
 
+import '../../../core/keyboard_safe_sheet.dart';
 import '../../../core/widgets/option_picker_sheet.dart';
 import '../../payments/donation_reason_picker.dart';
 import '../../users/data/user_repository.dart';
@@ -780,117 +781,91 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
   /// Only shown when setting a non-manual frequency.
   Future<bool> _showConsentDialog() async {
     final tr = S.of(context);
-    return await showDialog<bool>(
+    return await showKeyboardSafeSheet<bool>(
           context: context,
-          barrierDismissible: false,
-          builder: (ctx) => AlertDialog(
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(20),
-            ),
-            titlePadding: const EdgeInsets.fromLTRB(24, 24, 24, 0),
-            contentPadding: const EdgeInsets.fromLTRB(24, 16, 24, 0),
-            actionsPadding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
-            title: Row(
+          builder: (ctx, _) {
+            final cs = Theme.of(ctx).colorScheme;
+            return Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                const Icon(Icons.verified_user_rounded,
-                    color: AppTokens.primaryBlue, size: 22),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Text(
-                    tr.autoEmptyConsentTitle,
-                    style: const TextStyle(
-                      fontSize: 17,
-                      fontWeight: FontWeight.w700,
+                Center(
+                  child: Container(
+                    width: 36,
+                    height: 4,
+                    margin: const EdgeInsets.only(bottom: 12),
+                    decoration: BoxDecoration(
+                      color: Colors.grey.shade300,
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                ),
+                Center(
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Image.asset(
+                        'assets/images/secure_shield.png',
+                        width: 26,
+                        height: 26,
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        tr.autoEmptyConsentTitle,
+                        style: const TextStyle(
+                          fontSize: 22,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 16),
+                Text(
+                  tr.autoEmptyConsentBody,
+                  style: TextStyle(fontSize: 15, fontWeight: FontWeight.w500, height: 1.55, color: cs.onSurface),
+                ),
+                const SizedBox(height: 16),
+                Container(
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    color: cs.surfaceContainerHighest,
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: cs.outlineVariant, width: 1),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(tr.autoEmptyConsentBullet1,
+                          style: TextStyle(fontSize: 15, fontWeight: FontWeight.w500, height: 1.5, color: cs.onSurface)),
+                      const SizedBox(height: 6),
+                      Text(tr.autoEmptyConsentBullet3,
+                          style: TextStyle(fontSize: 15, fontWeight: FontWeight.w500, height: 1.5, color: cs.onSurface)),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 20),
+                SizedBox(
+                  width: double.infinity,
+                  height: 50,
+                  child: ElevatedButton(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppTokens.primaryBlue,
+                      foregroundColor: Colors.white,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                    onPressed: () => Navigator.pop(ctx, true),
+                    child: Text(
+                      tr.autoEmptyConsentAccept,
+                      style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
                     ),
                   ),
                 ),
               ],
-            ),
-            content: SingleChildScrollView(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    tr.autoEmptyConsentBody,
-                    style: const TextStyle(fontSize: 14, height: 1.55),
-                  ),
-                  const SizedBox(height: 16),
-                  Container(
-                    padding: const EdgeInsets.all(14),
-                    decoration: BoxDecoration(
-                      // Use the theme's elevated-surface color so the bullets
-                      // box reads as a subtle highlight in BOTH light and
-                      // dark mode. The previous hardcoded cream background
-                      // (#FFF7ED) was invisible in dark mode (light-on-light
-                      // text). Bullet text inherits onSurface, matching the
-                      // rest of the dialog body.
-                      color: Theme.of(ctx).colorScheme.surfaceContainerHighest,
-                      borderRadius: BorderRadius.circular(10),
-                      border: Border.all(
-                        color: Theme.of(ctx).colorScheme.outlineVariant,
-                        width: 1,
-                      ),
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(tr.autoEmptyConsentBullet1,
-                            style: TextStyle(
-                              fontSize: 13, height: 1.5,
-                              color: Theme.of(ctx).colorScheme.onSurface,
-                            )),
-                        const SizedBox(height: 6),
-                        // Bullet about "balance < $5" was removed — the
-                        // underlying skip-on-low-balance gate in
-                        // processPushkaAutoEmpty was deleted by product
-                        // decision; the user gets charged for any non-zero
-                        // amount above Stripe's per-currency floor.
-                        Text(tr.autoEmptyConsentBullet3,
-                            style: TextStyle(
-                              fontSize: 13, height: 1.5,
-                              color: Theme.of(ctx).colorScheme.onSurface,
-                            )),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            actions: [
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AppTokens.primaryBlue,
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(vertical: 14),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                  ),
-                  onPressed: () => Navigator.pop(ctx, true),
-                  child: Text(
-                    tr.autoEmptyConsentAccept,
-                    style: const TextStyle(
-                        fontSize: 15, fontWeight: FontWeight.w700),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 4),
-              SizedBox(
-                width: double.infinity,
-                child: TextButton(
-                  onPressed: () => Navigator.pop(ctx, false),
-                  child: Text(
-                    tr.autoEmptyConsentCancel,
-                    style: TextStyle(
-                        color: Theme.of(ctx).colorScheme.onSurfaceVariant,
-                        fontWeight: FontWeight.w500),
-                  ),
-                ),
-              ),
-            ],
-          ),
+            );
+          },
         ) ??
         false;
   }

@@ -867,10 +867,10 @@ class S {
   String get settingsSaved => _t('Configuración guardada', 'Settings saved', 'Paramètres enregistrés', 'הגדרות נשמרו');
   String get saveError => _t('Error al guardar. Intenta nuevamente.', 'Error saving. Try again.', "Erreur d'enregistrement. Réessayez.", 'שגיאה בשמירה. נסה שוב.');
   String get autoEmptyConsentTitle => _t(
-    'Autorización de Vaciado Automático',
-    'Automatic Empty Authorization',
-    'Autorisation de vidage automatique',
-    'אישור ריקון אוטומטי',
+    'Autorización',
+    'Authorization',
+    'Autorisation',
+    'אישור',
   );
   String get autoEmptyConsentBody => _t(
     'Al activar el vaciado automático, Pushka vaciará tu alcancía según la frecuencia elegida y el monto acumulado será cobrado a tu tarjeta de pago registrada en ese momento.\n\nEsto constituye una autorización de cobro periódico. Puedes cancelarlo en cualquier momento desde esta misma pantalla.',

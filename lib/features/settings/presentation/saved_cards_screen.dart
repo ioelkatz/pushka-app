@@ -9,6 +9,7 @@ import 'package:flutter_svg/flutter_svg.dart';
 
 import '../../../app/theme/app_tokens.dart';
 import '../../../core/hive_cache.dart';
+import '../../../core/keyboard_safe_sheet.dart';
 import '../../auth/providers/auth_state_provider.dart';
 import '../../payments/stripe_service.dart';
 import '../../tenant/data/tenant_repository.dart';
@@ -759,53 +760,79 @@ class _SavedCardsScreenState extends ConsumerState<SavedCardsScreen> {
   Future<void> _promptNickname(String pmId, {required String? initial}) async {
     final tr = S.of(context);
     final ctrl = TextEditingController(text: initial ?? '');
-    final result = await showDialog<String?>(
-      context: context,
-      builder: (ctx) {
-        final cs = Theme.of(ctx).colorScheme;
-        return AlertDialog(
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-          title: Text(tr.cardNicknameTitle),
-          content: Column(
+    String? result;
+    try {
+      result = await showKeyboardSafeSheet<String?>(
+        context: context,
+        builder: (ctx, _) {
+          final cs = Theme.of(ctx).colorScheme;
+          return Column(
             mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Text(tr.cardNicknameHint, style: TextStyle(color: cs.onSurfaceVariant, fontSize: 13)),
-              const SizedBox(height: 12),
+              Center(
+                child: Container(
+                  width: 36,
+                  height: 4,
+                  margin: const EdgeInsets.only(bottom: 12),
+                  decoration: BoxDecoration(
+                    color: Colors.grey.shade300,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+              ),
+              Text(
+                tr.cardNicknameTitle,
+                style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w700),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                tr.cardNicknameHint,
+                style: TextStyle(color: cs.onSurfaceVariant, fontSize: 14),
+              ),
+              const SizedBox(height: 16),
               TextField(
                 controller: ctrl,
                 autofocus: true,
                 maxLength: 60,
+                textInputAction: TextInputAction.done,
+                onSubmitted: (_) => Navigator.pop(ctx, ctrl.text.trim()),
                 decoration: InputDecoration(
                   hintText: tr.cardNicknamePlaceholder,
                   border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: const BorderSide(color: AppTokens.primaryBlue, width: 2),
+                  ),
                 ),
               ),
+              const SizedBox(height: 16),
+              Row(
+                children: [
+                  TextButton(
+                    onPressed: () => Navigator.pop(ctx, null),
+                    style: TextButton.styleFrom(foregroundColor: cs.onSurfaceVariant),
+                    child: Text(tr.skip),
+                  ),
+                  const Spacer(),
+                  ElevatedButton(
+                    onPressed: () => Navigator.pop(ctx, ctrl.text.trim()),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppTokens.primaryBlue,
+                      foregroundColor: Colors.white,
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    ),
+                    child: Text(tr.add),
+                  ),
+                ],
+              ),
             ],
-          ),
-          actions: [
-            // Omitir = close without saving (keeps current nickname unchanged).
-            TextButton(
-              onPressed: () => Navigator.pop(ctx, null),
-              style: TextButton.styleFrom(
-                foregroundColor: cs.onSurfaceVariant,
-              ),
-              child: Text(tr.skip),
-            ),
-            ElevatedButton(
-              onPressed: () => Navigator.pop(ctx, ctrl.text.trim()),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: AppTokens.primaryBlue,
-                foregroundColor: Colors.white,
-              ),
-              child: Text(tr.add),
-            ),
-          ],
-        );
-      },
-    );
-    // Defer dispose: TextField might still be in tree mid-pop animation.
-    Future.delayed(const Duration(milliseconds: 400), () { ctrl.dispose(); });
+          );
+        },
+      );
+    } finally {
+      Future.delayed(const Duration(milliseconds: 400), ctrl.dispose);
+    }
 
     if (result == null || !mounted) return;
     try {
