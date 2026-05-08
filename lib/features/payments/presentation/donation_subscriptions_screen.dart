@@ -186,7 +186,7 @@ class _DonationSubscriptionsScreenState
                       : _openCreateRecurringSheet,
                   icon: const Icon(Icons.favorite, color: Color(0xFFCC2936)),
                   label: Text(
-                    tr.donate,
+                    tr.donate.toUpperCase(),
                     style: const TextStyle(
                       fontWeight: FontWeight.w700,
                       fontSize: 15,
