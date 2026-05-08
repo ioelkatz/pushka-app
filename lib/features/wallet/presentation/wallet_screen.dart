@@ -39,7 +39,48 @@ class WalletScreen extends ConsumerWidget {
             );
           },
         ),
+        const SizedBox(height: 18),
+        _SectionLabel(tr.mySubscriptions.toUpperCase()),
+        const SizedBox(height: 6),
+        _ActionButton(
+          label: tr.mySubscriptions,
+          onTap: () => context.go('/wallet/donation-subs'),
+        ),
       ],
+    );
+  }
+}
+
+class _ActionButton extends StatelessWidget {
+  const _ActionButton({required this.label, required this.onTap});
+  final String label;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(12),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        decoration: BoxDecoration(
+          color: cs.surface,
+          border: Border.all(color: cs.outline),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Row(
+          children: [
+            Expanded(
+              child: Text(
+                label,
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w500, color: cs.onSurface),
+              ),
+            ),
+            Icon(Icons.chevron_right, color: cs.onSurfaceVariant),
+          ],
+        ),
+      ),
     );
   }
 }

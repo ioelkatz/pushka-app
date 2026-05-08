@@ -275,6 +275,12 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           _buildCurrentPresets(tenantState, blue, user),
           const SizedBox(height: 18),
 
+          // SAVED CARD
+          _buildLabel(tr.savedCards),
+          const SizedBox(height: 6),
+          _buildSavedCardPreview(userProfile, tr),
+          const SizedBox(height: 18),
+
           // EMPTY PUSHKA
           _buildLabel(tr.emptyPushkaSetting),
           const SizedBox(height: 6),
@@ -285,12 +291,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               );
             },
           ),
-          const SizedBox(height: 18),
-
-          // SAVED CARD
-          _buildLabel(tr.savedCards),
-          const SizedBox(height: 6),
-          _buildSavedCardPreview(userProfile, tr),
           const SizedBox(height: 18),
 
           // RECURRING DONATIONS
