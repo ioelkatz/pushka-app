@@ -190,7 +190,7 @@ class _DonationSubscriptionsScreenState
                   onPressed: (_loading || _processingId)
                       ? null
                       : _openCreateRecurringSheet,
-                  icon: const Icon(Icons.favorite, color: Color(0xFFCC2936)),
+                  icon: const Icon(Icons.favorite_outline, color: Color(0xFFCC2936)),
                   label: Text(
                     tr.donate.toUpperCase(),
                     style: const TextStyle(
@@ -362,23 +362,24 @@ class _DonationSubscriptionsScreenState
     final donationAmount = result['amount'] as double;
     final chosenInterval = result['interval'] as String? ?? 'month';
     final amountCents = amountToStripeUnits(donationAmount, currency);
-
-    if (_biometricEnabled()) {
-      final authenticated = await BiometricService.instance.authenticate(
-        reason: tr.biometricReasonDonate,
-      );
-      if (!authenticated) {
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(tr.authRequiredDonate)),
-        );
-        return;
-      }
-      if (!mounted) return;
-    }
+    final messenger = ScaffoldMessenger.of(context);
 
     setState(() => _processingId = true);
     try {
+      if (_biometricEnabled()) {
+        final authenticated = await BiometricService.instance.authenticate(
+          reason: tr.biometricReasonDonate,
+        );
+        if (!authenticated) {
+          if (!mounted) return;
+          messenger.showSnackBar(
+            SnackBar(content: Text(tr.authRequiredDonate)),
+          );
+          return;
+        }
+        if (!mounted) return;
+      }
+
       await StripeService.instance.subscribe(
         amountCents: amountCents,
         currency: currency,
