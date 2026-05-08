@@ -18,5 +18,7 @@
          This Theme is only used starting with V2 of Flutter's Android embedding. -->
     <style name="NormalTheme" parent="@android:style/Theme.Black.NoTitleBar">
         <item name="android:windowBackground">?android:colorBackground</item>
+        <!-- Biometric prompt button/accent color — dark mode sky blue (matches Flutter toggle) -->
+        <item name="android:colorAccent">#60A5FA</item>
     </style>
 </resources>

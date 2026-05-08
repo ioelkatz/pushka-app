@@ -26,5 +26,7 @@
         <item name="android:windowDrawsSystemBarBackgrounds">true</item>
         <item name="android:statusBarColor">@android:color/transparent</item>
         <item name="android:navigationBarColor">@android:color/transparent</item>
+        <!-- Biometric prompt button/accent color — light mode orange (matches Flutter toggle) -->
+        <item name="android:colorAccent">#FF9500</item>
     </style>
 </resources>
