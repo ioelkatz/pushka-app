@@ -349,14 +349,18 @@ service cloud.firestore {
             'status',
             'currencyCode',
             'tenantId',
+            'donationReason',
             'createdAt'
           ]) &&
           (request.resource.data.type == 'tzedaka' ||
               request.resource.data.type == 'pushkaEmpty') &&
           request.resource.data.amount is number &&
-          // Amount must be positive and within a sane ceiling (100 000 in major currency units).
+          // Amount must be positive and within a sane ceiling. Cap is in MAJOR
+          // currency units — must accommodate ARS/CLP/COP/MXN where a routine
+          // donation can exceed millions of pesos. 10 million covers a
+          // legitimate $50K USD donation in ARS at peak inflation.
           request.resource.data.amount > 0 &&
-          request.resource.data.amount <= 100000 &&
+          request.resource.data.amount <= 10000000 &&
           // createdAt must equal the server request time — prevents backdating / future-dating.
           request.resource.data.createdAt == request.time &&
           (!('description' in request.resource.data) ||

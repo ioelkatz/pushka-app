@@ -527,6 +527,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
     if (result == null || !mounted) return;
     final donationAmount = result['amount'] as double;
     final donationMessage = (result['message'] as String?)?.trim() ?? '';
+    final donationReason = (result['reason'] as String?)?.trim();
     final isMonthly = result['monthly'] == true;
 
     setState(() => _isProcessing = true);
@@ -564,6 +565,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
           currency: currency,
           interval: 'month',
           donorMessage: donationMessage.isEmpty ? null : donationMessage,
+          donationReason: (donationReason == null || donationReason.isEmpty) ? null : donationReason,
           merchantDisplayName: ref.read(tenantConfigProvider).valueOrNull?.appName ?? 'Pushka',
         );
       } else {
@@ -574,6 +576,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
           purpose: 'donation',
           merchantDisplayName: ref.read(tenantConfigProvider).valueOrNull?.appName ?? 'Pushka',
           donorMessage: donationMessage.isEmpty ? null : donationMessage,
+          donationReason: (donationReason == null || donationReason.isEmpty) ? null : donationReason,
         );
       }
 

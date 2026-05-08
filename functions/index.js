@@ -709,6 +709,18 @@ exports.createPaymentIntent = onCall(
   // dashboard. Optional; "" when omitted.
   const donorMessage = sanitizeDonorMessage(request.data?.donorMessage);
 
+  // Donation designation (e.g. "Familias necesitadas", "Estudio de Torá").
+  // Sanitized + capped at 80 chars (Stripe metadata value limit is 500;
+  // 80 keeps headroom + matches the cap used in cron auto-empty path).
+  // Optional; null when omitted so we don't pollute the metadata with empty
+  // strings.
+  const donationReasonRaw = request.data?.donationReason;
+  const donationReason = (typeof donationReasonRaw === "string" &&
+      donationReasonRaw.trim().length > 0)
+    // eslint-disable-next-line no-control-regex
+    ? donationReasonRaw.replace(/[\x00-\x1F\x7F-\x9F]/g, " ").trim().slice(0, 80)
+    : null;
+
   // Client-supplied correlation ID — 16-char hex (8 random bytes). Threaded
   // onto Stripe metadata + every log line emitted from this function so a
   // single donation can be traced end-to-end (client → CF → Stripe → webhook
@@ -993,6 +1005,10 @@ exports.createPaymentIntent = onCall(
         // webhook copies this onto the persisted transaction so it appears
         // in History + admin dashboards.
         ...(donorMessage ? { donorMessage } : {}),
+        // Donation designation chosen by the donor (e.g. "Familias necesitadas").
+        // Webhook copies this onto the transaction so admin dashboards can
+        // break revenue down by destination.
+        ...(donationReason ? { donationReason } : {}),
         correlationId,
       },
   };
@@ -1294,6 +1310,16 @@ exports.createDonationSubscription = onCall(
 
     const donorMessage = sanitizeDonorMessage(request.data?.donorMessage);
 
+    // Donation designation — sanitized + 80-char cap, same shape as
+    // createPaymentIntent. Stamped on the subscription metadata so every
+    // generated invoice's transaction inherits it via the webhook.
+    const donationReasonRaw = request.data?.donationReason;
+    const donationReason = (typeof donationReasonRaw === "string" &&
+        donationReasonRaw.trim().length > 0)
+      // eslint-disable-next-line no-control-regex
+      ? donationReasonRaw.replace(/[\x00-\x1F\x7F-\x9F]/g, " ").trim().slice(0, 80)
+      : null;
+
     // Stripe subscription items.price_data accepts a `product` ID (not the
     // top-level `product_data` shortcut). Get-or-create a single shared
     // "Pushka recurring donation" product and cache its ID in Firestore so
@@ -1380,6 +1406,7 @@ exports.createDonationSubscription = onCall(
         tenantId: tenantId || "",
         purpose: "donation_recurring",
         donorMessage,
+        ...(donationReason ? { donationReason } : {}),
       },
     };
 
@@ -1710,6 +1737,16 @@ exports.createSetupIntent = onCall(
     }
     await enforceRateLimit(request.auth.uid, "createSetupIntent", 20, 3600);
 
+    // Client-supplied correlation ID — scopes the Stripe idempotency key to a
+    // single attempt so retries within the same minute don't reuse a key whose
+    // SetupIntent was canceled (which would surface as "PaymentSheet cannot
+    // set up SetupIntent in status canceled" client-side). Strict 16-hex
+    // shape, server-generated fallback for older clients.
+    const rawCid = request.data?.correlationId;
+    const correlationId = (typeof rawCid === "string" && /^[a-f0-9]{16}$/.test(rawCid))
+      ? rawCid
+      : require("crypto").randomBytes(8).toString("hex");
+
     const uid = request.auth.uid;
     const stripe = require("stripe")(stripeSecret.value());
     const userRef = db.collection("users").doc(uid);
@@ -1775,9 +1812,11 @@ exports.createSetupIntent = onCall(
       }
     }
 
-    // Idempotency key: uid + minute bucket — retries within the same minute
-    // reuse the same SetupIntent instead of creating an orphaned one.
-    const siIdempotencyKey = `si_${uid}_${Math.floor(Date.now() / 60000)}`;
+    // Idempotency key scoped to the donor's correlationId. Retries of the
+    // same attempt reuse the key (Stripe dedupes), but a fresh attempt
+    // (after a cancel/error) gets a fresh key — avoids the
+    // "SetupIntent in status canceled" failure on retry.
+    const siIdempotencyKey = `si_${uid}_${correlationId}`;
     const setupIntent = await stripe.setupIntents.create({
       customer: customerId,
       payment_method_types: ["card"],
@@ -2356,6 +2395,14 @@ exports.stripeWebhook = onRequest(
             ...(intent.metadata?.donorMessage
               ? { donorMessage: sanitizeDonorMessage(intent.metadata.donorMessage) }
               : {}),
+            // Donation designation — copied from PI metadata to power admin
+            // analytics ("which destination receives most donations?"). Cap
+            // length defensively even though createPaymentIntent already did.
+            ...(intent.metadata?.donationReason &&
+              typeof intent.metadata.donationReason === "string" &&
+              intent.metadata.donationReason.trim().length > 0
+              ? { donationReason: String(intent.metadata.donationReason).trim().slice(0, 80) }
+              : {}),
             // Persist the correlation ID stamped by createPaymentIntent so
             // ops can grep `[cid:xxx]` across CF logs AND find the
             // associated tx doc in Firestore. Validated shape on read.
@@ -2859,6 +2906,13 @@ exports.stripeWebhook = onRequest(
               // sanitization on the way in.
               ...(subMeta?.donorMessage
                 ? { donorMessage: sanitizeDonorMessage(subMeta.donorMessage) }
+                : {}),
+              // Donation designation inherited from the subscription. Powers
+              // admin "donations by destination" reports.
+              ...(subMeta?.donationReason &&
+                typeof subMeta.donationReason === "string" &&
+                subMeta.donationReason.trim().length > 0
+                ? { donationReason: String(subMeta.donationReason).trim().slice(0, 80) }
                 : {}),
               createdAt: admin.firestore.FieldValue.serverTimestamp(),
             });
@@ -6130,6 +6184,11 @@ exports.getTenantConfig = onCall(
     if (!request.auth?.uid) {
       throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
     }
+    // Cap to 200/h. The app legitimately polls this on boot + every ~60s
+    // while in the foreground, so a normal session sees 60-80/h. 200 leaves
+    // headroom for tab-switch refetches without letting a buggy client (or
+    // attacker bypassing App Check) hammer the endpoint.
+    await enforceRateLimit(request.auth.uid, "getTenantConfig", 200, 3600);
 
     const uid = request.auth.uid;
     const userRef = db.collection("users").doc(uid);
@@ -6653,6 +6712,12 @@ exports.createTenantSubscription = onCall(
     if (!(await callerIsSuperAdminFresh(request))) {
       throw new HttpsError("permission-denied", "Solo el super administrador.");
     }
+    // Cap retries: a double-click without idempotency keys would have created
+    // duplicate Stripe customers + prices + subscriptions (= double-charge to
+    // the tenant). Idempotency keys below close that primary hole; the rate
+    // limit is the second line of defense against rapid retries from the
+    // admin web panel.
+    await enforceRateLimit(request.auth.uid, "createTenantSubscription", 5, 3600);
 
     const { tenantId } = request.data ?? {};
     if (!tenantId) throw new HttpsError("invalid-argument", "tenantId requerido.");
@@ -6673,34 +6738,50 @@ exports.createTenantSubscription = onCall(
 
     const stripe = require("stripe")(stripeSecret.value());
 
-    // Create or reuse Stripe customer
+    // Create or reuse Stripe customer. Idempotency key tied to tenantId so a
+    // retry within 24h reuses the same Stripe customer instead of creating a
+    // duplicate. Stripe API rejects ANY parameter mismatch under the same
+    // key — keep the create body deterministic (no timestamps, etc.).
     let stripeCustomerId = tenantData.stripeCustomerId;
     if (!stripeCustomerId) {
-      const customer = await stripe.customers.create({
-        email: adminEmail,
-        name: tenantData.name,
-        metadata: { tenantId },
-      });
+      const customer = await stripe.customers.create(
+        {
+          email: adminEmail,
+          name: tenantData.name,
+          metadata: { tenantId },
+        },
+        { idempotencyKey: `tenant_customer_${tenantId}` },
+      );
       stripeCustomerId = customer.id;
     }
 
-    // Create a price for this tenant (one-time price object, per-tenant)
-    const price = await stripe.prices.create({
-      currency: "usd",
-      unit_amount: Math.round(planPrice * 100),
-      recurring: { interval: "month" },
-      product_data: { name: `Pushka SaaS — ${tenantData.name}` },
-    });
+    // Per-tenant price object. The idempotency key includes planPrice so a
+    // legitimate plan change (admin bumps the price) creates a NEW price
+    // instead of reusing the old amount; same plan + same tenant always
+    // reuses the same price object.
+    const price = await stripe.prices.create(
+      {
+        currency: "usd",
+        unit_amount: Math.round(planPrice * 100),
+        recurring: { interval: "month" },
+        product_data: { name: `Pushka SaaS — ${tenantData.name}` },
+      },
+      { idempotencyKey: `tenant_price_${tenantId}_${Math.round(planPrice * 100)}` },
+    );
 
-    // Create subscription (starts trial, customer must add payment method)
-    const subscription = await stripe.subscriptions.create({
-      customer: stripeCustomerId,
-      items: [{ price: price.id }],
-      payment_behavior: "default_incomplete",
-      payment_settings: { save_default_payment_method: "on_subscription" },
-      expand: ["latest_invoice.payment_intent"],
-      metadata: { tenantId },
-    });
+    // Subscription. Same key → Stripe returns the existing subscription on
+    // retry instead of creating a second one (= double-billing to tenant).
+    const subscription = await stripe.subscriptions.create(
+      {
+        customer: stripeCustomerId,
+        items: [{ price: price.id }],
+        payment_behavior: "default_incomplete",
+        payment_settings: { save_default_payment_method: "on_subscription" },
+        expand: ["latest_invoice.payment_intent"],
+        metadata: { tenantId },
+      },
+      { idempotencyKey: `tenant_sub_${tenantId}_${Math.round(planPrice * 100)}` },
+    );
 
     const now = new Date();
     const nextDue = new Date(now);

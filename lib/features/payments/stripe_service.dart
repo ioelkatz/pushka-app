@@ -1,6 +1,7 @@
 import 'dart:math';
 
 import 'package:cloud_functions/cloud_functions.dart';
+import 'package:firebase_crashlytics/firebase_crashlytics.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_stripe/flutter_stripe.dart';
 
@@ -15,6 +16,43 @@ String _newCorrelationId() {
   final r = Random.secure();
   final bytes = List<int>.generate(8, (_) => r.nextInt(256));
   return bytes.map((b) => b.toRadixString(16).padLeft(2, '0')).join();
+}
+
+/// Records a non-fatal payment error to Crashlytics with rich context. The
+/// flutter_stripe SDK and Cloud Functions throw exceptions that today only hit
+/// `debugPrint` (logcat), so the first time a real donor's payment fails we'd
+/// have no signal in Crashlytics. This routes every payment failure through
+/// recordError with a tagged reason + structured information so post-launch
+/// triage can grep by `payment:<op>` and pull the cid + amount + currency.
+void _recordPaymentError(
+  String op,
+  Object error,
+  StackTrace? stack, {
+  required String cid,
+  String? purpose,
+  int? amountCents,
+  String? currency,
+  String? interval,
+  String? extraCode,
+}) {
+  try {
+    FirebaseCrashlytics.instance.recordError(
+      error,
+      stack,
+      reason: 'payment:$op',
+      information: [
+        'cid=$cid',
+        if (purpose != null) 'purpose=$purpose',
+        if (interval != null) 'interval=$interval',
+        if (amountCents != null) 'amountCents=$amountCents',
+        if (currency != null) 'currency=$currency',
+        if (extraCode != null) 'code=$extraCode',
+      ],
+      fatal: false,
+    );
+  } catch (_) {
+    // Crashlytics itself failing must never tank the user-facing flow.
+  }
 }
 
 class StripeServiceException implements Exception {
@@ -69,6 +107,11 @@ class StripeService {
     String purpose = 'donation',
     String merchantDisplayName = 'Pushka',
     String? donorMessage,
+    /// Optional designation/destination chosen by the donor (e.g. "Familias
+    /// necesitadas", "Estudio de Torá"). Stamped onto the Stripe PaymentIntent
+    /// metadata and persisted on the transaction so admin dashboards can
+    /// break down donations by destination.
+    String? donationReason,
     /// For purpose=='pushka_empty' only — the value the donor's pushka
     /// should be set to AFTER the charge confirms. The webhook (not the
     /// client) writes this to Firestore atomically with the transaction
@@ -89,6 +132,8 @@ class StripeService {
           'correlationId': cid,
           if (donorMessage != null && donorMessage.isNotEmpty)
             'donorMessage': donorMessage,
+          if (donationReason != null && donationReason.isNotEmpty)
+            'donationReason': donationReason,
           if (purpose == 'pushka_empty')
             'pushkaAmountAfter': pushkaAmountAfter ?? 0,
         });
@@ -96,7 +141,7 @@ class StripeService {
     HttpsCallableResult result;
     try {
       result = await callOnce();
-    } on FirebaseFunctionsException catch (e) {
+    } on FirebaseFunctionsException catch (e, st) {
       // Self-heal a stuck "manual" auto-empty lock: a prior attempt that
       // the donor cancelled (or that crashed mid-PaymentSheet) leaves
       // _autoEmptyChargeLockAt set on tenantState for up to 10 min. Without
@@ -107,15 +152,25 @@ class StripeService {
         await _releaseManualPushkaEmptyLock();
         try {
           result = await callOnce();
-        } on FirebaseFunctionsException {
+        } on FirebaseFunctionsException catch (e2, st2) {
+          _recordPaymentError('pay/createPaymentIntent_retry', e2, st2,
+              cid: cid, purpose: purpose, amountCents: amountCents,
+              currency: currency, extraCode: e2.code);
           rethrow;
-        } catch (_) {
+        } catch (e2, st2) {
+          _recordPaymentError('pay/createPaymentIntent_retry_unknown', e2, st2,
+              cid: cid, purpose: purpose, amountCents: amountCents, currency: currency);
           throw const StripeServiceException('network-error');
         }
       } else {
+        _recordPaymentError('pay/createPaymentIntent', e, st,
+            cid: cid, purpose: purpose, amountCents: amountCents,
+            currency: currency, extraCode: e.code);
         rethrow;
       }
-    } catch (_) {
+    } catch (e, st) {
+      _recordPaymentError('pay/createPaymentIntent_unknown', e, st,
+          cid: cid, purpose: purpose, amountCents: amountCents, currency: currency);
       throw const StripeServiceException('network-error');
     }
     debugPrint('StripeService.pay[cid:$cid]: createPaymentIntent CF returned in ${sw.elapsedMilliseconds}ms');
@@ -165,7 +220,7 @@ class StripeService {
 
       await Stripe.instance.presentPaymentSheet();
       debugPrint('StripeService.pay: presentPaymentSheet returned (user closed/paid) in ${sw.elapsedMilliseconds}ms');
-    } on StripeException catch (e) {
+    } on StripeException catch (e, st) {
       // PaymentSheet failed or user dismissed. For purpose=='pushka_empty'
       // the CF claimed _autoEmptyChargeLockAt before returning the
       // clientSecret — we MUST proactively release it so the lock doesn't
@@ -177,14 +232,20 @@ class StripeService {
       }
       final code = e.error.code;
       if (code == FailureCode.Canceled) {
+        // User-initiated cancel — not an error worth Crashlytics noise.
         throw const StripeServiceException('canceled');
       }
+      _recordPaymentError('pay/PaymentSheet', e, st,
+          cid: cid, purpose: purpose, amountCents: amountCents,
+          currency: currency, extraCode: code.name);
       throw StripeServiceException(code.name);
-    } catch (_) {
+    } catch (e, st) {
       // Same lock-release for unexpected non-Stripe errors.
       if (purpose == 'pushka_empty') {
         await _releaseManualPushkaEmptyLock();
       }
+      _recordPaymentError('pay/PaymentSheet_unknown', e, st,
+          cid: cid, purpose: purpose, amountCents: amountCents, currency: currency);
       rethrow;
     }
 
@@ -213,6 +274,10 @@ class StripeService {
     required String currency,
     String interval = 'month',
     String? donorMessage,
+    /// See `pay()` — same role here for recurring donations. Stamped on the
+    /// subscription metadata so every generated invoice's transaction inherits
+    /// it in the webhook handler.
+    String? donationReason,
     String merchantDisplayName = 'Pushka',
   }) async {
     final cid = _newCorrelationId();
@@ -226,14 +291,21 @@ class StripeService {
         'currency': currency.toLowerCase(),
         'interval': interval,
         'correlationId': cid,
+        if (donationReason != null && donationReason.isNotEmpty)
+          'donationReason': donationReason,
         if (donorMessage != null && donorMessage.isNotEmpty)
           'donorMessage': donorMessage,
       });
-    } on FirebaseFunctionsException catch (e) {
+    } on FirebaseFunctionsException catch (e, st) {
       debugPrint('StripeService.subscribe: CF error code=${e.code} message=${e.message}');
+      _recordPaymentError('subscribe/createDonationSubscription', e, st,
+          cid: cid, amountCents: amountCents, currency: currency,
+          interval: interval, extraCode: e.code);
       rethrow;
-    } catch (e) {
+    } catch (e, st) {
       debugPrint('StripeService.subscribe: network error $e');
+      _recordPaymentError('subscribe/createDonationSubscription_unknown', e, st,
+          cid: cid, amountCents: amountCents, currency: currency, interval: interval);
       throw const StripeServiceException('network-error');
     }
     debugPrint('StripeService.subscribe: CF returned, initing PaymentSheet');
@@ -271,12 +343,15 @@ class StripeService {
       debugPrint('StripeService.subscribe: presenting PaymentSheet');
       await Stripe.instance.presentPaymentSheet();
       debugPrint('StripeService.subscribe: PaymentSheet completed');
-    } on StripeException catch (e) {
+    } on StripeException catch (e, st) {
       debugPrint('StripeService.subscribe: PaymentSheet error code=${e.error.code} message=${e.error.message} localized=${e.error.localizedMessage}');
       final code = e.error.code;
       if (code == FailureCode.Canceled) {
         throw const StripeServiceException('canceled');
       }
+      _recordPaymentError('subscribe/PaymentSheet', e, st,
+          cid: cid, amountCents: amountCents, currency: currency,
+          interval: interval, extraCode: code.name);
       throw StripeServiceException(code.name);
     }
 
@@ -295,13 +370,17 @@ class StripeService {
   /// Opens the Stripe SetupIntent sheet so the user can save a card for
   /// future off-session charges. Returns the SetupIntent ID on success.
   Future<String> setupCard({String merchantDisplayName = 'Pushka'}) async {
+    final cid = _newCorrelationId();
     final callable = FirebaseFunctions.instance.httpsCallable('createSetupIntent');
     HttpsCallableResult result;
     try {
-      result = await callable.call({});
-    } on FirebaseFunctionsException {
+      result = await callable.call({'correlationId': cid});
+    } on FirebaseFunctionsException catch (e, st) {
+      _recordPaymentError('setupCard/createSetupIntent', e, st,
+          cid: cid, extraCode: e.code);
       rethrow;
-    } catch (_) {
+    } catch (e, st) {
+      _recordPaymentError('setupCard/createSetupIntent_unknown', e, st, cid: cid);
       throw const StripeServiceException('network-error');
     }
 
@@ -331,11 +410,13 @@ class StripeService {
 
     try {
       await Stripe.instance.presentPaymentSheet();
-    } on StripeException catch (e) {
+    } on StripeException catch (e, st) {
       final code = e.error.code;
       if (code == FailureCode.Canceled) {
         throw const StripeServiceException('canceled');
       }
+      _recordPaymentError('setupCard/PaymentSheet', e, st,
+          cid: cid, extraCode: code.name);
       throw StripeServiceException(code.name);
     }
 
