@@ -9,6 +9,7 @@ import '../../../core/l10n/s.dart';
 import '../../auth/biometric_service.dart';
 import '../../tenant/data/tenant_repository.dart';
 import '../../users/presentation/user_profile_provider.dart';
+import '../donation_reason_picker.dart';
 import '../stripe_service.dart';
 
 class DonationSubscriptionsScreen extends ConsumerStatefulWidget {
@@ -228,6 +229,13 @@ class _DonationSubscriptionsScreenState
     final symbol = _currencySymbol(currency);
     final tenantConfig = ref.read(tenantConfigProvider).valueOrNull;
     final merchantDisplayName = tenantConfig?.appName ?? 'Pushka';
+    // Tenant-configured donation destinations (e.g. "Familias necesitadas",
+    // "Estudio de Torá"). Falls back to the in-app default Chabad list when
+    // the tenant hasn't customized any. Empty list => skip the picker.
+    final reasons = (tenantConfig?.donationReasons.isNotEmpty ?? false)
+        ? tenantConfig!.donationReasons
+        : tr.defaultDonationReasons;
+    String? selectedReason = reasons.isNotEmpty ? reasons.first : null;
 
     Map<String, dynamic>? result;
     try {
@@ -281,6 +289,52 @@ class _DonationSubscriptionsScreenState
                   ),
                 ],
               ),
+              if (reasons.isNotEmpty) ...[
+                const SizedBox(height: 14),
+                InkWell(
+                  borderRadius: BorderRadius.circular(12),
+                  onTap: () async {
+                    final picked = await showDonationReasonPicker(
+                      context: ctx,
+                      reasons: reasons,
+                      currentSelection: selectedReason,
+                    );
+                    if (picked is DonationReasonSelected) {
+                      setSheetState(() => selectedReason = picked.reason);
+                    }
+                  },
+                  child: InputDecorator(
+                    decoration: InputDecoration(
+                      labelText: tr.donationReasonTitle,
+                      filled: true,
+                      fillColor: cs.surface,
+                      enabledBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: BorderSide(color: cs.outline),
+                      ),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: BorderSide(color: cs.outline),
+                      ),
+                    ),
+                    child: Row(children: [
+                      Expanded(
+                        child: Text(
+                          selectedReason ?? tr.donationReasonNone,
+                          style: TextStyle(
+                            fontSize: 16,
+                            color: selectedReason == null
+                                ? cs.onSurfaceVariant
+                                : cs.onSurface,
+                          ),
+                        ),
+                      ),
+                      Icon(Icons.keyboard_arrow_down_rounded,
+                          color: cs.onSurfaceVariant),
+                    ]),
+                  ),
+                ),
+              ],
               const SizedBox(height: 14),
               TextField(
                 controller: amountCtrl,
@@ -338,6 +392,7 @@ class _DonationSubscriptionsScreenState
                     Navigator.pop(ctx, {
                       'amount': value,
                       'interval': interval,
+                      'reason': selectedReason,
                     });
                   },
                   child: Text(
@@ -361,6 +416,7 @@ class _DonationSubscriptionsScreenState
     if (result == null || !mounted) return;
     final donationAmount = result['amount'] as double;
     final chosenInterval = result['interval'] as String? ?? 'month';
+    final donationReason = (result['reason'] as String?)?.trim();
     final amountCents = amountToStripeUnits(donationAmount, currency);
     final messenger = ScaffoldMessenger.of(context);
 
@@ -385,6 +441,9 @@ class _DonationSubscriptionsScreenState
         currency: currency,
         interval: chosenInterval,
         merchantDisplayName: merchantDisplayName,
+        donationReason: (donationReason == null || donationReason.isEmpty)
+            ? null
+            : donationReason,
       );
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(

@@ -111,3 +111,74 @@ y que el Notification channel quedó verificado.
 - Crashlytics alerts: **gratis**.
 
 Total: $0/mes. Hacelo HOY.
+
+---
+
+## 6. Cold start de Cloud Functions (latencia 5-10s al primer click)
+
+### Por qué pasa
+
+Cloud Functions v2 escala a CERO cuando no hay tráfico. La primera llamada
+después de un período de inactividad sufre **cold start**: el sistema arranca
+un container Node.js, carga firebase-admin (~10MB) + firebase-functions +
+secrets manager, y recién entonces ejecuta tu código. Eso son 3-5 segundos
+fijos antes de tocar Stripe.
+
+En **dev** (testing solo) esto se nota mucho porque las funciones casi nunca
+se invocan → siempre cold. En **prod** con 50+ donaciones/día el container
+queda warm casi todo el tiempo y el lag desaparece naturalmente.
+
+### Cuándo configurar `minInstances`
+
+Pagar para tener instances "always-on" (`minInstances: 1`) es la solución
+oficial. Costo aproximado **us-central1**:
+
+| Función | Memoria | CPU | Costo/mes con minInstances:1 |
+|---------|---------|-----|------------------------------|
+| createPaymentIntent | 256MB | 1 vCPU | ~$72 |
+| createSetupIntent | 256MB | 1 vCPU | ~$72 |
+| createDonationSubscription | 256MB | 1 vCPU | ~$72 |
+| listSavedCards | 256MB | 1 vCPU | ~$72 |
+| **Total 4 funciones** | | | **~$288/mes** |
+
+### Recomendación por etapa
+
+- **HOY (dev + rollout 50-100 users)**: NO configurar `minInstances`. El
+  costo no se justifica con tráfico tan bajo y el lag solo te afecta a vos
+  testeando. Tus primeros 50-100 usuarios reales mantendrán las CFs warm
+  por su propio uso.
+
+- **Cuando tengas 200+ donaciones/mes**: configurar `minInstances: 1` SOLO
+  en `createPaymentIntent` (la más crítica para conversión). Con commission
+  del 3% sobre $200/donación promedio = $6 por donación → 12 donaciones cubren
+  el costo mensual de esa instance.
+
+- **Cuando tengas 1000+ donaciones/mes**: agregar a las 4 funciones críticas.
+
+### Cómo configurar (cuando llegue el momento)
+
+En `functions/index.js`, en el `onCall` config:
+
+```js
+exports.createPaymentIntent = onCall(
+  {
+    secrets: [stripeSecret],
+    enforceAppCheck: true,
+    minInstances: 1, // ← agregar esta línea (solo en prod)
+  },
+  async (request) => { ... }
+);
+```
+
+Y deployar **solo a prod**:
+```
+firebase deploy --only functions:createPaymentIntent --project pushka-app-ioel
+```
+
+NO agregarlo en `pushka-app-ioel-test` (dev) — gastarías sin necesidad.
+
+### Mientras tanto (dev)
+
+El spinner en el botón "Agregar tarjeta" ya muestra al user que algo está
+pasando. Si querés un mensaje más claro, decímelo y agrego un overlay tipo
+"Cargando Stripe..." que se muestra cuando la latencia supera 2 segundos.
