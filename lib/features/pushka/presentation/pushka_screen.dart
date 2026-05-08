@@ -401,7 +401,10 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                         decoration: InputDecoration(
                           labelText: tr.amount,
                           floatingLabelStyle: TextStyle(color: Theme.of(ctx).colorScheme.onSurfaceVariant),
-                          hintText: '0', prefixText: '\$ ', errorText: error,
+                          hintText: '0',
+                          prefixText: '${_shortSymbol(_currencyCodeFromProfile())} ',
+                          suffixText: _currencyCodeFromProfile().toUpperCase(),
+                          errorText: error,
                           filled: true,
                           fillColor: Theme.of(ctx).colorScheme.surface,
                           enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide(color: Theme.of(ctx).colorScheme.outline)),
