@@ -44,7 +44,7 @@ class WalletScreen extends ConsumerWidget {
         const SizedBox(height: 6),
         _ActionButton(
           label: tr.mySubscriptions,
-          onTap: () => context.go('/wallet/donation-subs'),
+          onTap: () => context.go('/settings/donation-subs'),
         ),
       ],
     );
