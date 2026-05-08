@@ -745,19 +745,24 @@ exports.createPaymentIntent = onCall(
   // Idempotency key: uid + purpose + amount + currency + 5-minute bucket.
   // A 5-min bucket (vs 1-min) closes the boundary-straddling double-tap race
   // where two clicks at 12:00:59.500 and 12:01:00.300 land in different buckets
-  // and create two PaymentIntents. With 5-min buckets, the worst-case duplicate
-  // window is one straddle per 5 minutes, which is acceptable for donations.
-  // Idempotency key: uid + purpose + amount + currency + 60-minute bucket.
-  // The bucket size used to be 5 minutes, but the boundary race
-  // (12:04:59.500 vs 12:05:00.500 land in different buckets and produce
-  // two distinct PaymentIntents → potential double-charge under retry
-  // spam) was easier to trigger than expected. 60 minutes makes the
-  // probability of a legitimate retry crossing a bucket negligible
-  // while still letting a donor make two distinct same-amount donations
-  // within a single hour (Stripe will dedupe via idempotency only the
-  // first; the second errors with "already used", which the client
-  // surfaces as "intentá de nuevo en unos segundos").
-  const idempotencyKey = `pi_${request.auth.uid}_${purpose}_${currency}_${amount}_${Math.floor(Date.now() / 3600000)}`;
+  // Idempotency key: uid + correlationId. The client (StripeService.pay)
+  // generates a fresh correlationId per donation attempt; retries of the
+  // SAME attempt (network blip, app backgrounded mid-call) reuse the same
+  // ID and Stripe dedupes them into one PaymentIntent. Distinct attempts
+  // get distinct keys → both go through.
+  //
+  // The previous (uid + purpose + amount + currency + hour_bucket) scheme
+  // looked safer for double-charge prevention but failed in practice:
+  // Stripe ALSO checks that the request body is identical when a key is
+  // reused. Fields like application_fee_amount, metadata.tenantId, and
+  // transfer_data.destination naturally vary between attempts (commission
+  // rate changes, tenant switch, etc.), so retries hit
+  // StripeIdempotencyError "Keys for idempotent requests can only be used
+  // with the same parameters they were first used with" and the user saw
+  // a generic "No se pudo procesar el pago".
+  //
+  // Double-tap protection lives in the client (`_processing` guard).
+  const idempotencyKey = `pi_${request.auth.uid}_${correlationId}`;
 
   // Build Stripe Connect params — only when the tenant has an active Connect account.
   // Clamp app fee defensively: a misconfigured commissionRate >= 1 would cause
