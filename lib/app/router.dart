@@ -160,6 +160,14 @@ final router = GoRouter(
               path: 'saved-cards',
               pageBuilder: (context, state) => _slidePage(state, const SavedCardsScreen()),
             ),
+            // Same screen as /settings/donation-subs but rooted under /wallet
+            // so the back button returns to Billetera (where the user came
+            // from) instead of bouncing them out to Configuración.
+            GoRoute(
+              path: 'donation-subs',
+              pageBuilder: (context, state) =>
+                  _slidePage(state, const DonationSubscriptionsScreen()),
+            ),
           ],
         ),
         GoRoute(path: '/reminders', pageBuilder: (context, state) => _slidePage(state, const RemindersScreen())),

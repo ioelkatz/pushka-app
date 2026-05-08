@@ -5474,13 +5474,16 @@ const TENANT_MEMBER_FIELDS = [...TENANT_PUBLIC_FIELDS, "status"];
 // branding endpoints) when a tenant doc has no donationReasons set, so every
 // org gets a sensible default destinación picker out of the box. The
 // backfillDonationReasonsChabad CF stamps this same list onto each tenant doc.
+// Default destinations seeded on every new tenant. Tenant admins can edit
+// (add/remove/rename) from the admin web → Configuración → Designaciones.
+// Edits propagate live to the app via getTenantConfig polling +
+// onTenantBrandingUpdated trigger that mirrors the array onto every member's
+// tenantState.tenantDonationReasons cache.
 const DEFAULT_CHABAD_DONATION_REASONS = [
   "Donde más se necesite",
   "Comida para familias",
   "Estudios de Torá",
   "Festividades",
-  "Edificio / Beit Jabad",
-  "Becas para niños",
 ];
 
 /**
