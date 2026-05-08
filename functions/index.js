@@ -2418,7 +2418,6 @@ exports.stripeWebhook = onRequest(
               originalPaymentIntentId: paymentIntentId,
               originalChargeId: charge.id,
               ...(originalMissing ? { originalMissing: true } : {}),
-              skipNotification: true, // user already sees the refund in their bank
               createdAt: admin.firestore.FieldValue.serverTimestamp(),
             }, { merge: true });
         }
@@ -2485,7 +2484,6 @@ exports.stripeWebhook = onRequest(
               originalChargeId: chargeId,
               originalPaymentIntentId: paymentIntentId,
               disputeStatus: dispute.status || "needs_response",
-              skipNotification: true,
               createdAt: admin.firestore.FieldValue.serverTimestamp(),
             }, { merge: true });
         }
@@ -2883,25 +2881,34 @@ exports.onTransactionCreated = onDocumentCreated(
 
     const fmt = (n) => `${sym}${Number(n).toFixed(2)}`;
 
+    const fmtAbs = (n) => `${sym}${Math.abs(Number(n)).toFixed(2)}`;
     const messages = {
       es: {
         tzedaka:       `¡Gracias por tu donación! ${fmt(amount)}`,
         pushkaEmpty:   `Tu Pushka fue vaciada. Donación: ${fmt(amount)}`,
+        refund:        `Reembolso procesado: ${fmtAbs(amount)}`,
+        chargeback:    `Contracargo recibido: ${fmtAbs(amount)}. Tu banco está investigando un cargo.`,
         default:       "Nueva transacción registrada",
       },
       en: {
         tzedaka:       `Thank you for your donation! ${fmt(amount)}`,
         pushkaEmpty:   `Your Pushka was emptied. Donation: ${fmt(amount)}`,
+        refund:        `Refund processed: ${fmtAbs(amount)}`,
+        chargeback:    `Chargeback received: ${fmtAbs(amount)}. Your bank is investigating a charge.`,
         default:       "New transaction recorded",
       },
       fr: {
         tzedaka:       `Merci pour votre don ! ${fmt(amount)}`,
         pushkaEmpty:   `Votre Pushka a été vidée. Don : ${fmt(amount)}`,
+        refund:        `Remboursement traité : ${fmtAbs(amount)}`,
+        chargeback:    `Contestation reçue : ${fmtAbs(amount)}. Votre banque enquête sur un paiement.`,
         default:       "Nouvelle transaction enregistrée",
       },
       he: {
         tzedaka:       `תודה על תרומתך! ${fmt(amount)}`,
         pushkaEmpty:   `הפושקה שלך רוקנה. תרומה: ${fmt(amount)}`,
+        refund:        `החזר עובד: ${fmtAbs(amount)}`,
+        chargeback:    `התקבל ערעור על חיוב: ${fmtAbs(amount)}. הבנק שלך בודק את החיוב.`,
         default:       "עסקה חדשה נרשמה",
       },
     };
@@ -2910,10 +2917,25 @@ exports.onTransactionCreated = onDocumentCreated(
     let body = m.default;
     if (type === "tzedaka") body = m.tzedaka;
     else if (type === "pushkaEmpty") body = m.pushkaEmpty;
+    else if (type === "refund") body = m.refund;
+    else if (type === "chargeback") body = m.chargeback;
 
     const tenantId = data.tenantId ?? "";
+
+    // Title: prefer the tenant's appName so the notification matches the
+    // branded UI the donor sees in-app. Falls back to "Pushka" for legacy
+    // transactions without a tenantId or when the tenant doc is unreachable.
+    let title = "Pushka";
+    if (tenantId) {
+      try {
+        const tSnap = await db.collection("tenants").doc(tenantId).get();
+        const appName = String(tSnap.data()?.appName || "").trim();
+        if (appName) title = appName;
+      } catch (_) { /* keep default */ }
+    }
+
     await sendToUser(uid, {
-      notification: { title: "Pushka", body },
+      notification: { title, body },
       data: { type, amount: String(amount), tenantId },
     });
 
@@ -3129,20 +3151,24 @@ exports.onTenantBrandingUpdated = onDocumentUpdated(
     const after = event.data?.after?.data() || {};
     const tenantId = event.params.tenantId;
 
-    const denormalizedFields = ["name", "appName", "logoUrl", "primaryColor"];
+    const fieldMap = {
+      name: "tenantName",
+      appName: "tenantAppName",
+      logoUrl: "tenantLogoUrl",
+      primaryColor: "tenantPrimaryColor",
+      contactPhone: "tenantContactPhone",
+    };
     const changes = {};
-    for (const f of denormalizedFields) {
-      if (before[f] !== after[f]) {
-        // Map tenant doc field → tenantState field naming.
-        const dest = f === "name"
-          ? "tenantName"
-          : f === "appName"
-            ? "tenantAppName"
-            : f === "logoUrl"
-              ? "tenantLogoUrl"
-              : "tenantPrimaryColor";
-        changes[dest] = after[f] ?? null;
+    for (const [src, dest] of Object.entries(fieldMap)) {
+      if (before[src] !== after[src]) {
+        changes[dest] = after[src] ?? null;
       }
+    }
+    // donationReasons is an array — compare by JSON serialization.
+    const beforeReasons = JSON.stringify(before.donationReasons ?? null);
+    const afterReasons = JSON.stringify(after.donationReasons ?? null);
+    if (beforeReasons !== afterReasons) {
+      changes.tenantDonationReasons = after.donationReasons ?? null;
     }
     if (Object.keys(changes).length === 0) return;
 
@@ -3240,36 +3266,41 @@ exports.monitorStripeWebhookStuckEvents = onSchedule(
 );
 
 
-// --- Erev Rosh Chodesh lookup (Gregorian dates for years 2025-2035) ---
-// Format: [month 0-indexed, day]. Tishrei (month 7 Hebrew) is skipped (Rosh HaShana).
-const erevRoshChodeshDates = {
-  2025: [[0,29],[1,27],[2,29],[3,27],[4,27],[5,25],[6,25],[7,23],[9,21],[10,20],[11,19]],
-  2026: [[0,18],[1,16],[2,18],[3,16],[4,16],[5,14],[6,14],[7,12],[9,10],[10,9],[11,9]],
-  2027: [[0,8],[1,6],[2,8],[3,7],[4,6],[5,5],[6,4],[7,3],[8,1],[9,30],[10,29],[11,29]],
-  2028: [[0,28],[1,26],[2,27],[3,25],[4,25],[5,23],[6,23],[7,21],[9,19],[10,18],[11,17]],
-  2029: [[0,16],[1,14],[2,16],[3,14],[4,14],[5,12],[6,12],[7,10],[9,8],[10,7],[11,6]],
-  2030: [[0,4],[1,2],[2,4],[3,3],[4,2],[5,1],[5,30],[6,30],[7,28],[9,26],[10,25],[11,25]],
-  2031: [[0,24],[1,22],[2,24],[3,22],[4,22],[5,20],[6,20],[7,18],[9,16],[10,15],[11,15]],
-  2032: [[0,13],[1,12],[2,12],[3,11],[4,10],[5,9],[6,8],[7,7],[9,5],[10,3],[11,3]],
-  2033: [[0,2],[1,1],[1,28],[2,30],[3,29],[4,28],[5,27],[6,26],[7,25],[9,22],[10,22],[11,21]],
-  2034: [[0,21],[1,19],[2,21],[3,19],[4,19],[5,17],[6,17],[7,15],[9,13],[10,12],[11,12]],
-  2035: [[0,10],[1,9],[2,11],[3,9],[4,9],[5,7],[6,7],[7,5],[9,3],[10,2],[11,1],[11,31]],
-};
-
-function computeNextErevRoshChodesh(baseDate) {
-  const now = new Date(baseDate);
-  const year = now.getUTCFullYear();
-  const candidates = [];
-  for (const y of [year, year + 1]) {
-    const dates = erevRoshChodeshDates[y];
-    if (!dates) continue;
-    for (const [m, d] of dates) {
-      candidates.push(new Date(Date.UTC(y, m, d, 8, 0, 0)));
-    }
+// --- Erev Rosh Chodesh computation (dynamic via @hebcal/core) ---
+// Computes the next Erev Rosh Chodesh (day before the start of a Hebrew month)
+// dynamically from the Hebrew calendar so the schedule never runs out. Skips
+// Elul (its day 29 leads into Tishrei = Erev Rosh HaShana, handled separately
+// as a holiday). Returns a UTC Date at 08:00.
+//
+// @hebcal/core is ESM-only — load via dynamic import + memoize.
+let _hebcalCachePromise = null;
+function _getHebcal() {
+  if (!_hebcalCachePromise) {
+    _hebcalCachePromise = import("@hebcal/core").then((mod) => ({
+      HDate: mod.HDate,
+      HMonths: mod.months,
+    }));
   }
-  candidates.sort((a, b) => a - b);
-  for (const d of candidates) {
-    if (d > now) return d;
+  return _hebcalCachePromise;
+}
+
+async function computeNextErevRoshChodesh(baseDate) {
+  const { HDate, HMonths } = await _getHebcal();
+  const now = new Date(baseDate);
+  // Erev Rosh Chodesh = day 29 of any Hebrew month, EXCEPT Elul (whose day 29
+  // leads into Tishrei = Erev Rosh HaShana, handled separately as a holiday).
+  // Day 29 always exists regardless of whether the month has 29 or 30 days,
+  // and is the colloquial "day before Rosh Chodesh begins".
+  for (let dayOffset = 0; dayOffset < 400; dayOffset++) {
+    const candidate = new Date(now);
+    candidate.setUTCDate(candidate.getUTCDate() + dayOffset);
+    candidate.setUTCHours(8, 0, 0, 0);
+    if (candidate <= now) continue;
+
+    const hd = new HDate(candidate);
+    if (hd.getDate() === 29 && hd.getMonth() !== HMonths.ELUL) {
+      return candidate;
+    }
   }
   const fallback = new Date(now);
   fallback.setUTCDate(fallback.getUTCDate() + 30);
@@ -3311,24 +3342,35 @@ async function _runPushkaAutoEmptyTick() {
 
     const nowTs = admin.firestore.Timestamp.now();
 
-    // Per-tenant rows due. Limit 200: each iteration may issue a Stripe call
-    // (1-2s) plus 2 Firestore transactions; 200 stays comfortably under the
-    // function's timeout budget when paired with maxInstances:1.
-    const dueStates = await db
-      .collectionGroup("tenantState")
-      .where("autoEmptyNextRunAt", "<=", nowTs)
-      .limit(200)
-      .get();
-
-    if (dueStates.empty) {
-      console.info("processPushkaAutoEmpty: no_due_states");
-      return;
-    }
-
+    // Paginated processing with soft deadline. Each iteration issues a Stripe
+    // call (1-2s) + 2 Firestore txns. Page size 200 keeps memory bounded; we
+    // keep paginating until either the query is drained or we approach the
+    // function's 9-minute timeout. This scales past the previous 200/run cap.
+    const PAGE_SIZE = 200;
+    const SOFT_DEADLINE_MS = 7 * 60 * 1000; // 7 min — leaves 2 min buffer before 540s timeout
+    const startedAt = Date.now();
     let processed = 0;
     let failed = 0;
     let skipped = 0;
+    let cursor = null;
+    let totalScanned = 0;
     const stripe = require("stripe")(stripeSecret.value(), { timeout: 15000 });
+
+    while (Date.now() - startedAt < SOFT_DEADLINE_MS) {
+    let q = db
+      .collectionGroup("tenantState")
+      .where("autoEmptyNextRunAt", "<=", nowTs)
+      .orderBy("autoEmptyNextRunAt", "asc")
+      .limit(PAGE_SIZE);
+    if (cursor) q = q.startAfter(cursor);
+    const dueStates = await q.get();
+
+    if (dueStates.empty) {
+      if (totalScanned === 0) console.info("processPushkaAutoEmpty: no_due_states");
+      break;
+    }
+    totalScanned += dueStates.size;
+    cursor = dueStates.docs[dueStates.docs.length - 1];
 
     for (const stateDoc of dueStates.docs) {
       const stateRef = stateDoc.ref;
@@ -3433,7 +3475,7 @@ async function _runPushkaAutoEmptyTick() {
           // actual failures, just "skip this cycle and move on").
           let normalNextDate;
           if (freq === "erev_rosh_chodesh") {
-            normalNextDate = computeNextErevRoshChodesh(new Date());
+            normalNextDate = await computeNextErevRoshChodesh(new Date());
           } else {
             normalNextDate = computeNextScheduleDate({
               frequency: freq, weekday, dayOfMonth, baseDate: new Date(),
@@ -3816,7 +3858,13 @@ async function _runPushkaAutoEmptyTick() {
       }
     }
 
-    console.info("processPushkaAutoEmpty: completed", { processed, failed, skipped });
+    if (dueStates.size < PAGE_SIZE) break;
+    }
+
+    console.info("processPushkaAutoEmpty: completed", {
+      processed, failed, skipped, totalScanned,
+      hitSoftDeadline: Date.now() - startedAt >= SOFT_DEADLINE_MS,
+    });
 }
 
 exports.processPushkaAutoEmpty = onSchedule(
@@ -3825,6 +3873,7 @@ exports.processPushkaAutoEmpty = onSchedule(
     timeZone: "Etc/UTC",
     secrets: [stripeSecret],
     maxInstances: 1,
+    timeoutSeconds: 540,
   },
   _runPushkaAutoEmptyTick,
 );

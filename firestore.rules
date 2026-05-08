@@ -110,6 +110,7 @@ service cloud.firestore {
     function tenantStateClientKeys() {
       return ['uid', 'tenantId',
               'tenantName', 'tenantAppName', 'tenantLogoUrl', 'tenantPrimaryColor',
+              'tenantContactPhone', 'tenantDonationReasons',
               'pushkaAmount', 'pushkaGoal',
               'presetAmount', 'presetAmounts',
               'streakCount', 'lastStreakDate',
@@ -161,8 +162,11 @@ service cloud.firestore {
                   request.resource.data.autoEmptyTopOffAmount >= 0 &&
                   request.resource.data.autoEmptyTopOffAmount <= 10000000)) &&
           (!('autoEmptyNextRunAt' in request.resource.data) ||
-              request.resource.data.autoEmptyNextRunAt is timestamp ||
-              request.resource.data.autoEmptyNextRunAt == null) &&
+              request.resource.data.autoEmptyNextRunAt == null ||
+              (request.resource.data.autoEmptyNextRunAt is timestamp &&
+                  (request.resource.data.autoEmptyNextRunAt > request.time ||
+                      (resource != null &&
+                          resource.data.get('autoEmptyNextRunAt', null) == request.resource.data.autoEmptyNextRunAt)))) &&
           (!('autoEmptyPaymentMethodId' in request.resource.data) ||
               request.resource.data.autoEmptyPaymentMethodId == null ||
               (request.resource.data.autoEmptyPaymentMethodId is string &&
@@ -294,8 +298,11 @@ service cloud.firestore {
                   request.resource.data.autoEmptyTopOffAmount >= 0 &&
                   request.resource.data.autoEmptyTopOffAmount <= 10000000)) &&
           (!('autoEmptyNextRunAt' in request.resource.data) ||
-              request.resource.data.autoEmptyNextRunAt is timestamp ||
-              request.resource.data.autoEmptyNextRunAt == null) &&
+              request.resource.data.autoEmptyNextRunAt == null ||
+              (request.resource.data.autoEmptyNextRunAt is timestamp &&
+                  (request.resource.data.autoEmptyNextRunAt > request.time ||
+                      (resource != null &&
+                          resource.data.get('autoEmptyNextRunAt', null) == request.resource.data.autoEmptyNextRunAt)))) &&
           (!('email' in request.resource.data) ||
               (request.resource.data.email is string &&
                   request.resource.data.email.size() <= 254)) &&
