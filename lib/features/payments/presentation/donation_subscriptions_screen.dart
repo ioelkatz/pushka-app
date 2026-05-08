@@ -6,6 +6,7 @@ import '../../../app/theme/app_tokens.dart';
 import '../../../core/format_utils.dart';
 import '../../../core/keyboard_safe_sheet.dart';
 import '../../../core/l10n/s.dart';
+import '../../auth/biometric_service.dart';
 import '../../tenant/data/tenant_repository.dart';
 import '../../users/presentation/user_profile_provider.dart';
 import '../stripe_service.dart';
@@ -119,6 +120,11 @@ class _DonationSubscriptionsScreenState
         });
       }
     }
+  }
+
+  bool _biometricEnabled() {
+    final profile = ref.read(userProfileProvider).valueOrNull;
+    return (profile?['biometricAuthenticationEnabled'] as bool?) ?? false;
   }
 
   String _currencySymbol(String code) {
@@ -356,6 +362,20 @@ class _DonationSubscriptionsScreenState
     final donationAmount = result['amount'] as double;
     final chosenInterval = result['interval'] as String? ?? 'month';
     final amountCents = amountToStripeUnits(donationAmount, currency);
+
+    if (_biometricEnabled()) {
+      final authenticated = await BiometricService.instance.authenticate(
+        reason: tr.biometricReasonDonate,
+      );
+      if (!authenticated) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(tr.authRequiredDonate)),
+        );
+        return;
+      }
+      if (!mounted) return;
+    }
 
     setState(() => _processingId = true);
     try {

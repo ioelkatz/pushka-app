@@ -7,6 +7,7 @@ import '../../../app/theme/app_tokens.dart';
 import 'card_brand_box.dart';
 
 import '../../../core/keyboard_safe_sheet.dart';
+import '../../auth/biometric_service.dart';
 import '../../../core/widgets/option_picker_sheet.dart';
 import '../../payments/donation_reason_picker.dart';
 import '../../users/data/user_repository.dart';
@@ -410,6 +411,19 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
                               if (_frequency != 'manual' && _savedFrequency == 'manual') {
                                 final accepted = await _showConsentDialog();
                                 if (!accepted || !mounted) return;
+                              }
+                              if (_biometricEnabled()) {
+                                final authenticated = await BiometricService.instance.authenticate(
+                                  reason: tr.biometricReasonEmpty,
+                                );
+                                if (!authenticated) {
+                                  if (!mounted) return;
+                                  messenger.showSnackBar(
+                                    SnackBar(content: Text(tr.authRequired)),
+                                  );
+                                  return;
+                                }
+                                if (!mounted) return;
                               }
                               setState(() => _saving = true);
                               try {
@@ -849,6 +863,11 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
           },
         ) ??
         false;
+  }
+
+  bool _biometricEnabled() {
+    final profile = ref.read(userProfileProvider).valueOrNull;
+    return (profile?['biometricAuthenticationEnabled'] as bool?) ?? false;
   }
 
   Future<void> _saveConfig(String uid) async {
