@@ -1039,6 +1039,28 @@ exports.createPaymentIntent = onCall(
       errorCode: err?.code,
       errorMessage: err?.message,
     });
+    // Release the auto-empty lock claimed for purpose === "pushka_empty"
+    // (lines ~627-657) before bubbling the error up. Otherwise the lock
+    // would persist for its full 10-min TTL after a Stripe failure, blocking
+    // every subsequent payment attempt with "Tu Pushka se está vaciando
+    // automáticamente" — a poor UX for retryable failures (network blips,
+    // card declines, etc.). Best-effort: a lock-release failure here just
+    // means the user waits the TTL, no double-charge risk.
+    if (purpose === "pushka_empty" && tenantId) {
+      try {
+        await db.collection("users").doc(request.auth.uid)
+          .collection("tenantState").doc(tenantId)
+          .set({
+            _autoEmptyChargeLockAt: admin.firestore.FieldValue.delete(),
+            _autoEmptyChargeLockSource: admin.firestore.FieldValue.delete(),
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          }, { merge: true });
+      } catch (lockReleaseErr) {
+        console.warn("createPaymentIntent: lock_release_after_stripe_error_failed", {
+          uid: request.auth.uid, tenantId, err: lockReleaseErr?.message,
+        });
+      }
+    }
     const userMessage = err?.type === "StripeAuthenticationError"
       ? "Error de configuración del servidor de pagos."
       : err?.type === "StripeCardError"
@@ -1085,6 +1107,63 @@ exports.createPaymentIntent = onCall(
     ephemeralKeySecret,
   };
 });
+
+// ---------------------------------------------------------------------------
+// releaseManualPushkaEmptyLock — let the client free the lock it claimed
+// ---------------------------------------------------------------------------
+// When createPaymentIntent({purpose:"pushka_empty"}) succeeds, the CF claims
+// _autoEmptyChargeLockAt on the (uid, tenantId) tenantState doc to block the
+// cron from double-charging. If the donor then dismisses or errors out of
+// PaymentSheet (StripeException, network, app crash), no webhook fires, and
+// the lock would persist for its full 10-min TTL — locking out every other
+// payment flow ("Tu Pushka se está vaciando automáticamente"). The client
+// calls this CF in its catch/finally to release the lock proactively.
+//
+// Safety: only releases locks with _autoEmptyChargeLockSource === "manual"
+// so a racing cron lock (source: undefined / "scheduled") is never cleared.
+exports.releaseManualPushkaEmptyLock = onCall(
+  { enforceAppCheck: true },
+  async (request) => {
+    if (!request.auth?.uid) {
+      throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
+    }
+    await enforceRateLimit(request.auth.uid, "releaseManualPushkaEmptyLock", 30, 600);
+
+    // tenantId is optional — fall back to the user's active tenant. The
+    // client may not always have it handy when reacting to a PaymentSheet
+    // exception, and the server already knows the donor's primary tenant.
+    let tenantId = String(request.data?.tenantId || "").trim();
+    if (!tenantId) {
+      const userSnap = await db.collection("users").doc(request.auth.uid).get();
+      tenantId = String(userSnap.data()?.tenantId || "").trim();
+    }
+    if (!tenantId) return { released: false, reason: "no_tenant" };
+
+    const stateRef = db.collection("users").doc(request.auth.uid)
+      .collection("tenantState").doc(tenantId);
+    try {
+      await db.runTransaction(async (tx) => {
+        const snap = await tx.get(stateRef);
+        if (!snap.exists) return;
+        const source = snap.data()?._autoEmptyChargeLockSource;
+        // Only release manual locks. A racing scheduled-cron lock (source
+        // unset or "scheduled") MUST stay claimed — clearing it would let
+        // the next createPaymentIntent slip through and double-charge.
+        if (source !== "manual") return;
+        tx.set(stateRef, {
+          _autoEmptyChargeLockAt: admin.firestore.FieldValue.delete(),
+          _autoEmptyChargeLockSource: admin.firestore.FieldValue.delete(),
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        }, { merge: true });
+      });
+    } catch (err) {
+      console.warn("releaseManualPushkaEmptyLock: tx failed (non-fatal)", {
+        uid: request.auth.uid, tenantId, err: err?.message,
+      });
+    }
+    return { released: true };
+  },
+);
 
 // ---------------------------------------------------------------------------
 // Stripe Subscription — recurring donation (monthly / weekly / etc.)
@@ -1433,7 +1512,15 @@ exports.createDonationSubscription = onCall(
         .create({
           customer: customerId,
           components: {
-            payment_sheet: { enabled: true },
+            mobile_payment_element: {
+              enabled: true,
+              features: {
+                payment_method_save: "enabled",
+                payment_method_remove: "enabled",
+                payment_method_redisplay: "enabled",
+                payment_method_allow_redisplay_filters: ["always", "limited", "unspecified"],
+              },
+            },
           },
         })
         .then((cs) => {

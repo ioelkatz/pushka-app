@@ -81,21 +81,40 @@ class StripeService {
     final callable = FirebaseFunctions.instance.httpsCallable(
       'createPaymentIntent',
     );
+    Future<HttpsCallableResult> callOnce() => callable.call({
+          'amount': amountCents,
+          'currency': currency.toLowerCase(),
+          'customerEmail': customerEmail,
+          'purpose': purpose,
+          'correlationId': cid,
+          if (donorMessage != null && donorMessage.isNotEmpty)
+            'donorMessage': donorMessage,
+          if (purpose == 'pushka_empty')
+            'pushkaAmountAfter': pushkaAmountAfter ?? 0,
+        });
+
     HttpsCallableResult result;
     try {
-      result = await callable.call({
-        'amount': amountCents,
-        'currency': currency.toLowerCase(),
-        'customerEmail': customerEmail,
-        'purpose': purpose,
-        'correlationId': cid,
-        if (donorMessage != null && donorMessage.isNotEmpty)
-          'donorMessage': donorMessage,
-        if (purpose == 'pushka_empty')
-          'pushkaAmountAfter': pushkaAmountAfter ?? 0,
-      });
-    } on FirebaseFunctionsException {
-      rethrow;
+      result = await callOnce();
+    } on FirebaseFunctionsException catch (e) {
+      // Self-heal a stuck "manual" auto-empty lock: a prior attempt that
+      // the donor cancelled (or that crashed mid-PaymentSheet) leaves
+      // _autoEmptyChargeLockAt set on tenantState for up to 10 min. Without
+      // this retry, the next 10 min of payment attempts all bounce with
+      // "Tu Pushka se está vaciando automáticamente". Release the lock
+      // server-side and try once more.
+      if (e.code == 'aborted') {
+        await _releaseManualPushkaEmptyLock();
+        try {
+          result = await callOnce();
+        } on FirebaseFunctionsException {
+          rethrow;
+        } catch (_) {
+          throw const StripeServiceException('network-error');
+        }
+      } else {
+        rethrow;
+      }
     } catch (_) {
       throw const StripeServiceException('network-error');
     }
@@ -119,43 +138,67 @@ class StripeService {
     final customerSessionClientSecret =
         result.data['customerSessionClientSecret'] as String?;
     final ephemeralKeySecret = result.data['ephemeralKeySecret'] as String?;
-    final hasCustomerContext = customerId != null && customerId.isNotEmpty;
 
-    await Stripe.instance.initPaymentSheet(
-      paymentSheetParameters: SetupPaymentSheetParameters(
-        paymentIntentClientSecret: clientSecret,
-        merchantDisplayName: merchantDisplayName,
-        allowsDelayedPaymentMethods: false,
-        customerId: hasCustomerContext ? customerId : null,
-        customerSessionClientSecret: hasCustomerContext
-            ? customerSessionClientSecret
-            : null,
-        customerEphemeralKeySecret: hasCustomerContext &&
-                (customerSessionClientSecret == null ||
-                    customerSessionClientSecret.isEmpty)
-            ? ephemeralKeySecret
-            : null,
-        applePay: _applePayConfig,
-        googlePay: _googlePayConfigFor(currency),
-      ),
-    );
-    debugPrint('StripeService.pay: initPaymentSheet returned in ${sw.elapsedMilliseconds}ms');
-    sw.reset();
+    // flutter_stripe v12 requires that if customerId is set, at least one auth
+    // mechanism (customerSessionClientSecret OR customerEphemeralKeySecret)
+    // must also be non-null. If both auth tokens fail server-side, drop the
+    // customerId entirely so the sheet still opens (just without saved cards).
+    final hasSessionAuth = customerSessionClientSecret != null && customerSessionClientSecret.isNotEmpty;
+    final hasEphemeralAuth = ephemeralKeySecret != null && ephemeralKeySecret.isNotEmpty;
+    final hasCustomerContext = customerId != null && customerId.isNotEmpty && (hasSessionAuth || hasEphemeralAuth);
 
     try {
+      await Stripe.instance.initPaymentSheet(
+        paymentSheetParameters: SetupPaymentSheetParameters(
+          paymentIntentClientSecret: clientSecret,
+          merchantDisplayName: merchantDisplayName,
+          allowsDelayedPaymentMethods: false,
+          customerId: hasCustomerContext ? customerId : null,
+          customerSessionClientSecret: hasCustomerContext && hasSessionAuth ? customerSessionClientSecret : null,
+          customerEphemeralKeySecret: hasCustomerContext && !hasSessionAuth ? ephemeralKeySecret : null,
+          applePay: _applePayConfig,
+          googlePay: _googlePayConfigFor(currency),
+        ),
+      );
+      debugPrint('StripeService.pay: initPaymentSheet returned in ${sw.elapsedMilliseconds}ms');
+      sw.reset();
+
       await Stripe.instance.presentPaymentSheet();
       debugPrint('StripeService.pay: presentPaymentSheet returned (user closed/paid) in ${sw.elapsedMilliseconds}ms');
     } on StripeException catch (e) {
-      // Convert StripeException to a typed exception so callers can distinguish
-      // a user-initiated cancel from a genuine payment failure.
+      // PaymentSheet failed or user dismissed. For purpose=='pushka_empty'
+      // the CF claimed _autoEmptyChargeLockAt before returning the
+      // clientSecret — we MUST proactively release it so the lock doesn't
+      // persist for its full 10-min TTL, blocking every retry with
+      // "Tu Pushka se está vaciando automáticamente". Best-effort: a
+      // failure here just means the user waits the TTL.
+      if (purpose == 'pushka_empty') {
+        await _releaseManualPushkaEmptyLock();
+      }
       final code = e.error.code;
       if (code == FailureCode.Canceled) {
         throw const StripeServiceException('canceled');
       }
       throw StripeServiceException(code.name);
+    } catch (_) {
+      // Same lock-release for unexpected non-Stripe errors.
+      if (purpose == 'pushka_empty') {
+        await _releaseManualPushkaEmptyLock();
+      }
+      rethrow;
     }
 
     return _extractIdFromSecret(clientSecret, 'pi_');
+  }
+
+  Future<void> _releaseManualPushkaEmptyLock() async {
+    try {
+      await FirebaseFunctions.instance
+          .httpsCallable('releaseManualPushkaEmptyLock')
+          .call({});
+    } catch (e) {
+      debugPrint('StripeService.pay: lock release failed (non-fatal): $e');
+    }
   }
 
   /// Creates a Stripe Subscription for a recurring donation and confirms
