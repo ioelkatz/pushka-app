@@ -215,7 +215,8 @@ class StripeService {
     String? donorMessage,
     String merchantDisplayName = 'Pushka',
   }) async {
-    debugPrint('StripeService.subscribe: calling CF amount=$amountCents currency=$currency interval=$interval');
+    final cid = _newCorrelationId();
+    debugPrint('StripeService.subscribe[cid:$cid]: calling CF amount=$amountCents currency=$currency interval=$interval');
     final callable = FirebaseFunctions.instance
         .httpsCallable('createDonationSubscription');
     HttpsCallableResult result;
@@ -224,6 +225,7 @@ class StripeService {
         'amount': amountCents,
         'currency': currency.toLowerCase(),
         'interval': interval,
+        'correlationId': cid,
         if (donorMessage != null && donorMessage.isNotEmpty)
           'donorMessage': donorMessage,
       });

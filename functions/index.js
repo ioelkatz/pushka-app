@@ -1203,6 +1203,15 @@ exports.createDonationSubscription = onCall(
       throw new HttpsError("permission-denied", "Tu cuenta está temporalmente suspendida.");
     }
 
+    // Client-supplied correlation ID, used to scope the Stripe idempotency key
+    // to a single donor attempt. Validate to a strict 16-hex shape so it can't
+    // smuggle log-injection patterns; fall back to a server-generated value
+    // for older clients that don't send it.
+    const rawCid = request.data?.correlationId;
+    const correlationId = (typeof rawCid === "string" && /^[a-f0-9]{16}$/.test(rawCid))
+      ? rawCid
+      : require("crypto").randomBytes(8).toString("hex");
+
     const userData = userSnap.exists ? (userSnap.data() ?? {}) : {};
     const tenantId = userData.tenantId ?? null;
 
@@ -1456,8 +1465,13 @@ exports.createDonationSubscription = onCall(
       interval,
       hasConnect: !!tenantConnectAccountId,
     });
-    // 5-minute bucket so a retry within the window reuses the same sub.
-    const subIdempotencyKey = `sub_${request.auth.uid}_${currency}_${amount}_${interval}_${Math.floor(Date.now() / 300000)}`;
+    // Idempotency key scoped to the donor's correlationId — retries of the
+    // same attempt (network blip) reuse the key and Stripe dedupes; new
+    // attempts get fresh keys so we don't reuse a Stripe response that may
+    // already point at a sub our pre-cleanup pass cancelled (which would
+    // surface as "PaymentSheet cannot set up a PaymentIntent in status
+    // 'canceled'" client-side).
+    const subIdempotencyKey = `sub_${request.auth.uid}_${correlationId}`;
     let subscription;
     try {
       subscription = await stripe.subscriptions.create(subParams, { idempotencyKey: subIdempotencyKey });
