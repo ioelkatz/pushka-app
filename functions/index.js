@@ -335,8 +335,22 @@ async function reserveWebhookEvent(event) {
       const status = data.status;
 
       // Terminal states: never reprocess.
-      if (status === "processed" || status === "skipped" || status === "ignored" || status === "failed") {
+      if (status === "processed" || status === "skipped" || status === "ignored") {
         alreadyProcessed = true;
+        return;
+      }
+
+      // Previously-failed events: allow Stripe retries to re-process them.
+      // Without this, a transient Firestore failure during webhook processing
+      // would permanently lose the event — Stripe retries are silently dropped,
+      // and confirmed payments would never be written to Firestore.
+      if (status === "failed") {
+        recoveredFromStuck = true;
+        tx.set(eventRef, {
+          status: "processing",
+          recoveredFromFailed: true,
+          recoveredAt: admin.firestore.FieldValue.serverTimestamp(),
+        }, { merge: true });
         return;
       }
 
@@ -1358,9 +1372,11 @@ exports.createDonationSubscription = onCall(
       interval,
       hasConnect: !!tenantConnectAccountId,
     });
+    // 5-minute bucket so a retry within the window reuses the same sub.
+    const subIdempotencyKey = `sub_${request.auth.uid}_${currency}_${amount}_${interval}_${Math.floor(Date.now() / 300000)}`;
     let subscription;
     try {
-      subscription = await stripe.subscriptions.create(subParams);
+      subscription = await stripe.subscriptions.create(subParams, { idempotencyKey: subIdempotencyKey });
       console.info("createDonationSubscription: sub created", {
         subId: subscription.id,
         status: subscription.status,
@@ -1406,27 +1422,48 @@ exports.createDonationSubscription = onCall(
       throw new HttpsError("internal", "Suscripción creada sin payment intent.");
     }
 
-    // EphemeralKey lets PaymentSheet show saved cards. Best-effort —
-    // subscription works without it, just lacks the saved-card picker.
+    // CustomerSession (modern) + EphemeralKey (legacy fallback) — both allow
+    // PaymentSheet to show saved cards. flutter_stripe v12 prefers
+    // customerSessionClientSecret; we return both so the client can pick whichever
+    // is available. Best-effort — subscription works without either.
     let ephemeralKeySecret = null;
-    try {
-      const ephemeralKey = await stripe.ephemeralKeys.create(
-        { customer: customerId },
-        { apiVersion: "2024-06-20" },
-      );
-      ephemeralKeySecret = ephemeralKey.secret;
-    } catch (ekErr) {
-      console.warn("createDonationSubscription: ephemeralKey create failed", {
-        uid: request.auth.uid,
-        err: ekErr.message,
-      });
-    }
+    let customerSessionClientSecret = null;
+    await Promise.all([
+      stripe.customerSessions
+        .create({
+          customer: customerId,
+          components: {
+            payment_sheet: { enabled: true },
+          },
+        })
+        .then((cs) => {
+          customerSessionClientSecret = cs.client_secret;
+        })
+        .catch((csErr) => {
+          console.warn("createDonationSubscription: customerSession create failed", {
+            uid: request.auth.uid,
+            err: csErr.message,
+          });
+        }),
+      stripe.ephemeralKeys
+        .create({ customer: customerId }, { apiVersion: "2024-06-20" })
+        .then((ek) => {
+          ephemeralKeySecret = ek.secret;
+        })
+        .catch((ekErr) => {
+          console.warn("createDonationSubscription: ephemeralKey create failed", {
+            uid: request.auth.uid,
+            err: ekErr.message,
+          });
+        }),
+    ]);
 
     return {
       subscriptionId: subscription.id,
       clientSecret,
       customerId,
       ephemeralKeySecret,
+      customerSessionClientSecret,
     };
   },
 );
@@ -1441,6 +1478,7 @@ exports.listDonationSubscriptions = onCall(
     if (!request.auth?.uid) {
       throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
     }
+    await enforceRateLimit(request.auth.uid, "listDonationSubscriptions", 60, 3600);
     if (!stripeSecret.value()) {
       throw new HttpsError("failed-precondition", "Stripe no configurado.");
     }
@@ -1457,34 +1495,33 @@ exports.listDonationSubscriptions = onCall(
     });
 
     const ACTIVE_STATUSES = new Set(["active", "trialing", "past_due"]);
+
+    // Filter first, then fetch all unique tenant IDs in parallel.
+    const activeSubs = subs.data.filter(
+      (s) => s.metadata?.purpose === "donation_recurring" && ACTIVE_STATUSES.has(s.status),
+    );
+    const uniqueTenantIds = [...new Set(activeSubs.map((s) => s.metadata?.tenantId).filter(Boolean))];
     const tenantCache = new Map();
-    const out = [];
-    for (const s of subs.data) {
-      if (s.metadata?.purpose !== "donation_recurring") continue;
-      if (!ACTIVE_STATUSES.has(s.status)) continue;
+    await Promise.all(
+      uniqueTenantIds.map((tid) =>
+        db
+          .collection("tenants")
+          .doc(tid)
+          .get()
+          .then((snap) => {
+            const td = snap.data() || {};
+            tenantCache.set(tid, { name: String(td.name || ""), appName: String(td.appName || "") });
+          })
+          .catch(() => tenantCache.set(tid, { name: "", appName: "" })),
+      ),
+    );
+
+    const out = activeSubs.map((s) => {
       const item = s.items?.data?.[0];
       const price = item?.price;
       const tenantId = s.metadata?.tenantId || "";
-      let tenantName = "";
-      let tenantAppName = "";
-      if (tenantId) {
-        if (!tenantCache.has(tenantId)) {
-          try {
-            const tSnap = await db.collection("tenants").doc(tenantId).get();
-            const td = tSnap.data() || {};
-            tenantCache.set(tenantId, {
-              name: String(td.name || ""),
-              appName: String(td.appName || ""),
-            });
-          } catch (_) {
-            tenantCache.set(tenantId, { name: "", appName: "" });
-          }
-        }
-        const c = tenantCache.get(tenantId);
-        tenantName = c.name;
-        tenantAppName = c.appName;
-      }
-      out.push({
+      const tc = tenantCache.get(tenantId) || { name: "", appName: "" };
+      return {
         id: s.id,
         status: s.status,
         currency: (price?.currency || s.currency || "").toLowerCase(),
@@ -1492,11 +1529,11 @@ exports.listDonationSubscriptions = onCall(
         interval: price?.recurring?.interval || "month",
         currentPeriodEnd: s.current_period_end ? s.current_period_end * 1000 : null,
         tenantId,
-        tenantName,
-        tenantAppName,
+        tenantName: tc.name,
+        tenantAppName: tc.appName,
         cancelAtPeriodEnd: !!s.cancel_at_period_end,
-      });
-    }
+      };
+    });
     return { subscriptions: out };
   },
 );

@@ -158,7 +158,8 @@ service cloud.firestore {
           (!('autoEmptyTopOffAmount' in request.resource.data) ||
               request.resource.data.autoEmptyTopOffAmount == null ||
               (request.resource.data.autoEmptyTopOffAmount is number &&
-                  request.resource.data.autoEmptyTopOffAmount >= 0)) &&
+                  request.resource.data.autoEmptyTopOffAmount >= 0 &&
+                  request.resource.data.autoEmptyTopOffAmount <= 10000000)) &&
           (!('autoEmptyNextRunAt' in request.resource.data) ||
               request.resource.data.autoEmptyNextRunAt is timestamp ||
               request.resource.data.autoEmptyNextRunAt == null) &&
@@ -290,7 +291,8 @@ service cloud.firestore {
               request.resource.data.autoEmptyTopOffEnabled is bool) &&
           (!('autoEmptyTopOffAmount' in request.resource.data) ||
               (request.resource.data.autoEmptyTopOffAmount is number &&
-                  request.resource.data.autoEmptyTopOffAmount >= 0)) &&
+                  request.resource.data.autoEmptyTopOffAmount >= 0 &&
+                  request.resource.data.autoEmptyTopOffAmount <= 10000000)) &&
           (!('autoEmptyNextRunAt' in request.resource.data) ||
               request.resource.data.autoEmptyNextRunAt is timestamp ||
               request.resource.data.autoEmptyNextRunAt == null) &&
@@ -490,6 +492,9 @@ service cloud.firestore {
       allow read, write: if false;
     }
     match /_backfillRuns/{document=**} {
+      allow read, write: if false;
+    }
+    match /_appConfig/{document=**} {
       allow read, write: if false;
     }
 

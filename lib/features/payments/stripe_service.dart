@@ -196,20 +196,27 @@ class StripeService {
     final clientSecret = result.data['clientSecret'] as String?;
     final customerId = result.data['customerId'] as String?;
     final ephemeralKeySecret = result.data['ephemeralKeySecret'] as String?;
+    final customerSessionClientSecret = result.data['customerSessionClientSecret'] as String?;
     final subscriptionId = result.data['subscriptionId'] as String?;
     if (clientSecret == null || clientSecret.isEmpty) {
       throw const StripeServiceException('no-client-secret');
     }
+
+    // flutter_stripe v12 requires that if customerId is set, at least one auth
+    // mechanism (customerSessionClientSecret OR customerEphemeralKeySecret) must
+    // also be non-null. Prefer CustomerSession (modern) over ephemeral key.
+    final hasSessionAuth = customerSessionClientSecret != null && customerSessionClientSecret.isNotEmpty;
+    final hasEphemeralAuth = ephemeralKeySecret != null && ephemeralKeySecret.isNotEmpty;
+    final hasCustomerContext = customerId != null && customerId.isNotEmpty && (hasSessionAuth || hasEphemeralAuth);
 
     await Stripe.instance.initPaymentSheet(
       paymentSheetParameters: SetupPaymentSheetParameters(
         paymentIntentClientSecret: clientSecret,
         merchantDisplayName: merchantDisplayName,
         allowsDelayedPaymentMethods: false,
-        customerId: (customerId != null && customerId.isNotEmpty) ? customerId : null,
-        customerEphemeralKeySecret: (customerId != null && customerId.isNotEmpty)
-            ? ephemeralKeySecret
-            : null,
+        customerId: hasCustomerContext ? customerId : null,
+        customerSessionClientSecret: hasCustomerContext && hasSessionAuth ? customerSessionClientSecret : null,
+        customerEphemeralKeySecret: hasCustomerContext && !hasSessionAuth ? ephemeralKeySecret : null,
         applePay: _applePayConfig,
         googlePay: _googlePayConfigFor(currency),
       ),
