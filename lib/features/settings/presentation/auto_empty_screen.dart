@@ -825,25 +825,6 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
                   tr.autoEmptyConsentBody,
                   style: TextStyle(fontSize: 15, fontWeight: FontWeight.w500, height: 1.55, color: cs.onSurface),
                 ),
-                const SizedBox(height: 16),
-                Container(
-                  padding: const EdgeInsets.all(14),
-                  decoration: BoxDecoration(
-                    color: cs.surfaceContainerHighest,
-                    borderRadius: BorderRadius.circular(10),
-                    border: Border.all(color: cs.outlineVariant, width: 1),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(tr.autoEmptyConsentBullet1,
-                          style: TextStyle(fontSize: 15, fontWeight: FontWeight.w500, height: 1.5, color: cs.onSurface)),
-                      const SizedBox(height: 6),
-                      Text(tr.autoEmptyConsentBullet3,
-                          style: TextStyle(fontSize: 15, fontWeight: FontWeight.w500, height: 1.5, color: cs.onSurface)),
-                    ],
-                  ),
-                ),
                 const SizedBox(height: 20),
                 SizedBox(
                   width: double.infinity,
