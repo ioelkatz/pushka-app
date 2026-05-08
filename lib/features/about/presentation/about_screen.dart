@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
-import 'package:url_launcher/url_launcher.dart';
 
 import '../../../core/l10n/s.dart';
+import '../../legal/presentation/legal_screen.dart';
 
 class AboutScreen extends StatelessWidget {
   const AboutScreen({super.key});
@@ -56,17 +56,20 @@ class AboutScreen extends StatelessWidget {
 
           const SizedBox(height: 30),
 
-          // Legal links
+          // Legal links — open the in-app LegalScreen scrolled to the right
+          // anchor. Both rows route to the same screen; `section` only changes
+          // the initial scroll target so "Privacy" lands at the top and
+          // "Terms" jumps straight to the Terms heading.
           _LegalLink(
             icon: Icons.privacy_tip_outlined,
             label: tr.privacyPolicy,
-            url: 'https://www.pushkaapp.com/privacy',
+            section: LegalSectionTarget.privacy,
           ),
           const SizedBox(height: 12),
           _LegalLink(
             icon: Icons.description_outlined,
             label: tr.termsOfService,
-            url: 'https://www.pushkaapp.com/terms',
+            section: LegalSectionTarget.terms,
           ),
           const SizedBox(height: 30),
 
@@ -90,26 +93,25 @@ class AboutScreen extends StatelessWidget {
 }
 
 class _LegalLink extends StatelessWidget {
-  const _LegalLink({required this.icon, required this.label, required this.url});
+  const _LegalLink({required this.icon, required this.label, required this.section});
   final IconData icon;
   final String label;
-  final String url;
+  final LegalSectionTarget section;
 
   @override
   Widget build(BuildContext context) {
     return Semantics(
       button: true,
-      link: true,
       label: label,
       child: InkWell(
         borderRadius: BorderRadius.circular(12),
-        onTap: () async {
-          final uri = Uri.parse(url);
-          try {
-            if (await canLaunchUrl(uri)) {
-              await launchUrl(uri, mode: LaunchMode.externalApplication);
-            }
-          } catch (_) {}
+        onTap: () {
+          // In-app navigation (rootNavigator: true) so the legal screen takes
+          // over with its own AppBar + back arrow that returns to About.
+          // Goes through the root navigator to escape any nested nav stacks.
+          Navigator.of(context, rootNavigator: true).push(
+            MaterialPageRoute(builder: (_) => LegalScreen(section: section)),
+          );
         },
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),

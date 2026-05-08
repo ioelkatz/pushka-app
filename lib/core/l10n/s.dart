@@ -822,6 +822,13 @@ class S {
   );
   String get privacyPolicy => _t('Política de Privacidad', 'Privacy Policy', 'Politique de confidentialité', 'מדיניות פרטיות');
   String get termsOfService => _t('Términos de Servicio', 'Terms of Service', "Conditions d'utilisation", 'תנאי שימוש');
+  String get legalTitle => _t('Privacidad y Términos', 'Privacy & Terms', 'Confidentialité et Conditions', 'פרטיות ותנאים');
+  String get legalContactFooter => _t(
+        'Para cualquier pregunta sobre estos documentos, escribinos a support@pushkaapp.com',
+        'For any question about these documents, write to support@pushkaapp.com',
+        'Pour toute question concernant ces documents, écrivez-nous à support@pushkaapp.com',
+        'לשאלות בנוגע למסמכים אלה: support@pushkaapp.com',
+      );
   String get copyright => _t(
     '© 2026 Jabad en Campus. Todos los derechos reservados.',
     '© 2026 Chabad on Campus. All rights reserved.',
