@@ -184,7 +184,7 @@ class _DonationSubscriptionsScreenState
                   onPressed: (_loading || _processingId)
                       ? null
                       : _openCreateRecurringSheet,
-                  icon: const Icon(Icons.favorite_outline),
+                  icon: const Icon(Icons.favorite, color: Color(0xFFCC2936)),
                   label: Text(
                     tr.donate,
                     style: const TextStyle(
