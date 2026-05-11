@@ -6563,7 +6563,7 @@ exports.listTenants = onCall(
     }
     const snap = await q.limit(limit).get();
 
-    const tenants = snap.docs.map((d) => {
+    function mapTenantDoc(d) {
       const data = d.data();
       return {
         tenantId: d.id,
@@ -6582,7 +6582,30 @@ exports.listTenants = onCall(
         billingNextDue: data.billingNextDue?.toDate?.()?.toISOString() ?? null,
         gracePeriodEndsAt: data.gracePeriodEndsAt?.toDate?.()?.toISOString() ?? null,
       };
-    });
+    }
+
+    const tenants = snap.docs.map(mapTenantDoc);
+
+    // Catch tenants missing the `createdAt` field — Firestore's orderBy
+    // silently excludes them, so the ordered query above never sees them.
+    // Without this branch, an orphan tenant (e.g. a legacy doc created
+    // before we started stamping createdAt) is invisible in the admin web
+    // and can't be selected for deletion or repair. We only run this catch
+    // on the FIRST page (no cursor) to avoid double-paginating; on
+    // production scale, anyone with so many tenants would also be paying
+    // for the audit log of orphan creation.
+    if (!cursorRaw) {
+      try {
+        const orphanSnap = await db.collection("tenants").limit(500).get();
+        const seen = new Set(snap.docs.map((d) => d.id));
+        for (const od of orphanSnap.docs) {
+          if (seen.has(od.id)) continue;
+          tenants.push(mapTenantDoc(od));
+        }
+      } catch (orphanErr) {
+        console.warn("listTenants: orphan sweep failed (non-fatal)", { err: orphanErr?.message });
+      }
+    }
 
     const nextCursor = snap.size === limit && tenants.length > 0
         ? tenants[tenants.length - 1].createdAt
