@@ -508,6 +508,14 @@ service cloud.firestore {
     match /_appConfig/{document=**} {
       allow read, write: if false;
     }
+    match /_pendingTenantAdmins/{document=**} {
+      // Pending tenant_admin invitations — server-only via Cloud Functions
+      // (setAdminClaim writes, claimPendingTenantAdmin reads + deletes).
+      // No client access: leaking the document set would reveal who has been
+      // invited but not yet signed up, and a forged write would let any
+      // user grant themselves a tenant_admin claim on next sign-in.
+      allow read, write: if false;
+    }
 
     // Admin-only config and notes collections
     match /adminConfig/{document} {

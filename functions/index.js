@@ -4264,6 +4264,98 @@ exports.bootstrapSuperAdmin = onCall(
   },
 );
 
+// ---------------------------------------------------------------------------
+// claimPendingTenantAdmin — apply a pre-authorized tenant_admin invitation.
+// ---------------------------------------------------------------------------
+// When super_admin assigns a tenant_admin role to an email that doesn't yet
+// have an Auth account (the rab nunca abrió la app), setAdminClaim queues
+// the invitation in `_pendingTenantAdmins/{lowercased-email}` instead of
+// failing. The admin web calls THIS function during post-login to apply
+// the claim retroactively the first time that email signs in.
+//
+// Safety:
+//   - Caller must be authenticated.
+//   - We use `request.auth.token.email` (verified by Firebase Auth) so a
+//     malicious caller can't claim someone else's invitation by passing
+//     a different email in the body.
+//   - The pending doc is deleted on success so the invitation is single-use.
+//   - Idempotent: a second call after the claim is set returns
+//     `{ applied: false, reason: "no_pending" }`.
+exports.claimPendingTenantAdmin = onCall(
+  { enforceAppCheck: false },
+  async (request) => {
+    const callerUid = request.auth?.uid;
+    if (!callerUid) {
+      throw new HttpsError("unauthenticated", "Debes estar autenticado.");
+    }
+    await enforceRateLimit(callerUid, "claimPendingTenantAdmin", 20, 3600);
+
+    // Re-fetch from admin SDK so we can't be tricked by a stale token email
+    // (in practice Firebase Auth rotates the token on email change, but
+    // belt + suspenders for a security-relevant lookup).
+    const callerRecord = await admin.auth().getUser(callerUid);
+    const email = String(callerRecord.email || "").toLowerCase().trim();
+    if (!email) {
+      return { applied: false, reason: "no_email" };
+    }
+
+    const pendingRef = db.collection("_pendingTenantAdmins").doc(email);
+    const pendingSnap = await pendingRef.get();
+    if (!pendingSnap.exists) {
+      return { applied: false, reason: "no_pending" };
+    }
+    const pending = pendingSnap.data() || {};
+    const role = pending.role;
+    const tenantId = pending.tenantId;
+    if (role !== "tenant_admin" && role !== "tenant_collaborator") {
+      // Unknown role — clean the pending doc so it doesn't loop forever.
+      await pendingRef.delete().catch(() => {});
+      return { applied: false, reason: "invalid_role" };
+    }
+    if (!tenantId) {
+      await pendingRef.delete().catch(() => {});
+      return { applied: false, reason: "no_tenant_id" };
+    }
+
+    // Verify the tenant still exists. If it was deleted between invitation
+    // and first sign-in, drop the pending doc and return.
+    const tenantSnap = await db.collection("tenants").doc(tenantId).get();
+    if (!tenantSnap.exists) {
+      await pendingRef.delete().catch(() => {});
+      return { applied: false, reason: "tenant_missing" };
+    }
+
+    // Apply the claim. setCustomUserClaims REPLACES the object, but a user
+    // who's only ever been a pending invitation has no claims to preserve.
+    await admin.auth().setCustomUserClaims(callerUid, { role, tenantId });
+
+    // Mirror into tenant team subcollection so admin dashboards see them.
+    try {
+      await db.collection("tenants").doc(tenantId).collection("team").doc(callerUid).set({
+        uid: callerUid,
+        email: callerRecord.email,
+        displayName: callerRecord.displayName ?? null,
+        role,
+        addedAt: admin.firestore.FieldValue.serverTimestamp(),
+        addedBy: pending.invitedBy ?? null,
+        claimedFromPending: true,
+      });
+    } catch (teamErr) {
+      console.warn("claimPendingTenantAdmin: team subcollection update failed (non-fatal)", {
+        uid: callerUid, tenantId, err: teamErr?.message,
+      });
+    }
+
+    // Single-use: drop the pending doc.
+    await pendingRef.delete().catch(() => {});
+
+    console.info("claimPendingTenantAdmin: applied", {
+      uid: callerUid, email, role, tenantId,
+    });
+    return { applied: true, role, tenantId };
+  },
+);
+
 // Admin: setAdminClaim — grant or revoke admin/tenant access
 // ---------------------------------------------------------------------------
 
@@ -4335,9 +4427,23 @@ exports.setAdminClaim = onCall(
       throw new HttpsError("invalid-argument", `role debe ser uno de: ${validRoles.join(", ")}`);
     }
 
-    // Resolve target early — needed for protection checks and claims write.
-    const targetRecord = await admin.auth().getUserByEmail(targetEmail);
-    const targetExistingClaims = targetRecord.customClaims || {};
+    // Resolve target. If the email has no Auth account yet (rab never opened
+    // the app), we don't throw — we record the invitation in
+    // `_pendingTenantAdmins/{lowercased-email}` and the claim is applied on
+    // first sign-in (handled by claimPendingTenantAdmin CF below). Revoke
+    // on a non-existent email also goes through the pending path so the
+    // caller can cancel an invitation before the invitee signs in.
+    const normalizedEmail = String(targetEmail).toLowerCase().trim();
+    let targetRecord = null;
+    let targetExistingClaims = {};
+    try {
+      targetRecord = await admin.auth().getUserByEmail(normalizedEmail);
+      targetExistingClaims = targetRecord.customClaims || {};
+    } catch (err) {
+      if (err?.code !== "auth/user-not-found") throw err;
+      // Pending invitation branch — handled after permission gates below so
+      // a tenant_admin can't sneak around the same-tenant check.
+    }
 
     if (!callerIsSuper) {
       if (role === "super_admin") {
@@ -4391,6 +4497,30 @@ exports.setAdminClaim = onCall(
     } else if (role === "tenant_collaborator") {
       if (!tenantId) throw new HttpsError("invalid-argument", "tenantId requerido para tenant_collaborator.");
       newClaims = { role: "tenant_collaborator", tenantId };
+    }
+
+    // If the email doesn't have an Auth account yet, record the invitation
+    // and exit successfully. claimPendingTenantAdmin (called from the admin
+    // web auth flow) will apply the claim + team membership on first sign in.
+    if (!targetRecord) {
+      if (revoke) {
+        // Revoking a pending invitation: just delete the pending doc.
+        await db.collection("_pendingTenantAdmins").doc(normalizedEmail).delete().catch(() => {});
+        return { pending: false, revoked: true, email: normalizedEmail };
+      }
+      const pendingPayload = {
+        email: normalizedEmail,
+        role,
+        ...(tenantId ? { tenantId } : {}),
+        invitedBy: callerUid,
+        invitedByEmail: callerRecord.email ?? null,
+        invitedAt: admin.firestore.FieldValue.serverTimestamp(),
+      };
+      await db.collection("_pendingTenantAdmins").doc(normalizedEmail).set(pendingPayload);
+      console.info("setAdminClaim: invitation queued (no Auth account yet)", {
+        email: normalizedEmail, role, tenantId,
+      });
+      return { pending: true, email: normalizedEmail, role, tenantId };
     }
 
     await admin.auth().setCustomUserClaims(targetRecord.uid, newClaims);
