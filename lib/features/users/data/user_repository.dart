@@ -4,6 +4,27 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+/// Thrown by [UserRepository.uploadProfilePhoto] when the picked image
+/// exceeds the Storage rule's 5MB ceiling. Catch in the UI layer to show
+/// a localized "imagen demasiado grande" message instead of the generic
+/// `firebase_storage/unauthorized` (which conflates this with rule denials
+/// for other reasons).
+class ProfilePhotoTooLargeException implements Exception {
+  ProfilePhotoTooLargeException({required this.actualBytes, required this.maxBytes});
+  final int actualBytes;
+  final int maxBytes;
+  @override
+  String toString() =>
+      'ProfilePhotoTooLargeException(actual=${actualBytes}B, max=${maxBytes}B)';
+}
+
+/// Thrown when the caller hands us a zero-byte buffer — typically a sign
+/// that the file picker returned a corrupt or canceled selection.
+class ProfilePhotoEmptyException implements Exception {
+  @override
+  String toString() => 'ProfilePhotoEmptyException';
+}
+
 class UserRepository {
   UserRepository(this._firestore);
 
@@ -126,10 +147,27 @@ class UserRepository {
 
   /// Uploads [bytes] to Firebase Storage and saves the download URL to Firestore.
   /// Returns the public download URL.
+  ///
+  /// BUG-045 fix (Audit Round 4 Phase 6): validate the byte length client-side
+  /// BEFORE hitting Storage. The bucket's rule rejects >5MB with a generic
+  /// `firebase_storage/unauthorized` error that's indistinguishable from a
+  /// rule-deny — checking here lets us throw a clear, localizable exception.
+  /// Callers should still compress (e.g. `ImagePicker` with `imageQuality`)
+  /// to keep typical uploads under ~1MB.
   Future<String> uploadProfilePhoto({
     required String uid,
     required Uint8List bytes,
   }) async {
+    const maxBytes = 5 * 1024 * 1024;
+    if (bytes.lengthInBytes > maxBytes) {
+      throw ProfilePhotoTooLargeException(
+        actualBytes: bytes.lengthInBytes,
+        maxBytes: maxBytes,
+      );
+    }
+    if (bytes.isEmpty) {
+      throw ProfilePhotoEmptyException();
+    }
     final ref = FirebaseStorage.instance
         .ref()
         .child('profile_photos')

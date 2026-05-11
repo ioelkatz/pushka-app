@@ -39,20 +39,55 @@ const String _lastUpdatedLabelEn = 'Last updated: May 7, 2026';
 const String _lastUpdatedLabelFr = 'Dernière mise à jour : 7 mai 2026';
 const String _lastUpdatedLabelHe = 'עדכון אחרון: 7 במאי 2026';
 
+// Default contact email — also acts as the substitution sentinel below.
+// If `tenantContactEmail` is provided to `legalContentFor`, every occurrence
+// of this literal across the legal text gets rewritten to the tenant-specific
+// address. Picked a unique-looking string so the replacement can't collide
+// with user-generated content.
 const String _contactEmail = 'support@pushkaapp.com';
 
-LegalContent legalContentFor(String languageCode) {
-  switch (languageCode) {
-    case 'en':
-      return _legalContentEn;
-    case 'fr':
-      return _legalContentFr;
-    case 'he':
-      return _legalContentHe;
-    case 'es':
-    default:
-      return _legalContentEs;
+/// Returns the legal content (privacy + terms) for the given language code,
+/// optionally rewriting the default Pushka support email to the tenant's
+/// own `contactEmail` (BUG-002/012/066 fix, Audit Round 4 Phase 1/8).
+///
+/// Pre-fix every donor across every tenant saw `support@pushkaapp.com` —
+/// not multi-tenant correct. Now each tenant's legal page reflects their
+/// own contact channel when configured.
+LegalContent legalContentFor(String languageCode, {String? tenantContactEmail}) {
+  final base = switch (languageCode) {
+    'en' => _legalContentEn,
+    'fr' => _legalContentFr,
+    'he' => _legalContentHe,
+    _    => _legalContentEs,
+  };
+  final overrideEmail = (tenantContactEmail ?? '').trim();
+  if (overrideEmail.isEmpty || overrideEmail == _contactEmail) {
+    return base;
   }
+  return _rewriteContactEmail(base, overrideEmail);
+}
+
+LegalContent _rewriteContactEmail(LegalContent base, String newEmail) {
+  return LegalContent(
+    privacy: _rewriteDoc(base.privacy, newEmail),
+    terms: _rewriteDoc(base.terms, newEmail),
+  );
+}
+
+LegalDoc _rewriteDoc(LegalDoc doc, String newEmail) {
+  return LegalDoc(
+    title: doc.title.replaceAll(_contactEmail, newEmail),
+    lastUpdated: doc.lastUpdated,
+    intro: doc.intro.replaceAll(_contactEmail, newEmail),
+    sections: doc.sections
+        .map((s) => LegalSection(
+              title: s.title.replaceAll(_contactEmail, newEmail),
+              paragraphs: s.paragraphs
+                  .map((p) => p.replaceAll(_contactEmail, newEmail))
+                  .toList(growable: false),
+            ))
+        .toList(growable: false),
+  );
 }
 
 // ---------------------------------------------------------------------------

@@ -485,6 +485,29 @@ async function incrementTenantRevenue(tenantId, amountUSD) {
   }
 }
 
+/**
+ * BUG-024 fix: decrement tenant revenue on refund/chargeback so admin
+ * dashboards reflect net donations. Does NOT decrement `count` — the
+ * count is kept as "gross transactions" for trend analysis; the refund
+ * itself counts as a separate negative tx in the user's history.
+ * Stamped under the current month even when the original tx was older —
+ * we don't time-travel revenue stats backward (Stripe's own reporting is
+ * authoritative for historical reconstruction).
+ */
+async function decrementTenantRevenue(tenantId, amountUSD) {
+  if (!tenantId || !Number.isFinite(amountUSD) || amountUSD <= 0) return;
+  const now = new Date();
+  const monthKey = `${now.getUTCFullYear()}_${String(now.getUTCMonth() + 1).padStart(2, "0")}`;
+  try {
+    await db.collection("tenants").doc(tenantId).update({
+      [`revenueStats.${monthKey}.revenue`]: admin.firestore.FieldValue.increment(-amountUSD),
+      "revenueStats.allTime.revenue":       admin.firestore.FieldValue.increment(-amountUSD),
+    });
+  } catch (err) {
+    console.warn("decrementTenantRevenue: failed (non-fatal)", { tenantId, amountUSD, error: String(err?.message || err) });
+  }
+}
+
 async function deleteQueryBatch(query) {
   const snap = await query.get();
   if (snap.empty) return 0;
@@ -682,10 +705,35 @@ exports.createPaymentIntent = onCall(
           "Tu organización está temporalmente sin conexión con el procesador de pagos. Avisale al administrador de tu Jabad para que lo regularice.",
         );
       }
-      // If connectAccountId is null AND status is not_connected: tenant never
-      // set up Connect — fall through to platform-account charge (the original
-      // behavior). This is intentional for tenants still in onboarding.
+      // Pre-Connect-onboarding rejection (BUG-018, Audit Round 4 Phase 3).
+      // Previously: tenant without Connect setup → charge fell through to the
+      // platform Stripe account. That silently kept donor money in the
+      // platform's bucket instead of the tenant's, requiring manual transfer.
+      // New behavior: reject with a clear error so the tenant_admin completes
+      // onboarding BEFORE inviting donors.
+      if (!connectAccountId) {
+        throw new HttpsError(
+          "failed-precondition",
+          "Esta organización todavía no completó la configuración de pagos. " +
+          "Avisale al administrador para que active Stripe Connect.",
+        );
+      }
+    } else {
+      // Tenant doc missing entirely — defensive. createPaymentIntent shouldn't
+      // be reachable without a tenant, but guard so we never silently bill the
+      // platform account.
+      throw new HttpsError(
+        "failed-precondition",
+        "Esta organización no existe o no está disponible.",
+      );
     }
+  } else {
+    // User has no tenant attached → no charge possible. The donation flow
+    // assumes a tenant context for the application_fee + Connect routing.
+    throw new HttpsError(
+      "failed-precondition",
+      "Para donar necesitás unirte a una organización primero.",
+    );
   }
 
   const amount = Number(request.data?.amount || 0);
@@ -785,13 +833,20 @@ exports.createPaymentIntent = onCall(
   const connectParams = {};
   if (tenantConnectAccountId) {
     const rawFee = Math.floor(amount * tenantCommissionRate);
-    const safeFee = Math.max(1, Math.min(rawFee, amount - 1));
-    if (safeFee !== rawFee) {
-      console.warn("createPaymentIntent: clamped_app_fee", {
-        uid: request.auth.uid, tenantId, amount, tenantCommissionRate, rawFee, safeFee,
-      });
+    // BUG-013 fix: commissionRate === 0 should mean ZERO platform fee, not
+    // 1 cent (the old `Math.max(1, ...)` floor charged 1 cent even for
+    // explicit free-mode tenants). When rawFee is 0 we still set
+    // transfer_data so the donor's full amount lands in the tenant's Connect
+    // account — just without an application_fee_amount param.
+    if (rawFee > 0) {
+      const safeFee = Math.min(rawFee, amount - 1);
+      if (safeFee !== rawFee) {
+        console.warn("createPaymentIntent: clamped_app_fee", {
+          uid: request.auth.uid, tenantId, amount, tenantCommissionRate, rawFee, safeFee,
+        });
+      }
+      connectParams.application_fee_amount = safeFee;
     }
-    connectParams.application_fee_amount = safeFee;
     connectParams.transfer_data = { destination: tenantConnectAccountId };
   }
 
@@ -2365,6 +2420,28 @@ exports.stripeWebhook = onRequest(
                 stampedConnect,
                 currentConnect,
               });
+              // BUG-022 fix: surface drift in the super_admin activity feed so
+              // ops sees it instead of having to scrape Cloud Logging. The
+              // money already moved to `stampedConnect` (the old account) but
+              // the tenant attribution points at `currentConnect`.
+              try {
+                await writeActivityLog({
+                  type: "stripe_connect_account_drift",
+                  tenantId: txTenantId,
+                  tenantName: tenantSnap.data()?.name ?? txTenantId,
+                  severity: "error",
+                  requiresAction: true,
+                  data: {
+                    uid,
+                    paymentIntentId: docId,
+                    eventId: event.id,
+                    stampedConnect,
+                    currentConnect,
+                  },
+                });
+              } catch (logErr) {
+                console.warn("stripeWebhook: drift activityLog failed", { err: logErr?.message });
+              }
             }
           } catch (driftErr) {
             console.warn("stripeWebhook: drift check failed", {
@@ -2573,6 +2650,16 @@ exports.stripeWebhook = onRequest(
               ...(originalMissing ? { originalMissing: true } : {}),
               createdAt: admin.firestore.FieldValue.serverTimestamp(),
             }, { merge: true });
+
+          // BUG-024 fix: also decrement tenant revenue counter so admin
+          // finance dashboards show net donations (gross minus refunds).
+          // Resolve tenantId from the original tx (refunds inherit it).
+          const refundTenantId = originalTxSnap.exists
+            ? originalTxSnap.data()?.tenantId ?? null
+            : null;
+          if (refundTenantId && txSnap.amountUSD) {
+            await decrementTenantRevenue(refundTenantId, txSnap.amountUSD);
+          }
         }
       }
 
@@ -2753,6 +2840,23 @@ exports.stripeWebhook = onRequest(
             severity: "info",
             requiresAction: false,
             data: { accountId },
+          });
+        }
+        // BUG-023 fix: alert super_admin when Connect becomes restricted —
+        // active charges will now fail (createPaymentIntent rejects), so the
+        // tenant_admin needs to redo Stripe verification ASAP.
+        if (newConnectStatus === "restricted" && prevConnectStatus === "active") {
+          await writeActivityLog({
+            type: "stripe_connect_restricted",
+            tenantId: tenantsSnap.docs[0].id,
+            tenantName: tenantDocData.name ?? tenantsSnap.docs[0].id,
+            severity: "error",
+            requiresAction: true,
+            data: {
+              accountId,
+              chargesEnabled: chargesEnabled,
+              payoutsEnabled: payoutsEnabled,
+            },
           });
         }
       }
@@ -3316,6 +3420,11 @@ exports.onTenantBrandingUpdated = onDocumentUpdated(
       appName: "tenantAppName",
       logoUrl: "tenantLogoUrl",
       primaryColor: "tenantPrimaryColor",
+      // BUG-007 fix: secondaryColor is consumed by tenant_theme_provider on
+      // the same path as primaryColor. Adding it to the fan-out so theme
+      // accent changes propagate instantly to active sessions instead of
+      // waiting up to 60s for the getTenantConfig poll.
+      secondaryColor: "tenantSecondaryColor",
       contactPhone: "tenantContactPhone",
     };
     const changes = {};
@@ -4307,6 +4416,17 @@ exports.claimPendingTenantAdmin = onCall(
     const pending = pendingSnap.data() || {};
     const role = pending.role;
     const tenantId = pending.tenantId;
+    // BUG-040 fix: respect TTL on stale invitations. A pending doc older than
+    // its expiresAt is treated as if it didn't exist — the doc is also
+    // deleted so it doesn't loop on every login.
+    const expiresAt = pending.expiresAt?.toMillis?.() ?? null;
+    if (expiresAt && Date.now() > expiresAt) {
+      await pendingRef.delete().catch(() => {});
+      console.info("claimPendingTenantAdmin: pending invitation expired", {
+        uid: callerUid, email: _redactEmail(email),
+      });
+      return { applied: false, reason: "expired" };
+    }
     if (role !== "tenant_admin" && role !== "tenant_collaborator") {
       // Unknown role — clean the pending doc so it doesn't loop forever.
       await pendingRef.delete().catch(() => {});
@@ -4466,8 +4586,11 @@ exports.setAdminClaim = onCall(
       }
     }
 
-    // Super admin email can never be revoked
-    if (revoke && targetEmail === SUPER_ADMIN_EMAIL) {
+    // Super admin email can never be revoked. Compare against the normalized
+    // (lowercased) email — a case-mismatched targetEmail like
+    // "IOELKATZ@GMAIL.COM" would otherwise bypass this gate and wipe the
+    // super_admin's claims (BUG-035, Audit Round 4 Phase 5).
+    if (revoke && normalizedEmail === SUPER_ADMIN_EMAIL.toLowerCase()) {
       throw new HttpsError("permission-denied", "No se pueden revocar los permisos del super administrador.");
     }
 
@@ -4508,6 +4631,12 @@ exports.setAdminClaim = onCall(
         await db.collection("_pendingTenantAdmins").doc(normalizedEmail).delete().catch(() => {});
         return { pending: false, revoked: true, email: normalizedEmail };
       }
+      // BUG-040 fix: 30-day TTL on pending invitations. Without an explicit
+      // expiry, a forgotten invitation could reactivate months later when the
+      // invitee finally creates an account. claimPendingTenantAdmin checks
+      // `expiresAt` and ignores expired docs.
+      const PENDING_TTL_DAYS = 30;
+      const expiresAt = new Date(Date.now() + PENDING_TTL_DAYS * 24 * 60 * 60 * 1000);
       const pendingPayload = {
         email: normalizedEmail,
         role,
@@ -4515,6 +4644,7 @@ exports.setAdminClaim = onCall(
         invitedBy: callerUid,
         invitedByEmail: callerRecord.email ?? null,
         invitedAt: admin.firestore.FieldValue.serverTimestamp(),
+        expiresAt: admin.firestore.Timestamp.fromDate(expiresAt),
       };
       await db.collection("_pendingTenantAdmins").doc(normalizedEmail).set(pendingPayload);
       console.info("setAdminClaim: invitation queued (no Auth account yet)", {
@@ -4573,8 +4703,8 @@ exports.setAdminClaim = onCall(
 
     console.info("setAdminClaim", {
       callerUid,
-      callerEmail: callerRecord.email,
-      targetEmail,
+      callerEmail: _redactEmail(callerRecord.email),
+      targetEmail: _redactEmail(targetEmail),
       role: revoke ? "revoked" : role,
       tenantId: tenantId ?? null,
     });
@@ -5197,6 +5327,13 @@ exports.deleteAccount = onCall(
     const userData = userSnap.exists ? userSnap.data() || {} : {};
     const stripeCustomerId = userData.stripeCustomerId || null;
     const email = userData.email || null;
+    // BUG-049 fix: capture tenant memberships BEFORE the sweep so we can
+    // write an activity log entry per tenant after deletion. Tenant_admins
+    // then see "donor X left" in their activity feed alongside their
+    // recurring-donation drop in revenue.
+    const tenantMemberships = Array.isArray(userData.tenantIds) && userData.tenantIds.length > 0
+      ? [...userData.tenantIds]
+      : (userData.tenantId ? [userData.tenantId] : []);
 
     // ---- 1. Stripe cleanup (best-effort; don't block deletion on it) ----
     let stripeCleanup = { customerDeleted: false, subscriptionsCanceled: 0 };
@@ -5308,6 +5445,34 @@ exports.deleteAccount = onCall(
 
     // ---- 6. Delete the parent user doc itself ----
     await userRef.delete().catch(() => { /* idempotent */ });
+
+    // ---- 6b. Per-tenant activity log entries (BUG-049 fix) ----
+    // After the user is gone, write one entry per tenant they belonged to so
+    // each tenant_admin sees the departure in their activity feed. Best-
+    // effort: an audit-log write failure must not impact account deletion.
+    for (const tenantId of tenantMemberships) {
+      try {
+        const tenantSnap = await db.collection("tenants").doc(tenantId).get();
+        const tenantName = tenantSnap.exists ? (tenantSnap.data()?.name ?? tenantId) : tenantId;
+        await writeActivityLog({
+          type: "donor_deleted_account",
+          tenantId,
+          tenantName,
+          severity: "info",
+          requiresAction: false,
+          data: {
+            uid,
+            stripeCleanup,
+            // PII redacted to honor the GDPR delete we just executed.
+            email: _redactEmail(email || ""),
+          },
+        });
+      } catch (logErr) {
+        console.warn("deleteAccount: per-tenant activity log failed", {
+          uid, tenantId, error: logErr?.message,
+        });
+      }
+    }
 
     // ---- 7. Delete Firebase Auth user (irreversible) ----
     // This MUST be last — once gone, the client's request.auth is invalidated
@@ -5443,11 +5608,15 @@ exports.joinTenant = onCall(
     const tenantId = String(request.data?.tenantId || "").trim();
     if (!tenantId) throw new HttpsError("invalid-argument", "tenantId requerido.");
 
-    // Validate tenant exists and is active
+    // Validate tenant exists and is active.
+    // BUG-041 fix: exclude `grace_period`. A tenant whose payment is
+    // failing is on the verge of suspension — letting new users join while
+    // they're a few days from being kicked out creates churn confusion.
+    // They can still rejoin after the rab regularizes payment.
     const tenantSnap = await db.collection("tenants").doc(tenantId).get();
     if (!tenantSnap.exists) throw new HttpsError("not-found", "Organización no encontrada.");
     const tenantData = tenantSnap.data();
-    if (!["active", "trial", "grace_period"].includes(tenantData.status)) {
+    if (!["active", "trial"].includes(tenantData.status)) {
       throw new HttpsError("failed-precondition", "Esta organización no está disponible.");
     }
 
@@ -5925,6 +6094,33 @@ exports.createTenant = onCall(
       console.warn("createTenant: welcome email failed:", e.message);
     }
 
+    // BUG-026 fix: provision the Stripe Billing subscription automatically
+    // when the tenant is created. Without this chain, super_admin would have
+    // to call createTenantSubscription manually after creation — easy to
+    // forget, and the tenant runs in "trial" indefinitely (= Pushka never
+    // bills the rab).
+    //
+    // We swallow errors here so a Stripe API hiccup doesn't prevent tenant
+    // creation. The super_admin can re-run createTenantSubscription manually
+    // from TenantDetailPage if this initial provisioning fails.
+    let subscriptionProvision = null;
+    if (typeof planPrice === "number" && planPrice > 0) {
+      try {
+        const result = await _ensureTenantSubscription(tenantRef.id);
+        subscriptionProvision = {
+          subscriptionId: result.subscriptionId,
+          hostedInvoiceUrl: result.hostedInvoiceUrl,
+        };
+        console.info("createTenant: subscription provisioned", {
+          tenantId: tenantRef.id, subscriptionId: result.subscriptionId,
+        });
+      } catch (subErr) {
+        console.warn("createTenant: subscription provisioning failed (non-fatal)", {
+          tenantId: tenantRef.id, error: subErr?.message ?? String(subErr),
+        });
+      }
+    }
+
     await writeActivityLog({
       type: "new_tenant",
       tenantId: tenantRef.id,
@@ -5934,7 +6130,12 @@ exports.createTenant = onCall(
       data: { adminEmail: adminEmail.trim(), appName: tenantData.appName, slug: normalizedSlug },
     });
 
-    return { success: true, tenantId: tenantRef.id, slug: normalizedSlug };
+    return {
+      success: true,
+      tenantId: tenantRef.id,
+      slug: normalizedSlug,
+      ...(subscriptionProvision ? { subscription: subscriptionProvision } : {}),
+    };
   }
 );
 
@@ -6077,6 +6278,97 @@ exports.backfillDonationReasonsChabad = onCall(
 );
 
 // ---------------------------------------------------------------------------
+// backfillTransactionTenantId — one-shot super_admin operation: stamp
+// `tenantId` on legacy transactions written before the multi-tenant cutover.
+//
+// Pre-multi-tenant transactions lack the `tenantId` field on the doc.
+// Multi-tenant `where('tenantId', '==', X)` queries silently exclude them,
+// so the tenant's admin dashboard loses historical donations from migrated
+// donors. This backfill resolves `tenantId` from each user's current
+// `tenants/{id}` membership (single-tenant assumption: at the time these
+// txns were written, the donor had exactly one tenant — there were no
+// multi-memberships yet).
+//
+// Idempotent: skips txns that already have tenantId. Bounded by 5000 docs
+// per invocation to stay under the function timeout; rerun until
+// `remaining` returns 0.
+// BUG-048 fix (Audit Round 4 Phase 6).
+// ---------------------------------------------------------------------------
+exports.backfillTransactionTenantId = onCall(
+  { enforceAppCheck: true },
+  async (request) => {
+    if (!(await callerIsSuperAdminFresh(request))) {
+      throw new HttpsError("permission-denied", "Solo super_admin.");
+    }
+    await enforceRateLimit(request.auth.uid, "backfillTransactionTenantId", 5, 3600);
+
+    const MAX_PER_RUN = 5000;
+    let scanned = 0;
+    let stamped = 0;
+    let alreadyHadTenantId = 0;
+    let skippedNoUserTenant = 0;
+    let remaining = 0;
+
+    // Collection-group query over all transactions, filtering at app level
+    // to those missing tenantId. We can't `.where('tenantId', '==', null)`
+    // because Firestore queries don't return docs that lack the field.
+    const cg = await db.collectionGroup("transactions").limit(MAX_PER_RUN + 1).get();
+    if (cg.size > MAX_PER_RUN) {
+      remaining = cg.size - MAX_PER_RUN;
+    }
+    const docs = cg.docs.slice(0, MAX_PER_RUN);
+
+    // Group by uid so we batch user lookups (each unique user only fetched once).
+    const byUid = new Map(); // uid -> [DocumentSnapshot]
+    for (const txDoc of docs) {
+      scanned += 1;
+      if (txDoc.data()?.tenantId) {
+        alreadyHadTenantId += 1;
+        continue;
+      }
+      const uid = txDoc.ref.parent.parent?.id;
+      if (!uid) continue;
+      if (!byUid.has(uid)) byUid.set(uid, []);
+      byUid.get(uid).push(txDoc);
+    }
+
+    // For each uid, look up their tenantId (or first of tenantIds[]) and
+    // stamp every matching tx with it. Chunked into batches of 400 to stay
+    // under Firestore's 500-write batch ceiling.
+    for (const [uid, txDocs] of byUid.entries()) {
+      let userTenantId;
+      try {
+        const userSnap = await db.collection("users").doc(uid).get();
+        const userData = userSnap.data() ?? {};
+        userTenantId = userData.tenantId ?? (Array.isArray(userData.tenantIds) ? userData.tenantIds[0] : null);
+      } catch (lookupErr) {
+        console.warn("backfillTransactionTenantId: user lookup failed", {
+          uid, error: lookupErr?.message,
+        });
+        continue;
+      }
+      if (!userTenantId) {
+        skippedNoUserTenant += txDocs.length;
+        continue;
+      }
+      const CHUNK = 400;
+      for (let i = 0; i < txDocs.length; i += CHUNK) {
+        const batch = db.batch();
+        for (const txDoc of txDocs.slice(i, i + CHUNK)) {
+          batch.set(txDoc.ref, { tenantId: userTenantId }, { merge: true });
+          stamped += 1;
+        }
+        await batch.commit();
+      }
+    }
+
+    const summary = { scanned, stamped, alreadyHadTenantId, skippedNoUserTenant, remaining };
+    console.info("backfillTransactionTenantId: completed", summary);
+    return summary;
+  },
+);
+
+// ---------------------------------------------------------------------------
 // getTenantBranding — super_admin (any tenant) or tenant_admin (own tenant)
 // ---------------------------------------------------------------------------
 exports.getTenantBranding = onCall(
@@ -6121,7 +6413,7 @@ exports.getTenantBranding = onCall(
 // updateTenant — super_admin (all fields) or tenant_admin (branding only)
 // ---------------------------------------------------------------------------
 exports.updateTenant = onCall(
-  { enforceAppCheck: false },
+  { enforceAppCheck: false, secrets: [stripeSecret] },
   async (request) => {
     const callerUid = request.auth?.uid;
     if (!callerUid) throw new HttpsError("unauthenticated", "Debes estar autenticado.");
@@ -6145,6 +6437,19 @@ exports.updateTenant = onCall(
     // Tenant admin can only edit their own tenant
     if (isTenantAdmin && callerClaims.tenantId !== tenantId) {
       throw new HttpsError("permission-denied", "Solo podés editar tu propia organización.");
+    }
+
+    // BUG-028/015 fix: `subscriptionMonthlyAmount` was a phantom field that
+    // never affected actual Stripe billing — only `planPrice` does. Treat
+    // subscriptionMonthlyAmount as a deprecation alias that writes through
+    // to planPrice (and we explicitly null out the phantom field below so
+    // the data model converges to a single source of truth).
+    if (
+      isSuper &&
+      "subscriptionMonthlyAmount" in updates &&
+      !("planPrice" in updates)
+    ) {
+      updates.planPrice = updates.subscriptionMonthlyAmount;
     }
 
     const tenantRef = db.collection("tenants").doc(tenantId);
@@ -6246,6 +6551,13 @@ exports.updateTenant = onCall(
       }
     }
 
+    // BUG-028/015 follow-up: explicitly null out subscriptionMonthlyAmount on
+    // any patch where planPrice is set, so legacy admin docs gradually
+    // converge to a single source of truth (planPrice only).
+    if ("planPrice" in patch) {
+      patch.subscriptionMonthlyAmount = null;
+    }
+
     if (updates.slug) {
       // Slug change: atomically free the old slug lock and grab the new one
       // alongside the tenant patch. Same TOCTOU protection as createTenant.
@@ -6281,6 +6593,145 @@ exports.updateTenant = onCall(
       }
     } else {
       await tenantRef.update(patch);
+    }
+
+    // BUG-017/027 fix: propagate planPrice changes to the existing Stripe
+    // subscription. Without this, super_admin "raises" the plan from $99 →
+    // $150 in admin UI but Stripe keeps billing $99 (the Firestore field is
+    // updated, the actual sub is not). We do this AFTER the Firestore write
+    // so a Stripe failure doesn't leave a half-applied state — the next
+    // sync attempt (or manual fix) can retry.
+    const beforeData = snap.data() ?? {};
+    const planPriceChanged =
+      "planPrice" in patch &&
+      typeof patch.planPrice === "number" &&
+      patch.planPrice > 0 &&
+      patch.planPrice !== (beforeData.planPrice ?? null);
+    const existingSubscriptionId = beforeData.stripeSubscriptionId ?? null;
+    if (isSuper && planPriceChanged && existingSubscriptionId) {
+      try {
+        const stripe = require("stripe")(stripeSecret.value());
+        const newPrice = await stripe.prices.create(
+          {
+            currency: "usd",
+            unit_amount: Math.round(patch.planPrice * 100),
+            recurring: { interval: "month" },
+            product_data: { name: `Pushka SaaS — ${beforeData.name ?? tenantId}` },
+          },
+          { idempotencyKey: `tenant_price_${tenantId}_${Math.round(patch.planPrice * 100)}` },
+        );
+        const sub = await stripe.subscriptions.retrieve(existingSubscriptionId);
+        const subItemId = sub.items?.data?.[0]?.id;
+        if (subItemId) {
+          await stripe.subscriptions.update(existingSubscriptionId, {
+            items: [{ id: subItemId, price: newPrice.id }],
+            proration_behavior: "create_prorations",
+            metadata: { tenantId },
+          });
+          console.info("updateTenant: stripe subscription price updated", {
+            tenantId, subscriptionId: existingSubscriptionId, newAmount: patch.planPrice,
+          });
+        } else {
+          console.warn("updateTenant: subscription has no items.data[0]", {
+            tenantId, subscriptionId: existingSubscriptionId,
+          });
+        }
+      } catch (subErr) {
+        console.warn("updateTenant: stripe sub update failed (non-fatal)", {
+          tenantId, error: subErr?.message ?? String(subErr),
+        });
+      }
+    }
+
+    // BUG-010 fix: when super_admin changes adminEmail, transfer
+    // tenant_admin claims too. Without this, the tenant was orphaned: the
+    // tenant doc pointed at the new email, but the new email had no
+    // claim and the old email still had claim+tenantId pointing at this
+    // tenant for up to 1h until token refresh.
+    if (isSuper && "adminEmail" in updates) {
+      const oldEmail = String(beforeData.adminEmail ?? "").toLowerCase();
+      const newEmail = String(patch.adminEmail ?? "").toLowerCase();
+      if (newEmail && newEmail !== oldEmail) {
+        // 1. Revoke claims from old admin (if they have an Auth account AND
+        //    their claim still points to this tenant). Skip if they're a
+        //    super_admin — never revoke super_admin via this side channel.
+        if (oldEmail) {
+          try {
+            const oldRec = await admin.auth().getUserByEmail(oldEmail);
+            const oldClaims = oldRec.customClaims ?? {};
+            const stillPointsHere =
+              (oldClaims.role === "tenant_admin" || oldClaims.role === "tenant_collaborator") &&
+              oldClaims.tenantId === tenantId;
+            const isOldSuper = oldClaims.role === "super_admin";
+            if (stillPointsHere && !isOldSuper) {
+              const { role: _r, tenantId: _t, ...keep } = oldClaims;
+              await admin.auth().setCustomUserClaims(oldRec.uid, keep);
+              await admin.auth().revokeRefreshTokens(oldRec.uid);
+              try {
+                await tenantRef.collection("team").doc(oldRec.uid).delete();
+              } catch (_) { /* tolerate missing team doc */ }
+            }
+          } catch (oldErr) {
+            // user-not-found is benign (admin was a pending invitation).
+            if (oldErr?.code !== "auth/user-not-found") {
+              console.warn("updateTenant: old admin claim revoke failed (non-fatal)", {
+                tenantId, oldEmail: _redactEmail(oldEmail), error: oldErr?.message,
+              });
+            }
+          }
+        }
+        // 2. Apply tenant_admin claim to new email. If no Auth account yet,
+        //    queue a pending invitation (same flow as setAdminClaim).
+        try {
+          let newRec;
+          try {
+            newRec = await admin.auth().getUserByEmail(newEmail);
+          } catch (notFound) {
+            if (notFound?.code === "auth/user-not-found") newRec = null;
+            else throw notFound;
+          }
+          if (newRec) {
+            const existingClaims = newRec.customClaims ?? {};
+            const isAlreadySuper = existingClaims.role === "super_admin";
+            // Preserve super_admin status; otherwise stamp tenant_admin claim.
+            await admin.auth().setCustomUserClaims(newRec.uid, {
+              ...existingClaims,
+              ...(isAlreadySuper ? {} : { role: "tenant_admin", tenantId }),
+            });
+            await admin.auth().revokeRefreshTokens(newRec.uid);
+            try {
+              await tenantRef.collection("team").doc(newRec.uid).set({
+                uid: newRec.uid,
+                email: newRec.email,
+                displayName: newRec.displayName ?? null,
+                role: isAlreadySuper ? "super_admin" : "tenant_admin",
+                addedAt: admin.firestore.FieldValue.serverTimestamp(),
+                addedBy: callerUid,
+                addedVia: "adminEmail_transfer",
+              });
+            } catch (teamErr) {
+              console.warn("updateTenant: team subcoll write failed", { error: teamErr?.message });
+            }
+          } else {
+            // No Auth account yet → queue pending invitation (30-day TTL).
+            const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+            await db.collection("_pendingTenantAdmins").doc(newEmail).set({
+              email: newEmail,
+              role: "tenant_admin",
+              tenantId,
+              invitedBy: callerUid,
+              invitedByEmail: callerRecord.email ?? null,
+              invitedAt: admin.firestore.FieldValue.serverTimestamp(),
+              expiresAt: admin.firestore.Timestamp.fromDate(expiresAt),
+              addedVia: "adminEmail_transfer",
+            });
+          }
+        } catch (newErr) {
+          console.warn("updateTenant: new admin claim apply failed (non-fatal)", {
+            tenantId, newEmail: _redactEmail(newEmail), error: newErr?.message,
+          });
+        }
+      }
     }
 
     console.info("updateTenant", { tenantId, fields: Object.keys(patch) });
@@ -6456,9 +6907,30 @@ exports.getTenantConfig = onCall(
             updatedAt: admin.firestore.FieldValue.serverTimestamp(),
           });
           // Nullify autoEmptyNextRunAt on user doc so the legacy scheduler skips it.
+          // BUG-047 fix: also clear the rest of the legacy fields that were
+          // copied into tenantState above. Leaving stale duplicates on the
+          // user doc creates "which value is authoritative?" confusion and
+          // risks the Flutter app writing to the wrong place (silent desync).
+          // tenantState is now the source of truth for these per-tenant
+          // values; the user doc only keeps cross-tenant settings (language,
+          // currencyCode, biometricAuthenticationEnabled, etc.).
           batch.set(
             db.collection("users").doc(uid),
-            { autoEmptyNextRunAt: null, updatedAt: admin.firestore.FieldValue.serverTimestamp() },
+            {
+              autoEmptyNextRunAt: null,
+              pushkaAmount: admin.firestore.FieldValue.delete(),
+              pushkaGoal: admin.firestore.FieldValue.delete(),
+              presetAmount: admin.firestore.FieldValue.delete(),
+              presetAmounts: admin.firestore.FieldValue.delete(),
+              streakCount: admin.firestore.FieldValue.delete(),
+              lastStreakDate: admin.firestore.FieldValue.delete(),
+              autoEmptyFrequency: admin.firestore.FieldValue.delete(),
+              autoEmptyWeekday: admin.firestore.FieldValue.delete(),
+              autoEmptyDayOfMonth: admin.firestore.FieldValue.delete(),
+              autoEmptyTopOffEnabled: admin.firestore.FieldValue.delete(),
+              autoEmptyTopOffAmount: admin.firestore.FieldValue.delete(),
+              updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            },
             { merge: true },
           );
         }
@@ -6792,15 +7264,35 @@ exports.handleStripeConnectOAuth = onRequest(
 
       const stripeConnectAccountId = response.stripe_user_id;
 
+      // BUG-019 fix: verify the account is actually able to accept charges
+      // BEFORE marking it active. OAuth completion only means the rab
+      // authorized; KYC/banking can still be pending. If we mark "active"
+      // prematurely, createPaymentIntent will route charges with
+      // transfer_data, Stripe will reject "destination account cannot accept
+      // charges", and the donor sees a generic error.
+      let initialStatus = "active";
+      try {
+        const acct = await stripe.accounts.retrieve(stripeConnectAccountId);
+        const ready = acct.charges_enabled === true && acct.payouts_enabled === true;
+        initialStatus = ready ? "active" : "restricted";
+      } catch (acctErr) {
+        // Defensive: if retrieve fails, leave status pending so the next
+        // account.updated webhook reconciles correctly.
+        console.warn("handleStripeConnectOAuth: account retrieve failed", {
+          tenantId, stripeConnectAccountId, error: acctErr?.message,
+        });
+        initialStatus = "restricted";
+      }
+
       await tenantDoc.ref.update({
         stripeConnectAccountId,
-        stripeConnectStatus: "active",
+        stripeConnectStatus: initialStatus,
         stripeConnectOAuthState: null,
         stripeConnectOAuthStateCreatedAt: null,
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       });
 
-      console.log(`Stripe Connect activated for tenant ${tenantId}: ${stripeConnectAccountId}`);
+      console.log(`Stripe Connect ${initialStatus} for tenant ${tenantId}: ${stripeConnectAccountId}`);
       return res.redirect(`https://pushka-admin.web.app/tenants/${tenantId}?connect=success`);
     } catch (err) {
       console.error("Stripe Connect OAuth exchange error:", err);
@@ -6941,6 +7433,126 @@ async function sendEmail({ to, subject, html }) {
 // ---------------------------------------------------------------------------
 // createTenantSubscription — super_admin creates Stripe Billing subscription
 // ---------------------------------------------------------------------------
+/**
+ * Internal helper: creates Stripe customer + price + subscription for a tenant.
+ * Used by both the public `createTenantSubscription` CF and by `createTenant`
+ * (which chains this call automatically so every new tenant gets a billing
+ * subscription wired up without manual intervention — BUG-026 fix).
+ *
+ * Idempotent: a second call for the same tenant reuses the existing customer
+ * and the same Stripe price+sub objects (via deterministic idempotency keys).
+ *
+ * Returns:
+ *   { subscriptionId, clientSecret, hostedInvoiceUrl, alreadyExisted? }
+ */
+async function _ensureTenantSubscription(tenantId) {
+  if (!tenantId) throw new HttpsError("invalid-argument", "tenantId requerido.");
+
+  const tenantRef = db.collection("tenants").doc(tenantId);
+  const tenantSnap = await tenantRef.get();
+  if (!tenantSnap.exists) throw new HttpsError("not-found", "Tenant no encontrado.");
+
+  const tenantData = tenantSnap.data();
+  const planPrice = tenantData.planPrice ?? 0;
+  const adminEmail = tenantData.adminEmail;
+
+  if (!planPrice || planPrice <= 0) {
+    throw new HttpsError("invalid-argument", "El plan no tiene precio configurado.");
+  }
+  if (!adminEmail) {
+    throw new HttpsError("invalid-argument", "El tenant no tiene email de administrador.");
+  }
+
+  const stripe = require("stripe")(stripeSecret.value());
+
+  // Reuse existing subscription if already provisioned (idempotency).
+  if (tenantData.stripeSubscriptionId) {
+    try {
+      const existing = await stripe.subscriptions.retrieve(tenantData.stripeSubscriptionId, {
+        expand: ["latest_invoice.payment_intent"],
+      });
+      return {
+        subscriptionId: existing.id,
+        clientSecret: existing.latest_invoice?.payment_intent?.client_secret ?? null,
+        hostedInvoiceUrl: existing.latest_invoice?.hosted_invoice_url ?? null,
+        alreadyExisted: true,
+      };
+    } catch (retrieveErr) {
+      // Existing ID is stale (deleted in Stripe?). Fall through to create a fresh sub.
+      console.warn("_ensureTenantSubscription: existing sub retrieve failed, will create new", {
+        tenantId, subscriptionId: tenantData.stripeSubscriptionId, error: retrieveErr?.message,
+      });
+    }
+  }
+
+  // Create or reuse Stripe customer. Idempotency key tied to tenantId so a
+  // retry within 24h reuses the same Stripe customer instead of creating a
+  // duplicate. Stripe API rejects ANY parameter mismatch under the same
+  // key — keep the create body deterministic (no timestamps, etc.).
+  let stripeCustomerId = tenantData.stripeCustomerId;
+  if (!stripeCustomerId) {
+    const customer = await stripe.customers.create(
+      {
+        email: adminEmail,
+        name: tenantData.name,
+        metadata: { tenantId },
+      },
+      { idempotencyKey: `tenant_customer_${tenantId}` },
+    );
+    stripeCustomerId = customer.id;
+  }
+
+  // Per-tenant price object. The idempotency key includes planPrice so a
+  // legitimate plan change (admin bumps the price) creates a NEW price
+  // instead of reusing the old amount; same plan + same tenant always
+  // reuses the same price object.
+  const price = await stripe.prices.create(
+    {
+      currency: "usd",
+      unit_amount: Math.round(planPrice * 100),
+      recurring: { interval: "month" },
+      product_data: { name: `Pushka SaaS — ${tenantData.name}` },
+    },
+    { idempotencyKey: `tenant_price_${tenantId}_${Math.round(planPrice * 100)}` },
+  );
+
+  // Subscription. Same key → Stripe returns the existing subscription on
+  // retry instead of creating a second one (= double-billing to tenant).
+  const subscription = await stripe.subscriptions.create(
+    {
+      customer: stripeCustomerId,
+      items: [{ price: price.id }],
+      payment_behavior: "default_incomplete",
+      payment_settings: { save_default_payment_method: "on_subscription" },
+      expand: ["latest_invoice.payment_intent"],
+      metadata: { tenantId },
+    },
+    { idempotencyKey: `tenant_sub_${tenantId}_${Math.round(planPrice * 100)}` },
+  );
+
+  const now = new Date();
+  const nextDue = new Date(now);
+  nextDue.setMonth(nextDue.getMonth() + 1);
+
+  // Use "pending_payment" — subscription is incomplete until customer
+  // adds a payment method and the first invoice is confirmed via webhook.
+  await tenantRef.update({
+    stripeCustomerId,
+    stripeSubscriptionId: subscription.id,
+    paymentStatus: "pending_payment",
+    billingCycleStart: admin.firestore.Timestamp.fromDate(now),
+    billingNextDue: admin.firestore.Timestamp.fromDate(nextDue),
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+  });
+
+  return {
+    subscriptionId: subscription.id,
+    clientSecret: subscription.latest_invoice?.payment_intent?.client_secret ?? null,
+    hostedInvoiceUrl: subscription.latest_invoice?.hosted_invoice_url ?? null,
+    alreadyExisted: false,
+  };
+}
+
 exports.createTenantSubscription = onCall(
   { secrets: [stripeSecret], enforceAppCheck: true },
   async (request) => {
@@ -6955,86 +7567,58 @@ exports.createTenantSubscription = onCall(
     await enforceRateLimit(request.auth.uid, "createTenantSubscription", 5, 3600);
 
     const { tenantId } = request.data ?? {};
+    return await _ensureTenantSubscription(tenantId);
+  }
+);
+
+// ---------------------------------------------------------------------------
+// createBillingPortalSession — Stripe Customer Portal for tenant self-service.
+// Lets the tenant_admin update their payment method, view invoices, download
+// receipts without super_admin intervention (BUG-034 fix, Audit Round 4).
+// ---------------------------------------------------------------------------
+exports.createBillingPortalSession = onCall(
+  { secrets: [stripeSecret], enforceAppCheck: false },
+  async (request) => {
+    const callerUid = request.auth?.uid;
+    if (!callerUid) throw new HttpsError("unauthenticated", "Debes estar autenticado.");
+    await enforceRateLimit(callerUid, "createBillingPortalSession", 10, 3600);
+
+    const callerRecord = await admin.auth().getUser(callerUid);
+    const callerClaims = callerRecord.customClaims || {};
+    const isSuper = callerClaims.role === "super_admin" ||
+      (callerClaims.admin === true && callerRecord.email === SUPER_ADMIN_EMAIL);
+    const isTenantAdmin = callerClaims.role === "tenant_admin";
+    if (!isSuper && !isTenantAdmin) {
+      throw new HttpsError("permission-denied", "Acceso denegado.");
+    }
+
+    // super_admin can request any tenant; tenant_admin only their own
+    const tenantId = isSuper
+      ? request.data?.tenantId
+      : callerClaims.tenantId;
     if (!tenantId) throw new HttpsError("invalid-argument", "tenantId requerido.");
+    if (isTenantAdmin && callerClaims.tenantId !== tenantId) {
+      throw new HttpsError("permission-denied", "Solo podés gestionar tu propia organización.");
+    }
 
     const tenantSnap = await db.collection("tenants").doc(tenantId).get();
     if (!tenantSnap.exists) throw new HttpsError("not-found", "Tenant no encontrado.");
-
     const tenantData = tenantSnap.data();
-    const planPrice = tenantData.planPrice ?? 0;
-    const adminEmail = tenantData.adminEmail;
-
-    if (!planPrice || planPrice <= 0) {
-      throw new HttpsError("invalid-argument", "El plan no tiene precio configurado.");
-    }
-    if (!adminEmail) {
-      throw new HttpsError("invalid-argument", "El tenant no tiene email de administrador.");
+    const customerId = tenantData.stripeCustomerId;
+    if (!customerId) {
+      throw new HttpsError(
+        "failed-precondition",
+        "Tu organización todavía no tiene una suscripción configurada.",
+      );
     }
 
     const stripe = require("stripe")(stripeSecret.value());
-
-    // Create or reuse Stripe customer. Idempotency key tied to tenantId so a
-    // retry within 24h reuses the same Stripe customer instead of creating a
-    // duplicate. Stripe API rejects ANY parameter mismatch under the same
-    // key — keep the create body deterministic (no timestamps, etc.).
-    let stripeCustomerId = tenantData.stripeCustomerId;
-    if (!stripeCustomerId) {
-      const customer = await stripe.customers.create(
-        {
-          email: adminEmail,
-          name: tenantData.name,
-          metadata: { tenantId },
-        },
-        { idempotencyKey: `tenant_customer_${tenantId}` },
-      );
-      stripeCustomerId = customer.id;
-    }
-
-    // Per-tenant price object. The idempotency key includes planPrice so a
-    // legitimate plan change (admin bumps the price) creates a NEW price
-    // instead of reusing the old amount; same plan + same tenant always
-    // reuses the same price object.
-    const price = await stripe.prices.create(
-      {
-        currency: "usd",
-        unit_amount: Math.round(planPrice * 100),
-        recurring: { interval: "month" },
-        product_data: { name: `Pushka SaaS — ${tenantData.name}` },
-      },
-      { idempotencyKey: `tenant_price_${tenantId}_${Math.round(planPrice * 100)}` },
-    );
-
-    // Subscription. Same key → Stripe returns the existing subscription on
-    // retry instead of creating a second one (= double-billing to tenant).
-    const subscription = await stripe.subscriptions.create(
-      {
-        customer: stripeCustomerId,
-        items: [{ price: price.id }],
-        payment_behavior: "default_incomplete",
-        payment_settings: { save_default_payment_method: "on_subscription" },
-        expand: ["latest_invoice.payment_intent"],
-        metadata: { tenantId },
-      },
-      { idempotencyKey: `tenant_sub_${tenantId}_${Math.round(planPrice * 100)}` },
-    );
-
-    const now = new Date();
-    const nextDue = new Date(now);
-    nextDue.setMonth(nextDue.getMonth() + 1);
-
-    // Use "pending_payment" — subscription is incomplete until customer
-    // adds a payment method and the first invoice is confirmed via webhook.
-    await db.collection("tenants").doc(tenantId).update({
-      stripeCustomerId,
-      stripeSubscriptionId: subscription.id,
-      paymentStatus: "pending_payment",
-      billingCycleStart: admin.firestore.Timestamp.fromDate(now),
-      billingNextDue: admin.firestore.Timestamp.fromDate(nextDue),
-      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    const session = await stripe.billingPortal.sessions.create({
+      customer: customerId,
+      return_url: "https://pushka-admin.web.app/my-org",
     });
 
-    const clientSecret = subscription.latest_invoice?.payment_intent?.client_secret ?? null;
-    return { subscriptionId: subscription.id, clientSecret };
+    return { url: session.url };
   }
 );
 
@@ -7042,7 +7626,7 @@ exports.createTenantSubscription = onCall(
 // cancelTenantSubscription — super_admin cancels Stripe Billing subscription
 // ---------------------------------------------------------------------------
 exports.cancelTenantSubscription = onCall(
-  { secrets: [stripeSecret], enforceAppCheck: false },
+  { secrets: [stripeSecret, sendgridApiKey], enforceAppCheck: false },
   async (request) => {
     if (!(await callerIsSuperAdminFresh(request))) {
       throw new HttpsError("permission-denied", "Solo el super administrador.");
@@ -7070,6 +7654,45 @@ exports.cancelTenantSubscription = onCall(
       paymentStatus: "canceling",
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     });
+
+    // BUG-029 fix: notify the tenant_admin via email so the rab gets a
+    // paper trail of the cancellation. Also log to the activity feed for
+    // super_admin operations history.
+    const adminEmail = tenantData.adminEmail;
+    const tenantName = tenantData.name ?? tenantId;
+    if (adminEmail) {
+      try {
+        await sendEmail({
+          to: adminEmail,
+          subject: `Tu suscripción Pushka fue cancelada — ${tenantName}`,
+          html: `
+            <p>Hola,</p>
+            <p>Te informamos que tu suscripción de <strong>${tenantName} Pushka</strong> ha sido cancelada.</p>
+            <p>Tu servicio sigue activo hasta el fin del período de facturación actual.</p>
+            <p>Si esto fue un error o querés reactivar la suscripción, contactá a soporte.</p>
+            <p>— Equipo Pushka</p>
+          `,
+        });
+      } catch (e) {
+        console.warn("cancelTenantSubscription: tenant email failed", { tenantId, error: e?.message });
+      }
+    }
+    try {
+      await writeActivityLog({
+        type: "tenant_subscription_canceled",
+        tenantId,
+        tenantName,
+        severity: "warning",
+        requiresAction: false,
+        data: {
+          actor: request.auth.uid,
+          subscriptionId,
+          adminEmail: adminEmail ?? null,
+        },
+      });
+    } catch (logErr) {
+      console.warn("cancelTenantSubscription: activityLog failed", { error: logErr?.message });
+    }
 
     return { success: true };
   }
@@ -7186,6 +7809,11 @@ exports.deleteTenant = onCall(
 
       const batch = db.batch();
       let batchOps = 0;
+      // BUG-030 fix: collect uids whose claims point at this tenant so we
+      // can revoke them after the batch commits. We do the claim revocation
+      // OUTSIDE the Firestore batch because setCustomUserClaims is an Auth
+      // operation, not Firestore — they can't share a transaction.
+      const claimRevokes = [];
       for (const userDoc of usersSnap.docs) {
         const userData = userDoc.data();
         const newTenantIds = (userData.tenantIds || []).filter((id) => id !== tenantId);
@@ -7214,6 +7842,15 @@ exports.deleteTenant = onCall(
         result.usersUpdated += 1;
         result.tenantStatesDeleted += 1;
 
+        // Queue claim revocation for users whose Auth custom claims point at
+        // this deleted tenant. We skip super_admin (their claims aren't
+        // tenant-scoped) and users whose role+tenantId combo doesn't match
+        // this tenant (they're scoped elsewhere). Without this, the user
+        // would carry a stale `role=tenant_admin, tenantId=<deleted>` claim
+        // for up to 1h after delete (orphan-healing in getTenantConfig
+        // eventually fixes it on next call — this just makes it instant).
+        claimRevokes.push(userDoc.id);
+
         // Firestore batch limit is 500. Flush mid-loop if we'd cross it.
         if (batchOps >= 480) {
           await batch.commit();
@@ -7221,6 +7858,32 @@ exports.deleteTenant = onCall(
         }
       }
       if (batchOps > 0) await batch.commit();
+
+      // Process Auth claim revocations sequentially after the batch commits.
+      // Each is wrapped in try/catch so a single Auth failure doesn't break
+      // the sweep — orphan-healing will pick up stragglers on next login.
+      for (const uid of claimRevokes) {
+        try {
+          const authRec = await admin.auth().getUser(uid);
+          const claims = authRec.customClaims ?? {};
+          const pointsHere =
+            (claims.role === "tenant_admin" || claims.role === "tenant_collaborator") &&
+            claims.tenantId === tenantId;
+          if (pointsHere) {
+            const { role: _r, tenantId: _t, ...keep } = claims;
+            await admin.auth().setCustomUserClaims(uid, keep);
+            await admin.auth().revokeRefreshTokens(uid);
+          }
+        } catch (revokeErr) {
+          // user-not-found is fine (account deleted in parallel); log others.
+          if (revokeErr?.code !== "auth/user-not-found") {
+            console.warn("deleteTenant: claim revoke failed (non-fatal)", {
+              uid, tenantId, error: revokeErr?.message,
+            });
+          }
+        }
+      }
+
       if (usersSnap.size < PAGE) break;
       lastDoc = usersSnap.docs[usersSnap.docs.length - 1];
     }
@@ -7451,7 +8114,11 @@ exports.stripeBillingWebhook = onRequest(
 // checkGracePeriods — scheduled daily: sends reminder emails + suspends
 // ---------------------------------------------------------------------------
 exports.checkGracePeriods = onSchedule(
-  { schedule: "every 24 hours", secrets: [sendgridApiKey] },
+  // BUG-032 fix: every 12h instead of 24h. With a 24h cadence the worst
+  // case for a tenant whose grace ended at midnight is ~24h of overrun
+  // before suspension. 12h cuts that in half at negligible cost (job
+  // reads a handful of docs).
+  { schedule: "every 12 hours", secrets: [sendgridApiKey] },
   async () => {
     const now = new Date();
 

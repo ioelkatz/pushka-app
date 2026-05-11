@@ -134,6 +134,24 @@ class _JoinViaLinkScreenState extends ConsumerState<JoinViaLinkScreen> {
                         textAlign: TextAlign.center,
                       ),
                     ],
+                    // BUG-004 fix: render the tenant's welcomeText if set.
+                    // Pre-fix the field was write-only (admin could edit but
+                    // nothing displayed it). The join-link preview is the
+                    // most natural place to surface a custom welcome line.
+                    if (config.welcomeText != null && config.welcomeText!.isNotEmpty) ...[
+                      const SizedBox(height: AppTokens.spaceMd),
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: AppTokens.spaceMd),
+                        child: Text(
+                          config.welcomeText!,
+                          style: tt.bodyMedium?.copyWith(
+                            color: AppTokens.textPrimary,
+                            height: 1.4,
+                          ),
+                          textAlign: TextAlign.center,
+                        ),
+                      ),
+                    ],
                     const SizedBox(height: AppTokens.spaceXl * 1.5),
                     SizedBox(
                       width: double.infinity,

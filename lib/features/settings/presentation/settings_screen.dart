@@ -533,15 +533,47 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             ),
           ),
           const SizedBox(height: 20),
-          const Center(
-            child: Text(
-              'Jabad en Campus',
-              style: TextStyle(
-                fontSize: 12,
-                color: Color(0xFF9E9E9E),
-                fontWeight: FontWeight.w400,
-              ),
-            ),
+          // BUG-062 fix: footer brand follows the current tenant's appName /
+          // name rather than the hardcoded "Jabad en Campus" of the original
+          // launch tenant. Falls back to "Pushka" when no tenant context is
+          // loaded so we never show an empty footer.
+          //
+          // BUG-004 fix: also surfaces the tenant's `showPoweredBy` flag —
+          // when true (default) we render "Powered by Pushka" below the org
+          // brand, when false the white-label branding is intact. Pre-fix
+          // the flag was a write-only toggle in admin with no UI impact.
+          Center(
+            child: Builder(builder: (_) {
+              final cfg = ref.watch(tenantConfigProvider).valueOrNull;
+              final footerBrand = cfg?.appName.isNotEmpty == true
+                  ? cfg!.appName
+                  : (cfg?.name.isNotEmpty == true ? cfg!.name : 'Pushka');
+              final showPoweredBy = cfg?.showPoweredBy ?? true;
+              return Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    footerBrand,
+                    style: const TextStyle(
+                      fontSize: 12,
+                      color: Color(0xFF9E9E9E),
+                      fontWeight: FontWeight.w400,
+                    ),
+                  ),
+                  if (showPoweredBy && footerBrand != 'Pushka') ...[
+                    const SizedBox(height: 2),
+                    const Text(
+                      'Powered by Pushka',
+                      style: TextStyle(
+                        fontSize: 10,
+                        color: Color(0xFFBDBDBD),
+                        fontWeight: FontWeight.w400,
+                      ),
+                    ),
+                  ],
+                ],
+              );
+            }),
           ),
           const SizedBox(height: 24),
         ],
@@ -695,6 +727,24 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(tr.photoUpdated)),
+      );
+    } on ProfilePhotoTooLargeException catch (e) {
+      // BUG-046 fix: tell the user exactly WHY the upload failed instead of
+      // the generic "no se pudo subir la foto" we used to show for every
+      // error. 5MB ceiling is enforced both client-side (here) and
+      // server-side (Storage rules).
+      debugPrint('uploadProfilePhoto too large: $e');
+      if (!mounted) return;
+      final mb = (e.actualBytes / (1024 * 1024)).toStringAsFixed(1);
+      final maxMb = (e.maxBytes / (1024 * 1024)).toStringAsFixed(0);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Imagen demasiado grande (${mb}MB). Máximo permitido: ${maxMb}MB.')),
+      );
+    } on ProfilePhotoEmptyException {
+      debugPrint('uploadProfilePhoto empty bytes');
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(tr.couldNotUploadPhoto)),
       );
     } catch (e) {
       debugPrint('uploadProfilePhoto error: $e');

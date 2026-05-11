@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../app/theme/app_tokens.dart';
 import '../../../core/l10n/s.dart';
+import '../../tenant/data/tenant_repository.dart';
 import '../../users/presentation/user_profile_provider.dart';
 import '../data/legal_content.dart';
 
@@ -67,7 +68,13 @@ class _LegalScreenState extends ConsumerState<LegalScreen> {
     final cs = Theme.of(context).colorScheme;
     final profile = ref.watch(userProfileProvider).valueOrNull;
     final lang = (profile?['language'] as String?) ?? 'es';
-    final content = legalContentFor(lang);
+    // BUG-002/012/066 fix: pass tenant.contactEmail through to the legal
+    // content so per-tenant donors see their own org's support contact.
+    final tenantConfig = ref.watch(tenantConfigProvider).valueOrNull;
+    final content = legalContentFor(
+      lang,
+      tenantContactEmail: tenantConfig?.contactEmail,
+    );
 
     return Scaffold(
       appBar: AppBar(

@@ -1,23 +1,44 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../../app/theme/app_tokens.dart';
 import '../../../core/l10n/s.dart';
 import '../../pushka/presentation/building_770_widget.dart';
+import '../../tenant/data/tenant_repository.dart';
 
-class SupportScreen extends StatelessWidget {
+// Audit Round 4 BUG-001/011: previously hardcoded `jymmexico@gmail.com`
+// + branding "Colel Chabad / Jabad en Campus" — broken for any tenant
+// other than Jabad en Campus. Now reads tenant.appName/name +
+// tenant.contactEmail/Phone from tenantConfigProvider with a Pushka
+// fallback so the support screen stays multi-tenant correct.
+const String _fallbackSupportEmail = 'support@pushkaapp.com';
+const String _fallbackLearnMoreUrl = 'https://pushkapp.cc';
+
+class SupportScreen extends ConsumerWidget {
   const SupportScreen({super.key});
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final tr = S.of(context);
     final cs = Theme.of(context).colorScheme;
     final isDark = Theme.of(context).brightness == Brightness.dark;
     // Fixed link color: sky blue in dark mode (same as toggles), platform blue in light mode.
     // NOT derived from tenant primaryColor so it can't be overridden by branding.
     final linkColor = isDark ? const Color(0xFF60A5FA) : AppTokens.primaryBlue;
+
+    final tenantConfig = ref.watch(tenantConfigProvider).valueOrNull;
+    final brandName = tenantConfig?.appName.isNotEmpty == true
+        ? tenantConfig!.appName
+        : (tenantConfig?.name.isNotEmpty == true ? tenantConfig!.name : tr.colelJabad);
+    final supportEmail = tenantConfig?.contactEmail ?? _fallbackSupportEmail;
+    final supportPhone = tenantConfig?.contactPhone;
+    final learnMoreUrl = (tenantConfig?.privacyPolicyUrl != null &&
+            tenantConfig!.privacyPolicyUrl!.isNotEmpty)
+        ? tenantConfig.privacyPolicyUrl!
+        : _fallbackLearnMoreUrl;
 
     return SingleChildScrollView(
       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
@@ -26,12 +47,12 @@ class SupportScreen extends StatelessWidget {
         children: [
           const SizedBox(height: 12),
 
-          // Branding header
+          // Branding header — uses tenant brand instead of hardcoded "Jabad en Campus"
           Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                tr.colelJabad,
+                brandName,
                 style: TextStyle(fontSize: 30, fontWeight: FontWeight.w700, color: cs.onSurface, letterSpacing: 0.5),
               ),
               const SizedBox(height: 4),
@@ -40,15 +61,20 @@ class SupportScreen extends StatelessWidget {
                 style: TextStyle(fontSize: 14, color: cs.onSurfaceVariant, fontWeight: FontWeight.w400),
               ),
               const SizedBox(height: 16),
-              ClipRRect(
-                borderRadius: BorderRadius.circular(12),
-                child: Image.asset(
-                  'assets/images/mendy_meer.png',
-                  height: 112,
-                  fit: BoxFit.cover,
-                  alignment: Alignment.topCenter,
-                ),
-              ),
+              // Tenant logo if available, otherwise fallback to the bundled
+              // Jabad en Campus rab photo (default tenant identity).
+              if (tenantConfig?.logoUrl != null && tenantConfig!.logoUrl!.isNotEmpty)
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(12),
+                  child: Image.network(
+                    tenantConfig.logoUrl!,
+                    height: 112,
+                    fit: BoxFit.contain,
+                    errorBuilder: (_, _, _) => _defaultRabHeader(),
+                  ),
+                )
+              else
+                _defaultRabHeader(),
               const SizedBox(height: 40),
               const Center(
                 child: SizedBox(width: 80, height: 80, child: Building770Widget(fillFraction: 0)),
@@ -92,22 +118,42 @@ class SupportScreen extends StatelessWidget {
           ),
           const SizedBox(height: 16),
 
-          // Email
+          // Email — dynamic per tenant
           InkWell(
-            onTap: () => _launchEmail(context),
+            onTap: () => _launchSafe(context, Uri.parse('mailto:$supportEmail')),
             child: Text(
-              'jymmexico@gmail.com',
+              supportEmail,
               style: TextStyle(fontSize: 16, color: linkColor),
             ),
           ),
 
+          if (supportPhone != null && supportPhone.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            InkWell(
+              onTap: () => _launchSafe(
+                context,
+                Uri.parse('tel:${supportPhone.replaceAll(RegExp(r'[^+0-9]'), '')}'),
+              ),
+              child: Text(
+                supportPhone,
+                style: TextStyle(fontSize: 16, color: linkColor),
+              ),
+            ),
+          ],
+
           const SizedBox(height: 32),
 
-          // Learn More Link
+          // Learn More Link — dynamic per tenant (privacy URL or default).
+          // Label uses the brand we resolved above so a non-Jabad tenant
+          // doesn't see "Learn more about Chabad on Campus".
           InkWell(
-            onTap: () => _launchLearnMore(context),
+            onTap: () => _launchSafe(
+              context,
+              Uri.parse(learnMoreUrl),
+              mode: LaunchMode.externalApplication,
+            ),
             child: Text(
-              tr.learnMoreColel,
+              tr.learnMoreAbout(brandName),
               textAlign: TextAlign.center,
               style: TextStyle(fontSize: 14, color: linkColor),
             ),
@@ -115,7 +161,7 @@ class SupportScreen extends StatelessWidget {
 
           const SizedBox(height: 32),
 
-          // Developer Section
+          // Developer Section — always Pushka (constant)
           Text(
             tr.developedBy,
             style: TextStyle(
@@ -141,6 +187,18 @@ class SupportScreen extends StatelessWidget {
     );
   }
 
+  Widget _defaultRabHeader() {
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(12),
+      child: Image.asset(
+        'assets/images/mendy_meer.png',
+        height: 112,
+        fit: BoxFit.cover,
+        alignment: Alignment.topCenter,
+      ),
+    );
+  }
+
   Future<void> _launchSafe(BuildContext context, Uri uri,
       {LaunchMode mode = LaunchMode.platformDefault}) async {
     final tr = S.of(context);
@@ -157,14 +215,5 @@ class SupportScreen extends StatelessWidget {
             .showSnackBar(SnackBar(content: Text(tr.errorWithMessage(e.message ?? ''))));
       }
     }
-  }
-
-  Future<void> _launchEmail(BuildContext context) async {
-    await _launchSafe(context, Uri.parse('mailto:jymmexico@gmail.com'));
-  }
-
-  Future<void> _launchLearnMore(BuildContext context) async {
-    await _launchSafe(context, Uri.parse('https://jabad.mx'),
-        mode: LaunchMode.externalApplication);
   }
 }

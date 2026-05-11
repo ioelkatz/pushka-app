@@ -787,20 +787,35 @@ class S {
   );
   String get appVersionSection => _t('VERSIÓN DE LA APP', 'APP VERSION', "VERSION DE L'APP", 'גרסת האפליקציה');
   String get supportSection => _t('SOPORTE', 'SUPPORT', 'ASSISTANCE', 'תמיכה');
-  String get learnMoreColel => _t(
-    'Conoce más de Jabad en Campus',
-    'Learn more about Chabad on Campus',
-    'En savoir plus sur Habad sur le Campus',
-    'גלה עוד על חב"ד בקמפוס',
-  );
+  /// BUG-060 fix: brand-parameterised version of the "Learn more" link.
+  /// The legacy getter still returns the Jabad-specific copy.
+  String learnMoreAbout(String brand) => _t(
+        'Conoce más de $brand',
+        'Learn more about $brand',
+        'En savoir plus sur $brand',
+        'גלה עוד על $brand',
+      );
+  String get learnMoreColel => learnMoreAbout(colelJabad);
   String get developedBy => _t('DESARROLLADO POR', 'DEVELOPED BY', 'DÉVELOPPÉ PAR', 'פותח על ידי');
 
   // ---------------------------------------------------------------------------
   // ABOUT SCREEN
   // ---------------------------------------------------------------------------
 
-  String get aboutBreadcrumb => _t('Acerca de | Jabad en Campus', 'About | Chabad on Campus', 'À propos | Habad sur le Campus', 'אודות | חב"ד בקמפוס');
-  String get aboutTitle => _t('Jabad en Campus', 'Chabad on Campus', 'Habad sur le Campus', 'חב"ד בקמפוס');
+  /// BUG-060 fix: brand-parameterized about-screen labels. Passing the
+  /// tenant's `appName` produces tenant-correct headers; falling back to
+  /// `colelJabad` preserves the original "Jabad en Campus" experience when
+  /// no tenant config is loaded yet.
+  String aboutBreadcrumbFor(String brand) => _t(
+        'Acerca de | $brand',
+        'About | $brand',
+        'À propos | $brand',
+        'אודות | $brand',
+      );
+  // Legacy getter — kept for callers that don't yet pass a brand. Equivalent
+  // to aboutBreadcrumbFor(colelJabad).
+  String get aboutBreadcrumb => aboutBreadcrumbFor(colelJabad);
+  String get aboutTitle => colelJabad;
   String get aboutSection => _t('Acerca de', 'About', 'À propos', 'אודות');
   String get aboutP1 => _t(
     'Bienvenido a Jabad en Campus. Esta aplicación fue creada para facilitar la tzedaká en nuestra comunidad, liderada por el Rabino Menachem Mendel Meer.',
@@ -829,12 +844,16 @@ class S {
         'Pour toute question concernant ces documents, écrivez-nous à support@pushkaapp.com',
         'לשאלות בנוגע למסמכים אלה: support@pushkaapp.com',
       );
-  String get copyright => _t(
-    '© 2026 Jabad en Campus. Todos los derechos reservados.',
-    '© 2026 Chabad on Campus. All rights reserved.',
-    '© 2026 Habad sur le Campus. Tous droits réservés.',
-    '© 2026 חב"ד בקמפוס. כל הזכויות שמורות.',
-  );
+  /// BUG-060 fix: copyright line parameterised on tenant brand so each org
+  /// shows their own name in the about/legal footer instead of the hardcoded
+  /// "Jabad en Campus".
+  String copyrightFor(String brand) => _t(
+        '© 2026 $brand. Todos los derechos reservados.',
+        '© 2026 $brand. All rights reserved.',
+        '© 2026 $brand. Tous droits réservés.',
+        '© 2026 $brand. כל הזכויות שמורות.',
+      );
+  String get copyright => copyrightFor(colelJabad);
 
   // ---------------------------------------------------------------------------
   // AUTO EMPTY SCREEN
@@ -1081,12 +1100,18 @@ class S {
   String get onboardingNext => _t('Siguiente', 'Next', 'Suivant', 'הבא');
   String get onboardingDone => _t('¡Comenzar!', 'Get started!', 'Commencer !', 'בואו נתחיל!');
   String get onboarding1Title => _t('Bienvenido a Pushka', 'Welcome to Pushka', 'Bienvenue sur Pushka', 'ברוכים הבאים לפושקה');
-  String get onboarding1Body => _t(
-    'La app de Tzedaká de Jabad en Campus. Acumula donaciones como en una pushka real, y vacíala cuando estés listo.',
-    'The Chabad on Campus Tzedakah app. Accumulate donations like a real pushka, and empty it when you\'re ready.',
-    "L'application Tsédaka de Habad sur le Campus. Accumulez des dons comme dans une vraie pushka, et videz-la quand vous êtes prêt.",
-    'אפליקציית הצדקה של חב"ד בקמפוס. צבור תרומות כמו בפושקה אמיתית, ורוקן אותה כשתהיה מוכן.',
-  );
+  /// BUG-060 fix: onboarding body is now tenant-aware. Pre-fix the welcome
+  /// screen always said "Jabad en Campus Tzedakah app" — any other tenant's
+  /// donor would see the wrong org name on their first launch.
+  String onboarding1BodyFor(String brand) => _t(
+        'La app de Tzedaká de $brand. Acumula donaciones como en una pushka real, y vacíala cuando estés listo.',
+        "The $brand Tzedakah app. Accumulate donations like a real pushka, and empty it when you're ready.",
+        "L'application Tsédaka de $brand. Accumulez des dons comme dans une vraie pushka, et videz-la quand vous êtes prêt.",
+        'אפליקציית הצדקה של $brand. צבור תרומות כמו בפושקה אמיתית, ורוקן אותה כשתהיה מוכן.',
+      );
+  // Legacy getter — tenants in their first launch with no config loaded still
+  // see the original copy.
+  String get onboarding1Body => onboarding1BodyFor(colelJabad);
   String get onboarding2Title => _t('Acumula Tzedaká', 'Accumulate Tzedakah', 'Accumulez de la Tsédaka', 'צבור צדקה');
   String get onboarding2Body => _t(
     'Toca los montos predefinidos para ir sumando. Establece una meta y cuando la alcances, ¡celebra tu mitzvá!',
@@ -1289,12 +1314,19 @@ class S {
     'שירות הארגון שלך מושעה זמנית. צור קשר עם מנהל הארגון לפרטים נוספים.',
   );
 
-  String get appShareText => _t(
-    'He estado usando esta increíble app Pushka de Tzedaká de Jabad en Campus. ¡Funciona igual que una pushka real! Con solo un toque puedes "poner una moneda" y cuando estés listo, "vaciarla" para hacer una donación.\n\nMírala aquí: https://pushkapp.cc/share',
-    'I\'ve been using this amazing Chabad on Campus Tzedakah Pushka app. It works just like a real pushka! With one tap you can "drop a coin" and when ready, "empty it" to make a donation.\n\nCheck it out: https://pushkapp.cc/share',
-    'J\'utilise cette incroyable app Pushka de Tsédaka de Habad sur le Campus. Elle fonctionne comme une vraie pushka ! D\'un simple clic, vous pouvez "mettre une pièce" et quand vous êtes prêt, "la vider" pour faire un don.\n\nDécouvrez-la ici : https://pushkapp.cc/share',
-    'אני משתמש באפליקציית הפושקה המדהימה לצדקה של חב"ד בקמפוס. היא עובדת בדיוק כמו פושקה אמיתית! בלחיצה אחת אפשר "להכניס מטבע" וכשמוכנים, "לרוקן אותה" לתרומה.\n\nגלה אותה כאן: https://pushkapp.cc/share',
-  );
+  /// BUG-061 fix: share message now templated on tenant brand + optional
+  /// share URL so each tenant's donors share their own org's invitation
+  /// link, not always pushkapp.cc/share (which lands on Jabad en Campus).
+  /// Callers should pass `brand = tenant.appName ?? tenant.name`, and the
+  /// share URL pointing at the tenant's slug (e.g. `https://pushkapp.cc/<slug>`).
+  String appShareTextFor(String brand, String shareUrl) => _t(
+        'He estado usando esta increíble app Pushka de Tzedaká de $brand. ¡Funciona igual que una pushka real! Con solo un toque puedes "poner una moneda" y cuando estés listo, "vaciarla" para hacer una donación.\n\nMírala aquí: $shareUrl',
+        'I\'ve been using this amazing $brand Tzedakah Pushka app. It works just like a real pushka! With one tap you can "drop a coin" and when ready, "empty it" to make a donation.\n\nCheck it out: $shareUrl',
+        'J\'utilise cette incroyable app Pushka de Tsédaka de $brand. Elle fonctionne comme une vraie pushka ! D\'un simple clic, vous pouvez "mettre une pièce" et quand vous êtes prêt, "la vider" pour faire un don.\n\nDécouvrez-la ici : $shareUrl',
+        'אני משתמש באפליקציית הפושקה המדהימה לצדקה של $brand. היא עובדת בדיוק כמו פושקה אמיתית! בלחיצה אחת אפשר "להכניס מטבע" וכשמוכנים, "לרוקן אותה" לתרומה.\n\nגלה אותה כאן: $shareUrl',
+      );
+  // Legacy getter for any caller that hasn't migrated to the brand-aware version.
+  String get appShareText => appShareTextFor(colelJabad, 'https://pushkapp.cc/share');
 }
 
 // -----------------------------------------------------------------------------

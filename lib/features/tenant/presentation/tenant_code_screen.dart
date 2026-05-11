@@ -168,8 +168,14 @@ class _TenantCodeScreenState extends ConsumerState<TenantCodeScreen> {
                       return Column(
                         mainAxisSize: MainAxisSize.min,
                         children: [
+                          // BUG-063 fix: this screen is pre-tenant-join (no
+                          // tenantConfig available yet), so we show the
+                          // generic Pushka brand instead of hardcoding the
+                          // first launch tenant ("Jabad en Campus"). Any
+                          // donor of any future tenant lands here when
+                          // entering an invite code.
                           const Text(
-                            'Jabad en Campus',
+                            'Pushka',
                             style: TextStyle(
                               fontSize: 26,
                               fontWeight: FontWeight.w800,
@@ -179,7 +185,7 @@ class _TenantCodeScreenState extends ConsumerState<TenantCodeScreen> {
                           ),
                           const SizedBox(height: 20),
                           Image.asset(
-                            'assets/images/jabad_campus_logo.png',
+                            'assets/images/logo.png',
                             width: 90,
                             height: 90,
                             fit: BoxFit.contain,
