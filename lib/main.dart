@@ -45,6 +45,18 @@ Future<void> main() async {
     // Already initialized by native google-services plugin
   }
 
+  // App Check MUST be activated before any Firestore/Functions traffic so
+  // those calls present a valid token. Previously this ran inside
+  // `_performDeferredInit()` AFTER runApp, leaving a race window where the
+  // default Play Integrity provider (which fails on debug builds) burned the
+  // per-app retry budget and surfaced as "verificación de seguridad fallida"
+  // + "Too many attempts" rate-limit. Activating here closes the gap.
+  try {
+    await activateAppCheck();
+  } catch (e) {
+    debugPrint('activateAppCheck failed (non-fatal): $e');
+  }
+
   FirebaseFirestore.instance.settings = const Settings(
     persistenceEnabled: true,
     cacheSizeBytes: Settings.CACHE_SIZE_UNLIMITED,

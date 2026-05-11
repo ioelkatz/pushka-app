@@ -25,7 +25,18 @@ void scheduleDeferredInit() {
   appDeferredInit = _performDeferredInit();
 }
 
-Future<void> _performDeferredInit() async {
+/// Activates App Check synchronously. **Must be awaited from main() before
+/// runApp()**, so the very first Firestore/Functions call after Firebase init
+/// presents a valid token instead of falling back to the framework default
+/// (Play Integrity on Android), which fails on debug builds and burns the
+/// per-app retry budget — causing the user-visible "verificación de seguridad
+/// fallida" error and a "Too many attempts" rate-limit that takes several
+/// minutes to clear.
+///
+/// Audit Round 4 follow-up — previously this lived inside
+/// `_performDeferredInit` which ran AFTER runApp, leaving a race window where
+/// the auto-default Play Integrity provider would attestation-fail on debug.
+Future<void> activateAppCheck() async {
   if (kIsWeb) {
     await FirebaseAppCheck.instance.activate(
       providerWeb: ReCaptchaV3Provider(
@@ -46,7 +57,9 @@ Future<void> _performDeferredInit() async {
       providerApple: AppleDebugProvider(),
     );
   }
+}
 
+Future<void> _performDeferredInit() async {
   if (!kIsWeb) {
     await NotificationService.instance.initialize();
     final user = FirebaseAuth.instance.currentUser;
