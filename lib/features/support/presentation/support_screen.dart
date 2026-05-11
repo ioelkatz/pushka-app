@@ -39,6 +39,15 @@ class SupportScreen extends ConsumerWidget {
             tenantConfig!.privacyPolicyUrl!.isNotEmpty)
         ? tenantConfig.privacyPolicyUrl!
         : _fallbackLearnMoreUrl;
+    // BUG-005 fix (Audit Round 4 Phase 1): expose the tenant's `city` and
+    // `country` if configured. Pre-fix the admin web let tenants type them
+    // but no Flutter widget rendered them anywhere.
+    final cityCountry = [
+      if (tenantConfig?.city != null && tenantConfig!.city!.isNotEmpty)
+        tenantConfig.city!,
+      if (tenantConfig?.country != null && tenantConfig!.country!.isNotEmpty)
+        tenantConfig.country!,
+    ].join(', ');
 
     return SingleChildScrollView(
       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
@@ -138,6 +147,19 @@ class SupportScreen extends ConsumerWidget {
                 supportPhone,
                 style: TextStyle(fontSize: 16, color: linkColor),
               ),
+            ),
+          ],
+
+          if (cityCountry.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            Text(
+              cityCountry,
+              style: TextStyle(
+                fontSize: 13,
+                color: cs.onSurfaceVariant,
+                fontWeight: FontWeight.w400,
+              ),
+              textAlign: TextAlign.center,
             ),
           ],
 

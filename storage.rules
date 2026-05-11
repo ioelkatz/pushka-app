@@ -2,15 +2,16 @@ rules_version = '2';
 service firebase.storage {
   match /b/{bucket}/o {
     match /profile_photos/{fileName} {
-      // Reads scoped to authenticated users. Note: Flutter clients fetch
-      // photos via the `getDownloadURL()` token URL which bypasses these
-      // rules entirely (Firebase Storage download URLs are signed and
-      // valid for anyone who holds them). This rule only gates direct
-      // Storage SDK reads — leaving it open to any auth'd user matches
-      // how donor avatars are surfaced in tenant leaderboards. To tighten
-      // further would require switching to short-lived signed URLs (a
-      // larger change) and would still not stop URL-based fetches.
-      allow read: if request.auth != null;
+      // BUG-039 fix (Audit Round 4 Phase 5): direct Storage SDK reads are
+      // scoped to the owner. Leaderboard / CRM avatars keep working because
+      // Flutter (and the admin web) load photos via the `getDownloadURL()`
+      // token URL — that signed URL bypasses Storage rules entirely, so any
+      // client holding the URL can fetch the asset. The rule below only
+      // gates *enumeration* and SDK-style fetches that don't include the
+      // download token, blocking a malicious caller from scraping every
+      // donor face by iterating `profile_photos/{uid}.jpg` directly.
+      allow read: if request.auth != null
+                   && fileName == request.auth.uid + '.jpg';
 
       // Writes restricted to the owner uploading <their-uid>.jpg only.
       // Constraints prevent uploading on behalf of other users, oversize

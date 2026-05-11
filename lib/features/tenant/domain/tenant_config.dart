@@ -17,6 +17,8 @@ class TenantConfig {
     this.contactPhone,
     this.privacyPolicyUrl,
     this.termsUrl,
+    this.city,
+    this.country,
     this.donationReasons = const [],
   });
 
@@ -35,6 +37,12 @@ class TenantConfig {
   final String? contactPhone;
   final String? privacyPolicyUrl;
   final String? termsUrl;
+  /// BUG-005 fix (Audit Round 4 Phase 1): the org's physical location.
+  /// Surfaced on the support screen so donors know where the organization
+  /// is based. Pre-fix the admin web wrote these fields but the Flutter
+  /// app discarded them.
+  final String? city;
+  final String? country;
   /// Optional per-tenant list of donation reasons ("designaciones") shown
   /// to the donor at payment time. Empty list = picker is hidden.
   final List<String> donationReasons;
@@ -56,6 +64,8 @@ class TenantConfig {
       contactPhone: _nonEmpty(data['contactPhone'] as String?),
       privacyPolicyUrl: _nonEmpty(data['privacyPolicyUrl'] as String?),
       termsUrl: _nonEmpty(data['termsUrl'] as String?),
+      city: _nonEmpty(data['city'] as String?),
+      country: _nonEmpty(data['country'] as String?),
       donationReasons: _stringList(data['donationReasons']),
     );
   }
@@ -79,6 +89,8 @@ class TenantConfig {
       if (contactPhone != null) 'contactPhone': contactPhone,
       if (privacyPolicyUrl != null) 'privacyPolicyUrl': privacyPolicyUrl,
       if (termsUrl != null) 'termsUrl': termsUrl,
+      if (city != null) 'city': city,
+      if (country != null) 'country': country,
       if (donationReasons.isNotEmpty) 'donationReasons': donationReasons,
     };
   }
@@ -141,6 +153,8 @@ class TenantConfig {
           contactPhone == other.contactPhone &&
           privacyPolicyUrl == other.privacyPolicyUrl &&
           termsUrl == other.termsUrl &&
+          city == other.city &&
+          country == other.country &&
           _listEquals(donationReasons, other.donationReasons);
 
   static bool _listEquals(List<String> a, List<String> b) {
@@ -157,6 +171,7 @@ class TenantConfig {
         primaryColor, secondaryColor, logoUrl,
         defaultLanguage, defaultCurrency, defaultCountry,
         contactEmail, contactPhone, privacyPolicyUrl, termsUrl,
+        city, country,
         Object.hashAll(donationReasons),
       );
 }
