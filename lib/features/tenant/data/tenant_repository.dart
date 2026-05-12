@@ -94,16 +94,25 @@ final tenantRepositoryProvider = Provider<TenantRepository>((ref) {
   return const TenantRepository();
 });
 
-/// Streams the active tenant's config, yielding cached data first (if any)
-/// so the UI renders branded immediately on cold-start, then a fresh value
-/// from the backend.
+/// Streams the active tenant's config in real time.
 ///
-/// - Returns null if the user has no tenant yet or is not logged in.
-/// - Throws [TenantSuspendedException] if the live config reports suspended.
-/// - Writes the fresh config back to HiveCache so the next cold-start has a
-///   warm cache. Failures during the network fetch fall back to the cached
-///   value so an offline user still sees their org's branding instead of
-///   a blank/error screen.
+/// Sequence:
+///   1. Yield HiveCache value first (cold-start gets branded UI instantly).
+///   2. Fetch fresh via `getTenantConfig` CF — that single call enforces the
+///      suspended-tenant check + writes denormalized cache fields to
+///      `users/{uid}/tenantState/{tenantId}` that other widgets depend on.
+///   3. Subscribe to `tenants/{tenantId}` via `.snapshots()` so any branding
+///      edit in the admin web (logo, color, designations, contact info,
+///      welcome text, etc.) reaches active sessions within ~1s instead of
+///      waiting for the next 60s poll tick. The Firestore rule
+///      `isTenantMember() && callerTenantId() == tenantId` already permits
+///      this read for any member of the tenant.
+///
+/// Errors:
+///   - Throws [TenantSuspendedException] when status flips to "suspended"
+///     (both on the CF response and on subsequent snapshot updates).
+///   - Network failure on initial fetch falls back to the cached value so
+///     offline users still see their org branding.
 ///
 /// Note: in the multi-tenant model (a user may belong to several orgs), this
 /// provider returns the config of the user's currently active tenant. Other
@@ -127,34 +136,48 @@ final tenantConfigProvider = StreamProvider<TenantConfig?>((ref) async* {
     }
   }
 
-  // 2. Fetch fresh from backend.
+  // 2. Fetch fresh from backend (CF enforces suspended-tenant + writes
+  //    denormalized tenantState cache that other widgets read).
   TenantConfig? fresh;
   try {
     fresh = await ref.read(tenantRepositoryProvider).loadConfig();
   } catch (e) {
-    // Suspension is a real signal — surface it so the listener redirects.
     if (e is TenantSuspendedException) rethrow;
-    // Network/Cloud Functions failure: keep showing the cached value so the
-    // user isn't bricked offline. Do NOT yield (the cached value is already
-    // the most recent emission).
-    if (cached != null) return;
-    rethrow; // No cache, no network — let the AsyncValue.error propagate.
+    if (cached != null) return; // keep showing cache when offline
+    rethrow;
   }
 
-  // 3. Persist fresh value to cache, then yield it.
-  if (fresh != null) {
-    try {
-      await HiveCache.instance.saveTenantConfig(
-        user.uid,
-        fresh.tenantId,
-        fresh.toMap(),
-      );
-    } catch (_) {
-      // Cache-write failure is non-critical; the user still gets the fresh
-      // config from this emission, just no warm cache for next cold-start.
-    }
+  if (fresh == null) {
+    yield null;
+    return;
   }
+
+  // 3. Persist + yield first fresh value.
+  try {
+    await HiveCache.instance.saveTenantConfig(user.uid, fresh.tenantId, fresh.toMap());
+  } catch (_) { /* non-fatal */ }
   yield fresh;
+
+  // 4. Real-time stream on the tenant doc. Branding edits from the admin
+  //    web propagate immediately instead of waiting for the next poll tick.
+  final tenantId = fresh.tenantId;
+  yield* FirebaseFirestore.instance
+      .collection('tenants')
+      .doc(tenantId)
+      .snapshots()
+      .skip(1) // first emission is the value we already yielded via the CF
+      .asyncMap<TenantConfig?>((snap) async {
+        if (!snap.exists) return null;
+        final data = Map<String, dynamic>.from(snap.data() ?? {});
+        if (data['status'] == 'suspended') {
+          throw const TenantSuspendedException();
+        }
+        final live = TenantConfig.fromMap(tenantId, data);
+        try {
+          await HiveCache.instance.saveTenantConfig(user.uid, tenantId, live.toMap());
+        } catch (_) { /* non-fatal */ }
+        return live;
+      });
 });
 
 /// Stream provider for the per-tenant state doc of the currently active tenant.
