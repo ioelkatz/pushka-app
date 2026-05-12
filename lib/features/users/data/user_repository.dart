@@ -94,7 +94,11 @@ class UserRepository {
       'autoEmptyTopOffEnabled': false,
       'streakCount': 0,
       'lastStreakDate': null,
-      'language': 'es',
+      // Language intentionally omitted (Audit Round 4 — Bug A): leaving it
+      // unset lets joinTenant apply tenant.defaultLanguage on first join,
+      // and lets app.dart fall back to tenant.defaultLanguage at runtime
+      // when the donor hasn't picked a language manually. The Hive-saved
+      // manual preference still wins in LocaleNotifier.
     }, SetOptions(merge: true));
   }
 

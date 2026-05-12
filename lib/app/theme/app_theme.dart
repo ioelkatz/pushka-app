@@ -8,9 +8,13 @@ class AppTheme {
 
   /// Builds light + dark themes using a custom primary color from the tenant.
   /// If [primaryColor] is null, falls back to [AppTokens.primaryBlue].
+  ///
+  /// Audit Round 4 — Bug C: removed `secondaryColor` parameter. The tenant
+  /// admin used to be able to set a second color, but no widget consumed
+  /// `colorScheme.secondary` visually — donors saw no effect. Re-introduce
+  /// this when we actually wire up secondary accents (e.g. FAB, chips).
   static ({ThemeData light, ThemeData dark}) fromTenantColors({
     Color? primaryColor,
-    Color? secondaryColor,
   }) {
     final effectivePrimary = primaryColor ?? AppTokens.primaryBlue;
     final effectiveDark = Color.lerp(effectivePrimary, Colors.white, 0.3) ?? AppTokens.skyBlue;
@@ -18,22 +22,15 @@ class AppTheme {
     final lightBase = light();
     final darkBase = dark();
 
-    var lightCS = lightBase.colorScheme.copyWith(
+    final lightCS = lightBase.colorScheme.copyWith(
       primary: effectivePrimary,
       onPrimary: Colors.white,
     );
-    if (secondaryColor != null) {
-      lightCS = lightCS.copyWith(secondary: secondaryColor, onSecondary: Colors.white);
-    }
 
-    var darkCS = darkBase.colorScheme.copyWith(
+    final darkCS = darkBase.colorScheme.copyWith(
       primary: effectiveDark,
       onPrimary: Colors.white,
     );
-    if (secondaryColor != null) {
-      final darkSecondary = Color.lerp(secondaryColor, Colors.white, 0.2) ?? secondaryColor;
-      darkCS = darkCS.copyWith(secondary: darkSecondary, onSecondary: Colors.white);
-    }
 
     return (
       light: lightBase.copyWith(

@@ -3420,11 +3420,9 @@ exports.onTenantBrandingUpdated = onDocumentUpdated(
       appName: "tenantAppName",
       logoUrl: "tenantLogoUrl",
       primaryColor: "tenantPrimaryColor",
-      // BUG-007 fix: secondaryColor is consumed by tenant_theme_provider on
-      // the same path as primaryColor. Adding it to the fan-out so theme
-      // accent changes propagate instantly to active sessions instead of
-      // waiting up to 60s for the getTenantConfig poll.
-      secondaryColor: "tenantSecondaryColor",
+      // secondaryColor removed (Audit Round 4 — Bug C): no widget consumed
+      // the secondary accent visually. The field is also gone from the
+      // admin web editor + Flutter theme.
       contactPhone: "tenantContactPhone",
     };
     const changes = {};
@@ -5812,9 +5810,12 @@ exports.leaveTenant = onCall(
 // is in `grace_period` or `trial` leaks billing state to the public internet.
 const TENANT_PUBLIC_FIELDS = [
   "name", "slug", "appName", "welcomeText",
-  "primaryColor", "secondaryColor", "logoUrl", "showPoweredBy",
+  "primaryColor", "logoUrl", "showPoweredBy",
+  // secondaryColor + termsUrl removed (Audit Round 4 — Bugs B & C):
+  // neither was consumed by the Flutter client. Legacy tenant docs may
+  // still hold these fields, but we no longer expose them to clients.
   "defaultLanguage", "defaultCurrency", "defaultCountry",
-  "contactEmail", "contactPhone", "privacyPolicyUrl", "termsUrl",
+  "contactEmail", "contactPhone", "privacyPolicyUrl",
   "city", "neighborhood", "country",
   "donationReasons",
 ];
@@ -5870,13 +5871,20 @@ exports.createTenant = onCall(
 
     const {
       name, slug, appName, welcomeText,
-      primaryColor, secondaryColor, logoUrl,
+      primaryColor, logoUrl,
       defaultLanguage, defaultCurrency, defaultCountry,
-      contactEmail, contactPhone, privacyPolicyUrl, termsUrl,
+      contactEmail, contactPhone, privacyPolicyUrl,
       city, country,
       adminEmail,
       commissionRate, planPrice,
+      // secondaryColor + termsUrl deprecated (Audit Round 4 Bugs B & C) —
+      // accepted from clients for backwards-compat but no longer stored.
+      secondaryColor: _ignoredSecondaryColor,
+      termsUrl: _ignoredTermsUrl,
     } = request.data ?? {};
+    // Suppress unused-var lint warnings while keeping the destructure as docs.
+    void _ignoredSecondaryColor;
+    void _ignoredTermsUrl;
 
     if (!name || !slug || !adminEmail) {
       throw new HttpsError("invalid-argument", "name, slug y adminEmail son requeridos.");
@@ -5925,7 +5933,7 @@ exports.createTenant = onCall(
       appName: String(appName || name).trim(),
       welcomeText: String(welcomeText || "").trim() || null,
       primaryColor: /^#[0-9A-Fa-f]{6}$/.test(String(primaryColor || "")) ? String(primaryColor).trim().toLowerCase() : "#e8a87c",
-      secondaryColor: /^#[0-9A-Fa-f]{6}$/.test(String(secondaryColor || "")) ? String(secondaryColor).trim().toLowerCase() : "#d4a843",
+      // secondaryColor removed (Audit Round 4 — Bug C): no widget consumed it.
       logoUrl: String(logoUrl || "").trim() || null,
       showPoweredBy: true,
 
@@ -6393,9 +6401,10 @@ exports.getTenantBranding = onCall(
     const data = snap.data();
     const fields = [
       "name", "slug", "appName", "welcomeText",
-      "primaryColor", "secondaryColor", "logoUrl", "showPoweredBy",
+      "primaryColor", "logoUrl", "showPoweredBy",
+      // secondaryColor + termsUrl removed (Audit Round 4 Bugs B & C).
       "defaultLanguage", "defaultCurrency", "defaultCountry",
-      "contactEmail", "contactPhone", "privacyPolicyUrl", "termsUrl",
+      "contactEmail", "contactPhone", "privacyPolicyUrl",
       "city", "country", "donationReasons",
     ];
     const branding = { tenantId: snap.id };
@@ -6459,9 +6468,11 @@ exports.updateTenant = onCall(
     // Super admin: all fields. Tenant admin: branding only.
     const brandingFields = [
       "appName", "welcomeText",
-      "primaryColor", "secondaryColor", "logoUrl", "showPoweredBy",
+      "primaryColor", "logoUrl", "showPoweredBy",
+      // secondaryColor + termsUrl removed (Audit Round 4 Bugs B & C). If a
+      // client still sends them, they're silently dropped (not in allowed).
       "defaultLanguage", "defaultCurrency", "defaultCountry",
-      "contactEmail", "contactPhone", "privacyPolicyUrl", "termsUrl",
+      "contactEmail", "contactPhone", "privacyPolicyUrl",
       "city", "country",
       "donationReasons",
     ];
@@ -6478,11 +6489,11 @@ exports.updateTenant = onCall(
     // Fields where empty string means "not set" — store null instead of ""
     const nullableStringFields = new Set([
       "logoUrl", "welcomeText", "contactEmail", "contactPhone",
-      "privacyPolicyUrl", "termsUrl", "defaultCountry", "city", "country",
+      "privacyPolicyUrl", "defaultCountry", "city", "country",
     ]);
 
     // Hex color fields — must be exactly #rrggbb
-    const hexColorFields = new Set(["primaryColor", "secondaryColor"]);
+    const hexColorFields = new Set(["primaryColor"]);
     const hexRe = /^#[0-9A-Fa-f]{6}$/;
 
     const patch = { updatedAt: admin.firestore.FieldValue.serverTimestamp() };

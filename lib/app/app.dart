@@ -75,9 +75,15 @@ class _PushkaAppState extends ConsumerState<PushkaApp> with WidgetsBindingObserv
     final profile = ref.read(userProfileProvider).valueOrNull;
     if (profile == null) return;
 
-    final lang = profile['language'] as String?;
-    if (lang != null && lang.isNotEmpty) {
-      ref.read(localeProvider.notifier).syncFromRemote(lang);
+    // Audit Round 4 — Bug A (wire-up defaultLanguage): if the user has no
+    // explicit `language` saved, fall back to the tenant's defaultLanguage.
+    // syncFromRemote itself respects a Hive-saved manual preference, so users
+    // who already chose a language won't be overridden.
+    final userLang = profile['language'] as String?;
+    final tenantLang = ref.read(tenantConfigProvider).valueOrNull?.defaultLanguage;
+    final effectiveLang = (userLang != null && userLang.isNotEmpty) ? userLang : tenantLang;
+    if (effectiveLang != null && effectiveLang.isNotEmpty) {
+      ref.read(localeProvider.notifier).syncFromRemote(effectiveLang);
     }
 
     // ambient is intentionally excluded here: it must only start once the
@@ -108,9 +114,12 @@ class _PushkaAppState extends ConsumerState<PushkaApp> with WidgetsBindingObserv
         return;
       }
 
-      final lang = profile['language'] as String?;
-      if (lang != null && lang.isNotEmpty) {
-        ref.read(localeProvider.notifier).syncFromRemote(lang);
+      // Same tenant fallback as _applyProfilePreferences above.
+      final userLang = profile['language'] as String?;
+      final tenantLang = ref.read(tenantConfigProvider).valueOrNull?.defaultLanguage;
+      final effectiveLang = (userLang != null && userLang.isNotEmpty) ? userLang : tenantLang;
+      if (effectiveLang != null && effectiveLang.isNotEmpty) {
+        ref.read(localeProvider.notifier).syncFromRemote(effectiveLang);
       }
 
       FeedbackService.instance.updatePreferences(

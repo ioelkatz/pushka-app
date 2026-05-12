@@ -8,7 +8,6 @@ class TenantConfig {
     required this.showPoweredBy,
     this.welcomeText,
     this.primaryColor,
-    this.secondaryColor,
     this.logoUrl,
     this.defaultLanguage,
     this.defaultCurrency,
@@ -16,7 +15,6 @@ class TenantConfig {
     this.contactEmail,
     this.contactPhone,
     this.privacyPolicyUrl,
-    this.termsUrl,
     this.city,
     this.country,
     this.donationReasons = const [],
@@ -28,7 +26,8 @@ class TenantConfig {
   final bool showPoweredBy;
   final String? welcomeText;
   final Color? primaryColor;
-  final Color? secondaryColor;
+  // secondaryColor + termsUrl removed (Audit Round 4 Bugs B & C). Legacy
+  // tenant docs may still have these fields; they're ignored.
   final String? logoUrl;
   final String? defaultLanguage;
   final String? defaultCurrency;
@@ -36,7 +35,6 @@ class TenantConfig {
   final String? contactEmail;
   final String? contactPhone;
   final String? privacyPolicyUrl;
-  final String? termsUrl;
   /// BUG-005 fix (Audit Round 4 Phase 1): the org's physical location.
   /// Surfaced on the support screen so donors know where the organization
   /// is based. Pre-fix the admin web wrote these fields but the Flutter
@@ -55,7 +53,7 @@ class TenantConfig {
       showPoweredBy: (data['showPoweredBy'] as bool?) ?? true,
       welcomeText: _nonEmpty(data['welcomeText'] as String?),
       primaryColor: _parseColor(data['primaryColor'] as String?),
-      secondaryColor: _parseColor(data['secondaryColor'] as String?),
+      // secondaryColor + termsUrl ignored (Audit Round 4 Bugs B & C).
       logoUrl: _nonEmpty(data['logoUrl'] as String?),
       defaultLanguage: _nonEmpty(data['defaultLanguage'] as String?),
       defaultCurrency: _nonEmpty(data['defaultCurrency'] as String?),
@@ -63,7 +61,6 @@ class TenantConfig {
       contactEmail: _nonEmpty(data['contactEmail'] as String?),
       contactPhone: _nonEmpty(data['contactPhone'] as String?),
       privacyPolicyUrl: _nonEmpty(data['privacyPolicyUrl'] as String?),
-      termsUrl: _nonEmpty(data['termsUrl'] as String?),
       city: _nonEmpty(data['city'] as String?),
       country: _nonEmpty(data['country'] as String?),
       donationReasons: _stringList(data['donationReasons']),
@@ -80,7 +77,6 @@ class TenantConfig {
       'showPoweredBy': showPoweredBy,
       if (welcomeText != null) 'welcomeText': welcomeText,
       if (primaryColor != null) 'primaryColor': _formatColor(primaryColor!),
-      if (secondaryColor != null) 'secondaryColor': _formatColor(secondaryColor!),
       if (logoUrl != null) 'logoUrl': logoUrl,
       if (defaultLanguage != null) 'defaultLanguage': defaultLanguage,
       if (defaultCurrency != null) 'defaultCurrency': defaultCurrency,
@@ -88,7 +84,6 @@ class TenantConfig {
       if (contactEmail != null) 'contactEmail': contactEmail,
       if (contactPhone != null) 'contactPhone': contactPhone,
       if (privacyPolicyUrl != null) 'privacyPolicyUrl': privacyPolicyUrl,
-      if (termsUrl != null) 'termsUrl': termsUrl,
       if (city != null) 'city': city,
       if (country != null) 'country': country,
       if (donationReasons.isNotEmpty) 'donationReasons': donationReasons,
@@ -144,7 +139,6 @@ class TenantConfig {
           showPoweredBy == other.showPoweredBy &&
           welcomeText == other.welcomeText &&
           primaryColor == other.primaryColor &&
-          secondaryColor == other.secondaryColor &&
           logoUrl == other.logoUrl &&
           defaultLanguage == other.defaultLanguage &&
           defaultCurrency == other.defaultCurrency &&
@@ -152,7 +146,6 @@ class TenantConfig {
           contactEmail == other.contactEmail &&
           contactPhone == other.contactPhone &&
           privacyPolicyUrl == other.privacyPolicyUrl &&
-          termsUrl == other.termsUrl &&
           city == other.city &&
           country == other.country &&
           _listEquals(donationReasons, other.donationReasons);
@@ -168,9 +161,9 @@ class TenantConfig {
   @override
   int get hashCode => Object.hash(
         tenantId, name, appName, showPoweredBy, welcomeText,
-        primaryColor, secondaryColor, logoUrl,
+        primaryColor, logoUrl,
         defaultLanguage, defaultCurrency, defaultCountry,
-        contactEmail, contactPhone, privacyPolicyUrl, termsUrl,
+        contactEmail, contactPhone, privacyPolicyUrl,
         city, country,
         Object.hashAll(donationReasons),
       );
