@@ -6060,7 +6060,7 @@ exports.createTenant = onCall(
     console.info("createTenant", { id: tenantRef.id, slug: normalizedSlug, adminEmail: _redactEmail(adminEmail) });
 
     // Generate Stripe Connect link and send welcome email — errors are logged, never thrown.
-    const adminPanelUrl = "https://pushka-admin.web.app";
+    const adminPanelUrl = "https://chabad-admin.web.app";
     let stripeConnectUrl = null;
     try {
       const clientId = stripeConnectClientId.value();
@@ -7236,7 +7236,7 @@ exports.handleStripeConnectOAuth = onRequest(
 
     if (error) {
       console.warn("Stripe Connect OAuth denied:", error);
-      return res.redirect(`https://pushka-admin.web.app/tenants?connect=denied`);
+      return res.redirect(`https://chabad-admin.web.app/tenants?connect=denied`);
     }
 
     if (!code || !state) {
@@ -7303,7 +7303,7 @@ exports.handleStripeConnectOAuth = onRequest(
       });
 
       console.log(`Stripe Connect ${initialStatus} for tenant ${tenantId}: ${stripeConnectAccountId}`);
-      return res.redirect(`https://pushka-admin.web.app/tenants/${tenantId}?connect=success`);
+      return res.redirect(`https://chabad-admin.web.app/tenants/${tenantId}?connect=success`);
     } catch (err) {
       console.error("Stripe Connect OAuth exchange error:", err);
       return res.status(500).send("Error al conectar con Stripe. Intentá de nuevo.");
@@ -7625,7 +7625,7 @@ exports.createBillingPortalSession = onCall(
     const stripe = require("stripe")(stripeSecret.value());
     const session = await stripe.billingPortal.sessions.create({
       customer: customerId,
-      return_url: "https://pushka-admin.web.app/my-org",
+      return_url: "https://chabad-admin.web.app/my-org",
     });
 
     return { url: session.url };
@@ -8085,7 +8085,7 @@ exports.stripeBillingWebhook = onRequest(
           html: `
             <p>El tenant <strong>${tenantData.name ?? tenantId}</strong> (${tenantData.adminEmail}) tiene un pago fallido.</p>
             <p>Período de gracia hasta: ${gracePeriodEndsAt.toLocaleDateString("es-MX")}.</p>
-            <p><a href="https://pushka-admin.web.app/tenants/${tenantId}">Ver en el panel</a></p>
+            <p><a href="https://chabad-admin.web.app/tenants/${tenantId}">Ver en el panel</a></p>
           `,
         });
       } catch (emailErr) {
