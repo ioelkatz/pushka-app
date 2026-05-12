@@ -15,7 +15,10 @@ import '../../tenant/data/tenant_repository.dart';
 // tenant.contactEmail/Phone from tenantConfigProvider with a Pushka
 // fallback so the support screen stays multi-tenant correct.
 const String _fallbackSupportEmail = 'support@pushkaapp.com';
-const String _fallbackLearnMoreUrl = 'https://pushkapp.cc';
+// Note: "Conoce más" link is hidden when the tenant has no privacyPolicyUrl
+// configured (instead of falling back to a hardcoded URL). When the rab
+// publishes his org's site, set it in the admin web → Branding → "URL de
+// privacidad" and the link appears automatically.
 
 class SupportScreen extends ConsumerWidget {
   const SupportScreen({super.key});
@@ -35,10 +38,13 @@ class SupportScreen extends ConsumerWidget {
         : (tenantConfig?.name.isNotEmpty == true ? tenantConfig!.name : tr.colelJabad);
     final supportEmail = tenantConfig?.contactEmail ?? _fallbackSupportEmail;
     final supportPhone = tenantConfig?.contactPhone;
+    // null when the tenant has no public URL configured — the "Conoce más"
+    // link is hidden in that case (previously fell back to pushkapp.cc which
+    // didn't exist, generating 404s).
     final learnMoreUrl = (tenantConfig?.privacyPolicyUrl != null &&
             tenantConfig!.privacyPolicyUrl!.isNotEmpty)
         ? tenantConfig.privacyPolicyUrl!
-        : _fallbackLearnMoreUrl;
+        : null;
     // city/country were previously rendered here (BUG-005 fix). Ioel
     // requested removing the location line from the support screen — the
     // fields stay in the admin web (for internal use / future features)
@@ -148,21 +154,22 @@ class SupportScreen extends ConsumerWidget {
 
           const SizedBox(height: 32),
 
-          // Learn More Link — dynamic per tenant (privacy URL or default).
-          // Label uses the brand we resolved above so a non-Jabad tenant
-          // doesn't see "Learn more about Chabad on Campus".
-          InkWell(
-            onTap: () => _launchSafe(
-              context,
-              Uri.parse(learnMoreUrl),
-              mode: LaunchMode.externalApplication,
+          // Learn More Link — only rendered when the tenant has a public
+          // privacyPolicyUrl set. Label uses the brand resolved above so a
+          // non-Jabad tenant doesn't see "Learn more about Chabad on Campus".
+          if (learnMoreUrl != null)
+            InkWell(
+              onTap: () => _launchSafe(
+                context,
+                Uri.parse(learnMoreUrl),
+                mode: LaunchMode.externalApplication,
+              ),
+              child: Text(
+                tr.learnMoreAbout(brandName),
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 14, color: linkColor),
+              ),
             ),
-            child: Text(
-              tr.learnMoreAbout(brandName),
-              textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 14, color: linkColor),
-            ),
-          ),
 
           const SizedBox(height: 32),
 
