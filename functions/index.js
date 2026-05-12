@@ -5810,10 +5810,10 @@ exports.leaveTenant = onCall(
 // is in `grace_period` or `trial` leaks billing state to the public internet.
 const TENANT_PUBLIC_FIELDS = [
   "name", "slug", "appName", "welcomeText",
-  "primaryColor", "logoUrl", "showPoweredBy",
-  // secondaryColor + termsUrl removed (Audit Round 4 — Bugs B & C):
-  // neither was consumed by the Flutter client. Legacy tenant docs may
-  // still hold these fields, but we no longer expose them to clients.
+  "primaryColor", "logoUrl",
+  // secondaryColor + termsUrl + showPoweredBy removed: not consumed by the
+  // Flutter client. Legacy tenant docs may still hold these fields, but we
+  // no longer expose them to clients.
   "defaultLanguage", "defaultCurrency", "defaultCountry",
   "contactEmail", "contactPhone", "privacyPolicyUrl",
   "city", "neighborhood", "country",
@@ -5933,9 +5933,8 @@ exports.createTenant = onCall(
       appName: String(appName || name).trim(),
       welcomeText: String(welcomeText || "").trim() || null,
       primaryColor: /^#[0-9A-Fa-f]{6}$/.test(String(primaryColor || "")) ? String(primaryColor).trim().toLowerCase() : "#e8a87c",
-      // secondaryColor removed (Audit Round 4 — Bug C): no widget consumed it.
+      // secondaryColor + showPoweredBy removed: no widget consumed them.
       logoUrl: String(logoUrl || "").trim() || null,
-      showPoweredBy: true,
 
       // Localization
       defaultLanguage: String(defaultLanguage || "es"),
@@ -6401,8 +6400,8 @@ exports.getTenantBranding = onCall(
     const data = snap.data();
     const fields = [
       "name", "slug", "appName", "welcomeText",
-      "primaryColor", "logoUrl", "showPoweredBy",
-      // secondaryColor + termsUrl removed (Audit Round 4 Bugs B & C).
+      "primaryColor", "logoUrl",
+      // secondaryColor + termsUrl + showPoweredBy removed.
       "defaultLanguage", "defaultCurrency", "defaultCountry",
       "contactEmail", "contactPhone", "privacyPolicyUrl",
       "city", "country", "donationReasons",
@@ -6468,9 +6467,9 @@ exports.updateTenant = onCall(
     // Super admin: all fields. Tenant admin: branding only.
     const brandingFields = [
       "appName", "welcomeText",
-      "primaryColor", "logoUrl", "showPoweredBy",
-      // secondaryColor + termsUrl removed (Audit Round 4 Bugs B & C). If a
-      // client still sends them, they're silently dropped (not in allowed).
+      "primaryColor", "logoUrl",
+      // secondaryColor + termsUrl + showPoweredBy removed. If a client
+      // still sends them, they're silently dropped (not in allowed).
       "defaultLanguage", "defaultCurrency", "defaultCountry",
       "contactEmail", "contactPhone", "privacyPolicyUrl",
       "city", "country",

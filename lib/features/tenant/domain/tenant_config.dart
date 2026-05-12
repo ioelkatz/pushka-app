@@ -5,7 +5,6 @@ class TenantConfig {
     required this.tenantId,
     required this.name,
     required this.appName,
-    required this.showPoweredBy,
     this.welcomeText,
     this.primaryColor,
     this.logoUrl,
@@ -23,7 +22,7 @@ class TenantConfig {
   final String tenantId;
   final String name;
   final String appName;
-  final bool showPoweredBy;
+  // showPoweredBy removed (Ioel — kill "Powered by Pushka" everywhere).
   final String? welcomeText;
   final Color? primaryColor;
   // secondaryColor + termsUrl removed (Audit Round 4 Bugs B & C). Legacy
@@ -50,7 +49,6 @@ class TenantConfig {
       tenantId: tenantId,
       name: (data['name'] as String?) ?? '',
       appName: (data['appName'] as String?) ?? 'Pushka',
-      showPoweredBy: (data['showPoweredBy'] as bool?) ?? true,
       welcomeText: _nonEmpty(data['welcomeText'] as String?),
       primaryColor: _parseColor(data['primaryColor'] as String?),
       // secondaryColor + termsUrl ignored (Audit Round 4 Bugs B & C).
@@ -74,7 +72,6 @@ class TenantConfig {
     return {
       'name': name,
       'appName': appName,
-      'showPoweredBy': showPoweredBy,
       if (welcomeText != null) 'welcomeText': welcomeText,
       if (primaryColor != null) 'primaryColor': _formatColor(primaryColor!),
       if (logoUrl != null) 'logoUrl': logoUrl,
@@ -136,7 +133,6 @@ class TenantConfig {
           tenantId == other.tenantId &&
           name == other.name &&
           appName == other.appName &&
-          showPoweredBy == other.showPoweredBy &&
           welcomeText == other.welcomeText &&
           primaryColor == other.primaryColor &&
           logoUrl == other.logoUrl &&
@@ -160,7 +156,7 @@ class TenantConfig {
 
   @override
   int get hashCode => Object.hash(
-        tenantId, name, appName, showPoweredBy, welcomeText,
+        tenantId, name, appName, welcomeText,
         primaryColor, logoUrl,
         defaultLanguage, defaultCurrency, defaultCountry,
         contactEmail, contactPhone, privacyPolicyUrl,

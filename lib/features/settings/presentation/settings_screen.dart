@@ -533,45 +533,21 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             ),
           ),
           const SizedBox(height: 20),
-          // BUG-062 fix: footer brand follows the current tenant's appName /
-          // name rather than the hardcoded "Jabad en Campus" of the original
-          // launch tenant. Falls back to "Pushka" when no tenant context is
-          // loaded so we never show an empty footer.
-          //
-          // BUG-004 fix: also surfaces the tenant's `showPoweredBy` flag —
-          // when true (default) we render "Powered by Pushka" below the org
-          // brand, when false the white-label branding is intact. Pre-fix
-          // the flag was a write-only toggle in admin with no UI impact.
+          // Footer brand: just the tenant's appName / name. "Powered by Pushka"
+          // was removed at Ioel's request.
           Center(
             child: Builder(builder: (_) {
               final cfg = ref.watch(tenantConfigProvider).valueOrNull;
               final footerBrand = cfg?.appName.isNotEmpty == true
                   ? cfg!.appName
                   : (cfg?.name.isNotEmpty == true ? cfg!.name : 'Pushka');
-              final showPoweredBy = cfg?.showPoweredBy ?? true;
-              return Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(
-                    footerBrand,
-                    style: const TextStyle(
-                      fontSize: 12,
-                      color: Color(0xFF9E9E9E),
-                      fontWeight: FontWeight.w400,
-                    ),
-                  ),
-                  if (showPoweredBy && footerBrand != 'Pushka') ...[
-                    const SizedBox(height: 2),
-                    const Text(
-                      'Powered by Pushka',
-                      style: TextStyle(
-                        fontSize: 10,
-                        color: Color(0xFFBDBDBD),
-                        fontWeight: FontWeight.w400,
-                      ),
-                    ),
-                  ],
-                ],
+              return Text(
+                footerBrand,
+                style: const TextStyle(
+                  fontSize: 12,
+                  color: Color(0xFF9E9E9E),
+                  fontWeight: FontWeight.w400,
+                ),
               );
             }),
           ),

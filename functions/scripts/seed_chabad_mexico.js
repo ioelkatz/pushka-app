@@ -37,11 +37,10 @@ async function createTenantDoc() {
 
     // Branding — default values, will be updated via admin web
     primaryColor: "#FF6B35",
-    secondaryColor: "#FFD700",
     logoUrl: null,
     appName: "Chabad Pushka México",
     welcomeText: "Tzedakah",
-    showPoweredBy: true,
+    // secondaryColor + showPoweredBy removed (no longer in app).
 
     // Localización
     defaultLanguage: "es",
