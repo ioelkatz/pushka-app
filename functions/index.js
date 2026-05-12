@@ -7377,7 +7377,7 @@ function buildTenantWelcomeEmail({ appName, adminEmail, adminPanelUrl, passwordS
 
         <div style="margin-top:32px;padding-top:24px;border-top:1px solid #e2e8f0;text-align:center;">
           <p style="margin:0;color:#94a3b8;font-size:12px;line-height:1.6;">
-            ¿Tenés dudas? Contactá a tu asesor de Pushka.<br>
+            ¿Tenés dudas? Contactá a tu asesor de Chabad Pushka.<br>
             Este email fue generado automáticamente al activar tu organización.
           </p>
         </div>
@@ -7429,7 +7429,7 @@ async function sendEmail({ to, subject, html }) {
     },
     body: JSON.stringify({
       personalizations: [{ to: [{ email: to }] }],
-      from: { email: SENDGRID_FROM, name: "Pushka" },
+      from: { email: SENDGRID_FROM, name: "Chabad Pushka" },
       subject,
       content: [{ type: "text/html", value: html }],
     }),
@@ -7674,13 +7674,13 @@ exports.cancelTenantSubscription = onCall(
       try {
         await sendEmail({
           to: adminEmail,
-          subject: `Tu suscripción Pushka fue cancelada — ${tenantName}`,
+          subject: `Tu suscripción a Chabad Pushka fue cancelada — ${tenantName}`,
           html: `
             <p>Hola,</p>
-            <p>Te informamos que tu suscripción de <strong>${tenantName} Pushka</strong> ha sido cancelada.</p>
+            <p>Te informamos que tu suscripción de <strong>${tenantName}</strong> a Chabad Pushka ha sido cancelada.</p>
             <p>Tu servicio sigue activo hasta el fin del período de facturación actual.</p>
             <p>Si esto fue un error o querés reactivar la suscripción, contactá a soporte.</p>
-            <p>— Equipo Pushka</p>
+            <p>— Equipo Chabad Pushka</p>
           `,
         });
       } catch (e) {
@@ -8064,13 +8064,13 @@ exports.stripeBillingWebhook = onRequest(
       try {
         await sendEmail({
           to: tenantData.adminEmail,
-          subject: "Problema con tu pago — Pushka",
+          subject: "Problema con tu pago — Chabad Pushka",
           html: `
             <p>Hola,</p>
-            <p>Hubo un problema al procesar el pago de tu suscripción a Pushka.</p>
+            <p>Hubo un problema al procesar el pago de tu suscripción a Chabad Pushka.</p>
             <p>Tenés <strong>30 días</strong> para regularizar el pago antes de que el servicio sea suspendido.</p>
             <p>Por favor contactá a tu administrador o actualizá tu método de pago.</p>
-            <p>— Equipo Pushka</p>
+            <p>— Equipo Chabad Pushka</p>
           `,
         });
       } catch (emailErr) {
@@ -8166,12 +8166,12 @@ exports.checkGracePeriods = onSchedule(
         try {
           await sendEmail({
             to: adminEmail,
-            subject: "Tu servicio Pushka fue suspendido",
+            subject: "Tu servicio Chabad Pushka fue suspendido",
             html: `
               <p>Hola,</p>
-              <p>Tu servicio Pushka ha sido suspendido por falta de pago.</p>
+              <p>Tu servicio Chabad Pushka ha sido suspendido por falta de pago.</p>
               <p>Para reactivarlo, contactá a soporte.</p>
-              <p>— Equipo Pushka</p>
+              <p>— Equipo Chabad Pushka</p>
             `,
           });
         } catch (e) {
@@ -8196,12 +8196,12 @@ exports.checkGracePeriods = onSchedule(
       try {
         await sendEmail({
           to: adminEmail,
-          subject: `Recordatorio: tu suscripción Pushka vence en ${daysLeft} días`,
+          subject: `Recordatorio: tu suscripción a Chabad Pushka vence en ${daysLeft} días`,
           html: `
             <p>Hola,</p>
-            <p>Tu suscripción a <strong>${tenantName} Pushka</strong> vence en <strong>${daysLeft} días</strong>.</p>
+            <p>Tu suscripción de <strong>${tenantName}</strong> a Chabad Pushka vence en <strong>${daysLeft} días</strong>.</p>
             <p>Por favor actualizá tu método de pago para evitar la suspensión del servicio.</p>
-            <p>— Equipo Pushka</p>
+            <p>— Equipo Chabad Pushka</p>
           `,
         });
         await doc.ref.update({
