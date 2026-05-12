@@ -117,8 +117,13 @@ function validateCurrency(currency) {
  * second line of defense behind the write-time validation in createTenant.
  */
 function safeTenantCommissionRate(rawRate, tenantIdForLog) {
+  // Accepts 0–30% (matches the admin web validator in TenantDetailPage).
+  // Pre-fix the backend only accepted up to 10% and silently clamped to 3%
+  // when over — admin web could let super_admin set 0.25 and donors would
+  // unknowingly be charged 0.03. Now super_admin's intent is honored.
+  // commissionRate === 0 is supported explicitly (free tier, no platform fee).
   const r = typeof rawRate === "number" ? rawRate : NaN;
-  if (Number.isFinite(r) && r >= 0 && r <= 0.10) return r;
+  if (Number.isFinite(r) && r >= 0 && r <= 0.30) return r;
   console.warn("safeTenantCommissionRate: invalid rate, falling back to 0.03", {
     tenantId: tenantIdForLog,
     rawRate,
@@ -6605,30 +6610,39 @@ exports.updateTenant = onCall(
       await tenantRef.update(patch);
     }
 
-    // BUG-017/027 fix: propagate planPrice changes to the existing Stripe
-    // subscription. Without this, super_admin "raises" the plan from $99 →
-    // $150 in admin UI but Stripe keeps billing $99 (the Firestore field is
-    // updated, the actual sub is not). We do this AFTER the Firestore write
-    // so a Stripe failure doesn't leave a half-applied state — the next
-    // sync attempt (or manual fix) can retry.
+    // BUG-017/027 fix: propagate planPrice changes to Stripe.
+    //
+    // Two paths:
+    //   1. There's already a Stripe subscription → swap the price in place
+    //      (with proration). Used when admin raises $50 → $100.
+    //   2. There's no subscription yet AND new planPrice > 0 → create one
+    //      from scratch via _ensureTenantSubscription. Used when admin
+    //      enables billing for a tenant that started on free tier
+    //      (planPrice 0 → 50). Without this branch, Firestore said
+    //      "$50/mo" but Stripe never billed.
+    //   - If planPrice drops to 0, we leave the existing subscription
+    //     alone (super_admin can cancel manually via cancelTenantSubscription).
     const beforeData = snap.data() ?? {};
+    const prevPlanPrice = beforeData.planPrice ?? null;
+    const newPlanPrice = "planPrice" in patch && typeof patch.planPrice === "number"
+      ? patch.planPrice
+      : null;
     const planPriceChanged =
-      "planPrice" in patch &&
-      typeof patch.planPrice === "number" &&
-      patch.planPrice > 0 &&
-      patch.planPrice !== (beforeData.planPrice ?? null);
+      newPlanPrice !== null && newPlanPrice !== prevPlanPrice;
     const existingSubscriptionId = beforeData.stripeSubscriptionId ?? null;
-    if (isSuper && planPriceChanged && existingSubscriptionId) {
+
+    if (isSuper && planPriceChanged && newPlanPrice > 0 && existingSubscriptionId) {
+      // Path 1: update existing subscription
       try {
         const stripe = require("stripe")(stripeSecret.value());
         const newPrice = await stripe.prices.create(
           {
             currency: "usd",
-            unit_amount: Math.round(patch.planPrice * 100),
+            unit_amount: Math.round(newPlanPrice * 100),
             recurring: { interval: "month" },
-            product_data: { name: `Pushka SaaS — ${beforeData.name ?? tenantId}` },
+            product_data: { name: `Chabad Pushka SaaS — ${beforeData.name ?? tenantId}` },
           },
-          { idempotencyKey: `tenant_price_${tenantId}_${Math.round(patch.planPrice * 100)}` },
+          { idempotencyKey: `tenant_price_${tenantId}_${Math.round(newPlanPrice * 100)}` },
         );
         const sub = await stripe.subscriptions.retrieve(existingSubscriptionId);
         const subItemId = sub.items?.data?.[0]?.id;
@@ -6639,7 +6653,7 @@ exports.updateTenant = onCall(
             metadata: { tenantId },
           });
           console.info("updateTenant: stripe subscription price updated", {
-            tenantId, subscriptionId: existingSubscriptionId, newAmount: patch.planPrice,
+            tenantId, subscriptionId: existingSubscriptionId, newAmount: newPlanPrice,
           });
         } else {
           console.warn("updateTenant: subscription has no items.data[0]", {
@@ -6649,6 +6663,21 @@ exports.updateTenant = onCall(
       } catch (subErr) {
         console.warn("updateTenant: stripe sub update failed (non-fatal)", {
           tenantId, error: subErr?.message ?? String(subErr),
+        });
+      }
+    } else if (isSuper && planPriceChanged && newPlanPrice > 0 && !existingSubscriptionId) {
+      // Path 2: tenant was on free tier (planPrice 0) — provision a
+      // subscription now that admin enabled paid billing. Non-fatal: if
+      // Stripe is unreachable, the next updateTenant write or a manual
+      // createTenantSubscription call will retry.
+      try {
+        await _ensureTenantSubscription(tenantId);
+        console.info("updateTenant: stripe subscription provisioned on planPrice 0→>0", {
+          tenantId, newAmount: newPlanPrice,
+        });
+      } catch (provErr) {
+        console.warn("updateTenant: stripe sub provisioning failed (non-fatal)", {
+          tenantId, error: provErr?.message ?? String(provErr),
         });
       }
     }
