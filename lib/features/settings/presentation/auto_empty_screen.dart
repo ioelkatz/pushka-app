@@ -475,9 +475,13 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
   }
 
   /// Designación picker for the auto-empty schedule. Tap-to-open row that
-  /// pops the shared bottom sheet with the fixed app-wide reason set.
+  /// pops the shared bottom sheet with the tenant's reasons (or locale
+  /// defaults when the tenant hasn't configured custom ones).
   Widget _buildDonationReasonPicker(S tr) {
-    final reasons = tr.defaultDonationReasons;
+    // Same tenant-first fallback used across the donation flow so admin-web
+    // designation edits propagate to every picker instance.
+    final tenantReasons = ref.read(tenantConfigProvider).valueOrNull?.donationReasons ?? const <String>[];
+    final reasons = tenantReasons.isNotEmpty ? tenantReasons : tr.defaultDonationReasons;
     final cs = Theme.of(context).colorScheme;
     return Padding(
       padding: const EdgeInsets.only(bottom: 20),

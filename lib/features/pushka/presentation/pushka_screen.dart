@@ -345,7 +345,12 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
   Future<void> _donateNow() async {
     if (_isProcessing) return;
     final tr = S.of(context);
-    final reasons = tr.defaultDonationReasons;
+    // Prefer the tenant's custom donationReasons; fall back to the locale's
+    // default list only when the tenant hasn't configured one. Pre-fix this
+    // ignored the tenant config entirely, so admin-web changes to the
+    // designation list never showed up on the donor screen.
+    final tenantReasons = ref.read(tenantConfigProvider).valueOrNull?.donationReasons ?? const <String>[];
+    final reasons = tenantReasons.isNotEmpty ? tenantReasons : tr.defaultDonationReasons;
     // The amount controller must be disposed when the sheet closes —
     // keeping it alive in function scope without dispose() is a memory
     // leak the Flutter framework will warn about in debug. try/finally below.
@@ -1661,7 +1666,11 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
   /// the dialog → caller aborts. The picked reason is intentionally discarded:
   /// nothing is sent to Stripe metadata or written to Firestore.
   Future<(bool proceed, String? reason)> _resolveDonationReason() async {
-    final reasons = S.of(context).defaultDonationReasons;
+    // Same tenant-first fallback as _donateNow above.
+    final tenantReasons = ref.read(tenantConfigProvider).valueOrNull?.donationReasons ?? const <String>[];
+    final reasons = tenantReasons.isNotEmpty
+        ? tenantReasons
+        : S.of(context).defaultDonationReasons;
     final result = await showDonationReasonPicker(
       context: context,
       reasons: reasons,
@@ -1680,7 +1689,9 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
     required double amount,
   }) async {
     final tr = S.of(context);
-    final reasons = tr.defaultDonationReasons;
+    // Same tenant-first fallback as _donateNow above.
+    final tenantReasons = ref.read(tenantConfigProvider).valueOrNull?.donationReasons ?? const <String>[];
+    final reasons = tenantReasons.isNotEmpty ? tenantReasons : tr.defaultDonationReasons;
     final messageCtrl = TextEditingController();
     String? selectedReason = reasons.first;
     bool dedicateOn = false;
