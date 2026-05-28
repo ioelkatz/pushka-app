@@ -1,9 +1,13 @@
-import 'dart:math' as math;
 import 'package:flutter/material.dart';
-import '../../../core/format_utils.dart';
-import '../../../app/theme/app_tokens.dart';
-import 'pushka_3d_painter.dart';
 
+/// Static PNG pushka. Ioel pidió reemplazar la pushka 3D pintada (cilindro
+/// custom-painter + animación de líquido + labels de meta/monto flotantes)
+/// por una imagen única — el progreso ya se ve en la barra de arriba, así
+/// que duplicarlo flotando sobre la pushka era ruido visual.
+///
+/// La signature se mantiene (fillPercentage / goal / amount / currencySymbol)
+/// para no romper el callsite en pushka_screen ni la GlobalKey
+/// `Pushka3DWidgetState`. Los parámetros se ignoran — la imagen es estática.
 class Pushka3DWidget extends StatefulWidget {
   final double fillPercentage;
   final double goal;
@@ -22,143 +26,22 @@ class Pushka3DWidget extends StatefulWidget {
   State<Pushka3DWidget> createState() => Pushka3DWidgetState();
 }
 
-class Pushka3DWidgetState extends State<Pushka3DWidget>
-    with TickerProviderStateMixin {
-  late AnimationController _fillController;
-  late Animation<double> _fillAnimation;
-
-  late AnimationController _waveController;
-
-  double _lastKnownFill = 0;
-
-  @override
-  void initState() {
-    super.initState();
-    _fillController = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 800),
-    );
-    final target = widget.fillPercentage.clamp(0.0, 1.0);
-    final isSameFill = (_lastKnownFill - target).abs() < 0.001;
-    _fillAnimation = Tween<double>(
-      begin: isSameFill ? target : _lastKnownFill,
-      end: target,
-    ).animate(CurvedAnimation(
-      parent: _fillController,
-      curve: Curves.easeInOut,
-    ));
-    _lastKnownFill = target;
-    if (isSameFill) {
-      _fillController.value = 1.0;
-    } else {
-      _fillController.forward();
-    }
-
-    _waveController = AnimationController(
-      vsync: this,
-      duration: const Duration(seconds: 3),
-    )..repeat();
-  }
-
-  @override
-  void didUpdateWidget(Pushka3DWidget oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if ((oldWidget.fillPercentage - widget.fillPercentage).abs() > 0.001) {
-      _fillAnimation = Tween<double>(
-        begin: _fillAnimation.value,
-        end: widget.fillPercentage.clamp(0.0, 1.0),
-      ).animate(CurvedAnimation(
-        parent: _fillController,
-        curve: Curves.easeInOut,
-      ));
-      _fillController.forward(from: 0);
-    }
-  }
-
-  @override
-  void dispose() {
-    _fillController.dispose();
-    _waveController.dispose();
-    super.dispose();
-  }
-
+class Pushka3DWidgetState extends State<Pushka3DWidget> {
   @override
   Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final canvasH = constraints.maxHeight;
-        final canvasW = constraints.maxWidth;
-
-        return AnimatedBuilder(
-          animation: Listenable.merge([_fillController, _waveController]),
-          builder: (context, _) {
-            final fill = _fillAnimation.value;
-
-            final cylTop    = canvasH * 0.14;
-            final cylH      = canvasH * 0.765;
-            final cylBottom = cylTop + cylH;
-            final liquidTop = cylBottom - (cylH * fill);
-
-            final cylWidth = canvasW * 0.38;
-            final ellipseH = cylWidth * 0.20;
-            const labelH   = 18.0;
-
-            return Stack(
-              children: [
-                CustomPaint(
-                  painter: Pushka3DPainter(
-                    fillFraction: fill,
-                    wavePhase: _waveController.value * 2 * math.pi,
-                  ),
-                  size: Size(canvasW, canvasH),
-                  isComplex: true,
-                  willChange: fill > 0.005,
-                ),
-                Positioned(
-                  top: cylTop - labelH / 2 - ellipseH * 0.2,
-                  left: 0,
-                  child: _buildLabel(
-                    '${widget.currencySymbol}${formatAmount(widget.goal)}',
-                    Theme.of(context).brightness == Brightness.dark
-                        ? Colors.white
-                        : AppTokens.mutedText,
-                  ),
-                ),
-                Positioned(
-                  top: liquidTop - labelH / 2,
-                  right: 0,
-                  child: _buildLabel(
-                    '${widget.currencySymbol}${formatAmount(widget.amount)}',
-                    AppTokens.primaryBlue,
-                  ),
-                ),
-              ],
-            );
-          },
-        );
-      },
-    );
-  }
-
-  Widget _buildLabel(String text, Color color) {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Container(
-          width: 7,
-          height: 7,
-          decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+    return Center(
+      // 80% del SizedBox que da pushka_screen — Ioel quiso bajar el tamaño
+      // visual sin tocar el layout del screen (que ya clampa la altura entre
+      // 220 y 440 según el espacio disponible).
+      child: FractionallySizedBox(
+        widthFactor: 0.80,
+        heightFactor: 0.80,
+        child: Image.asset(
+          'assets/images/pushka_can.webp',
+          fit: BoxFit.contain,
+          gaplessPlayback: true,
         ),
-        const SizedBox(width: 5),
-        Text(
-          text,
-          style: TextStyle(
-            color: color,
-            fontSize: 14,
-            fontWeight: FontWeight.w700,
-          ),
-        ),
-      ],
+      ),
     );
   }
 }

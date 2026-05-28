@@ -1,5 +1,7 @@
 import 'dart:math';
+import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show rootBundle;
 
 // ── Controller ──────────────────────────────────────────────────────────────
 
@@ -26,16 +28,23 @@ class _JewishConfettiState extends State<JewishConfetti>
   static final _rng = Random();
   bool _active = false;
 
-  // Unicode symbols — rendered by the system font (Android Noto Emoji / iOS Apple emoji)
-  static const _symbols = [
-    '✡',  // Star of David
-    '🕎',  // Menorah
-    '🕯',  // Candle
-    '📜',  // Torah scroll
-    '🌟',  // Gold star
-    '✨',  // Sparkles
-    '🪬',  // Hamsa / Hand
-    '🔯',  // Star of David with dot
+  // Pre-decoded ui.Image handles for the symbol particles. CustomPainter
+  // can't render Image widgets — it draws on a Canvas — so we have to
+  // decode the assets once into ui.Image and let _Painter call
+  // canvas.drawImageRect with them. Decoding happens in initState so the
+  // first celebration doesn't pay the decode cost mid-animation.
+  List<ui.Image> _images = const [];
+  bool _imagesReady = false;
+
+  // Asset paths (kept here, not in pubspec, so adding/removing a particle
+  // type is a one-line code change). Pubspec exposes the folder, individual
+  // additions don't need a pub get.
+  static const _imageAssets = [
+    'assets/images/confetti/magen_david.webp',
+    'assets/images/confetti/menora.png',
+    'assets/images/confetti/torah.webp',
+    'assets/images/confetti/jala.webp',
+    'assets/images/confetti/vino.webp',
   ];
 
   static const _shapeColors = [
@@ -65,6 +74,30 @@ class _JewishConfettiState extends State<JewishConfetti>
     )
       ..addListener(_tick)
       ..addStatusListener(_onStatus);
+    _loadImages();
+  }
+
+  Future<void> _loadImages() async {
+    final loaded = <ui.Image>[];
+    for (final path in _imageAssets) {
+      try {
+        final data = await rootBundle.load(path);
+        final codec = await ui.instantiateImageCodec(
+          data.buffer.asUint8List(),
+        );
+        final frame = await codec.getNextFrame();
+        loaded.add(frame.image);
+      } catch (_) {
+        // If one fails (corrupted asset, wrong path), skip — the others
+        // still work and we silently fall back to fewer variants instead
+        // of crashing the whole celebration.
+      }
+    }
+    if (!mounted) return;
+    setState(() {
+      _images = loaded;
+      _imagesReady = loaded.isNotEmpty;
+    });
   }
 
   void _tick() { if (_active) setState(() {}); }
@@ -88,24 +121,34 @@ class _JewishConfettiState extends State<JewishConfetti>
   List<_Particle> _spawn() {
     final list = <_Particle>[];
 
-    // Emoji / symbol particles — 28 spread across the top
-    for (int i = 0; i < 28; i++) {
-      list.add(_Particle(
-        startX:    0.04 + _rng.nextDouble() * 0.92,
-        startY:   -0.02 - _rng.nextDouble() * 0.10,
-        vx:        (_rng.nextDouble() - 0.5) * 0.55,
-        vy:         0.45 + _rng.nextDouble() * 0.45,
-        gravity:    0.28 + _rng.nextDouble() * 0.30,
-        wobbleAmp:  _rng.nextDouble() * 0.022,
-        wobbleFreq: 1.5 + _rng.nextDouble() * 2.5,
-        rotation:   0,
-        rotSpeed:   0,
-        symbol:     _symbols[_rng.nextInt(_symbols.length)],
-        color:      Colors.white,
-        size:       22 + _rng.nextDouble() * 16,
-        delay:      _rng.nextDouble() * 0.18,
-        shapeType:  0,
-      ));
+    // Image particles — 28 spread across the top. Each picks a random
+    // index into _images; the Painter looks up the actual ui.Image when
+    // drawing. If images haven't finished loading yet (very fast taps
+    // after cold start) we skip this group and only the color shapes
+    // play — the next celebration will have the full set.
+    if (_imagesReady) {
+      for (int i = 0; i < 28; i++) {
+        list.add(_Particle(
+          startX:    0.04 + _rng.nextDouble() * 0.92,
+          startY:   -0.02 - _rng.nextDouble() * 0.10,
+          vx:        (_rng.nextDouble() - 0.5) * 0.55,
+          vy:         0.45 + _rng.nextDouble() * 0.45,
+          gravity:    0.28 + _rng.nextDouble() * 0.30,
+          wobbleAmp:  _rng.nextDouble() * 0.022,
+          wobbleFreq: 1.5 + _rng.nextDouble() * 2.5,
+          rotation:   0,
+          rotSpeed:   0,
+          imageIndex: _rng.nextInt(_images.length),
+          color:      Colors.white,
+          size:       38 + _rng.nextDouble() * 22, // bumped from 22-38 to 38-60
+                                                    // since the images have more
+                                                    // detail than emoji glyphs
+                                                    // and look small at the
+                                                    // emoji baseline size
+          delay:      _rng.nextDouble() * 0.18,
+          shapeType:  0,
+        ));
+      }
     }
 
     // Colored shape particles — 80 pieces (thin rects, circles, squares)
@@ -120,7 +163,7 @@ class _JewishConfettiState extends State<JewishConfetti>
         wobbleFreq: 2.0 + _rng.nextDouble() * 5.0,
         rotation:   _rng.nextDouble() * 2 * pi,
         rotSpeed:   (_rng.nextDouble() - 0.5) * 14,
-        symbol:     null,
+        imageIndex: null,
         color:      _shapeColors[_rng.nextInt(_shapeColors.length)],
         size:        5 + _rng.nextDouble() * 10,
         delay:      _rng.nextDouble() * 0.22,
@@ -135,6 +178,9 @@ class _JewishConfettiState extends State<JewishConfetti>
   void dispose() {
     widget.controller._play = null;
     _anim.dispose();
+    for (final img in _images) {
+      img.dispose();
+    }
     super.dispose();
   }
 
@@ -144,7 +190,7 @@ class _JewishConfettiState extends State<JewishConfetti>
     return IgnorePointer(
       child: RepaintBoundary(
         child: CustomPaint(
-          painter: _Painter(_particles, _anim.value),
+          painter: _Painter(_particles, _anim.value, _images),
           child: const SizedBox.expand(),
         ),
       ),
@@ -164,7 +210,7 @@ class _Particle {
   final double wobbleFreq;
   final double rotation;
   final double rotSpeed;
-  final String? symbol; // null → colored shape
+  final int? imageIndex; // null → colored shape; otherwise index into _images
   final Color color;
   final double size;
   final double delay;  // 0..1 normalized start time
@@ -180,7 +226,7 @@ class _Particle {
     required this.wobbleFreq,
     required this.rotation,
     required this.rotSpeed,
-    required this.symbol,
+    required this.imageIndex,
     required this.color,
     required this.size,
     required this.delay,
@@ -193,8 +239,9 @@ class _Particle {
 class _Painter extends CustomPainter {
   final List<_Particle> particles;
   final double t; // 0..1
+  final List<ui.Image> images;
 
-  const _Painter(this.particles, this.t);
+  const _Painter(this.particles, this.t, this.images);
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -220,28 +267,28 @@ class _Painter extends CustomPainter {
       canvas.save();
       canvas.translate(px, py);
 
-      if (p.symbol != null) {
-        // Emoji rendered by the platform font — looks crisp and recognizable
-        final tp = TextPainter(
-          text: TextSpan(
-            text: p.symbol,
-            style: TextStyle(fontSize: p.size, height: 1),
-          ),
-          textDirection: TextDirection.ltr,
-        )..layout();
-
-        if (opacity < 1.0) {
-          // saveLayer applies opacity to an already-composited emoji glyph
-          canvas.saveLayer(
-            Rect.fromLTWH(-tp.width / 2 - 2, -tp.height / 2 - 2,
-                tp.width + 4, tp.height + 4),
-            Paint()..color = Colors.white.withValues(alpha: opacity),
-          );
-          tp.paint(canvas, Offset(-tp.width / 2, -tp.height / 2));
-          canvas.restore();
-        } else {
-          tp.paint(canvas, Offset(-tp.width / 2, -tp.height / 2));
-        }
+      if (p.imageIndex != null && p.imageIndex! < images.length) {
+        // Image particle — draw the pre-decoded ui.Image scaled into a
+        // square centered on origin. Image particles don't rotate (the
+        // figures are recognizable assets like a menorah / torah, and
+        // tumbling them upside-down looks wrong).
+        final img = images[p.imageIndex!];
+        final s = p.size;
+        final dst = Rect.fromCenter(
+          center: Offset.zero,
+          width: s,
+          height: s,
+        );
+        final src = Rect.fromLTWH(
+          0,
+          0,
+          img.width.toDouble(),
+          img.height.toDouble(),
+        );
+        final paint = Paint()
+          ..filterQuality = FilterQuality.medium
+          ..color = Colors.white.withValues(alpha: opacity);
+        canvas.drawImageRect(img, src, dst, paint);
       } else {
         // Colored geometric shape with rotation
         canvas.rotate(p.rotation + p.rotSpeed * et);
