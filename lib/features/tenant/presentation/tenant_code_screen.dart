@@ -111,9 +111,7 @@ class _TenantCodeScreenState extends ConsumerState<TenantCodeScreen> {
       if (mounted) {
         setState(() {
           _loading = false;
-          _error = e.code == 'not-found'
-              ? 'Código no encontrado. Verificá que sea correcto.'
-              : 'Error al validar. Intentá de nuevo.';
+          _error = _humanError(e);
         });
       }
     } catch (_) {
@@ -123,6 +121,34 @@ class _TenantCodeScreenState extends ConsumerState<TenantCodeScreen> {
           _error = 'Error al unirse. Intentá de nuevo.';
         });
       }
+    }
+  }
+
+  // Mensajes específicos por código de error. Antes el catch mostraba
+  // "Código no encontrado" para CUALQUIER `not-found` — pero ese código
+  // también lo tira joinTenant cuando el user doc Firestore no existe,
+  // engañando al usuario ("el código está bien, ¿por qué dice eso?").
+  // Idem `resource-exhausted` mostraba "Error al validar" sin pista de
+  // que era rate limit.
+  String _humanError(FirebaseFunctionsException e) {
+    switch (e.code) {
+      case 'not-found':
+        return 'Código no encontrado. Verificá que sea correcto.';
+      case 'resource-exhausted':
+        final match = RegExp(r'(\d+)\s*segundos').firstMatch(e.message ?? '');
+        if (match != null) {
+          final secs = int.tryParse(match.group(1) ?? '') ?? 0;
+          final mins = (secs / 60).ceil();
+          if (mins <= 1) return 'Demasiados intentos. Esperá 1 minuto.';
+          return 'Demasiados intentos. Esperá $mins minutos.';
+        }
+        return 'Demasiados intentos. Esperá unos minutos.';
+      case 'unauthenticated':
+        return 'Tu sesión expiró. Cerrá sesión y volvé a entrar.';
+      case 'failed-precondition':
+        return 'Esta organización no está disponible.';
+      default:
+        return 'Error al unirse. Intentá de nuevo.';
     }
   }
 

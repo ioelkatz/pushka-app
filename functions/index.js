@@ -5605,7 +5605,13 @@ exports.joinTenant = onCall(
   { enforceAppCheck: true },
   async (request) => {
     if (!request.auth?.uid) throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
-    await enforceRateLimit(request.auth.uid, "joinTenant", 10, 3600);
+    // super_admin no se rate-limita: durante debugging/testing es normal
+    // hacer >10 joins en una hora. Usuarios normales siguen topeados en
+    // 30/h (subido de 10 — 10 pegaba a edge cases legítimos como retries
+    // por red lenta + cambio entre 2-3 tenants).
+    if (!callerIsSuperAdmin(request)) {
+      await enforceRateLimit(request.auth.uid, "joinTenant", 30, 3600);
+    }
 
     const uid = request.auth.uid;
     const tenantId = String(request.data?.tenantId || "").trim();
@@ -5626,12 +5632,63 @@ exports.joinTenant = onCall(
     const userRef = db.collection("users").doc(uid);
     const stateRef = userRef.collection("tenantState").doc(tenantId);
 
+    // Defensa en profundidad: si el doc del user no existe en Firestore (por
+    // wipe, restore desde backup, race en signUp, o cualquier estado
+    // inesperado), lo creamos acá con los mismos defaults que
+    // createUserDocument del client. Sin esto el user queda atrapado en
+    // /tenant-setup viendo "Código no encontrado" sin entender qué pasa.
+    // El lookup a admin.auth() es solo si el doc no existe (path raro),
+    // así que no agrega latencia al flujo normal.
+    let preloadedAuthRecord = null;
+    const preExistsSnap = await userRef.get();
+    if (!preExistsSnap.exists) {
+      try {
+        preloadedAuthRecord = await admin.auth().getUser(uid);
+      } catch (_) { /* fallback a token */ }
+    }
+
     await db.runTransaction(async (tx) => {
       const userSnap = await tx.get(userRef);
       const stateSnap = await tx.get(stateRef);
-      if (!userSnap.exists) throw new HttpsError("not-found", "Usuario no encontrado.");
 
-      const userData = userSnap.data();
+      let userData;
+      if (!userSnap.exists) {
+        const authEmail = preloadedAuthRecord?.email
+          || request.auth.token?.email || "";
+        const authName = preloadedAuthRecord?.displayName
+          || request.auth.token?.name || "";
+        const seed = {
+          uid,
+          email: authEmail,
+          displayName: authName,
+          billingEmail: "",
+          phoneNumber: "",
+          mailingAddress: "",
+          pushkaAmount: 0,
+          pushkaGoal: 180, // USD default; tenant override applied below if isFirst
+          presetAmount: 1.0,
+          presetAmounts: [],
+          soundEnabled: true,
+          vibrationEnabled: true,
+          partialPaymentsEnabled: false,
+          biometricAuthenticationEnabled: false,
+          currencyCountry: "Estados Unidos",
+          currencyCode: "USD",
+          autoEmptyFrequency: "manual",
+          autoEmptyTopOffEnabled: false,
+          streakCount: 0,
+          lastStreakDate: null,
+          createdAt: admin.firestore.FieldValue.serverTimestamp(),
+          lastLoginAt: admin.firestore.FieldValue.serverTimestamp(),
+          // language omitida: bloque "if (isFirst)" abajo la setea con
+          // tenant.defaultLanguage.
+        };
+        tx.set(userRef, seed, { merge: true });
+        userData = seed;
+        console.log("joinTenant: created missing user doc", { uid, tenantId });
+      } else {
+        userData = userSnap.data();
+      }
       const existing = userData.tenantIds || (userData.tenantId ? [userData.tenantId] : []);
       const isFirst = !userData.tenantId;
 

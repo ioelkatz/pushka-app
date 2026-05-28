@@ -94,6 +94,43 @@ final router = GoRouter(
         if (_cachedTenantCheckUid != uid) {
           final snap = await _firestore.collection('users').doc(uid).get();
           if (_auth.currentUser?.uid != uid) return '/login';
+          // Defensa en profundidad: invariante "Auth user vivo => doc en
+          // users/{uid}". Se rompe si vaciamos prod, hay race en signUp,
+          // o el doc se borró por bug. Sin esto, el user queda atrapado
+          // viendo "Código no encontrado" en /tenant-setup eternamente
+          // porque joinTenant no encuentra su doc. La CF joinTenant
+          // también auto-crea el doc como segunda red de seguridad.
+          if (!snap.exists) {
+            try {
+              final currentUser = _auth.currentUser;
+              if (currentUser != null) {
+                await _firestore.collection('users').doc(uid).set({
+                  'uid': uid,
+                  'email': currentUser.email,
+                  'displayName': currentUser.displayName ?? '',
+                  'createdAt': FieldValue.serverTimestamp(),
+                  'lastLoginAt': FieldValue.serverTimestamp(),
+                  'billingEmail': '',
+                  'phoneNumber': '',
+                  'mailingAddress': '',
+                  'pushkaAmount': 0.0,
+                  'pushkaGoal': 180.0,
+                  'presetAmount': 1.00,
+                  'presetAmounts': <double>[],
+                  'soundEnabled': true,
+                  'vibrationEnabled': true,
+                  'partialPaymentsEnabled': false,
+                  'biometricAuthenticationEnabled': false,
+                  'currencyCountry': 'Estados Unidos',
+                  'currencyCode': 'USD',
+                  'autoEmptyFrequency': 'manual',
+                  'autoEmptyTopOffEnabled': false,
+                  'streakCount': 0,
+                  'lastStreakDate': null,
+                }, SetOptions(merge: true));
+              }
+            } catch (_) { /* CF backfill will catch it */ }
+          }
           final tenantId = snap.data()?['tenantId'] as String?;
           _cachedTenantCheckUid = uid;
           _cachedHasTenant = tenantId != null && tenantId.isNotEmpty;
