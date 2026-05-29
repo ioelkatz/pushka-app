@@ -151,8 +151,11 @@ class _SplashScreenState extends State<SplashScreen>
     if (!mounted) return;
     _floodCtrl.forward();
 
-    // 9.1 s — wait for flood + app init, then navigate
-    await Future.delayed(1600.ms);
+    // Esperar a que el flood termine + un pequeño respiro antes de
+    // cortar a la home. Antes 1600 ms se sentía trabado, 700 ms muy
+    // rápido — 1100 ms es el punto medio donde la pantalla dorada
+    // respira un beat sin sentirse muerta.
+    await Future.delayed(1100.ms);
     await appDeferredInit.timeout(
       const Duration(seconds: 8),
       onTimeout: () {},
