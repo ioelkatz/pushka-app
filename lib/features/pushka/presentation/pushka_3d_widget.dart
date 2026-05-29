@@ -44,7 +44,7 @@ class Pushka3DWidgetState extends State<Pushka3DWidget> {
           widthFactor: 0.80,
           heightFactor: 0.80,
           child: Image.asset(
-            'assets/images/pushka_can.webp',
+            'assets/images/pushka_can.png',
             fit: BoxFit.contain,
             gaplessPlayback: true,
           ),
