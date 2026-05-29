@@ -8357,3 +8357,150 @@ exports.resolveActivityItem = onCall(
     return { success: true };
   }
 );
+
+// ---------------------------------------------------------------------------
+// getDonationReasonStats — admin analytics: which donation destinations
+// (designaciones) get the most love in a given period. Sums in USD using
+// the same frozen-snapshot / fallback chain as getAdminStats so results
+// are FX-stable across multi-currency tenants. Tenant members are scoped
+// to their own tenant; super_admin can pass tenantId or read aggregate.
+// ---------------------------------------------------------------------------
+exports.getDonationReasonStats = onCall(
+  { enforceAppCheck: false },
+  async (request) => {
+    const callerUid = request.auth?.uid;
+    if (!callerUid) throw new HttpsError("unauthenticated", "Debes estar autenticado.");
+    await enforceRateLimit(callerUid, "getDonationReasonStats", 60, 3600);
+
+    const callerClaims = request.auth?.token ?? {};
+    const isSuper = callerIsSuperAdmin(request);
+    const isTenantMember = callerClaims.role === "tenant_admin" ||
+      callerClaims.role === "tenant_collaborator";
+    if (!isSuper && !isTenantMember) {
+      throw new HttpsError("permission-denied", "Solo administradores.");
+    }
+
+    // Tenant member always scoped to their own tenant; super_admin may pass
+    // tenantId or null (null = aggregate across all tenants).
+    const filterTenantId = isTenantMember
+      ? callerClaims.tenantId
+      : (request.data?.tenantId ?? null);
+
+    const period = String(request.data?.period ?? "1m");
+    const now = new Date();
+    let since = null;
+    switch (period) {
+      case "1m":
+        since = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, now.getUTCDate()));
+        break;
+      case "3m":
+        since = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 3, now.getUTCDate()));
+        break;
+      case "6m":
+        since = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 6, now.getUTCDate()));
+        break;
+      case "1y":
+        since = new Date(Date.UTC(now.getUTCFullYear() - 1, now.getUTCMonth(), now.getUTCDate()));
+        break;
+      case "all":
+        since = null;
+        break;
+      default:
+        throw new HttpsError("invalid-argument",
+            "period debe ser uno de: 1m, 3m, 6m, 1y, all.");
+    }
+
+    const rates = await getExchangeRates(null);
+    const mxnRate = rates["MXN"] ?? 17.1;
+
+    // Same composite-index pattern as getAdminStats: (tenantId + createdAt)
+    // when scoped, plain createdAt otherwise.
+    let txQuery = db.collectionGroup("transactions");
+    if (since) {
+      txQuery = txQuery.where("createdAt", ">=",
+          admin.firestore.Timestamp.fromDate(since));
+    }
+    if (filterTenantId) {
+      txQuery = txQuery.where("tenantId", "==", filterTenantId);
+    }
+    const TX_HARD_CAP = 50000;
+    const txSnap = await txQuery.limit(TX_HARD_CAP).get();
+    if (txSnap.size >= TX_HARD_CAP) {
+      console.warn(`getDonationReasonStats: hit TX_HARD_CAP=${TX_HARD_CAP} ` +
+        `for tenant=${filterTenantId ?? "all"} period=${period} — ` +
+        `totals truncated; migrate to pre-aggregated counters.`);
+    }
+
+    // For tenant scope, also gate by user docs that belong to the tenant —
+    // catches grandfathered transactions written before the tenantId field
+    // was stamped (BUG-014 legacy data). Without this they'd be excluded
+    // from the where("tenantId", "==") query above; with the user-side
+    // gate we recover them via the uid path.
+    let tenantUserIds = null;
+    if (filterTenantId) {
+      const usersSnap = await db.collection("users")
+        .where("tenantId", "==", filterTenantId).get();
+      tenantUserIds = new Set(usersSnap.docs.map((d) => d.id));
+    }
+
+    const byReason = {};
+    let grandTotal = 0;
+    let grandCount = 0;
+
+    for (const txDoc of txSnap.docs) {
+      const tx = txDoc.data();
+      const uid = txDoc.ref.parent.parent?.id;
+      if (!uid) continue;
+      // Only count actual donations (tzedaka + pushkaEmpty are both donor
+      // money). Skip 'manual' (admin adjustments), 'refund', etc.
+      if (tx.type && tx.type !== "tzedaka" && tx.type !== "pushkaEmpty") continue;
+      // Skip in-flight / failed transactions — only completed should count.
+      if (tx.status && tx.status !== "completed") continue;
+      if (tenantUserIds && !tenantUserIds.has(uid)) continue;
+
+      const txCurrency = String(tx.currencyCode || "USD").toUpperCase();
+      let amountUSD;
+      if (tx.amountUSD != null) {
+        amountUSD = tx.amountUSD;
+      } else if (tx.amountMXN != null) {
+        amountUSD = tx.amountMXN / mxnRate;
+      } else {
+        const txRate = rates[txCurrency] ?? 1;
+        amountUSD = (tx.amount ?? 0) / txRate;
+      }
+
+      const reason = (tx.donationReason &&
+          String(tx.donationReason).trim().length > 0)
+        ? String(tx.donationReason).trim()
+        : "Sin designación";
+
+      if (!byReason[reason]) {
+        byReason[reason] = { reason, totalUSD: 0, count: 0 };
+      }
+      byReason[reason].totalUSD += amountUSD;
+      byReason[reason].count += 1;
+
+      grandTotal += amountUSD;
+      grandCount += 1;
+    }
+
+    const reasons = Object.values(byReason)
+      .map((r) => ({
+        reason: r.reason,
+        totalUSD: Math.round(r.totalUSD * 100) / 100,
+        count: r.count,
+        percentage: grandTotal > 0
+          ? Math.round((r.totalUSD / grandTotal) * 1000) / 10
+          : 0,
+      }))
+      .sort((a, b) => b.totalUSD - a.totalUSD);
+
+    return {
+      reasons,
+      grandTotalUSD: Math.round(grandTotal * 100) / 100,
+      grandCount,
+      period,
+      truncated: txSnap.size >= TX_HARD_CAP,
+    };
+  }
+);

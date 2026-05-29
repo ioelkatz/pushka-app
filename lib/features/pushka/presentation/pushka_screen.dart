@@ -603,7 +603,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
     }
   }
 
-  Future<void> _processCardPayment(double donationAmount, {String? donorMessage}) async {
+  Future<void> _processCardPayment(double donationAmount, {String? donorMessage, String? donationReason}) async {
     if (!mounted) return;
     final tr = S.of(context);
     setState(() => _isProcessing = true);
@@ -620,8 +620,15 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
         _showMinAmountDialog(currency, minCents, donationAmount);
         return;
       }
-      final (proceed, _) = await _resolveDonationReason();
-      if (!proceed || !mounted) return;
+      // Si el caller ya nos pasó una razón (flujo de festividad → "Pesaj",
+      // "Janucá", etc.), saltamos el picker — fuerza pre-categorizar la
+      // donación en el admin sin preguntarle al donor otra vez.
+      String? finalReason = donationReason;
+      if (finalReason == null) {
+        final (proceed, picked) = await _resolveDonationReason();
+        if (!proceed || !mounted) return;
+        finalReason = picked;
+      }
 
       await StripeService.instance.pay(
         amountCents: amountCents,
@@ -630,6 +637,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
         purpose: 'donation',
         merchantDisplayName: ref.read(tenantConfigProvider).valueOrNull?.appName ?? 'Pushka',
         donorMessage: donorMessage,
+        donationReason: finalReason,
       );
 
       await AnalyticsService.instance.logDonation(donationAmount, currency);
@@ -658,7 +666,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
     }
   }
 
-  Future<void> _processDirectDonation(double amount, {String? donorMessage}) async {
+  Future<void> _processDirectDonation(double amount, {String? donorMessage, String? donationReason}) async {
     if (amount <= 0 || _isProcessing) return;
     final tr = S.of(context);
 
@@ -673,7 +681,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
     }
     if (!mounted) return;
 
-    await _processCardPayment(amount, donorMessage: donorMessage);
+    await _processCardPayment(amount, donorMessage: donorMessage, donationReason: donationReason);
   }
     double get fillPercentage {
     if (pushkaGoal <= 0) return 0;
@@ -845,14 +853,27 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                 ),
               ),
               const SizedBox(height: 6),
-              Text(
-                '${_currencySymbol(_currencyCodeFromProfile())}${formatAmount(pushkaAmount)} / ${_currencySymbol(_currencyCodeFromProfile())}${formatAmount(pushkaGoal)}',
-                style: TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w500,
-                  color: cs.onSurfaceVariant,
-                ),
-              ),
+              // En RTL Flutter no reordena tokens latinos (MX$..., números),
+              // los pinta en el orden literal del string. Invertimos a mano
+              // así el monto actual queda a la derecha (lado de partida del
+              // ojo en hebreo) y la meta a la izquierda, espejando el LTR.
+              Builder(builder: (ctx) {
+                final symbol = _currencySymbol(_currencyCodeFromProfile());
+                final amountStr = '$symbol${formatAmount(pushkaAmount)}';
+                final goalStr = '$symbol${formatAmount(pushkaGoal)}';
+                final isRtl = Directionality.of(ctx) == TextDirection.rtl;
+                final str = isRtl
+                    ? '$goalStr / $amountStr'
+                    : '$amountStr / $goalStr';
+                return Text(
+                  str,
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w500,
+                    color: cs.onSurfaceVariant,
+                  ),
+                );
+              }),
               const SizedBox(height: 8),
               Padding(
                 padding: EdgeInsets.symmetric(horizontal: constraints.maxWidth * 0.09),
@@ -1074,11 +1095,9 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                       child: Container(
                         decoration: BoxDecoration(
                           gradient: LinearGradient(
-                            colors: holiday.key == 'roshHashana'
-                                ? const [Color(0xFFDCDCE8), Color(0xFF9898A8)]
-                                : holiday.key == 'sucot'
+                            colors: holiday.key == 'sucot'
                                 ? const [Color(0xFFFEEDD8), Color(0xFFFCAB64)]
-                                : holiday.key == 'purim' || holiday.key == 'januca' || holiday.key == 'yomKippur'
+                                : holiday.key == 'roshHashana' || holiday.key == 'purim' || holiday.key == 'januca' || holiday.key == 'yomKippur'
                                 ? const [Color(0xFF222222), Color(0xFF000000)]
                                 : const [Color(0xFF6B3800), Color(0xFF3A1A00)],
                             begin: Alignment.centerLeft,
@@ -1094,7 +1113,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                         child: Row(
                           mainAxisSize: MainAxisSize.min,
                           children: [
-                            _holidayIcon(holiday.nameEs, size: 26),
+                            _holidayIcon(holiday.key, size: 26),
                             const SizedBox(width: 10),
                             Text(
                               holiday.localizedBannerName(S.of(context)),
@@ -1119,8 +1138,13 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                   ),
                 // Streak: combined → fills all but 120px; alone → fills full pill
                 if (hasStreak)
-                  Positioned(
-                    left: 0, top: 0, bottom: 0,
+                  // PositionedDirectional respeta RTL: en hebreo `start:0`
+                  // ancla la pill de racha a la DERECHA física (donde el
+                  // hebreohablante mira primero), espejando el holiday
+                  // hacia la izquierda. El badge usa PositionedDirectional
+                  // también, así queda junto a la pill en ambos idiomas.
+                  PositionedDirectional(
+                    start: 0, top: 0, bottom: 0,
                     child: SizedBox(
                       width: both ? streakW : containerW,
                       child: Container(
@@ -1227,33 +1251,34 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
     return _streakColors(count).$2;
   }
 
-  Widget _holidayIcon(String name, {double size = 28}) {
-    final lower = name.toLowerCase();
-    String? asset;
-    String emoji = '✨';
-    if (lower.contains('shavuot')) {
-      asset = 'assets/icons/shavuot.png';
-    } else if (lower.contains('pesaj') || lower.contains('jitim') || lower.contains('ma\u0027ot')) {
-      asset = 'assets/icons/pesaj.png';
-    } else if (lower.contains('rosh')) {
-      asset = 'assets/icons/rosh_hashana.png';
-    } else if (lower.contains('kipur')) {
-      asset = 'assets/icons/yom_kipur.png';
-    } else if (lower.contains('sucot')) {
-      asset = 'assets/icons/sucot.png';
-    } else if (lower.contains('januc')) {
-      asset = 'assets/icons/januca.png';
-    } else if (lower.contains('purim')) {
-      asset = 'assets/icons/purim.png';
+  // Matcheamos por `key` estable, no por el nombre localizado. Antes
+  // usábamos `lower.contains('kipur')` lo que falló para "Yom Kippur"
+  // (2 p's no contienen "kipur" como substring) y mostraba el emoji ✨
+  // de fallback. Ahora el switch es exhaustivo sobre las 7 keys del
+  // array `_holidays`: si alguien agrega una festividad nueva y olvida
+  // su ícono, el `_` lanza un assert en debug que avisa exactamente
+  // qué falta. En release devuelve un SizedBox vacío para no crashear.
+  Widget _holidayIcon(String key, {double size = 28}) {
+    final asset = switch (key) {
+      'pesaj'       => 'assets/icons/pesaj.png',
+      'shavuot'     => 'assets/icons/shavuot.png',
+      'roshHashana' => 'assets/icons/rosh_hashana.png',
+      'yomKippur'   => 'assets/icons/yom_kipur.png',
+      'sucot'       => 'assets/icons/sucot.png',
+      'januca'      => 'assets/icons/januca.png',
+      'purim'       => 'assets/icons/purim.png',
+      _ => null,
+    };
+    assert(asset != null,
+        'Missing icon for holiday key: $key — agregalo a _holidayIcon.');
+    if (asset == null) return SizedBox(width: size, height: size);
+    final img = Image.asset(asset, width: size, height: size, fit: BoxFit.contain);
+    // El Book-of-Life de Yom Kippur tiene una baseline visual distinta
+    // a los demás íconos, lo bajamos 4 px para que quede alineado.
+    if (key == 'yomKippur') {
+      return Transform.translate(offset: const Offset(0, 4), child: img);
     }
-    if (asset != null) {
-      final img = Image.asset(asset, width: size, height: size, fit: BoxFit.contain);
-      if (lower.contains('kipur')) {
-        return Transform.translate(offset: const Offset(0, 4), child: img);
-      }
-      return img;
-    }
-    return Text(emoji, style: TextStyle(fontSize: size * 0.55));
+    return img;
   }
   Future<void> _showHolidayDonationDialog(_HolidayInfo holiday) async {
     final amountCtrl = TextEditingController();
@@ -1279,7 +1304,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    _holidayIcon(holiday.nameEs, size: 28),
+                    _holidayIcon(holiday.key, size: 28),
                     const SizedBox(width: 8),
                     Text(
                       holiday.localizedName(S.of(context)),
@@ -1393,9 +1418,13 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
     }
 
     if (result == null || !mounted) return;
+    // donationReason: holiday.nameEs (siempre en español, consistente para
+    // agrupar en el admin entre donors de distintos idiomas — el donor
+    // hebreo no envía "פסח" mientras el español envía "Pesaj").
     await _processDirectDonation(
       result.amount,
       donorMessage: result.message.isEmpty ? null : result.message,
+      donationReason: holiday.nameEs,
     );
   }
 
@@ -2490,7 +2519,7 @@ class _HolidayInfo {
   });
 
   String localizedName(S tr) => switch (key) {
-    'maotJitim' => tr.holidayPesaj,
+    'pesaj' => tr.holidayPesaj,
     'shavuot' => tr.holidayShavuot,
     'roshHashana' => tr.holidayRoshHashana,
     'yomKippur' => tr.holidayYomKippur,
@@ -2506,7 +2535,7 @@ class _HolidayInfo {
   };
 
   String localizedDescription(S tr) => switch (key) {
-    'maotJitim' => tr.holidayMaotJitimDesc,
+    'pesaj' => tr.holidayPesajDesc,
     'shavuot' => tr.holidayShavuotDesc,
     'roshHashana' => tr.holidayRoshHashanaDesc,
     'yomKippur' => tr.holidayYomKippurDesc,
@@ -2533,12 +2562,12 @@ class _HolidayInfo {
   static final List<_HolidayInfo> _holidays = [
     // 5786 (2025-2026)
     _HolidayInfo(
-      key: 'maotJitim',
-      nameEs: 'Ma\u0027ot Jitim',
-      descriptionEs: 'Fondos para los necesitados de Israel para sus necesidades de P\u00e9saj',
+      key: 'pesaj',
+      nameEs: 'Pesaj',
+      descriptionEs: 'Celebramos la salida de Egipto. Dona tzedak\u00e1 para una seuda de P\u00e9saj',
       presetAmounts: [54, 180, 1800],
       startDate: DateTime(2026, 4, 2),
-      showDaysBefore: 30,
+      showDaysBefore: 14,
       durationDays: 8,
     ),
     _HolidayInfo(
@@ -2547,7 +2576,7 @@ class _HolidayInfo {
       descriptionEs: 'Celebramos la entrega de la Tor\u00e1. Dona tzedak\u00e1 en honor a esta festividad',
       presetAmounts: [18, 36, 180],
       startDate: DateTime(2026, 5, 22),
-      showDaysBefore: 21,
+      showDaysBefore: 14,
       durationDays: 2,
     ),
     // 5787 (2026-2027)
@@ -2557,7 +2586,7 @@ class _HolidayInfo {
       descriptionEs: 'A\u00f1o Nuevo jud\u00edo. Comienza el a\u00f1o con tzedak\u00e1 y buenas acciones',
       presetAmounts: [36, 180, 360],
       startDate: DateTime(2026, 9, 12),
-      showDaysBefore: 30,
+      showDaysBefore: 14,
       durationDays: 2,
     ),
     _HolidayInfo(
@@ -2583,7 +2612,7 @@ class _HolidayInfo {
       descriptionEs: 'Festival de las Luces. Ilumina vidas con tu donaci\u00f3n de tzedak\u00e1',
       presetAmounts: [18, 54, 180],
       startDate: DateTime(2026, 12, 5),
-      showDaysBefore: 21,
+      showDaysBefore: 14,
       durationDays: 8,
     ),
     _HolidayInfo(
@@ -2592,15 +2621,15 @@ class _HolidayInfo {
       descriptionEs: "Matanot la'Evionim: regalos a los necesitados, una mitzv\u00e1 central de Purim",
       presetAmounts: [18, 54, 180],
       startDate: DateTime(2027, 3, 23),
-      showDaysBefore: 21,
+      showDaysBefore: 14,
     ),
     _HolidayInfo(
-      key: 'maotJitim',
-      nameEs: 'Ma\u0027ot Jitim',
-      descriptionEs: 'Fondos para los necesitados de Israel para sus necesidades de P\u00e9saj',
+      key: 'pesaj',
+      nameEs: 'Pesaj',
+      descriptionEs: 'Celebramos la salida de Egipto. Dona tzedak\u00e1 para una seuda de P\u00e9saj',
       presetAmounts: [54, 180, 1800],
       startDate: DateTime(2027, 4, 22),
-      showDaysBefore: 30,
+      showDaysBefore: 14,
       durationDays: 8,
     ),
   ];
