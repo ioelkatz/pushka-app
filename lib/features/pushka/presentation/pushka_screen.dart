@@ -50,6 +50,13 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
   bool _showBill = false;
   int _billKey = 0;
   double _billStartY = -90.0;
+  // Coin animation (classic pushka style). Bill is for 770. We track them
+  // separately so a fast-tap during the bill flight doesn't fire a coin and
+  // vice-versa — each style stays self-contained.
+  bool _showCoin = false;
+  int _coinKey = 0;
+  double _coinStartY = -90.0;
+  double _coinTargetY = 200.0;
   double pushkaAmount = 0;
   double pushkaGoal = UserRepository.defaultGoalForCurrency('USD');
   List<double> _presetAmounts = [];
@@ -234,13 +241,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
     if (goalJustReached) {
       _triggerCelebration();
     } else if (!skipBillAnimation) {
-      FeedbackService.instance.playBillFall();
-      final titleBox = _fillItTitleKey.currentContext?.findRenderObject() as RenderBox?;
-      final stackBox = _stackKey.currentContext?.findRenderObject() as RenderBox?;
-      final startY = (titleBox != null && stackBox != null)
-          ? stackBox.globalToLocal(titleBox.localToGlobal(Offset(0, titleBox.size.height))).dy + 8
-          : -90.0;
-      setState(() { _showBill = true; _billKey++; _billStartY = startY; });
+      _launchFallingAnimation();
     }
     try {
       await _persistPushkaAmount();
@@ -1015,6 +1016,17 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                       ),
                     ),
                   ),
+                if (_showCoin)
+                  Positioned.fill(
+                    child: IgnorePointer(
+                      child: CoinFallAnimation(
+                        key: ValueKey(_coinKey),
+                        startY: _coinStartY,
+                        targetY: _coinTargetY,
+                        onDone: () { if (mounted) setState(() => _showCoin = false); },
+                      ),
+                    ),
+                  ),
               ],
             );
           },
@@ -1477,13 +1489,58 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
       if (MediaQuery.of(context).viewInsets.bottom == 0) break;
     }
     if (!mounted) return;
-    FeedbackService.instance.playBillFall();
-    final titleBox = _fillItTitleKey.currentContext?.findRenderObject() as RenderBox?;
+    _launchFallingAnimation();
+  }
+
+  // Dispatch the right falling animation based on the donor's chosen
+  // pushka style: a 3D coin (classic lata) or the rebbe's dollar bill
+  // (770 building). Centralized here so both addAmount paths
+  // (quick-amount tap + "Otro" sheet) stay in sync. Sounds gated by
+  // FeedbackService.soundEnabled — silent automatically when the user
+  // toggles sonido off.
+  void _launchFallingAnimation() {
     final stackBox = _stackKey.currentContext?.findRenderObject() as RenderBox?;
-    final startY = (titleBox != null && stackBox != null)
+    final titleBox = _fillItTitleKey.currentContext?.findRenderObject() as RenderBox?;
+    if (stackBox == null) return;
+
+    // startY: bottom of the "¡Llénala!" title + 8 px ≈ where the progress
+    // bar sits (title → amount text → bar are stacked tightly below).
+    final startY = titleBox != null
         ? stackBox.globalToLocal(titleBox.localToGlobal(Offset(0, titleBox.size.height))).dy + 8
         : -90.0;
-    setState(() { _showBill = true; _billKey++; _billStartY = startY; });
+
+    final style = ref.read(pushkaStyleProvider);
+
+    if (style == PushkaStyle.classic) {
+      // Coin lands right at the slot of the pushka image. Pushka3DWidget
+      // wraps the asset in Center > FractionallySizedBox(0.80) > BoxFit
+      // .contain — the portrait image fits by height, so the rendered
+      // image starts at 10% from the SizedBox top, and the slot sits at
+      // ~10% from the image top → 18% of the widget's height. If the
+      // RenderBox isn't available (first paint race), we fall back to
+      // a mid-screen target which still looks acceptable.
+      final pushkaBox = _pushkaKey.currentContext?.findRenderObject() as RenderBox?;
+      double targetY;
+      if (pushkaBox != null) {
+        final pushkaTopGlobal = pushkaBox.localToGlobal(Offset.zero).dy;
+        final pushkaHeight = pushkaBox.size.height;
+        final slotGlobalY = pushkaTopGlobal + pushkaHeight * 0.18;
+        targetY = stackBox.globalToLocal(Offset(0, slotGlobalY)).dy;
+      } else {
+        targetY = stackBox.size.height * 0.43;
+      }
+
+      FeedbackService.instance.playCoinDrop();
+      setState(() {
+        _showCoin = true;
+        _coinKey++;
+        _coinStartY = startY;
+        _coinTargetY = targetY;
+      });
+    } else {
+      FeedbackService.instance.playBillFall();
+      setState(() { _showBill = true; _billKey++; _billStartY = startY; });
+    }
   }
 
 

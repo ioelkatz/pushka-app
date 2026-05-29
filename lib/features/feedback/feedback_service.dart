@@ -10,6 +10,7 @@ class FeedbackService {
 
   final AudioPlayer _successPlayer = AudioPlayer();
   final AudioPlayer _billPlayer = AudioPlayer();
+  final AudioPlayer _coinPlayer = AudioPlayer();
   final AudioPlayer _ambientPlayer = AudioPlayer();
   bool _initialized = false;
 
@@ -158,6 +159,31 @@ class FeedbackService {
           try { await _billPlayer.setVolume(step); } catch (_) {}
         }
         try { await _billPlayer.stop(); } catch (_) {}
+        unawaited(_fadeAmbientTo(_ambientNormal));
+      }));
+    } catch (_) {
+      unawaited(_fadeAmbientTo(_ambientNormal));
+    }
+  }
+
+  /// Coin sparkle/drop — used when the donor adds an amount to the
+  /// classic pushka style. 770 style still uses [playBillFall]. Same
+  /// soundEnabled gate as the rest of FeedbackService — flips to silent
+  /// instantly when the user toggles "sonido" off in settings.
+  Future<void> playCoinDrop() async {
+    if (!soundEnabled || kIsWeb) return;
+    // 800 ms delay para que el sparkle suene cerca del momento en que
+    // la moneda entra por la ranura, no cuando recién empieza a caer
+    // desde arriba. Ioel ajustó este timing visualmente.
+    await Future<void>.delayed(const Duration(milliseconds: 800));
+    unawaited(_fadeAmbientTo(_ambientDuck));
+    try {
+      await _coinPlayer.stop();
+      await _coinPlayer.setVolume(0.85);
+      await _coinPlayer.play(AssetSource('sounds/coin_drop.wav'));
+      // Coin sound is shorter than the bill flutter (no 2.5s fade tail).
+      // Restore ambient after the typical sample length.
+      unawaited(Future.delayed(const Duration(milliseconds: 1500), () {
         unawaited(_fadeAmbientTo(_ambientNormal));
       }));
     } catch (_) {
