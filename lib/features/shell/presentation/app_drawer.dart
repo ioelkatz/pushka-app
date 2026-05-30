@@ -105,9 +105,12 @@ class AppDrawer extends ConsumerWidget {
             ),
           ),
 
-          // Footer con versión y patrocinadores
+          // Footer con versión y patrocinadores. Padding-left ajustado
+          // para alinear con la posición visual de los iconos del nav
+          // (Container.margin 8 + ListTile.contentPadding 16 + offset
+          // del leading icon ≈ 32 px del borde del drawer).
           Container(
-            padding: const EdgeInsets.fromLTRB(16, 16, 20, 16),
+            padding: const EdgeInsets.fromLTRB(32, 16, 20, 16),
             decoration: BoxDecoration(
               border: Border(top: BorderSide(color: Theme.of(context).colorScheme.outlineVariant)),
             ),
