@@ -320,7 +320,33 @@ workflows:
           # robust to any YAML→bash transformation that might eat the
           # backslashes — saw a build where exactly that failed.
           flutter build ipa --debug --no-codesign --dart-define=ENV=dev --dart-define=STRIPE_PUBLISHABLE_KEY="$STRIPE_KEY_CLEAN"
+
+          # `flutter build ipa --no-codesign` produces a Runner.xcarchive but
+          # explicitly SKIPS the IPA export step ("Codesigning disabled with
+          # --no-codesign, skipping IPA."). For AltStore sideload we don't need
+          # signing — AltStore re-signs the IPA on the Windows side with the
+          # user's free Apple ID — so we package the .xcarchive's .app into a
+          # well-formed unsigned .ipa manually here.
+          #
+          # An .ipa is just a zip with `Payload/<App>.app/` at the root. Apple
+          # tooling adds extra fluff (SwiftSupport, Symbols), but AltStore only
+          # needs the Payload bundle.
+          APP_PATH="build/ios/archive/Runner.xcarchive/Products/Applications/Runner.app"
+          if [ ! -d "$APP_PATH" ]; then
+            echo "Expected app bundle at $APP_PATH but it doesn't exist."
+            ls -la build/ios/archive/ || true
+            ls -la build/ios/archive/Runner.xcarchive/Products/Applications/ || true
+            exit 1
+          fi
+          mkdir -p build/ios/ipa
+          rm -rf /tmp/altstore_payload
+          mkdir /tmp/altstore_payload
+          cp -R "$APP_PATH" /tmp/altstore_payload/
+          mv /tmp/altstore_payload "/tmp/Payload"
+          (cd /tmp && zip -qr "$CM_BUILD_DIR/build/ios/ipa/Runner.ipa" Payload)
+          rm -rf /tmp/Payload
           ls -la build/ios/ipa/
+          echo "IPA size: $(du -h build/ios/ipa/Runner.ipa | cut -f1)"
     artifacts:
       - build/ios/ipa/*.ipa
       - /tmp/xcodebuild_logs/*.log
