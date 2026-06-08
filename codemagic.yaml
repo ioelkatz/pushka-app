@@ -282,6 +282,17 @@ workflows:
       - *cocoapods_install
       - name: Build unsigned debug IPA (AltStore sideload target)
         script: |
+          set -euo pipefail
+          # Strip ANY whitespace/newlines that Codemagic's Secure env var
+          # injection sometimes appends to the value. Without this, Flutter's
+          # CLI parser sees the trailing \n inside `--dart-define=KEY=value\n`
+          # and stops recognizing the flag — the next iteration treats the
+          # entire token as a positional target file, surfacing as:
+          #   Target file "--dart-define=STRIPE_PUBLISHABLE_KEY=********" not found.
+          # Same root cause as the printf-vs-echo gotcha documented in CLAUDE.md
+          # for Firebase secrets — pipelines that handle "secure" values often
+          # add a trailing newline somewhere upstream.
+          STRIPE_KEY_CLEAN="$(printf '%s' "$STRIPE_PUBLISHABLE_KEY" | tr -d '[:space:]')"
           # `--no-codesign` skips signing entirely; AltStore re-signs on the
           # Windows side with the user's free Apple ID. `--debug` makes the
           # app use the App Check debug provider (AppleDebugProvider), which
@@ -290,9 +301,10 @@ workflows:
           # without a merchant ID Apple Pay is silently disabled and the
           # sheet falls back to credit-card-only, which is what AltStore
           # builds support.
-          flutter build ipa --debug --no-codesign \
-            --dart-define=ENV=dev \
-            --dart-define=STRIPE_PUBLISHABLE_KEY="$STRIPE_PUBLISHABLE_KEY"
+          # Single-line invocation (no `\` continuations) so the build is
+          # robust to any YAML→bash transformation that might eat the
+          # backslashes — saw a build where exactly that failed.
+          flutter build ipa --debug --no-codesign --dart-define=ENV=dev --dart-define=STRIPE_PUBLISHABLE_KEY="$STRIPE_KEY_CLEAN"
           ls -la build/ios/ipa/
     artifacts:
       - build/ios/ipa/*.ipa

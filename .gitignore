@@ -88,3 +88,6 @@ run.ps1
 
 # Temporary fix/migration scripts
 fix*.js
+
+# local-only base64 dumps for Codemagic env var copy/paste — never commit
+.codemagic_envvars_tmp/
