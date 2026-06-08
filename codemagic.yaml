@@ -309,17 +309,24 @@ workflows:
           # add a trailing newline somewhere upstream.
           STRIPE_KEY_CLEAN="$(printf '%s' "$STRIPE_PUBLISHABLE_KEY" | tr -d '[:space:]')"
           # `--no-codesign` skips signing entirely; AltStore re-signs on the
-          # Windows side with the user's free Apple ID. `--debug` makes the
-          # app use the App Check debug provider (AppleDebugProvider), which
-          # is what we want here — App Attest doesn't work with free Apple
-          # IDs anyway. `STRIPE_MERCHANT_ID` is intentionally NOT passed:
-          # without a merchant ID Apple Pay is silently disabled and the
-          # sheet falls back to credit-card-only, which is what AltStore
-          # builds support.
+          # Windows side with the user's free Apple ID. `STRIPE_MERCHANT_ID`
+          # is intentionally NOT passed: without a merchant ID Apple Pay is
+          # silently disabled and the sheet falls back to credit-card-only,
+          # which is what AltStore builds support.
+          #
+          # `--profile` (NOT `--debug`) because Flutter blocks launching debug
+          # iOS builds from the home screen on iOS 14+ with the message
+          # "debug mode Flutter apps can only be launched from Flutter tooling,
+          # IDEs with Flutter plugins or from Xcode". Profile builds DO launch
+          # standalone, AND still use the AppleDebugProvider for App Check —
+          # see lib/app/app_initializer.dart: the gate is `!kReleaseMode`,
+          # which covers profile mode. So we get a launchable bundle plus the
+          # debug App Check provider that AltStore-grade free signing requires.
+          #
           # Single-line invocation (no `\` continuations) so the build is
           # robust to any YAML→bash transformation that might eat the
           # backslashes — saw a build where exactly that failed.
-          flutter build ipa --debug --no-codesign --dart-define=ENV=dev --dart-define=STRIPE_PUBLISHABLE_KEY="$STRIPE_KEY_CLEAN"
+          flutter build ipa --profile --no-codesign --dart-define=ENV=dev --dart-define=STRIPE_PUBLISHABLE_KEY="$STRIPE_KEY_CLEAN"
 
           # `flutter build ipa --no-codesign` produces a Runner.xcarchive but
           # explicitly SKIPS the IPA export step ("Codesigning disabled with
