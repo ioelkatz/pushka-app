@@ -280,6 +280,21 @@ workflows:
       - *flutter_pub_get
       - *decode_secret_files
       - *cocoapods_install
+      - name: Disable Swift Package Manager (force CocoaPods for Firebase)
+        script: |
+          # Flutter auto-enables SPM when Xcode supports it, but the SPM
+          # resolver picks a firebase-ios-sdk version that's older than what
+          # cloud_firestore 6.3.x bridges to. Surface symptom is opaque ARC
+          # errors at archive time:
+          #   No visible @interface for 'FIRCollectionSourceStageBridge'
+          #     declares the selector 'initWithRef:firestore:'
+          # That bridge class lives in firebase-ios-sdk 12.x (new Pipelines
+          # API). CocoaPods resolution via the .podspec pins the right
+          # version, so we fall back to pods until the Flutter Firebase
+          # plugins ship a consistent SPM manifest.
+          flutter config --no-enable-swift-package-manager
+          flutter config --list | grep -i swift || true
+
       - name: Build unsigned debug IPA (AltStore sideload target)
         script: |
           set -euo pipefail
