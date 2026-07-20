@@ -2,6 +2,17 @@
   "projects": {
     "pushka-app-ioel": "pushka-app-ioel"
   },
-  "targets": {},
+  "targets": {
+    "pushka-app-ioel": {
+      "hosting": {
+        "assetlinks": [
+          "pushka-app-ioel"
+        ],
+        "pwa": [
+          "pushka-pwa"
+        ]
+      }
+    }
+  },
   "etags": {}
 }

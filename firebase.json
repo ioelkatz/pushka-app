@@ -2,29 +2,74 @@
   "functions": {"source": "functions"},
   "firestore": {"rules": "firestore.rules", "indexes": "firestore.indexes.json"},
   "storage": {"rules": "storage.rules"},
-  "hosting": {
-    "site": "pushka-app-ioel",
-    "public": "public",
-    "ignore": ["firebase.json", "**/.*", "**/node_modules/**"],
-    "cleanUrls": true,
-    "trailingSlash": false,
-    "headers": [
-      {
-        "source": "/.well-known/**",
-        "headers": [
-          { "key": "Cache-Control", "value": "public, max-age=86400, s-maxage=86400" }
-        ]
-      },
-      {
-        "source": "**/*.html",
-        "headers": [
-          { "key": "Cache-Control", "value": "public, max-age=300, s-maxage=300" },
-          { "key": "X-Content-Type-Options", "value": "nosniff" },
-          { "key": "Referrer-Policy", "value": "strict-origin-when-cross-origin" }
-        ]
-      }
-    ]
-  },
+  "hosting": [
+    {
+      "target": "assetlinks",
+      "site": "pushka-app-ioel",
+      "public": "public",
+      "ignore": ["firebase.json", "**/.*", "**/node_modules/**"],
+      "cleanUrls": true,
+      "trailingSlash": false,
+      "headers": [
+        {
+          "source": "/.well-known/**",
+          "headers": [
+            { "key": "Cache-Control", "value": "public, max-age=86400, s-maxage=86400" }
+          ]
+        },
+        {
+          "source": "**/*.html",
+          "headers": [
+            { "key": "Cache-Control", "value": "public, max-age=300, s-maxage=300" },
+            { "key": "X-Content-Type-Options", "value": "nosniff" },
+            { "key": "Referrer-Policy", "value": "strict-origin-when-cross-origin" }
+          ]
+        }
+      ]
+    },
+    {
+      "target": "pwa",
+      "site": "pushka-pwa",
+      "public": "build/web",
+      "ignore": ["firebase.json", "**/.*", "**/node_modules/**"],
+      "cleanUrls": true,
+      "trailingSlash": false,
+      "headers": [
+        {
+          "source": "/index.html",
+          "headers": [
+            { "key": "Cache-Control", "value": "no-cache, no-store, must-revalidate" },
+            { "key": "X-Content-Type-Options", "value": "nosniff" },
+            { "key": "Referrer-Policy", "value": "strict-origin-when-cross-origin" }
+          ]
+        },
+        {
+          "source": "**/*.@(js|css|woff2|png|jpg|jpeg|webp|svg|ico)",
+          "headers": [
+            { "key": "Cache-Control", "value": "public, max-age=31536000, immutable" }
+          ]
+        },
+        {
+          "source": "/flutter_service_worker.js",
+          "headers": [
+            { "key": "Cache-Control", "value": "no-cache, no-store, must-revalidate" }
+          ]
+        },
+        {
+          "source": "/manifest.json",
+          "headers": [
+            { "key": "Cache-Control", "value": "public, max-age=3600" }
+          ]
+        }
+      ],
+      "rewrites": [
+        {
+          "source": "**",
+          "destination": "/index.html"
+        }
+      ]
+    }
+  ],
   "flutter": {
     "platforms": {
       "android": {
