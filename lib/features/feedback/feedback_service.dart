@@ -31,21 +31,26 @@ class FeedbackService {
       'https://storage.googleapis.com/pushka-app-ioel.firebasestorage.app/ambient/nigunim.mp3';
 
   Future<void> init() async {
-    if (_initialized || kIsWeb) return;
+    if (_initialized) return;
     try {
-      // Set persistent audio focus so sounds aren't blocked by each other on Android.
-      await AudioPlayer.global.setAudioContext(AudioContext(
-        android: AudioContextAndroid(
-          contentType: AndroidContentType.music,
-          usageType: AndroidUsageType.media,
-          audioFocus: AndroidAudioFocus.gain,
-          isSpeakerphoneOn: false,
-          stayAwake: false,
-        ),
-        iOS: AudioContextIOS(
-          category: AVAudioSessionCategory.playback,
-        ),
-      ));
+      // AudioContext es Android/iOS-specific — no aplica en web.
+      // En web, HTMLAudioElement respeta las autoplay policies del
+      // browser; el primer play desde un user gesture (tap del donor)
+      // desbloquea el audio para la sesión.
+      if (!kIsWeb) {
+        await AudioPlayer.global.setAudioContext(AudioContext(
+          android: AudioContextAndroid(
+            contentType: AndroidContentType.music,
+            usageType: AndroidUsageType.media,
+            audioFocus: AndroidAudioFocus.gain,
+            isSpeakerphoneOn: false,
+            stayAwake: false,
+          ),
+          iOS: AudioContextIOS(
+            category: AVAudioSessionCategory.playback,
+          ),
+        ));
+      }
       await _successPlayer.setSource(AssetSource('sounds/success.wav'));
       await _billPlayer.setSource(AssetSource('sounds/bill_flutter.wav'));
       await _successPlayer.setVolume(1.0);
@@ -119,8 +124,11 @@ class FeedbackService {
   }
 
   Future<void> playSuccess() async {
-    if (!soundEnabled || kIsWeb) return;
-    if (vibrationEnabled) {
+    if (!soundEnabled) return;
+    // Vibración solo en mobile — no hay API estable en web (iOS Safari
+    // no soporta navigator.vibrate). Sonidos SÍ funcionan en web via
+    // HTMLAudioElement cuando el trigger es un user gesture.
+    if (vibrationEnabled && !kIsWeb) {
       HapticFeedback.mediumImpact();
       unawaited(Future.delayed(const Duration(milliseconds: 100), HapticFeedback.mediumImpact));
       unawaited(Future.delayed(const Duration(milliseconds: 200), HapticFeedback.heavyImpact));
@@ -145,7 +153,7 @@ class FeedbackService {
 
   /// Soft flutter at start of bill fall, then a thud at 2.5 s when it enters.
   Future<void> playBillFall() async {
-    if (!soundEnabled || kIsWeb) return;
+    if (!soundEnabled) return;
     unawaited(_fadeAmbientTo(_ambientDuck));
     try {
       await _billPlayer.stop();
@@ -171,10 +179,14 @@ class FeedbackService {
   /// soundEnabled gate as the rest of FeedbackService — flips to silent
   /// instantly when the user toggles "sonido" off in settings.
   Future<void> playCoinDrop() async {
-    if (!soundEnabled || kIsWeb) return;
+    if (!soundEnabled) return;
     // 800 ms delay para que el sparkle suene cerca del momento en que
     // la moneda entra por la ranura, no cuando recién empieza a caer
     // desde arriba. Ioel ajustó este timing visualmente.
+    //
+    // Nota web/iOS Safari: el user gesture (tap) puede "expirarse" tras
+    // ~500ms — si el coin drop no suena en PWA iOS, mover el delay
+    // dentro de un cambio de flujo o preloadear el buffer antes.
     await Future<void>.delayed(const Duration(milliseconds: 800));
     unawaited(_fadeAmbientTo(_ambientDuck));
     try {
