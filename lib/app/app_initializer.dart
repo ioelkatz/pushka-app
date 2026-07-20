@@ -38,40 +38,33 @@ void scheduleDeferredInit() {
 /// the auto-default Play Integrity provider would attestation-fail on debug.
 Future<void> activateAppCheck() async {
   if (kIsWeb) {
-    // Web: si NO tenemos reCAPTCHA v3 site key configurado (via
-    // --dart-define=RECAPTCHA_SITE_KEY=...), skip App Check activation
-    // completo. Activar ReCaptchaV3Provider con siteKey vacío hace que
-    // el provider tire error interno cada vez que el SDK pide token,
-    // y Firebase Auth Web SDK propaga eso como 'auth/network-request-failed'
-    // en cualquier operación (signup, signIn, etc.) — el user ve "Error
-    // de red" al intentar crear cuenta aunque la red esté perfecta.
-    //
-    // Sin App Check en web, las CFs con enforceAppCheck: true rechazan
-    // requests de web. Ese es un trade-off que aceptamos hasta configurar
-    // reCAPTCHA v3 site key en Firebase Console → App Check → Web app →
-    // Manage. Firebase Auth (signup/login) funciona sin App Check porque
-    // Identity Toolkit no está enforced en este proyecto.
+    // Web: usa reCAPTCHA v3 si el site key está configurado. Si no,
+    // skip activation completa (con siteKey vacío el provider tira
+    // errores internos que Firebase Auth propaga como
+    // 'auth/network-request-failed' en signup/login).
     const siteKey = String.fromEnvironment('RECAPTCHA_SITE_KEY', defaultValue: '');
     if (siteKey.isNotEmpty) {
       await FirebaseAppCheck.instance.activate(
         providerWeb: ReCaptchaV3Provider(siteKey),
       );
     }
-    // else: no activar — evita el bug del provider con siteKey vacío.
-  } else if (kReleaseMode) {
-    await FirebaseAppCheck.instance.activate(
-      providerAndroid: AndroidPlayIntegrityProvider(),
-      providerApple: AppleDeviceCheckProvider(),
-    );
-  } else {
-    // Debug builds: backend enforces App Check, so we need the debug provider
-    // here too. The token is printed to logcat on first launch — register it
-    // at Firebase Console → App Check → <app> → Manage debug tokens.
-    await FirebaseAppCheck.instance.activate(
-      providerAndroid: AndroidDebugProvider(),
-      providerApple: AppleDebugProvider(),
-    );
+    return;
   }
+
+  // Android/iOS: en la branch `pwa-sideload-launch` usamos DebugProvider
+  // SIEMPRE porque el APK se distribuye fuera de Play Store (Play
+  // Integrity no puede attestar apps sideload) y el .ipa PWA no aplica
+  // acá. El primer launch imprime un token secret que hay que registrar
+  // en Firebase Console → App Check → Manage debug tokens para que las
+  // CFs enforced acepten requests.
+  //
+  // Cuando migremos a Play Store / App Store (branch dev), este código
+  // vuelve a ser AndroidPlayIntegrityProvider() / AppleDeviceCheckProvider()
+  // en release mode.
+  await FirebaseAppCheck.instance.activate(
+    providerAndroid: AndroidDebugProvider(),
+    providerApple: AppleDebugProvider(),
+  );
 }
 
 Future<void> _performDeferredInit() async {
