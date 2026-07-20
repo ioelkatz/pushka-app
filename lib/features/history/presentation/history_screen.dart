@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:intl/intl.dart' hide TextDirection;
 
 import '../../../app/theme/app_tokens.dart';
 import '../../../core/format_utils.dart';
@@ -345,7 +346,16 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
               // backend-default "Donación Stripe"/"Vaciado de Pushka (Stripe)"
               // is redundant with the type label rendered under the amount.
               if (t.donorMessage != null && t.donorMessage!.isNotEmpty)
-                _detailRow(_tr.historyDescription, t.donorMessage!),
+                // maxLines=5 + ellipsis prevents a pathological long donor
+                // message from stretching the bottom sheet past the screen
+                // (Flexible only widens; without maxLines it wraps
+                // unbounded). 5 lines matches the visual weight of the other
+                // detail rows.
+                _detailRow(
+                  _tr.historyDescription,
+                  t.donorMessage!,
+                  maxLines: 5,
+                ),
               _detailRow(_tr.historyMethod, _methodLabel(t.paymentMethod)),
               _detailRow(
                 _tr.historyStatus,
@@ -359,7 +369,7 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
     );
   }
 
-  Widget _detailRow(String label, String value) {
+  Widget _detailRow(String label, String value, {int? maxLines}) {
     final cs = Theme.of(context).colorScheme;
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 8),
@@ -371,6 +381,8 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
             child: Text(
               value,
               textAlign: TextAlign.end,
+              maxLines: maxLines,
+              overflow: maxLines != null ? TextOverflow.ellipsis : null,
               style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: cs.onSurface),
             ),
           ),
@@ -561,11 +573,12 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
       _tr.monthSep, _tr.monthOct, _tr.monthNov, _tr.monthDec,
     ];
     final month = months[dt.month - 1];
-    final hour = dt.hour;
-    final minute = dt.minute;
-    final period = hour >= 12 ? 'PM' : 'AM';
-    final displayHour = hour > 12 ? hour - 12 : (hour == 0 ? 12 : hour);
-    return '$month. ${dt.day} - $displayHour:${minute.toString().padLeft(2, '0')}$period';
+    // Locale-aware time. Was hardcoded English "AM"/"PM", which read wrong
+    // in French/Hebrew/Spanish and forced a 12-hour clock even where 24h is
+    // standard. DateFormat.jm picks 12h vs 24h per locale.
+    final locale = Localizations.localeOf(context).toString();
+    final timeStr = DateFormat.jm(locale).format(dt);
+    return '$month. ${dt.day} - $timeStr';
   }
 
   String _typeLabel(TransactionType type) {

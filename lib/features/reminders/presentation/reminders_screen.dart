@@ -113,6 +113,11 @@ class _RemindersScreenState extends ConsumerState<RemindersScreen> {
             ),
           );
         }).valueOrNull ??
+        // Initial fetch (or error) fallback: the AsyncValue has no data yet,
+        // so we cannot enforce the client-side kMaxReminders cap. Keep the
+        // button visible for layout stability but disabled — otherwise a
+        // fast-tapping user could bypass the limit check by adding a reminder
+        // during the first-load window.
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
           child: SafeArea(
@@ -120,7 +125,7 @@ class _RemindersScreenState extends ConsumerState<RemindersScreen> {
               width: double.infinity,
               height: AppTokens.buttonHeight,
               child: OutlinedButton(
-                onPressed: _showAddReminderDialog,
+                onPressed: null,
                 style: OutlinedButton.styleFrom(
                   shape: RoundedRectangleBorder(
                     borderRadius:

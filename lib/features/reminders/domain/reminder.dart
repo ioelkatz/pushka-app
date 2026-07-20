@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:intl/intl.dart' hide TextDirection;
 
 import '../../../core/l10n/s.dart';
 
@@ -171,10 +172,15 @@ class Reminder {
   }
 
   String _formatTime(TimeOfDay t) {
-    final hour = t.hourOfPeriod == 0 ? 12 : t.hourOfPeriod;
-    final minute = t.minute.toString().padLeft(2, '0');
-    final period = t.period == DayPeriod.am ? 'AM' : 'PM';
-    return '$hour:$minute $period';
+    // Was hardcoded English "AM"/"PM" — surfaced in the reminders list under
+    // every reminder subtitle regardless of app language. Reminder lives in
+    // the domain layer with no BuildContext, so we use DateFormat.jm() with
+    // no explicit locale — intl falls back to Intl.defaultLocale (set by
+    // MaterialApp.localizationsDelegates via the S locale) or, absent that,
+    // to the system locale. This gets HE/FR/EN right; 24h locales get 24h.
+    final now = DateTime.now();
+    final dt = DateTime(now.year, now.month, now.day, t.hour, t.minute);
+    return DateFormat.jm().format(dt);
   }
 
   String _getDayNames(List<int> dayNumbers, S tr) {

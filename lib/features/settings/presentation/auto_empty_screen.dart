@@ -348,7 +348,10 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
                       fontWeight: FontWeight.w500,
                     ),
                     decoration: InputDecoration(
-                      prefixText: '\$ ',
+                      // Show the user's currency symbol, not a hardcoded '$'.
+                      // Reads currencyCode from the user profile and maps to a
+                      // short glyph via _shortCurrencySymbol.
+                      prefixText: '${_shortCurrencySymbol((profile?['currencyCode'] as String?) ?? 'USD')} ',
                       prefixStyle: TextStyle(
                         fontSize: 16,
                         color: Theme.of(context).colorScheme.onSurfaceVariant,
@@ -1057,7 +1060,13 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
           width: double.maxFinite,
           child: GridView.builder(
             shrinkWrap: true,
-            itemCount: 30,
+            // Allow day 1-31. Months without day 31 (or 30, or 29 in Feb) are
+            // handled server-side by processPushkaAutoEmpty in
+            // functions/index.js: it clamps the configured day to the actual
+            // month length, so picking 31 fires on the 30th in April / 28th in
+            // February. The picker should not silently forbid the user's
+            // legitimate choice.
+            itemCount: 31,
             gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
               crossAxisCount: 7,
               mainAxisSpacing: 8,
@@ -1083,6 +1092,19 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
     if (result != null && mounted) {
       setState(() => _dayOfMonth = result);
     }
+  }
+
+  /// Short currency glyph for the amount input prefix. Mirrors the mapping in
+  /// pushka_screen.dart::_shortSymbol — kept in sync so the auto-empty amount
+  /// field shows the same "$"/"₪"/"€"/"R$" the rest of the app uses.
+  String _shortCurrencySymbol(String code) {
+    const symbols = {
+      'usd': '\$', 'eur': '€', 'gbp': '£', 'cad': 'C\$', 'aud': '\$',
+      'mxn': '\$', 'ars': '\$', 'brl': 'R\$', 'ils': '₪',
+      'clp': '\$', 'cop': '\$', 'uyu': '\$', 'pen': 'S/',
+      'bob': 'Bs', 'gtq': 'Q', 'dop': 'RD\$',
+    };
+    return symbols[code.toLowerCase()] ?? '\$';
   }
 
   String _weekdayLabel(int weekday) {

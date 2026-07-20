@@ -160,6 +160,16 @@ Future<void> _performDeferredInit() async {
     }
     initNotificationNavigation();
     startDeepLinkListener((slug) {
+      // Warm-start deep-link race: if the user is signed OUT when a join
+      // link arrives, `router.go('/join/$slug')` gets redirected to /login
+      // by the auth guard and the slug is lost. Mirror the cold-start path
+      // (initDeepLinks → pendingJoinSlug) so the router's post-login redirect
+      // (loggedIn && pendingJoinSlug != null → /join/{slug}) picks it up
+      // after the user authenticates.
+      if (FirebaseAuth.instance.currentUser == null) {
+        pendingJoinSlug = slug;
+        return;
+      }
       router.go('/join/$slug');
     });
   }

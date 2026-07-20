@@ -1073,6 +1073,7 @@ class S {
 
   String get myOrganizations => _t('Mis organizaciones', 'My organizations', 'Mes organisations', 'הארגונים שלי');
   String get addOrganization => _t('Agregar organización', 'Add organization', 'Ajouter une organisation', 'הוסף ארגון');
+  String get switchOrganization => _t('Cambiar de organización', 'Switch organization', "Changer d'organisation", 'החלף ארגון');
 
   // ---------------------------------------------------------------------------
   // QR WALLET DIALOG
@@ -1148,6 +1149,12 @@ class S {
   String get uploadingPhoto => _t('Subiendo foto...', 'Uploading photo...', 'Envoi de la photo...', 'מעלה תמונה...');
   String get photoUpdated => _t('Foto actualizada', 'Photo updated', 'Photo mise à jour', 'התמונה עודכנה');
   String get couldNotUploadPhoto => _t('No se pudo subir la foto', 'Could not upload photo', "Impossible de télécharger la photo", 'לא ניתן להעלות את התמונה');
+  String imageTooLarge(String size, String max) => _t(
+    'Imagen demasiado grande (${size}MB). Máximo permitido: ${max}MB.',
+    'Image too large (${size}MB). Maximum allowed: ${max}MB.',
+    'Image trop volumineuse ($size Mo). Maximum autorisé : $max Mo.',
+    'התמונה גדולה מדי (${size}MB). המקסימום המותר: ${max}MB.',
+  );
 
   // ---------------------------------------------------------------------------
   // SAVED CARDS
@@ -1264,6 +1271,82 @@ class S {
   String get tenantJoin => _t('Unirme', 'Join', 'Rejoindre', 'הצטרף');
   String get tenantSearch => _t('Buscar', 'Search', 'Rechercher', 'חפש');
   String get tenantCancel => _t('Cancelar', 'Cancel', 'Annuler', 'ביטול');
+
+  // TENANT CODE SCREEN (pre-tenant-join, uses system locale)
+  String get tenantCodeTitle => _t(
+    'Ingresá el código de invitación',
+    'Enter your invite code',
+    "Saisissez votre code d'invitation",
+    'הזן את קוד ההזמנה',
+  );
+  String get tenantCodeSubtitle => _t(
+    'Tu rab te lo compartió por mensaje.',
+    'Your rabbi shared it with you by message.',
+    'Votre rabbin vous l\'a partagé par message.',
+    'הרב שלך שיתף אותו איתך בהודעה.',
+  );
+  String get tenantCodeJoinButton => _t('Unirse', 'Join', 'Rejoindre', 'הצטרף');
+  String get tenantCodeLostCode => _t(
+    '¿Perdiste el código? Contactá a tu rab',
+    'Lost the code? Contact your rabbi',
+    'Code perdu ? Contactez votre rabbin',
+    'אבד לך הקוד? צור קשר עם הרב שלך',
+  );
+  String get tenantCodeSignOut => _t('Cerrar sesión', 'Sign out', 'Déconnexion', 'התנתק');
+  String get tenantCodeMailSubject => _t(
+    'Ayuda para unirme a mi organización',
+    'Help joining my organization',
+    'Aide pour rejoindre mon organisation',
+    'עזרה להצטרף לארגון שלי',
+  );
+  String get tenantCodeMailOpenFailed => _t(
+    'No se pudo abrir el mail. Escribí a ioelkatz@gmail.com.',
+    'Could not open mail. Write to ioelkatz@gmail.com.',
+    'Impossible d\'ouvrir l\'e-mail. Écrivez à ioelkatz@gmail.com.',
+    'לא ניתן לפתוח את הדוא"ל. כתוב אל ioelkatz@gmail.com.',
+  );
+  String get tenantCodeErrorGeneric => _t(
+    'Error al unirse. Intentá de nuevo.',
+    'Error joining. Please try again.',
+    'Erreur lors de l\'adhésion. Veuillez réessayer.',
+    'שגיאה בהצטרפות. נסה שוב.',
+  );
+  String get tenantCodeErrorNotFound => _t(
+    'Código no encontrado. Verificá que sea correcto.',
+    'Code not found. Please check it.',
+    'Code introuvable. Veuillez vérifier.',
+    'הקוד לא נמצא. אנא בדוק שהוא נכון.',
+  );
+  String tenantCodeErrorRateLimitMins(int mins) => _t(
+    'Demasiados intentos. Esperá $mins minutos.',
+    'Too many attempts. Wait $mins minutes.',
+    'Trop de tentatives. Attendez $mins minutes.',
+    'יותר מדי ניסיונות. המתן $mins דקות.',
+  );
+  String get tenantCodeErrorRateLimitOne => _t(
+    'Demasiados intentos. Esperá 1 minuto.',
+    'Too many attempts. Wait 1 minute.',
+    'Trop de tentatives. Attendez 1 minute.',
+    'יותר מדי ניסיונות. המתן דקה אחת.',
+  );
+  String get tenantCodeErrorRateLimitGeneric => _t(
+    'Demasiados intentos. Esperá unos minutos.',
+    'Too many attempts. Wait a few minutes.',
+    'Trop de tentatives. Attendez quelques minutes.',
+    'יותר מדי ניסיונות. המתן מספר דקות.',
+  );
+  String get tenantCodeErrorSessionExpired => _t(
+    'Tu sesión expiró. Cerrá sesión y volvé a entrar.',
+    'Your session expired. Sign out and back in.',
+    'Votre session a expiré. Déconnectez-vous et reconnectez-vous.',
+    'הפגישה שלך פגה. התנתק והתחבר מחדש.',
+  );
+  String get tenantCodeErrorUnavailable => _t(
+    'Esta organización no está disponible.',
+    'This organization is not available.',
+    'Cette organisation n\'est pas disponible.',
+    'הארגון הזה אינו זמין.',
+  );
 
   // ---------------------------------------------------------------------------
   // TENANT SUSPENDED SCREEN

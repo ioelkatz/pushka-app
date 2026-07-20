@@ -15,6 +15,13 @@ admin.initializeApp();
 const db = admin.firestore();
 const messaging = admin.messaging();
 
+// In-memory per-instance cache of tenant appName, used by onTransactionCreated
+// to avoid a Firestore read on every donation notification. TTL keeps stale
+// data bounded (onTenantBrandingUpdated propagates changes within seconds via
+// user-side denorm; this fallback tolerates a few-minute lag on the title).
+const _tenantAppNameCache = new Map();
+const TENANT_APPNAME_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
 // ---------------------------------------------------------------------------
 // Rate limiting — Firestore-backed sliding window counter
 // ---------------------------------------------------------------------------
@@ -453,14 +460,35 @@ async function resolveUidFromCharge(charge, stripe) {
   const paymentIntentId = typeof charge?.payment_intent === "string" ?
     charge.payment_intent :
     charge?.payment_intent?.id;
-  if (!paymentIntentId) return null;
-
-  try {
-    const paymentIntent = await stripe.paymentIntents.retrieve(paymentIntentId);
-    return paymentIntent?.metadata?.uid || null;
-  } catch (_) {
-    return null;
+  if (paymentIntentId) {
+    try {
+      const paymentIntent = await stripe.paymentIntents.retrieve(paymentIntentId);
+      const piUid = paymentIntent?.metadata?.uid;
+      if (piUid) return piUid;
+    } catch (_) { /* fall through to invoice/subscription lookup */ }
   }
+
+  // Subscription-generated charges: PI metadata is empty (Stripe generates
+  // the PI from the invoice). Walk charge → invoice → subscription and use
+  // the subscription's metadata.uid instead. This matters for
+  // recurring-donation refunds/disputes — without it, resolveUidFromCharge
+  // silently returns null and the negating tx is never written.
+  const invoiceId = typeof charge?.invoice === "string"
+    ? charge.invoice
+    : charge?.invoice?.id;
+  if (invoiceId) {
+    try {
+      const invoice = await stripe.invoices.retrieve(invoiceId);
+      const subId = typeof invoice?.subscription === "string"
+        ? invoice.subscription
+        : invoice?.subscription?.id;
+      if (subId) {
+        const sub = await stripe.subscriptions.retrieve(subId);
+        if (sub?.metadata?.uid) return sub.metadata.uid;
+      }
+    } catch (_) { /* ignore */ }
+  }
+  return null;
 }
 
 async function writeUserPaymentEvent(uid, eventId, data) {
@@ -1332,26 +1360,47 @@ exports.createDonationSubscription = onCall(
     const userData = userSnap.exists ? (userSnap.data() ?? {}) : {};
     const tenantId = userData.tenantId ?? null;
 
+    // Refuse recurring donations for tenants without Connect setup.
+    // Mirrors createPaymentIntent guards (see functions/index.js:716-770).
+    // Without these checks a monthly recurring charge would silently route
+    // to the platform Stripe account every month instead of the tenant —
+    // far worse than a single one-shot misroute because it compounds.
+    if (!tenantId) {
+      throw new HttpsError(
+        "failed-precondition",
+        "Tu cuenta no está asociada a ninguna organización.",
+      );
+    }
     let tenantConnectAccountId = null;
     let tenantCommissionRate = 0;
-    if (tenantId) {
-      const tenantSnap = await db.collection("tenants").doc(tenantId).get();
-      if (tenantSnap.exists) {
-        const td = tenantSnap.data();
-        if (td.status === "suspended") {
-          throw new HttpsError("permission-denied", "El servicio de tu organización está suspendido.");
-        }
-        const cs = td.stripeConnectStatus;
-        const cid = td.stripeConnectAccountId;
-        if (cs === "active" && cid) {
-          tenantConnectAccountId = cid;
-          tenantCommissionRate = safeTenantCommissionRate(td.commissionRate, tenantId);
-        } else if (cid && cs !== "active") {
-          throw new HttpsError(
-            "failed-precondition",
-            "Tu organización está temporalmente sin conexión con el procesador de pagos.",
-          );
-        }
+    const tenantSnap = await db.collection("tenants").doc(tenantId).get();
+    if (!tenantSnap.exists) {
+      throw new HttpsError(
+        "failed-precondition",
+        "Tu organización no está lista para recibir donaciones recurrentes.",
+      );
+    }
+    {
+      const td = tenantSnap.data();
+      if (td.status === "suspended") {
+        throw new HttpsError("permission-denied", "El servicio de tu organización está suspendido.");
+      }
+      const cs = td.stripeConnectStatus;
+      const cid = td.stripeConnectAccountId;
+      if (cs === "active" && cid) {
+        tenantConnectAccountId = cid;
+        tenantCommissionRate = safeTenantCommissionRate(td.commissionRate, tenantId);
+      } else if (cid && cs !== "active") {
+        throw new HttpsError(
+          "failed-precondition",
+          "Tu organización está temporalmente sin conexión con el procesador de pagos.",
+        );
+      } else if (!cid) {
+        throw new HttpsError(
+          "failed-precondition",
+          "Esta organización todavía no completó la configuración de pagos. " +
+          "Avisale al administrador para que active Stripe Connect.",
+        );
       }
     }
 
@@ -2670,52 +2719,98 @@ exports.stripeWebhook = onRequest(
           // a PI whose original positive tx was never written — a permanent
           // orphan in user history. Tag the row with `originalMissing` so
           // ops can spot it; admin aggregates can choose to exclude.
+          //
+          // Multi-partial refund fix: charge.amount_refunded is Stripe's
+          // CUMULATIVE field, so refundedAmount grows on each partial
+          // refund event ($30 then $80 for two $30/$50 refunds). Blindly
+          // decrementing that would over-charge the tenant. We store
+          // lastAppliedRefundAmount on the refund tx doc and only decrement
+          // the delta since last event. Wrapped in a Firestore transaction
+          // so concurrent duplicate deliveries can't double-decrement.
+          //
+          // Try both PI-keyed doc (regular donations) and inv-keyed doc
+          // (subscription-generated charges) for tenant resolution.
           const originalTxRef = db
             .collection("users").doc(uid)
             .collection("transactions").doc(paymentIntentId);
-          const originalTxSnap = await originalTxRef.get();
-          const originalMissing = !originalTxSnap.exists;
-          if (originalMissing) {
-            console.warn("stripeWebhook: refund_before_original", {
-              uid, paymentIntentId, chargeId: charge.id, eventId: event.id,
-              note: "negating tx written with originalMissing flag — ops should reconcile",
-            });
-          }
-
+          const invoiceId = typeof charge.invoice === "string"
+            ? charge.invoice
+            : (charge.invoice?.id || null);
+          const invoiceTxRef = invoiceId
+            ? db.collection("users").doc(uid)
+                .collection("transactions").doc(`inv_${invoiceId}`)
+            : null;
+          const refundTxRef = db
+            .collection("users").doc(uid)
+            .collection("transactions").doc(`refund_${charge.id}`);
           const txRates = await getExchangeRates(null);
-          const txSnap = buildCurrencySnapshot(refundedAmount, currency, txRates);
-          // Negate snapshot fields too — buildCurrencySnapshot returns positive
-          // amounts; flip every numeric value so MXN/USD aggregates net out.
-          const negativeSnap = {};
-          for (const [k, v] of Object.entries(txSnap)) {
-            negativeSnap[k] = typeof v === "number" ? -v : v;
-          }
-          await db
-            .collection("users")
-            .doc(uid)
-            .collection("transactions")
-            .doc(`refund_${charge.id}`)
-            .set({
+
+          await db.runTransaction(async (tx) => {
+            const readTargets = [tx.get(originalTxRef), tx.get(refundTxRef)];
+            if (invoiceTxRef) readTargets.push(tx.get(invoiceTxRef));
+            const snaps = await Promise.all(readTargets);
+            const originalTxSnap = snaps[0];
+            const refundTxSnap = snaps[1];
+            const invoiceTxSnap = invoiceTxRef ? snaps[2] : null;
+
+            const originalMissing = !originalTxSnap.exists && !(invoiceTxSnap && invoiceTxSnap.exists);
+            if (originalMissing) {
+              console.warn("stripeWebhook: refund_before_original", {
+                uid, paymentIntentId, chargeId: charge.id, invoiceId, eventId: event.id,
+                note: "negating tx written with originalMissing flag — ops should reconcile",
+              });
+            }
+
+            const lastApplied = Number(refundTxSnap.data()?.lastAppliedRefundAmount) || 0;
+            const deltaAmount = refundedAmount - lastApplied;
+            if (deltaAmount <= 0) {
+              // Duplicate or out-of-order delivery — already accounted for.
+              console.warn("stripeWebhook: refund_delta_nonpositive", {
+                uid, chargeId: charge.id, refundedAmount, lastApplied, eventId: event.id,
+              });
+              return;
+            }
+
+            // The tx doc reflects the CUMULATIVE negative amount (audit-friendly),
+            // while the decrement uses only the per-event DELTA.
+            const cumulativeSnap = buildCurrencySnapshot(refundedAmount, currency, txRates);
+            const deltaSnap = buildCurrencySnapshot(deltaAmount, currency, txRates);
+            const negativeSnap = {};
+            for (const [k, v] of Object.entries(cumulativeSnap)) {
+              negativeSnap[k] = typeof v === "number" ? -v : v;
+            }
+            tx.set(refundTxRef, {
               type: "refund",
               amount: -refundedAmount,
               currencyCode: currency,
               ...negativeSnap,
               description: "Reembolso Stripe",
               originalPaymentIntentId: paymentIntentId,
+              originalInvoiceId: invoiceId || null,
               originalChargeId: charge.id,
+              lastAppliedRefundAmount: refundedAmount,
               ...(originalMissing ? { originalMissing: true } : {}),
               createdAt: admin.firestore.FieldValue.serverTimestamp(),
+              updatedAt: admin.firestore.FieldValue.serverTimestamp(),
             }, { merge: true });
 
-          // BUG-024 fix: also decrement tenant revenue counter so admin
-          // finance dashboards show net donations (gross minus refunds).
-          // Resolve tenantId from the original tx (refunds inherit it).
-          const refundTenantId = originalTxSnap.exists
-            ? originalTxSnap.data()?.tenantId ?? null
-            : null;
-          if (refundTenantId && txSnap.amountUSD) {
-            await decrementTenantRevenue(refundTenantId, txSnap.amountUSD);
-          }
+            // BUG-024 fix: also decrement tenant revenue counter so admin
+            // finance dashboards show net donations (gross minus refunds).
+            // Resolve tenantId from the original tx (refunds inherit it).
+            const refundTenantId = (originalTxSnap.exists
+              ? originalTxSnap.data()?.tenantId
+              : (invoiceTxSnap?.exists ? invoiceTxSnap.data()?.tenantId : null)) ?? null;
+            if (refundTenantId && deltaSnap.amountUSD > 0) {
+              const now = new Date();
+              const monthKey = `${now.getUTCFullYear()}_${String(now.getUTCMonth() + 1).padStart(2, "0")}`;
+              tx.set(db.collection("tenants").doc(refundTenantId), {
+                revenueStats: {
+                  [monthKey]: { revenue: admin.firestore.FieldValue.increment(-deltaSnap.amountUSD) },
+                  allTime: { revenue: admin.firestore.FieldValue.increment(-deltaSnap.amountUSD) },
+                },
+              }, { merge: true });
+            }
+          });
         }
       }
 
@@ -2782,6 +2877,36 @@ exports.stripeWebhook = onRequest(
               disputeStatus: dispute.status || "needs_response",
               createdAt: admin.firestore.FieldValue.serverTimestamp(),
             }, { merge: true });
+
+          // Decrement tenant revenue so admin dashboards reflect the loss
+          // (mirrors the refund handler). Resolve tenantId from the original
+          // tx — try both PI-keyed (regular donations) and inv-keyed
+          // (subscription-generated charges) doc paths.
+          try {
+            let refundTenantId = null;
+            if (paymentIntentId) {
+              const origSnap = await db.collection("users").doc(uid)
+                .collection("transactions").doc(paymentIntentId).get();
+              if (origSnap.exists) refundTenantId = origSnap.data()?.tenantId ?? null;
+            }
+            if (!refundTenantId) {
+              const invoiceId = typeof charge?.invoice === "string"
+                ? charge.invoice
+                : charge?.invoice?.id;
+              if (invoiceId) {
+                const invSnap = await db.collection("users").doc(uid)
+                  .collection("transactions").doc(`inv_${invoiceId}`).get();
+                if (invSnap.exists) refundTenantId = invSnap.data()?.tenantId ?? null;
+              }
+            }
+            if (refundTenantId && txSnap.amountUSD > 0) {
+              await decrementTenantRevenue(refundTenantId, txSnap.amountUSD);
+            }
+          } catch (revErr) {
+            console.warn("dispute.created: revenue decrement failed (non-fatal)", {
+              uid, chargeId, err: revErr?.message,
+            });
+          }
         }
       }
 
@@ -2852,13 +2977,56 @@ exports.stripeWebhook = onRequest(
         // If we won, delete the negating chargeback tx so the original
         // donation re-counts in totals. If lost, leave it (loss is real).
         if (dispute.status === "won") {
-          await db
-            .collection("users")
-            .doc(uid)
-            .collection("transactions")
-            .doc(`dispute_${dispute.id}`)
-            .delete()
-            .catch(() => { /* never written, ignore */ });
+          // Reverse the tenant-revenue decrement written by dispute.created.
+          // Read the chargeback tx BEFORE deleting to recover the tenantId
+          // and amount snapshot. Fire-and-forget so a failed increment
+          // doesn't block the deletion.
+          const disputeTxRef = db.collection("users").doc(uid)
+            .collection("transactions").doc(`dispute_${dispute.id}`);
+          try {
+            const disputeTxSnap = await disputeTxRef.get();
+            const disputeTx = disputeTxSnap.exists ? disputeTxSnap.data() : null;
+            // Look up the original tx to recover tenantId (chargeback tx
+            // itself doesn't store tenantId in the current schema).
+            let refundTenantId = null;
+            const origPiId = disputeTx?.originalPaymentIntentId || null;
+            if (origPiId) {
+              const origSnap = await db.collection("users").doc(uid)
+                .collection("transactions").doc(origPiId).get();
+              if (origSnap.exists) refundTenantId = origSnap.data()?.tenantId ?? null;
+            }
+            if (!refundTenantId) {
+              const invId = typeof charge?.invoice === "string"
+                ? charge.invoice
+                : charge?.invoice?.id;
+              if (invId) {
+                const invSnap = await db.collection("users").doc(uid)
+                  .collection("transactions").doc(`inv_${invId}`).get();
+                if (invSnap.exists) refundTenantId = invSnap.data()?.tenantId ?? null;
+              }
+            }
+            // amountUSD stored on chargeback is negative (we flipped signs) —
+            // reinstate by adding back the absolute value.
+            const negUsd = Number(disputeTx?.amountUSD || 0);
+            const reinstateUsd = Math.abs(negUsd);
+            if (refundTenantId && reinstateUsd > 0) {
+              // Revenue-only reinstate (do NOT bump count — dispute.created
+              // didn't decrement it, so incrementing would create drift).
+              const nowD = new Date();
+              const monthKeyD = `${nowD.getUTCFullYear()}_${String(nowD.getUTCMonth() + 1).padStart(2, "0")}`;
+              await db.collection("tenants").doc(refundTenantId).set({
+                revenueStats: {
+                  [monthKeyD]: { revenue: admin.firestore.FieldValue.increment(reinstateUsd) },
+                  allTime: { revenue: admin.firestore.FieldValue.increment(reinstateUsd) },
+                },
+              }, { merge: true });
+            }
+          } catch (reinstateErr) {
+            console.warn("dispute.closed(won): revenue reinstate failed (non-fatal)", {
+              uid, disputeId: dispute.id, err: reinstateErr?.message,
+            });
+          }
+          await disputeTxRef.delete().catch(() => { /* never written, ignore */ });
         }
       }
 
@@ -3281,12 +3449,26 @@ exports.onTransactionCreated = onDocumentCreated(
     // Title: prefer the tenant's appName so the notification matches the
     // branded UI the donor sees in-app. Falls back to "Pushka" for legacy
     // transactions without a tenantId or when the tenant doc is unreachable.
+    //
+    // Perf: cache appName per tenantId in a module-level Map with a 5 min
+    // TTL. Without this every single donation triggered a fresh
+    // tenants/{id} read; on a hot tenant that's one Firestore read per
+    // donation on top of the trigger overhead. The cache lives inside the
+    // warm instance — cold starts re-fetch, which is fine (appName rarely
+    // changes and onTenantBrandingUpdated will invalidate the whole
+    // container within a few minutes anyway).
     let title = "Pushka";
     if (tenantId) {
       try {
-        const tSnap = await db.collection("tenants").doc(tenantId).get();
-        const appName = String(tSnap.data()?.appName || "").trim();
-        if (appName) title = appName;
+        const cached = _tenantAppNameCache.get(tenantId);
+        if (cached && (Date.now() - cached.at) < TENANT_APPNAME_TTL_MS) {
+          if (cached.appName) title = cached.appName;
+        } else {
+          const tSnap = await db.collection("tenants").doc(tenantId).get();
+          const appName = String(tSnap.data()?.appName || "").trim();
+          _tenantAppNameCache.set(tenantId, { appName, at: Date.now() });
+          if (appName) title = appName;
+        }
       } catch (_) { /* keep default */ }
     }
 
@@ -3915,10 +4097,36 @@ async function _runPushkaAutoEmptyTick() {
               updatedAt: admin.firestore.FieldValue.serverTimestamp(),
             }, { merge: true });
             return;
+          } else if (!connectAccountId) {
+            // Tenant never set up Connect. Previously we fell through to a
+            // platform charge, which silently routed donor money to Pushka
+            // instead of the tenant. Auto-empty is a BACKGROUND operation —
+            // the donor didn't opt into this specific charge, so misrouting
+            // it is worse than skipping. Defer 24h and log an activity so
+            // the tenant_admin gets nudged.
+            console.warn("processPushkaAutoEmpty: skip_no_connect", {
+              uid, tenantId,
+            });
+            tx.set(stateRef, {
+              autoEmptyNextRunAt: admin.firestore.Timestamp.fromDate(
+                new Date(Date.now() + AUTO_EMPTY_RETRY_AFTER_FAILURE_HOURS * 3600 * 1000),
+              ),
+              _lastAutoEmptySkipReason: "tenant_connect_not_configured",
+              _lastAutoEmptySkipAt: admin.firestore.FieldValue.serverTimestamp(),
+              updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            }, { merge: true });
+            // Fire-and-forget activity log outside the transaction — we
+            // can't await inside runTransaction anyway. Best-effort.
+            Promise.resolve().then(() => writeActivityLog({
+              type: "auto_empty_skipped_no_connect",
+              tenantId,
+              tenantName: tenantData?.name ?? tenantId,
+              severity: "warning",
+              requiresAction: true,
+              data: { uid },
+            })).catch(() => {});
+            return;
           }
-          // connectAccountId == null && status != active → tenant never set
-          // up Connect → fall through to platform charge (legacy behavior
-          // for tenants in onboarding).
 
           // Capture the in-flight lock + the original due timestamp (used as
           // the Stripe idempotency key so a retry produces the same PI).
@@ -4006,10 +4214,20 @@ async function _runPushkaAutoEmptyTick() {
         if (plan.tenantConnectAccountId) {
           // Clamp app-fee defensively so a misconfigured commissionRate
           // cannot produce application_fee_amount >= amount (Stripe rejects).
-          const rawFee = Math.floor(amountCents * plan.tenantCommissionRate);
-          const safeFee = Math.max(1, Math.min(rawFee, amountCents - 1));
-          piParams.application_fee_amount = safeFee;
+          //
+          // BUG-013 regression fix: DO NOT floor at 1 cent — commissionRate=0
+          // tenants (e.g. non-profit special deals) must get the full donation
+          // routed to their Connect account, no platform fee at all. When rate
+          // is zero, skip the application_fee_amount field entirely so Stripe
+          // performs a pure destination transfer.
           piParams.transfer_data = { destination: plan.tenantConnectAccountId };
+          if (plan.tenantCommissionRate > 0) {
+            const rawFee = Math.floor(amountCents * plan.tenantCommissionRate);
+            const safeFee = Math.min(rawFee, amountCents - 1);
+            if (safeFee > 0) {
+              piParams.application_fee_amount = safeFee;
+            }
+          }
         }
 
         let paymentIntent;
@@ -4455,6 +4673,19 @@ exports.bootstrapSuperAdmin = onCall(
       admin: true,
     });
 
+    // Mirror to _superAdmins so listAdmins can serve fast.
+    try {
+      await db.collection("_superAdmins").doc(request.auth.uid).set({
+        uid: request.auth.uid,
+        email: callerEmail ?? null,
+        displayName: callerRecord.displayName ?? null,
+        grantedBy: "bootstrap",
+        grantedAt: admin.firestore.FieldValue.serverTimestamp(),
+      }, { merge: true });
+    } catch (mirrorErr) {
+      console.warn("bootstrapSuperAdmin: mirror write failed (non-fatal)", { err: mirrorErr?.message });
+    }
+
     console.info("bootstrapSuperAdmin: claim granted", {
       uid: request.auth.uid,
       email: callerEmail,
@@ -4493,6 +4724,16 @@ exports.claimPendingTenantAdmin = onCall(
     // (in practice Firebase Auth rotates the token on email change, but
     // belt + suspenders for a security-relevant lookup).
     const callerRecord = await admin.auth().getUser(callerUid);
+    // Security: an unverified email lets an attacker sign up with somebody
+    // else's address (Firebase Auth allows this) and steal a pending
+    // tenant_admin invitation. Require ownership proof via a verified email
+    // before granting any claim.
+    if (!callerRecord.emailVerified) {
+      throw new HttpsError(
+        "failed-precondition",
+        "Debes verificar tu correo electrónico antes de aceptar una invitación."
+      );
+    }
     const email = String(callerRecord.email || "").toLowerCase().trim();
     if (!email) {
       return { applied: false, reason: "no_email" };
@@ -4745,6 +4986,30 @@ exports.setAdminClaim = onCall(
 
     await admin.auth().setCustomUserClaims(targetRecord.uid, newClaims);
 
+    // Mirror super_admin state to Firestore so listAdmins can query it in
+    // O(1) instead of paginating the entire Auth directory. The mirror is
+    // authoritative for listing UX; the custom claim remains authoritative
+    // for authorization (never trust the mirror alone).
+    try {
+      const superRef = db.collection("_superAdmins").doc(targetRecord.uid);
+      if (newClaims.role === "super_admin") {
+        await superRef.set({
+          uid: targetRecord.uid,
+          email: targetRecord.email ?? null,
+          displayName: targetRecord.displayName ?? null,
+          grantedBy: callerUid,
+          grantedAt: admin.firestore.FieldValue.serverTimestamp(),
+        }, { merge: true });
+      } else {
+        // revoke or role change to something non-super — delete mirror.
+        await superRef.delete().catch(() => {});
+      }
+    } catch (mirrorErr) {
+      console.warn("setAdminClaim: superAdmin mirror update failed (non-fatal)", {
+        uid: targetRecord.uid, err: mirrorErr?.message,
+      });
+    }
+
     // Maintain tenants/{tenantId}/team subcollection for tenant roles
     const teamTenantId = revoke ? (targetExistingClaims.tenantId ?? tenantId) : tenantId;
     if (teamTenantId && (revoke || role === "tenant_admin" || role === "tenant_collaborator")) {
@@ -4861,18 +5126,47 @@ exports.listAdmins = onCall(
       return { admins: await buildTenantTeam(requestedTenantId) };
     }
 
-    // super_admin with no tenantId: return only super admins (paginate Auth)
+    // super_admin with no tenantId: return only super admins.
+    // Preferred path: read the `_superAdmins` Firestore mirror maintained by
+    // setAdminClaim. Fallback: paginate Firebase Auth (first-run bootstrap
+    // before any grant has populated the mirror, and belt-and-suspenders if
+    // the mirror is empty for any reason).
+    try {
+      const mirrorSnap = await db.collection("_superAdmins").limit(500).get();
+      if (!mirrorSnap.empty) {
+        const admins = mirrorSnap.docs.map((d) => {
+          const m = d.data() || {};
+          return {
+            uid: m.uid || d.id,
+            email: m.email || null,
+            displayName: m.displayName || null,
+            role: "super_admin",
+            tenantId: null,
+          };
+        });
+        return { admins };
+      }
+    } catch (mirrorErr) {
+      console.warn("listAdmins: mirror read failed, falling back to Auth pagination", {
+        err: mirrorErr?.message,
+      });
+    }
+
+    // Fallback: paginate Auth users. This is the O(N) path we replaced;
+    // kept for bootstrap and defense-in-depth. The pageSize is small (200)
+    // and MAX_PAGES tight (5) — the fallback is only meant to seed the
+    // mirror on first use, not to serve dashboards long-term.
     const allUsers = [];
     let pageToken;
     let pages = 0;
-    const MAX_PAGES = 50;
+    const MAX_PAGES = 5;
     do {
-      const listResult = await admin.auth().listUsers(1000, pageToken);
+      const listResult = await admin.auth().listUsers(200, pageToken);
       allUsers.push(...listResult.users);
       pageToken = listResult.pageToken;
       pages += 1;
       if (pages >= MAX_PAGES) {
-        console.warn("listAdmins: hit MAX_PAGES cap; results truncated", { pages, totalSoFar: allUsers.length });
+        console.warn("listAdmins: hit fallback MAX_PAGES cap; results truncated", { pages, totalSoFar: allUsers.length });
         break;
       }
     } while (pageToken);
@@ -4886,6 +5180,22 @@ exports.listAdmins = onCall(
         role: "super_admin",
         tenantId: null,
       }));
+
+    // Best-effort mirror backfill so subsequent calls take the fast path.
+    if (admins.length > 0) {
+      Promise.resolve().then(async () => {
+        for (const a of admins) {
+          try {
+            await db.collection("_superAdmins").doc(a.uid).set({
+              uid: a.uid,
+              email: a.email ?? null,
+              displayName: a.displayName ?? null,
+              backfilledAt: admin.firestore.FieldValue.serverTimestamp(),
+            }, { merge: true });
+          } catch (_) { /* non-fatal */ }
+        }
+      }).catch(() => {});
+    }
 
     return { admins };
   }
@@ -4923,10 +5233,17 @@ exports.getAdminStats = onCall(
 
     const rates = await getExchangeRates(null);
 
-    // Fetch users — filtered by tenant if needed
+    // Fetch users — filtered by tenant if needed.
+    // Hard cap the unscoped read at 1000 to prevent OOM once the project
+    // grows past a few thousand users. The dashboard totals will show
+    // "based on latest 1000 users" beyond that threshold — good enough
+    // until we denormalize into tenantAggregates counters.
+    // TODO(future): replace with pre-aggregated tenantAggregates read +
+    // db.collection('users').count().get() aggregate for the total count.
+    const USERS_HARD_CAP = 1000;
     const usersQuery = filterTenantId
-      ? db.collection("users").where("tenantId", "==", filterTenantId)
-      : db.collection("users");
+      ? db.collection("users").where("tenantId", "==", filterTenantId).limit(USERS_HARD_CAP)
+      : db.collection("users").limit(USERS_HARD_CAP);
 
     // Bound the transaction scan: dashboard only displays the last 12 months
     // anyway. Scanning the full collectionGroup unbounded OOMs the function
@@ -5140,10 +5457,6 @@ exports.getRecentTransactions = onCall(
     const rates = await getExchangeRates(null);
     const mxnRate = rates["MXN"] ?? 17.1;
 
-    const usersQuery = filterTenantId
-      ? db.collection("users").where("tenantId", "==", filterTenantId)
-      : db.collection("users");
-
     // Use Firestore's index instead of fetch-all-then-sort. When filtering by
     // tenant we can take advantage of the (tenantId ASC, createdAt DESC)
     // collection-group composite index, dropping the read cost from O(2000)
@@ -5163,13 +5476,39 @@ exports.getRecentTransactions = onCall(
           .limit(FETCH_CAP)
           .get();
 
-    const usersSnap = await usersQuery.get();
-
+    // Build displayName map only for the uids that actually appear in the
+    // fetched txs (max FETCH_CAP unique donors). Previously we read the
+    // ENTIRE users collection to build this map — an O(N) scan that scaled
+    // with tenant size and blew the memory budget on large tenants. Batched
+    // getAll in chunks of 30 (Firestore per-request limit).
+    const uniqueUids = Array.from(new Set(
+      txSnap.docs.map((d) => d.ref.parent.parent?.id).filter(Boolean)
+    ));
     const userMap = {};
-    usersSnap.docs.forEach((d) => {
-      const u = d.data();
-      userMap[d.id] = { displayName: u.displayName || u.email || d.id, email: u.email || "" };
-    });
+    const USER_BATCH = 30;
+    for (let i = 0; i < uniqueUids.length; i += USER_BATCH) {
+      const chunk = uniqueUids.slice(i, i + USER_BATCH);
+      const refs = chunk.map((id) => db.collection("users").doc(id));
+      let docs = [];
+      try {
+        docs = await db.getAll(...refs);
+      } catch (err) {
+        console.warn("getRecentTransactions: users.getAll chunk failed", { err: err?.message });
+        continue;
+      }
+      docs.forEach((d) => {
+        if (!d.exists) return;
+        const u = d.data() ?? {};
+        // Defense-in-depth: when a tenant filter is on, exclude users whose
+        // current tenantId does not match (the tx tenantId stamp already
+        // filters at query time; this catches drift).
+        if (filterTenantId && u.tenantId !== filterTenantId) return;
+        userMap[d.id] = {
+          displayName: u.displayName || u.email || d.id,
+          email: u.email || "",
+        };
+      });
+    }
 
     // Defense-in-depth: confirm tx owner exists in userMap when tenant-filtering.
     // The query above already restricts via tenantId on the doc, so this
@@ -5430,20 +5769,38 @@ exports.deleteAccount = onCall(
     if (stripeCustomerId && stripeSecret.value()) {
       try {
         const stripe = require("stripe")(stripeSecret.value());
-        // Cancel any active subscriptions
-        const subs = await stripe.subscriptions.list({
-          customer: stripeCustomerId,
-          status: "active",
-          limit: 100,
-        });
-        for (const sub of subs.data) {
+        // Cancel any billable subscription (broad status set — previous
+        // 'active' filter left trialing/past_due/unpaid/paused subs alive,
+        // meaning a deleted donor kept getting rebilled once trial ended).
+        // Skip terminal states (canceled/incomplete_expired) — Stripe would
+        // reject cancel() on them anyway.
+        const cancelableStatuses = ["active", "trialing", "past_due", "unpaid", "paused"];
+        const seenSubIds = new Set();
+        for (const status of cancelableStatuses) {
+          let subs;
           try {
-            await stripe.subscriptions.cancel(sub.id);
-            stripeCleanup.subscriptionsCanceled += 1;
-          } catch (subErr) {
-            console.warn("deleteAccount: subscription cancel failed", {
-              uid, subscriptionId: sub.id, errorMessage: subErr?.message,
+            subs = await stripe.subscriptions.list({
+              customer: stripeCustomerId,
+              status,
+              limit: 100,
             });
+          } catch (listErr) {
+            console.warn("deleteAccount: subscription list failed", {
+              uid, status, errorMessage: listErr?.message,
+            });
+            continue;
+          }
+          for (const sub of subs.data) {
+            if (seenSubIds.has(sub.id)) continue;
+            seenSubIds.add(sub.id);
+            try {
+              await stripe.subscriptions.cancel(sub.id);
+              stripeCleanup.subscriptionsCanceled += 1;
+            } catch (subErr) {
+              console.warn("deleteAccount: subscription cancel failed", {
+                uid, subscriptionId: sub.id, status, errorMessage: subErr?.message,
+              });
+            }
           }
         }
         // Delete customer (detaches all saved PMs)
@@ -5532,6 +5889,30 @@ exports.deleteAccount = onCall(
       docsDeleted,
       storageDeleted,
     });
+
+    // ---- 5b. Decrement tenants.totalUsers for each membership ----
+    // Without this, deleted donors linger in per-tenant counts, inflating
+    // seat metrics forever. Batched in groups of 400 for safety.
+    if (tenantMemberships.length > 0) {
+      const CHUNK = 400;
+      for (let i = 0; i < tenantMemberships.length; i += CHUNK) {
+        const slice = tenantMemberships.slice(i, i + CHUNK);
+        const batch = db.batch();
+        for (const tenantId of slice) {
+          batch.set(db.collection("tenants").doc(tenantId), {
+            totalUsers: admin.firestore.FieldValue.increment(-1),
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          }, { merge: true });
+        }
+        try {
+          await batch.commit();
+        } catch (decErr) {
+          console.warn("deleteAccount: totalUsers decrement failed (non-fatal)", {
+            uid, err: decErr?.message,
+          });
+        }
+      }
+    }
 
     // ---- 6. Delete the parent user doc itself ----
     await userRef.delete().catch(() => { /* idempotent */ });
@@ -5878,20 +6259,28 @@ exports.switchTenant = onCall(
     if (!tenantId) throw new HttpsError("invalid-argument", "tenantId requerido.");
 
     const userRef = db.collection("users").doc(uid);
-    const userSnap = await userRef.get();
-    if (!userSnap.exists) throw new HttpsError("not-found", "Usuario no encontrado.");
 
-    const userData = userSnap.data();
-    const tenantIds = userData.tenantIds || (userData.tenantId ? [userData.tenantId] : []);
+    // Wrapped in a transaction so a concurrent leaveTenant() can't drop the
+    // user's membership between our read and write, leaving them pointed at
+    // a tenant they no longer belong to. The read+write happen atomically:
+    // if leaveTenant races us, one of the two will retry against the fresh
+    // snapshot.
+    await db.runTransaction(async (tx) => {
+      const userSnap = await tx.get(userRef);
+      if (!userSnap.exists) throw new HttpsError("not-found", "Usuario no encontrado.");
 
-    if (!tenantIds.includes(tenantId)) {
-      throw new HttpsError("permission-denied", "No eres miembro de esa organización.");
-    }
+      const userData = userSnap.data();
+      const tenantIds = userData.tenantIds || (userData.tenantId ? [userData.tenantId] : []);
 
-    await userRef.set({
-      tenantId,
-      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-    }, { merge: true });
+      if (!tenantIds.includes(tenantId)) {
+        throw new HttpsError("permission-denied", "No eres miembro de esa organización.");
+      }
+
+      tx.set(userRef, {
+        tenantId,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      }, { merge: true });
+    });
 
     return { success: true, tenantId };
   }
@@ -6094,7 +6483,7 @@ exports.createTenant = onCall(
       contactEmail: String(contactEmail || adminEmail).trim() || null,
       contactPhone: String(contactPhone || "").trim() || null,
       privacyPolicyUrl: String(privacyPolicyUrl || "").trim() || null,
-      termsUrl: String(termsUrl || "").trim() || null,
+      // termsUrl deprecated (Audit Round 4 Bug C) — no longer stored on tenant docs.
       city: String(city || "").trim() || null,
       country: String(country || "").trim() || null,
 
@@ -7283,7 +7672,15 @@ exports.getSuperAdminDashboard = onCall(
 
     const now = new Date();
 
-    const tenantsSnap = await db.collection("tenants").get();
+    // Bounded query: with unlimited .get() the dashboard scales O(tenant
+    // count) and eventually OOMs. Cap at 200 most-recent tenants — plenty
+    // for the near-term while a proper cursor-paginated dashboard is
+    // designed. TODO(future): accept pageToken/startAfter for full paging.
+    const DASHBOARD_TENANT_CAP = 200;
+    const tenantsSnap = await db.collection("tenants")
+      .orderBy("createdAt", "desc")
+      .limit(DASHBOARD_TENANT_CAP)
+      .get();
 
     // Helper: sum revenueStats monthly buckets for the last N months (current month = i=0).
     // monthsBack=1 → current month only, monthsBack=3 → current + 2 back, etc.
@@ -8114,7 +8511,11 @@ exports.deleteTenant = onCall(
       const usersSnap = await q.get();
       if (usersSnap.empty) break;
 
-      const batch = db.batch();
+      // Batch reused across the page. IMPORTANT: after batch.commit(), the
+      // WriteBatch object is closed — any further batch.set/delete on it
+      // will not be re-applied. We MUST reassign `batch = db.batch()` after
+      // every mid-loop commit. Cap at 400 ops (safe margin under 500 limit).
+      let batch = db.batch();
       let batchOps = 0;
       // BUG-030 fix: collect uids whose claims point at this tenant so we
       // can revoke them after the batch commits. We do the claim revocation
@@ -8159,8 +8560,10 @@ exports.deleteTenant = onCall(
         claimRevokes.push(userDoc.id);
 
         // Firestore batch limit is 500. Flush mid-loop if we'd cross it.
-        if (batchOps >= 480) {
+        // Each user adds 2 ops, so 400 is the safe threshold (200 users).
+        if (batchOps >= 400) {
           await batch.commit();
+          batch = db.batch();
           batchOps = 0;
         }
       }
@@ -8197,23 +8600,61 @@ exports.deleteTenant = onCall(
 
     // Also catch users still using the legacy single-tenantId field with no
     // tenantIds array (shouldn't happen post-multitenant migration but guard).
+    // Paginated: an unbounded .get() on a giant users collection would blow
+    // the function's memory budget and the 500-op batch limit at once.
     try {
-      const legacySnap = await db.collection("users")
-        .where("tenantId", "==", tenantId)
-        .get();
-      const legacyBatch = db.batch();
-      for (const u of legacySnap.docs) {
-        // Skip if already handled above (tenantIds array path).
-        if ((u.data().tenantIds ?? []).includes(tenantId)) continue;
-        legacyBatch.set(u.ref, {
-          tenantId: null,
-          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-        }, { merge: true });
-        result.usersUpdated += 1;
+      const LEGACY_PAGE = 400;
+      let legacyLastDoc = null;
+      while (true) {
+        let legacyQ = db.collection("users")
+          .where("tenantId", "==", tenantId)
+          .orderBy("__name__")
+          .limit(LEGACY_PAGE);
+        if (legacyLastDoc) legacyQ = legacyQ.startAfter(legacyLastDoc);
+        const legacySnap = await legacyQ.get();
+        if (legacySnap.empty) break;
+        const legacyBatch = db.batch();
+        let ops = 0;
+        for (const u of legacySnap.docs) {
+          // Skip if already handled above (tenantIds array path).
+          if ((u.data().tenantIds ?? []).includes(tenantId)) continue;
+          legacyBatch.set(u.ref, {
+            tenantId: null,
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          }, { merge: true });
+          result.usersUpdated += 1;
+          ops += 1;
+        }
+        if (ops > 0) await legacyBatch.commit();
+        if (legacySnap.size < LEGACY_PAGE) break;
+        legacyLastDoc = legacySnap.docs[legacySnap.docs.length - 1];
       }
-      if (!legacySnap.empty) await legacyBatch.commit();
     } catch (err) {
       result.warnings.push(`legacy users sweep failed: ${err?.message ?? err}`);
+    }
+
+    // 4b. Cascade-delete tenant subcollections. Firestore does NOT auto-delete
+    // subcollections when the parent doc is deleted — leaving `team` and
+    // `_backfillRuns` docs orphaned in the tree (queryable, wasting quota,
+    // and leaking previous membership emails). Paginated + batched at 400.
+    const tenantSubcollections = ["team", "_backfillRuns"];
+    for (const subName of tenantSubcollections) {
+      try {
+        let subLastDoc = null;
+        while (true) {
+          let subQ = tenantRef.collection(subName).orderBy("__name__").limit(400);
+          if (subLastDoc) subQ = subQ.startAfter(subLastDoc);
+          const subSnap = await subQ.get();
+          if (subSnap.empty) break;
+          const subBatch = db.batch();
+          subSnap.docs.forEach((d) => subBatch.delete(d.ref));
+          await subBatch.commit();
+          if (subSnap.size < 400) break;
+          subLastDoc = subSnap.docs[subSnap.docs.length - 1];
+        }
+      } catch (subErr) {
+        result.warnings.push(`subcollection ${subName} cleanup failed: ${subErr?.message ?? subErr}`);
+      }
     }
 
     // 5. Delete the tenant doc itself.
@@ -8293,6 +8734,45 @@ exports.stripeBillingWebhook = onRequest(
     if (alreadyProcessed) {
       console.info("stripeBillingWebhook: duplicate event skipped", { id: event.id, type: event.type });
       return res.json({ received: true, duplicate: true });
+    }
+
+    // Purpose guard: this endpoint is dedicated to SaaS billing (tenant
+    // paying Pushka). If a donor's recurring-donation invoice is misrouted
+    // here, running the tenant-billing state machine on it would corrupt
+    // billing status (e.g. mark tenant as `grace_period` because a donor's
+    // card was declined). Only proceed for saas_billing subs or legacy subs
+    // without a purpose tag; skip anything explicitly marked donation.
+    try {
+      const obj = event?.data?.object;
+      let purpose = obj?.subscription_details?.metadata?.purpose
+        ?? obj?.metadata?.purpose
+        ?? null;
+      if (!purpose && obj && (obj.object === "invoice" || obj.subscription)) {
+        // Fetch subscription to inspect its metadata.purpose.
+        const subId = typeof obj.subscription === "string"
+          ? obj.subscription
+          : obj.subscription?.id;
+        if (subId) {
+          try {
+            const sub = await stripe.subscriptions.retrieve(subId);
+            purpose = sub?.metadata?.purpose || null;
+          } catch (_) { /* ignore */ }
+        }
+      }
+      if (purpose === "donation_recurring") {
+        console.info("stripeBillingWebhook: donation_recurring event skipped (wrong endpoint)", {
+          eventId: event.id, type: event.type,
+        });
+        await finalizeWebhookEvent(eventRef, {
+          status: "skipped",
+          reason: "donation_recurring_wrong_endpoint",
+        });
+        return res.json({ received: true, skipped: "donation_recurring" });
+      }
+    } catch (purposeErr) {
+      console.warn("stripeBillingWebhook: purpose check failed (non-fatal)", {
+        eventId: event.id, err: purposeErr?.message,
+      });
     }
 
     if (event.type === "invoice.payment_succeeded") {
@@ -8647,11 +9127,25 @@ exports.getDonationReasonStats = onCall(
     // was stamped (BUG-014 legacy data). Without this they'd be excluded
     // from the where("tenantId", "==") query above; with the user-side
     // gate we recover them via the uid path.
+    // Bounded read: cap at 500 users. A giant tenant would previously OOM
+    // the function here. If we ever hit the cap the aggregation may miss
+    // some legacy uids — warn so ops can migrate to backfilling tenantId.
+    // TODO(future): drop this whole gate once BUG-014 backfill runs in prod.
     let tenantUserIds = null;
     if (filterTenantId) {
+      const REASON_USER_CAP = 500;
       const usersSnap = await db.collection("users")
-        .where("tenantId", "==", filterTenantId).get();
+        .where("tenantId", "==", filterTenantId)
+        .limit(REASON_USER_CAP)
+        .get();
       tenantUserIds = new Set(usersSnap.docs.map((d) => d.id));
+      if (usersSnap.size >= REASON_USER_CAP) {
+        console.warn(
+          `getDonationReasonStats: hit REASON_USER_CAP=${REASON_USER_CAP} ` +
+          `for tenant=${filterTenantId} — legacy-uid gate may miss users; ` +
+          `backfill tenantId on legacy transactions to drop this fallback.`
+        );
+      }
     }
 
     const byReason = {};
@@ -8853,6 +9347,12 @@ exports.createCheckoutSession = onCall(
       metadata: {
         uid: request.auth.uid,
         tenantId,
+        // connectAccountId lets the webhook detect Connect drift (donation
+        // routed to an account that was disconnected between session
+        // creation and confirmation). Mirrors what createPaymentIntent
+        // stamps — without it the webhook's drift-detection check silently
+        // no-ops for Checkout-originated donations.
+        connectAccountId: tenantConnectAccountId,
         purpose,
         correlationId,
         ...(donationReason ? { donationReason } : {}),

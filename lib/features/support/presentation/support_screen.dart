@@ -82,6 +82,11 @@ class SupportScreen extends ConsumerWidget {
                     tenantConfig.logoUrl!,
                     height: 112,
                     fit: BoxFit.contain,
+                    // Decode at 2x the 112px display size for retina crispness
+                    // without holding a full-resolution logo (some tenant
+                    // logos ship at 2000px+) in memory.
+                    cacheWidth: 224,
+                    cacheHeight: 224,
                     errorBuilder: (_, _, _) => _defaultRabHeader(),
                   ),
                 )

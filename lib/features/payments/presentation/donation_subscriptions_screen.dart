@@ -1,6 +1,9 @@
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+// Hide TextDirection from intl — it collides with Flutter's dart:ui
+// TextDirection used elsewhere in this file (line 571 rtl check).
+import 'package:intl/intl.dart' hide TextDirection;
 
 import '../../../app/theme/app_tokens.dart';
 import '../../../core/format_utils.dart';
@@ -77,6 +80,13 @@ class _DonationSubscriptionsScreenState
         title: Text(tr.cancelSubscriptionConfirmTitle),
         content: Text(tr.cancelSubscriptionConfirmBody),
         actions: [
+          // Explicit back-out. Without this the dialog had only "Confirm" so
+          // users who tapped Cancel-subscription by mistake had to hit the
+          // Android back button (and iOS users had no obvious escape).
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: Text(tr.cancel),
+          ),
           TextButton(
             onPressed: () => Navigator.of(ctx).pop(true),
             style: TextButton.styleFrom(
@@ -139,13 +149,11 @@ class _DonationSubscriptionsScreenState
 
   String _formatDate(int millis) {
     final d = DateTime.fromMillisecondsSinceEpoch(millis);
-    final lang = Localizations.localeOf(context).languageCode;
-    final months = lang == 'en'
-        ? const ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
-        : lang == 'fr'
-          ? const ['janv.','févr.','mars','avr.','mai','juin','juil.','août','sept.','oct.','nov.','déc.']
-          : const ['ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic'];
-    return '${d.day} ${months[d.month - 1]} ${d.year}';
+    // Hardcoded ES/EN/FR month tables previously fell through to Spanish for
+    // Hebrew and any other locale. DateFormat.yMMMd handles all four app
+    // languages (ES/EN/FR/HE) plus any future locale correctly.
+    final locale = Localizations.localeOf(context).toString();
+    return DateFormat.yMMMd(locale).format(d);
   }
 
   @override

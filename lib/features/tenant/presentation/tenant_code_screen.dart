@@ -8,6 +8,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../../../app/router.dart';
 import '../../../app/theme/app_tokens.dart';
+import '../../../core/l10n/s.dart';
 import '../data/tenant_repository.dart';
 // Join code: "770-JYM". 6 OTP boxes split [7][7][0]–[J][Y][M].
 // Dash is a fixed visual separator. One-tap flow: validate → auto-join.
@@ -113,14 +114,14 @@ class _TenantCodeScreenState extends ConsumerState<TenantCodeScreen> {
       if (mounted) {
         setState(() {
           _loading = false;
-          _error = _humanError(e);
+          _error = _humanError(e, S.of(context));
         });
       }
     } catch (_) {
       if (mounted) {
         setState(() {
           _loading = false;
-          _error = 'Error al unirse. Intentá de nuevo.';
+          _error = S.of(context).tenantCodeErrorGeneric;
         });
       }
     }
@@ -130,16 +131,17 @@ class _TenantCodeScreenState extends ConsumerState<TenantCodeScreen> {
   // (super_admin) que puede guiarlos manualmente. Hardcoded porque en esta
   // pantalla todavía no hay tenantId asociado al user.
   Future<void> _contactSupport() async {
+    final tr = S.of(context);
     final uri = Uri(
       scheme: 'mailto',
       path: 'ioelkatz@gmail.com',
-      queryParameters: {'subject': 'Ayuda para unirme a mi organización'},
+      queryParameters: {'subject': tr.tenantCodeMailSubject},
     );
     try {
       await launchUrl(uri, mode: LaunchMode.externalApplication);
     } catch (_) {
       if (mounted) {
-        setState(() => _error = 'No se pudo abrir el mail. Escribí a ioelkatz@gmail.com.');
+        setState(() => _error = tr.tenantCodeMailOpenFailed);
       }
     }
   }
@@ -158,30 +160,31 @@ class _TenantCodeScreenState extends ConsumerState<TenantCodeScreen> {
   // engañando al usuario ("el código está bien, ¿por qué dice eso?").
   // Idem `resource-exhausted` mostraba "Error al validar" sin pista de
   // que era rate limit.
-  String _humanError(FirebaseFunctionsException e) {
+  String _humanError(FirebaseFunctionsException e, S tr) {
     switch (e.code) {
       case 'not-found':
-        return 'Código no encontrado. Verificá que sea correcto.';
+        return tr.tenantCodeErrorNotFound;
       case 'resource-exhausted':
         final match = RegExp(r'(\d+)\s*segundos').firstMatch(e.message ?? '');
         if (match != null) {
           final secs = int.tryParse(match.group(1) ?? '') ?? 0;
           final mins = (secs / 60).ceil();
-          if (mins <= 1) return 'Demasiados intentos. Esperá 1 minuto.';
-          return 'Demasiados intentos. Esperá $mins minutos.';
+          if (mins <= 1) return tr.tenantCodeErrorRateLimitOne;
+          return tr.tenantCodeErrorRateLimitMins(mins);
         }
-        return 'Demasiados intentos. Esperá unos minutos.';
+        return tr.tenantCodeErrorRateLimitGeneric;
       case 'unauthenticated':
-        return 'Tu sesión expiró. Cerrá sesión y volvé a entrar.';
+        return tr.tenantCodeErrorSessionExpired;
       case 'failed-precondition':
-        return 'Esta organización no está disponible.';
+        return tr.tenantCodeErrorUnavailable;
       default:
-        return 'Error al unirse. Intentá de nuevo.';
+        return tr.tenantCodeErrorGeneric;
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    final tr = S.of(context);
     return Theme(
       data: ThemeData.light(useMaterial3: true).copyWith(
         colorScheme: ColorScheme.fromSeed(
@@ -245,19 +248,20 @@ class _TenantCodeScreenState extends ConsumerState<TenantCodeScreen> {
                             fit: BoxFit.contain,
                           ),
                           const SizedBox(height: 32),
-                          const Text(
-                            'Ingresá el código de invitación',
-                            style: TextStyle(
+                          Text(
+                            tr.tenantCodeTitle,
+                            textAlign: TextAlign.center,
+                            style: const TextStyle(
                               fontSize: 15,
                               fontWeight: FontWeight.w600,
                               color: Color(0xFF1E293B),
                             ),
                           ),
                           const SizedBox(height: 6),
-                          const Text(
-                            'Tu rab te lo compartió por mensaje.',
+                          Text(
+                            tr.tenantCodeSubtitle,
                             textAlign: TextAlign.center,
-                            style: TextStyle(
+                            style: const TextStyle(
                               fontSize: 13,
                               color: Color(0xFF64748B),
                               height: 1.45,
@@ -314,9 +318,9 @@ class _TenantCodeScreenState extends ConsumerState<TenantCodeScreen> {
                                         color: Colors.white,
                                       ),
                                     )
-                                  : const Text(
-                                      'Unirse',
-                                      style: TextStyle(
+                                  : Text(
+                                      tr.tenantCodeJoinButton,
+                                      style: const TextStyle(
                                         fontSize: 16,
                                         fontWeight: FontWeight.w600,
                                       ),
@@ -336,10 +340,10 @@ class _TenantCodeScreenState extends ConsumerState<TenantCodeScreen> {
                               minimumSize: Size.zero,
                               tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                             ),
-                            child: const Text(
-                              '¿Perdiste el código? Contactá a tu rab',
+                            child: Text(
+                              tr.tenantCodeLostCode,
                               textAlign: TextAlign.center,
-                              style: TextStyle(
+                              style: const TextStyle(
                                 fontSize: 13,
                                 fontWeight: FontWeight.w500,
                               ),
@@ -355,10 +359,10 @@ class _TenantCodeScreenState extends ConsumerState<TenantCodeScreen> {
                               minimumSize: Size.zero,
                               tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                             ),
-                            child: const Text(
-                              'Cerrar sesión',
+                            child: Text(
+                              tr.tenantCodeSignOut,
                               textAlign: TextAlign.center,
-                              style: TextStyle(
+                              style: const TextStyle(
                                 fontSize: 12,
                                 fontWeight: FontWeight.w400,
                               ),

@@ -3,10 +3,12 @@ import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:country_picker/country_picker.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:local_auth/local_auth.dart';
+import 'package:sign_in_with_apple/sign_in_with_apple.dart';
 
 import '../../auth/providers/auth_controller.dart';
 import '../../users/data/user_repository.dart';
@@ -48,6 +50,12 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   bool _uploadingPhoto = false;
   bool _avatarLoadFailed = false;
   List<double>? _localPresets;
+  // Tracks the tenant whose state seeded our local mirrors. When the user
+  // switches tenants (AccountSwitcherSheet, invite link, etc.) the
+  // userProfile emits with a different tenantId and we must re-sync the
+  // pushka goal / currency / presets from the new tenant's state instead
+  // of showing the old tenant's values until the screen remounts.
+  String? _loadedForTenantId;
 
   // One persistent controller per preset slot — same pattern as the
   // Tzedaká config (Mi Pushka), so the field is ALWAYS a TextField (no
@@ -161,6 +169,21 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       return null;
     }
 
+    // Re-sync from remote when the active tenant changes (e.g. user
+    // switched via AccountSwitcherSheet). Without this the local mirrors
+    // (pushkaGoal, presets, currency) stay pinned to the previous tenant
+    // until the settings screen is remounted.
+    final activeTenantId = userProfile?['tenantId'] as String?;
+    if (_loadedProfile &&
+        activeTenantId != null &&
+        activeTenantId.isNotEmpty &&
+        activeTenantId != _loadedForTenantId) {
+      _loadedProfile = false;
+      _presetCtrlsInited = false;
+      _pushkaGoalCtrlInited = false;
+      _localPresets = null;
+    }
+
     if (!_loadedProfile && userProfile != null && tenantState != null) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
@@ -191,6 +214,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           // default. The currency code is always canonical (MXN/USD/...).
           selectedFlag = _flagForCurrency(selectedCurrency);
           _loadedProfile = true;
+          _loadedForTenantId = activeTenantId;
         });
       });
     }
@@ -310,8 +334,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           _buildLabel(tr.currency),
           const SizedBox(height: 6),
           _buildCurrencySelector(
-            country: selectedCountry,
-            currency: '\$ $selectedCurrency',
+            currency: selectedCurrency,
             onTap: () => _showCurrencyDialog(),
           ),
           const SizedBox(height: 18),
@@ -718,7 +741,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       final mb = (e.actualBytes / (1024 * 1024)).toStringAsFixed(1);
       final maxMb = (e.maxBytes / (1024 * 1024)).toStringAsFixed(0);
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Imagen demasiado grande (${mb}MB). Máximo permitido: ${maxMb}MB.')),
+        SnackBar(content: Text(tr.imageTooLarge(mb, maxMb))),
       );
     } on ProfilePhotoEmptyException {
       debugPrint('uploadProfilePhoto empty bytes');
@@ -1141,7 +1164,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   }
 
   Widget _buildCurrencySelector({
-    required String country,
     required String currency,
     required VoidCallback onTap,
   }) {
@@ -1160,24 +1182,12 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             Text(selectedFlag, style: const TextStyle(fontSize: 22)),
             const SizedBox(width: 12),
             Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    country,
-                    style: const TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w500,
-                    ),
-                  ),
-                  Text(
-                    currency,
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: Theme.of(context).colorScheme.onSurfaceVariant,
-                    ),
-                  ),
-                ],
+              child: Text(
+                currency,
+                style: const TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w500,
+                ),
               ),
             ),
             Icon(Icons.keyboard_arrow_down, color: Theme.of(context).colorScheme.onSurfaceVariant),
@@ -1649,6 +1659,14 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     final providers = user.providerData.map((p) => p.providerId).toSet();
     final isGoogle = providers.contains('google.com');
     final isPassword = providers.contains('password');
+    // Apple Sign-In is the third supported provider (see auth_controller
+    // signInWithApple). Without an Apple re-auth branch, users who signed
+    // up via Apple would be stuck with no way to satisfy deleteAccount's
+    // recent-login requirement — the dialog would show only Google + a
+    // password field they don't have. Only surface on non-web (Apple SDK
+    // gated to iOS/macOS/Android WKWebView; sign_in_with_apple throws on
+    // web with the plugin config we ship).
+    final isApple = providers.contains('apple.com') && !kIsWeb;
 
     final ctrl = TextEditingController();
     String? errorText;
@@ -1677,7 +1695,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   const SizedBox(height: 16),
                   TextField(
                     controller: ctrl,
-                    autofocus: !isGoogle,
+                    autofocus: !isGoogle && !isApple,
                     obscureText: true,
                     decoration: InputDecoration(
                       labelText: tr.passwordField,
@@ -1734,6 +1752,46 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                         final credential = GoogleAuthProvider.credential(
                           accessToken: googleAuth.accessToken,
                           idToken: googleAuth.idToken,
+                        );
+                        await user.reauthenticateWithCredential(credential);
+                        if (ctx.mounted) Navigator.pop(ctx, true);
+                      } catch (_) {
+                        if (ctx.mounted) setSS(() { loading = false; errorText = tr.reAuthFailed; });
+                      }
+                    },
+                  ),
+                ),
+              ],
+              if (isApple) ...[
+                if (isPassword || isGoogle) const SizedBox(height: 8),
+                SizedBox(
+                  width: double.infinity,
+                  height: 48,
+                  child: OutlinedButton.icon(
+                    icon: loading && isApple && !isPassword && !isGoogle
+                        ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
+                        : const Icon(Icons.apple, size: 22),
+                    label: Text(tr.continueApple, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
+                    style: OutlinedButton.styleFrom(
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    ),
+                    onPressed: loading ? null : () async {
+                      setSS(() => loading = true);
+                      try {
+                        // Mirrors AuthController.signInWithApple: request an
+                        // identity token from Apple, wrap it in an OAuth
+                        // credential for the apple.com provider, and re-auth
+                        // Firebase with it. This refreshes auth_time so the
+                        // deleteAccount CF's recent-login gate passes.
+                        final appleCredential = await SignInWithApple.getAppleIDCredential(
+                          scopes: [
+                            AppleIDAuthorizationScopes.email,
+                            AppleIDAuthorizationScopes.fullName,
+                          ],
+                        );
+                        final credential = OAuthProvider('apple.com').credential(
+                          idToken: appleCredential.identityToken,
+                          accessToken: appleCredential.authorizationCode,
                         );
                         await user.reauthenticateWithCredential(credential);
                         if (ctx.mounted) Navigator.pop(ctx, true);
@@ -1836,42 +1894,39 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   }
 
   Future<void> _showCurrencyDialog() async {
-    // Currency metadata used to render flag + country label per code.
-    // Anything not listed here falls through to a generic globe + the
-    // raw 3-letter code, so adding new locals only requires updating
-    // this map.
-    const allCurrencies = <String, Map<String, String>>{
-      'USD': {'country': 'Estados Unidos', 'flag': '🇺🇸'},
-      'EUR': {'country': 'Eurozona', 'flag': '🇪🇺'},
-      'ILS': {'country': 'Israel', 'flag': '🇮🇱'},
-      'MXN': {'country': 'México', 'flag': '🇲🇽'},
-      'ARS': {'country': 'Argentina', 'flag': '🇦🇷'},
-      'BRL': {'country': 'Brasil', 'flag': '🇧🇷'},
-      'CLP': {'country': 'Chile', 'flag': '🇨🇱'},
-      'COP': {'country': 'Colombia', 'flag': '🇨🇴'},
-      'GBP': {'country': 'Reino Unido', 'flag': '🇬🇧'},
-      'CAD': {'country': 'Canadá', 'flag': '🇨🇦'},
-      'UYU': {'country': 'Uruguay', 'flag': '🇺🇾'},
-      'PEN': {'country': 'Perú', 'flag': '🇵🇪'},
-      'BOB': {'country': 'Bolivia', 'flag': '🇧🇴'},
-      'GTQ': {'country': 'Guatemala', 'flag': '🇬🇹'},
-      'DOP': {'country': 'Rep. Dominicana', 'flag': '🇩🇴'},
-      'AUD': {'country': 'Australia', 'flag': '🇦🇺'},
+    // Flag-per-currency map. Country name intentionally dropped — the flag
+    // + 3-letter code (MXN 🇲🇽) reads unambiguously in every locale, and
+    // hardcoding Spanish country names ("México", "Estados Unidos") broke
+    // for EN/FR/HE users. Anything missing here falls back to the globe
+    // emoji; add new entries above as more currencies come online.
+    const allCurrencies = <String, String>{
+      'USD': '🇺🇸',
+      'EUR': '🇪🇺',
+      'ILS': '🇮🇱',
+      'MXN': '🇲🇽',
+      'ARS': '🇦🇷',
+      'BRL': '🇧🇷',
+      'CLP': '🇨🇱',
+      'COP': '🇨🇴',
+      'GBP': '🇬🇧',
+      'CAD': '🇨🇦',
+      'UYU': '🇺🇾',
+      'PEN': '🇵🇪',
+      'BOB': '🇧🇴',
+      'GTQ': '🇬🇹',
+      'DOP': '🇩🇴',
+      'AUD': '🇦🇺',
     };
 
-    // Shortlist = USD + EUR + ILS + MXN (universally-relevant baseline
-    // for Pushka's primary markets) plus two contextual additions:
+    // Shortlist = USD + EUR + ILS (universally-relevant baseline) plus
+    // two contextual additions:
     //   - the tenant's default currency (so the local org currency is
     //     always reachable from the picker)
     //   - the user's currently-selected currency (so switching away from
     //     a currency doesn't make it vanish from the list — they can
     //     switch back later)
-    // Without the last one, a user that picked their local currency
-    // would see it only as long as they kept it; a single switch to USD
-    // would hide the local forever (the original bug report).
     final cfg = ref.read(tenantConfigProvider).valueOrNull;
     final tenantCurrency = cfg?.defaultCurrency?.toUpperCase();
-    final tenantCountry = cfg?.defaultCountry;
     final shortlist = <String>['USD', 'EUR', 'ILS'];
     if (tenantCurrency != null && !shortlist.contains(tenantCurrency)) {
       shortlist.add(tenantCurrency);
@@ -1882,16 +1937,10 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     }
 
     final currencies = shortlist.map((code) {
-      final meta = allCurrencies[code] ?? const {'country': '', 'flag': '🌐'};
-      // For the local currency, prefer the tenant-provided country label
-      // (e.g. tenant set country: 'Cdmx' instead of generic 'México').
-      final country = (code == tenantCurrency && tenantCountry != null && tenantCountry.isNotEmpty)
-          ? tenantCountry
-          : (meta['country']!.isNotEmpty ? meta['country']! : code);
+      final flag = allCurrencies[code] ?? '🌐';
       return {
         'currency': code,
-        'country': country,
-        'flag': meta['flag']!,
+        'flag': flag,
       };
     }).toList();
 
@@ -1902,7 +1951,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         for (final c in currencies)
           (
             value: c['currency']!,
-            label: '${c['flag']}  ${c['country']}  ·  ${c['currency']!}',
+            label: '${c['flag']}  ${c['currency']!}',
           ),
       ],
     );
@@ -1983,7 +2032,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     final newGoal = UserRepository.defaultGoalForCurrency(newCurrency);
     final user = ref.read(currentUserProvider);
     setState(() {
-      selectedCountry = selected['country']!;
+      // selectedCountry kept as raw currency code for back-compat with the
+      // persisted `currencyCountry` field; UI no longer surfaces it.
+      selectedCountry = newCurrency;
       selectedCurrency = newCurrency;
       selectedFlag = selected['flag'] ?? _flagForCurrency(newCurrency);
       pushkaGoal = newGoal;
@@ -2012,7 +2063,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     final newPresets = _presetsForCurrency(newCurrency);
     _updateSettings(
       user,
-      currencyCountry: selected['country']!,
+      currencyCountry: newCurrency,
       currencyCode: newCurrency,
       pushkaGoal: newGoal,
       presetAmounts: newPresets,

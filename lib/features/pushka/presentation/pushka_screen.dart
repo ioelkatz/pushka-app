@@ -129,7 +129,13 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
       // otherwise we'd inherit the previous tenant's values until the
       // network catches up.
       pushkaAmount = cached ?? 0;
-      pushkaGoal = cachedGoal ?? 3600;
+      // Currency-aware fallback (was hardcoded 3600 which is way too high
+      // for USD/EUR — showed an unreachable "$3,600 goal" out of the box —
+      // and way too low for ARS/CLP/COP where 3600 barely covers a bus fare).
+      // Uses the same calibrated table as UserRepository.defaultGoalForCurrency
+      // (mirrored server-side in functions/index.js::defaultGoalForCurrency).
+      pushkaGoal = cachedGoal ??
+          UserRepository.defaultGoalForCurrency(_currencyCodeFromProfile());
     });
   }
 
