@@ -8926,3 +8926,339 @@ exports.createCheckoutSession = onCall(
     }
   }
 );
+
+// ---------------------------------------------------------------------------
+// sendWeeklySummary — scheduled Monday 08:00 ART "heartbeat" email to
+// super_admin covering the last 7 days across every tenant. The point is
+// not deep analytics (getAdminStats already does that on demand) — it's
+// PROACTIVE anomaly detection: if this email stops arriving, or the
+// numbers look wrong, Ioel knows within 7 days that something is broken
+// (SendGrid dead, donations not landing, chargebacks piling up). Without
+// this, weeks could go by silently before launch monitoring kicks in.
+//
+// Delivery success is itself the healthcheck — SendGrid working, Firestore
+// readable, function runtime healthy. Every aggregation query is wrapped
+// in .catch() so a single broken query (e.g. missing composite index)
+// zeros out that section instead of nuking the whole email. Fire-and-forget
+// on the sendEmail failure path: we swallow + log so the scheduler doesn't
+// retry and flood the inbox on a transient SendGrid blip.
+// ---------------------------------------------------------------------------
+exports.sendWeeklySummary = onSchedule(
+  {
+    schedule: "every monday 08:00",
+    timeZone: "America/Argentina/Buenos_Aires",
+    region: "us-central1",
+    secrets: [sendgridApiKey],
+    timeoutSeconds: 300,
+  },
+  async () => {
+    const now = new Date();
+    const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+    const sinceTs = admin.firestore.Timestamp.fromDate(sevenDaysAgo);
+
+    const fmtDay = (d) => d.toISOString().slice(0, 10);
+    const startDate = fmtDay(sevenDaysAgo);
+    const endDate = fmtDay(now);
+
+    // Live FX rates for USD conversion of any legacy tx docs missing the
+    // frozen amountUSD snapshot. If the rate provider itself is down we
+    // just fall back to an empty map — non-USD legacy rows silently
+    // contribute 0 USD in that (rare) case, which is preferable to
+    // failing the whole email.
+    const rates = await getExchangeRates(null).catch((err) => {
+      console.warn("sendWeeklySummary: getExchangeRates failed, using empty map", {
+        err: err?.message,
+      });
+      return {};
+    });
+
+    // --- Donations (transactions in the last 7d) ------------------------
+    // collectionGroup scan same as getAdminStats. 20k cap is generous for a
+    // pre-launch app; if we ever cross it we'd want per-tenant aggregation
+    // via pre-computed counters instead of a live scan.
+    const TX_HARD_CAP = 20000;
+    const txSnap = await db.collectionGroup("transactions")
+      .where("createdAt", ">=", sinceTs)
+      .limit(TX_HARD_CAP)
+      .get()
+      .catch((err) => {
+        console.error("sendWeeklySummary: transactions query failed", {
+          err: err?.message,
+        });
+        return { docs: [], size: 0 };
+      });
+    if (txSnap.size >= TX_HARD_CAP) {
+      console.warn("sendWeeklySummary: hit TX_HARD_CAP — totals truncated", {
+        cap: TX_HARD_CAP,
+      });
+    }
+
+    let donationCount = 0;
+    let donationUSD = 0;
+    const perCurrencyOriginal = {};
+    const tenantRevenue = {}; // tenantId -> { usd, count, name }
+
+    for (const txDoc of (txSnap.docs || [])) {
+      const tx = txDoc.data() || {};
+      // Only completed donation-type txs — mirrors getDonationReasonStats.
+      if (tx.type && tx.type !== "tzedaka" && tx.type !== "pushkaEmpty") continue;
+      if (tx.status && tx.status !== "completed") continue;
+
+      const currency = String(tx.currencyCode || "USD").toUpperCase();
+      let amountUSD;
+      if (tx.amountUSD != null) {
+        amountUSD = Number(tx.amountUSD);
+      } else {
+        const rate = rates[currency];
+        amountUSD = (rate && rate > 0) ? (Number(tx.amount) || 0) / rate : 0;
+      }
+      if (!Number.isFinite(amountUSD)) amountUSD = 0;
+
+      donationCount += 1;
+      donationUSD += amountUSD;
+
+      const origAmount = Number(tx.amount) || 0;
+      perCurrencyOriginal[currency] = (perCurrencyOriginal[currency] || 0) + origAmount;
+
+      const tenantId = tx.tenantId || null;
+      if (tenantId) {
+        if (!tenantRevenue[tenantId]) tenantRevenue[tenantId] = { usd: 0, count: 0, name: null };
+        tenantRevenue[tenantId].usd += amountUSD;
+        tenantRevenue[tenantId].count += 1;
+      }
+    }
+
+    // --- New users (last 7d) --------------------------------------------
+    // Requires a users.createdAt ASC index. If missing, we log + zero out.
+    const newUsersSnap = await db.collection("users")
+      .where("createdAt", ">=", sinceTs)
+      .limit(5000)
+      .get()
+      .catch((err) => {
+        console.warn("sendWeeklySummary: new users query failed (missing index?)", {
+          err: err?.message,
+        });
+        return { size: 0 };
+      });
+    const newUsersCount = newUsersSnap.size || 0;
+
+    // --- Failed payment intents (last 7d) -------------------------------
+    // Needs composite index (type ASC, createdAt ASC) on _stripeWebhookEvents.
+    const failedSnap = await db.collection("_stripeWebhookEvents")
+      .where("type", "==", "payment_intent.payment_failed")
+      .where("createdAt", ">=", sinceTs)
+      .limit(5000)
+      .get()
+      .catch((err) => {
+        console.warn("sendWeeklySummary: failed PIs query failed (missing index?)", {
+          err: err?.message,
+        });
+        return { size: 0 };
+      });
+    const failedCount = failedSnap.size || 0;
+
+    // --- Chargebacks (last 7d) ------------------------------------------
+    const chargebackSnap = await db.collection("_stripeWebhookEvents")
+      .where("type", "==", "charge.dispute.created")
+      .where("createdAt", ">=", sinceTs)
+      .limit(1000)
+      .get()
+      .catch((err) => {
+        console.warn("sendWeeklySummary: chargebacks query failed (missing index?)", {
+          err: err?.message,
+        });
+        return { size: 0 };
+      });
+    const chargebackCount = chargebackSnap.size || 0;
+
+    // --- Active tenants + name lookup for top-3 -------------------------
+    const activeTenantsSnap = await db.collection("tenants")
+      .where("status", "==", "active")
+      .get()
+      .catch((err) => {
+        console.warn("sendWeeklySummary: active tenants query failed", {
+          err: err?.message,
+        });
+        return { docs: [] };
+      });
+    const activeTenantsDocs = activeTenantsSnap.docs || [];
+    const activeTenantsCount = activeTenantsDocs.length;
+    const tenantNameById = {};
+    for (const d of activeTenantsDocs) {
+      const data = d.data() || {};
+      tenantNameById[d.id] = data.name || data.appName || d.id;
+    }
+    // Backfill names for tenants that got donations but aren't in the active
+    // set (suspended / trial / recently canceled). Cheap: bounded by top-N
+    // candidates; we cap the lookup to keep runtime predictable.
+    const missingNameTenantIds = Object.keys(tenantRevenue)
+      .filter((tid) => !tenantNameById[tid])
+      .slice(0, 20);
+    for (const tid of missingNameTenantIds) {
+      const s = await db.collection("tenants").doc(tid).get().catch(() => null);
+      const data = s?.data?.() || {};
+      tenantNameById[tid] = data.name || data.appName || tid;
+    }
+
+    // --- Unresolved activity items requiring action ---------------------
+    // Needs composite index (requiresAction ASC, resolved ASC) on _activityLog.
+    const activitySnap = await db.collection("_activityLog")
+      .where("requiresAction", "==", true)
+      .where("resolved", "==", false)
+      .limit(500)
+      .get()
+      .catch((err) => {
+        console.warn("sendWeeklySummary: activityLog query failed (missing index?)", {
+          err: err?.message,
+        });
+        return { size: 0 };
+      });
+    const unresolvedActivityCount = activitySnap.size || 0;
+
+    // --- Top 3 tenants by weekly revenue --------------------------------
+    const topTenants = Object.entries(tenantRevenue)
+      .map(([tid, v]) => ({
+        tenantId: tid,
+        name: tenantNameById[tid] || tid,
+        usd: v.usd,
+        count: v.count,
+      }))
+      .sort((a, b) => b.usd - a.usd)
+      .slice(0, 3);
+
+    // --- Red flags ------------------------------------------------------
+    // "Attempted" = completed donations + failed PIs. Not perfectly precise
+    // (a single PI can fail then succeed and be double-counted) but the
+    // signal is directional: sharp jumps are what we care about.
+    const attemptedPayments = donationCount + failedCount;
+    const failRate = attemptedPayments > 0 ? failedCount / attemptedPayments : 0;
+    const redFlags = [];
+    if (failRate > 0.05) {
+      redFlags.push(`Tasa de fallo de pagos ${(failRate * 100).toFixed(1)}% (umbral 5%).`);
+    }
+    if (chargebackCount > 0) {
+      redFlags.push(`${chargebackCount} chargeback${chargebackCount === 1 ? "" : "s"} en la semana — revisar disputas en Stripe.`);
+    }
+    if (unresolvedActivityCount > 5) {
+      redFlags.push(`${unresolvedActivityCount} alertas del activityLog sin resolver (umbral 5).`);
+    }
+    const alertCount = redFlags.length;
+
+    // --- HTML build -----------------------------------------------------
+    const fmtUSD = (n) => `$${(Number(n) || 0).toLocaleString("en-US", {
+      minimumFractionDigits: 2, maximumFractionDigits: 2,
+    })}`;
+    const fmtInt = (n) => (Number(n) || 0).toLocaleString("en-US");
+
+    const ACCENT = "#2563EB";
+    const S = {
+      wrap: "font-family: -apple-system, Segoe UI, Roboto, sans-serif; color: #111; max-width: 640px; margin: 0 auto; padding: 24px;",
+      h1: `color: ${ACCENT}; font-size: 22px; margin: 0 0 4px 0;`,
+      sub: "color: #666; font-size: 13px; margin: 0 0 24px 0;",
+      section: `margin: 20px 0; padding: 16px; background: #F8FAFC; border-left: 4px solid ${ACCENT}; border-radius: 4px;`,
+      h2: "font-size: 14px; text-transform: uppercase; letter-spacing: 0.5px; color: #334155; margin: 0 0 12px 0;",
+      row: "display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid #E2E8F0; font-size: 14px;",
+      num: "font-family: SF Mono, Menlo, Consolas, monospace; font-weight: 600;",
+      red: "margin: 20px 0; padding: 16px; background: #FEF2F2; border-left: 4px solid #DC2626; border-radius: 4px; color: #7F1D1D;",
+      redH2: "font-size: 14px; text-transform: uppercase; letter-spacing: 0.5px; color: #991B1B; margin: 0 0 12px 0;",
+      footer: "margin-top: 32px; padding-top: 16px; border-top: 1px solid #E2E8F0; color: #94A3B8; font-size: 12px; line-height: 1.5;",
+    };
+
+    const perCurrencyRows = Object.entries(perCurrencyOriginal)
+      .sort((a, b) => b[1] - a[1])
+      .map(([cur, amt]) =>
+        `<div style="${S.row}"><span>${_escapeHtmlForEmail(cur)}</span><span style="${S.num}">${fmtInt(Math.round(amt))}</span></div>`
+      ).join("") || `<div style="${S.row}"><span>(sin donaciones)</span><span style="${S.num}">0</span></div>`;
+
+    const topTenantsRows = topTenants.length > 0
+      ? topTenants.map((t, i) =>
+          `<div style="${S.row}"><span>${i + 1}. ${_escapeHtmlForEmail(t.name)} <span style="color:#94A3B8">(${fmtInt(t.count)} donaciones)</span></span><span style="${S.num}">${fmtUSD(t.usd)}</span></div>`
+        ).join("")
+      : `<div style="${S.row}"><span>(sin actividad)</span><span style="${S.num}">—</span></div>`;
+
+    const redFlagBlock = redFlags.length > 0
+      ? `<div style="${S.red}">
+           <div style="${S.redH2}">Se&ntilde;ales de alarma (${redFlags.length})</div>
+           <ul style="margin:0; padding-left: 20px;">
+             ${redFlags.map((f) => `<li style="margin:4px 0;">${_escapeHtmlForEmail(f)}</li>`).join("")}
+           </ul>
+         </div>`
+      : "";
+
+    const html = `
+      <div style="${S.wrap}">
+        <h1 style="${S.h1}">Pushka &mdash; Resumen Semanal</h1>
+        <p style="${S.sub}">Del ${startDate} al ${endDate}</p>
+
+        ${redFlagBlock}
+
+        <div style="${S.section}">
+          <div style="${S.h2}">Donaciones</div>
+          <div style="${S.row}"><span>Total (USD equivalente)</span><span style="${S.num}">${fmtUSD(donationUSD)}</span></div>
+          <div style="${S.row}"><span>Cantidad</span><span style="${S.num}">${fmtInt(donationCount)}</span></div>
+          <div style="${S.row}"><span>Promedio por donaci&oacute;n</span><span style="${S.num}">${fmtUSD(donationCount > 0 ? donationUSD / donationCount : 0)}</span></div>
+        </div>
+
+        <div style="${S.section}">
+          <div style="${S.h2}">Por moneda (importe original)</div>
+          ${perCurrencyRows}
+        </div>
+
+        <div style="${S.section}">
+          <div style="${S.h2}">Top 3 organizaciones (semana)</div>
+          ${topTenantsRows}
+        </div>
+
+        <div style="${S.section}">
+          <div style="${S.h2}">Plataforma</div>
+          <div style="${S.row}"><span>Nuevos usuarios</span><span style="${S.num}">${fmtInt(newUsersCount)}</span></div>
+          <div style="${S.row}"><span>Organizaciones activas</span><span style="${S.num}">${fmtInt(activeTenantsCount)}</span></div>
+          <div style="${S.row}"><span>Pagos fallidos (payment_intent.payment_failed)</span><span style="${S.num}">${fmtInt(failedCount)}</span></div>
+          <div style="${S.row}"><span>Tasa de fallo</span><span style="${S.num}">${(failRate * 100).toFixed(2)}%</span></div>
+          <div style="${S.row}"><span>Chargebacks</span><span style="${S.num}">${fmtInt(chargebackCount)}</span></div>
+          <div style="${S.row}"><span>Alertas sin resolver (activityLog)</span><span style="${S.num}">${fmtInt(unresolvedActivityCount)}</span></div>
+        </div>
+
+        <div style="${S.footer}">
+          Este resumen se env&iacute;a todos los lunes 08:00 ART autom&aacute;ticamente.<br>
+          Si dej&aacute;s de recibirlo, algo puede estar roto (SendGrid, esta CF, o el scheduler de Cloud Functions).
+        </div>
+      </div>
+    `;
+
+    const subject = `[Pushka Weekly] ${startDate} - ${endDate}: ${fmtInt(donationCount)} donaciones, ${alertCount} alertas`;
+
+    try {
+      await sendEmail({ to: SUPER_ADMIN_EMAIL, subject, html });
+      console.info("sendWeeklySummary: sent", {
+        to: _redactEmail(SUPER_ADMIN_EMAIL),
+        donationCount,
+        donationUSD: Math.round(donationUSD * 100) / 100,
+        newUsersCount, failedCount, chargebackCount, activeTenantsCount,
+        unresolvedActivityCount, alertCount,
+        failRate: Number(failRate.toFixed(4)),
+        redFlags,
+      });
+    } catch (err) {
+      // Fire-and-forget: log but don't throw so the scheduler doesn't retry
+      // and flood the inbox on a transient SendGrid glitch.
+      console.error("sendWeeklySummary: sendEmail threw (non-fatal)", {
+        err: err?.message,
+      });
+    }
+  }
+);
+
+// Local HTML escaper for the weekly summary email — tenant names, activity
+// descriptions, and currency codes can contain user-controlled text and this
+// email is rendered as HTML in the super_admin inbox. Kept private to this
+// section (prefix `_`) so it doesn't collide with any escaper added
+// elsewhere later. Function declaration = hoisted, so the caller above is fine.
+function _escapeHtmlForEmail(s) {
+  return String(s ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}

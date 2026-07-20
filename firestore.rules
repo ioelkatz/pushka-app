@@ -620,6 +620,21 @@ service cloud.firestore {
       }
 
     }
+
+    // Collection-group read para /users/*/transactions — powers el
+    // widget "Donaciones en vivo" del dashboard del Rab (onSnapshot en
+    // pushka_admin). Firestore requiere un rule separado para
+    // collectionGroup queries; el rule del subcollection de arriba solo
+    // aplica a direct-path reads. Stricter que el subcollection: la tx
+    // DEBE tener tenantId (legacy tenantless docs no matchean el
+    // where(tenantId==X) filter igualmente). Sin escritura — writes
+    // siguen gated en el rule de arriba.
+    match /{path=**}/transactions/{transactionId} {
+      allow read: if isAdmin() ||
+        (isTenantMember() &&
+         'tenantId' in resource.data &&
+         resource.data.tenantId == callerTenantId());
+    }
   }
 }
 
