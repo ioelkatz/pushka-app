@@ -8545,3 +8545,211 @@ exports.getDonationReasonStats = onCall(
     };
   }
 );
+
+// ---------------------------------------------------------------------------
+// createCheckoutSession — Stripe Checkout redirect flow para PWA / web.
+// Reemplaza el Payment Sheet nativo (flutter_stripe) que no soporta web.
+// Devuelve una URL de Stripe Checkout que el cliente carga con
+// window.location = url. Stripe maneja Apple Pay web, 3DS/SCA, y toda la
+// PSD2 compliance automáticamente. Callback: success_url + cancel_url
+// vuelven al app.pushkapp.cc / app.pushkapp.cc/cancel.
+// ---------------------------------------------------------------------------
+exports.createCheckoutSession = onCall(
+  { secrets: [stripeSecret], enforceAppCheck: true },
+  async (request) => {
+    if (!request.auth?.uid) {
+      throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
+    }
+    await enforceRateLimit(request.auth.uid, "createCheckoutSession", 10, 600);
+    if (!stripeSecret.value()) {
+      throw new HttpsError("failed-precondition", "Stripe no configurado.");
+    }
+
+    // Purpose: por ahora solo 'donation'. pushka_empty en web se puede
+    // agregar después con el lock cron equivalente al de createPaymentIntent.
+    const purpose = String(request.data?.purpose || "donation").toLowerCase();
+    if (purpose !== "donation") {
+      throw new HttpsError("invalid-argument", "Solo donation soportado en Checkout web por ahora.");
+    }
+
+    // Auth + blocked + tenant lookup (mismo patrón que createPaymentIntent).
+    const [adminDataSnap, userSnap] = await Promise.all([
+      db.collection("adminData").doc(request.auth.uid).get(),
+      db.collection("users").doc(request.auth.uid).get(),
+    ]);
+    if (adminDataSnap.exists && adminDataSnap.data()?.isBlocked === true) {
+      throw new HttpsError("permission-denied", "Tu cuenta está temporalmente suspendida.");
+    }
+    const userData = userSnap.exists ? (userSnap.data() ?? {}) : {};
+    const tenantId = userData.tenantId ?? null;
+    if (!tenantId) {
+      throw new HttpsError("failed-precondition", "Para donar necesitás unirte a una organización primero.");
+    }
+
+    const tenantSnap = await db.collection("tenants").doc(tenantId).get();
+    if (!tenantSnap.exists) {
+      throw new HttpsError("failed-precondition", "Esta organización no existe o no está disponible.");
+    }
+    const tenantData = tenantSnap.data() ?? {};
+    if (tenantData.status !== "active" && tenantData.status !== "trial") {
+      throw new HttpsError("failed-precondition", "Esta organización no está aceptando donaciones.");
+    }
+    const tenantConnectAccountId = tenantData.stripeConnectAccountId || null;
+    if (!tenantConnectAccountId || tenantData.stripeConnectStatus !== "active") {
+      throw new HttpsError("failed-precondition", "La organización no tiene pagos configurados.");
+    }
+    const tenantCommissionRate = safeTenantCommissionRate(tenantData.commissionRate, tenantId);
+
+    // Amount + currency validation con los mismos caps que createPaymentIntent.
+    const amount = Number(request.data?.amount || 0);
+    const currency = validateCurrency(request.data?.currency || "usd");
+    if (!Number.isFinite(amount) || amount <= 0) {
+      throw new HttpsError("invalid-argument", "Monto inválido.");
+    }
+    const minForCurrency = minAmountForCurrency(currency);
+    if (amount < minForCurrency) {
+      throw new HttpsError("invalid-argument", `Monto mínimo: ${minForCurrency} (unidad menor de ${currency.toUpperCase()}).`);
+    }
+    const maxForCurrency = maxAmountForCurrency(currency);
+    if (amount > maxForCurrency) {
+      console.warn("createCheckoutSession: amount exceeds per-currency cap", {
+        uid: request.auth.uid, tenantId, currency, amount, maxForCurrency,
+      });
+      throw new HttpsError("invalid-argument", `El monto excede el máximo permitido por transacción (${currency.toUpperCase()}).`);
+    }
+
+    // Optional metadata — donor message + designation.
+    const donorMessage = sanitizeDonorMessage(request.data?.donorMessage);
+    const donationReasonRaw = request.data?.donationReason;
+    const donationReason = (typeof donationReasonRaw === "string" &&
+        donationReasonRaw.trim().length > 0)
+      // eslint-disable-next-line no-control-regex
+      ? donationReasonRaw.replace(/[\x00-\x1F\x7F-\x9F]/g, " ").trim().slice(0, 80)
+      : null;
+
+    // Correlation ID para tracing end-to-end (client → CF → Stripe → webhook).
+    const rawCid = request.data?.correlationId;
+    const cidRegex = /^[a-f0-9]{16}$/i;
+    const correlationId = (typeof rawCid === "string" && cidRegex.test(rawCid))
+      ? rawCid.toLowerCase()
+      : require("crypto").randomBytes(8).toString("hex");
+
+    // Success / cancel URLs — el cliente PWA los provee; caemos a defaults
+    // seguros si vienen malformed o vacíos. Solo aceptamos HTTPS (previene
+    // open redirect a schemes exóticos).
+    const rawSuccessUrl = String(request.data?.successUrl || "").trim();
+    const rawCancelUrl = String(request.data?.cancelUrl || "").trim();
+    const defaultSuccessUrl = "https://pushka-pwa.web.app/donation-success?session_id={CHECKOUT_SESSION_ID}";
+    const defaultCancelUrl = "https://pushka-pwa.web.app/donation-cancel";
+    const successUrl = rawSuccessUrl.startsWith("https://") ? rawSuccessUrl : defaultSuccessUrl;
+    const cancelUrl = rawCancelUrl.startsWith("https://") ? rawCancelUrl : defaultCancelUrl;
+
+    const stripe = require("stripe")(stripeSecret.value(), { timeout: 15000 });
+    const customerEmail = request.auth.token?.email
+      ? String(request.auth.token.email).slice(0, 254)
+      : null;
+
+    // Get-or-create Stripe customer (mismo patrón que createPaymentIntent
+    // pero simplificado — sin transacción de sentinel porque Checkout
+    // Session no requiere el customerId de antemano; podemos incluso pasar
+    // customer_email y Stripe maneja el guest checkout).
+    let customerId = String(userData.stripeCustomerId || "").trim() || null;
+    if (!customerId && customerEmail) {
+      try {
+        const customer = await stripe.customers.create({
+          email: customerEmail,
+          metadata: { firebaseUid: request.auth.uid },
+        });
+        customerId = customer.id;
+        await db.collection("users").doc(request.auth.uid).set({
+          stripeCustomerId: customerId,
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        }, { merge: true });
+      } catch (err) {
+        console.warn("createCheckoutSession: customer.create failed", {
+          uid: request.auth.uid, cid: correlationId, errorMessage: err?.message,
+        });
+        // No es fatal — Checkout puede funcionar con customer_email en vez.
+      }
+    }
+
+    // Application fee (Connect destination_charges) — mismo clamp defensivo.
+    const rawFee = Math.floor(amount * tenantCommissionRate);
+    const paymentIntentData = {
+      transfer_data: { destination: tenantConnectAccountId },
+      metadata: {
+        firebaseUid: request.auth.uid,
+        tenantId,
+        purpose,
+        correlationId,
+        ...(donationReason ? { donationReason } : {}),
+        ...(donorMessage ? { donorMessage } : {}),
+      },
+    };
+    if (rawFee > 0) {
+      const safeFee = Math.min(rawFee, amount - 1);
+      if (safeFee !== rawFee) {
+        console.warn("createCheckoutSession: clamped_app_fee", {
+          uid: request.auth.uid, tenantId, amount, tenantCommissionRate, rawFee, safeFee,
+        });
+      }
+      paymentIntentData.application_fee_amount = safeFee;
+    }
+
+    const idempotencyKey = `cs_${request.auth.uid}_${correlationId}`;
+    const productName = purpose === "donation"
+      ? `Donación a ${tenantData.appName || tenantData.name || "Colel Chabad"}`
+      : "Pago";
+
+    try {
+      const session = await stripe.checkout.sessions.create({
+        mode: "payment",
+        line_items: [
+          {
+            price_data: {
+              currency,
+              unit_amount: amount,
+              product_data: {
+                name: productName,
+                ...(donationReason ? { description: `Designación: ${donationReason}` } : {}),
+              },
+            },
+            quantity: 1,
+          },
+        ],
+        payment_intent_data: paymentIntentData,
+        success_url: successUrl,
+        cancel_url: cancelUrl,
+        ...(customerId ? { customer: customerId } : { customer_email: customerEmail || undefined }),
+        // Metadata a nivel de session también (además del payment_intent) para
+        // que el webhook `checkout.session.completed` pueda leer sin re-fetch.
+        metadata: {
+          firebaseUid: request.auth.uid,
+          tenantId,
+          purpose,
+          correlationId,
+        },
+        // Locale del checkout — best-effort desde el header Accept-Language.
+        // Stripe cae a inglés si el valor es unknown.
+        locale: "es",
+      }, { idempotencyKey });
+
+      console.info("createCheckoutSession: created", {
+        uid: request.auth.uid, tenantId, cid: correlationId,
+        amount, currency, sessionId: session.id,
+      });
+
+      return {
+        url: session.url,
+        sessionId: session.id,
+        correlationId,
+      };
+    } catch (err) {
+      console.error("createCheckoutSession: stripe.checkout.sessions.create failed", {
+        uid: request.auth.uid, tenantId, cid: correlationId,
+        errorMessage: err?.message, errorType: err?.type,
+      });
+      throw new HttpsError("internal", "No se pudo crear la sesión de pago. Intentá de nuevo.");
+    }
+  }
+);
