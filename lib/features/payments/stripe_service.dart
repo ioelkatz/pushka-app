@@ -4,6 +4,7 @@ import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_crashlytics/firebase_crashlytics.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_stripe/flutter_stripe.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../config/stripe_config.dart';
 import '../../firebase_options.dart';
@@ -124,8 +125,19 @@ class StripeService {
     /// partial payments where the leftover stays in the pushka.
     double? pushkaAmountAfter,
   }) async {
+    // Web (PWA): flutter_stripe web no tiene Payment Sheet, así que
+    // delegamos a Stripe Checkout via createCheckoutSession CF. Después de
+    // que Stripe procese el pago el user vuelve a success_url (o cancel_url
+    // si abandona). Retorna el session ID como si fuese payment intent id
+    // para mantener la signature del método.
     if (kIsWeb) {
-      throw const StripeServiceException('web_payment_sheet_not_supported');
+      return _payWithCheckoutRedirect(
+        amountCents: amountCents,
+        currency: currency,
+        purpose: purpose,
+        donorMessage: donorMessage,
+        donationReason: donationReason,
+      );
     }
     final sw = Stopwatch()..start();
     final cid = _newCorrelationId();
@@ -436,5 +448,67 @@ class StripeService {
 
     // Extract SetupIntent ID from client_secret (format: seti_xxx_secret_yyy)
     return _extractIdFromSecret(clientSecret, 'seti_');
+  }
+
+  /// Web-only: crea una Stripe Checkout Session server-side y redirige el
+  /// browser a la URL de Stripe. El user completa el pago allí (Apple Pay web,
+  /// card entry, 3DS, todo built-in) y Stripe redirige de vuelta a
+  /// success_url (o cancel_url). Retorna el session ID.
+  ///
+  /// NO usar directamente — la llama pay() automáticamente cuando kIsWeb.
+  Future<String> _payWithCheckoutRedirect({
+    required int amountCents,
+    required String currency,
+    required String purpose,
+    String? donorMessage,
+    String? donationReason,
+  }) async {
+    final cid = _newCorrelationId();
+    debugPrint('StripeService._payWithCheckoutRedirect[cid:$cid]: creating session '
+        'amount=$amountCents currency=$currency purpose=$purpose');
+    final callable = FirebaseFunctions.instance.httpsCallable(
+      'createCheckoutSession',
+    );
+    HttpsCallableResult result;
+    try {
+      result = await callable.call({
+        'amount': amountCents,
+        'currency': currency.toLowerCase(),
+        'purpose': purpose,
+        'correlationId': cid,
+        if (donationReason != null && donationReason.isNotEmpty)
+          'donationReason': donationReason,
+        if (donorMessage != null && donorMessage.isNotEmpty)
+          'donorMessage': donorMessage,
+      });
+    } catch (e, st) {
+      _recordPaymentError('createCheckoutSession', e, st,
+          cid: cid, purpose: purpose, amountCents: amountCents, currency: currency);
+      throw const StripeServiceException('checkout_session_failed');
+    }
+    final data = Map<String, dynamic>.from(result.data as Map);
+    final url = String.fromEnvironment('', defaultValue: '') +
+        (data['url'] as String? ?? '');
+    final sessionId = data['sessionId'] as String? ?? '';
+    if (url.isEmpty || sessionId.isEmpty) {
+      throw const StripeServiceException('checkout_session_invalid_response');
+    }
+    debugPrint('StripeService._payWithCheckoutRedirect[cid:$cid]: redirecting to '
+        '$sessionId');
+    // launchUrl con webOnlyWindowName '_self' → same-tab redirect en web,
+    // que es lo que Stripe Checkout espera (para poder navegar back a
+    // success/cancel URLs sin abrir tabs nuevas).
+    final launched = await launchUrl(
+      Uri.parse(url),
+      webOnlyWindowName: '_self',
+    );
+    if (!launched) {
+      throw const StripeServiceException('checkout_redirect_failed');
+    }
+    // Esta línea probablemente nunca se alcanza — el browser ya navegó a
+    // Stripe Checkout. Pero por si el redirect falla silently, retornamos
+    // el sessionId para que el caller no se cuelgue esperando un future
+    // que nunca resuelve.
+    return sessionId;
   }
 }
