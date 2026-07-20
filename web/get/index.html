@@ -4,10 +4,10 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <meta name="theme-color" content="#2563EB">
-  <title>Chabad Pushka — Descargar app</title>
+  <title>Jabad en Campus — Descargar app</title>
   <link rel="icon" type="image/png" href="/favicon.png">
   <link rel="apple-touch-icon" href="/icons/Icon-192.png">
-  <meta name="description" content="Descargá Chabad Pushka en tu celular. Android e iPhone.">
+  <meta name="description" content="Descargá Jabad en Campus en tu celular. Android e iPhone.">
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
@@ -23,9 +23,15 @@
       -webkit-font-smoothing: antialiased;
     }
     .container { max-width: 420px; width: 100%; text-align: center; }
+    .logos {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 16px;
+      margin: 0 auto 24px;
+    }
     .logo {
       width: 96px; height: 96px;
-      margin: 0 auto 24px;
       background: #fff;
       border-radius: 24px;
       display: flex;
@@ -33,7 +39,7 @@
       justify-content: center;
       box-shadow: 0 8px 24px rgba(0,0,0,0.2);
     }
-    .logo img { width: 72px; height: 72px; }
+    .logo img { width: 72px; height: 72px; object-fit: contain; }
     h1 { font-size: 28px; font-weight: 800; margin-bottom: 8px; letter-spacing: -0.5px; }
     .subtitle { font-size: 15px; opacity: 0.85; margin-bottom: 40px; line-height: 1.5; }
     .btn {
@@ -90,10 +96,15 @@
 </head>
 <body>
   <div class="container">
-    <div class="logo">
-      <img src="/icons/Icon-192.png" alt="Chabad Pushka">
+    <div class="logos">
+      <div class="logo">
+        <img src="/icons/Icon-192.png" alt="Pushka">
+      </div>
+      <div class="logo">
+        <img src="jabad_campus_logo.png" alt="Jabad en Campus">
+      </div>
     </div>
-    <h1>Chabad Pushka</h1>
+    <h1>Jabad en Campus</h1>
     <p class="subtitle">Tu alcancía de tzedaká digital.<br>Descargala en tu celular.</p>
 
     <a href="#" id="btn-ios" class="btn btn-primary">
@@ -129,7 +140,7 @@
       </ol>
     </div>
 
-    <p class="footer">Colel Chabad USA · Donaciones seguras vía Stripe</p>
+    <p class="footer">Jabad en Campus · Ciudad de México</p>
   </div>
 
   <script>
@@ -153,8 +164,6 @@
       } else if (isAndroid) {
         hint.textContent = 'Detectamos Android — usá el botón de descarga';
         androidInst.classList.add('active');
-      } else {
-        hint.textContent = 'Elegí tu plataforma';
       }
     })();
   </script>

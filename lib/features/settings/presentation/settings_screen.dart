@@ -185,7 +185,11 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               getProfileString('currencyCountry') ?? selectedCountry;
           selectedCurrency =
               getProfileString('currencyCode') ?? selectedCurrency;
-          selectedFlag = _flagForCountry(selectedCountry);
+          // Flag must key off the currency code (source of truth): tenants
+          // can persist arbitrary country strings like "CDMX" via
+          // defaultCountry, which would fall through _flagForCurrency's
+          // default. The currency code is always canonical (MXN/USD/...).
+          selectedFlag = _flagForCurrency(selectedCurrency);
           _loadedProfile = true;
         });
       });
@@ -1981,7 +1985,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     setState(() {
       selectedCountry = selected['country']!;
       selectedCurrency = newCurrency;
-      selectedFlag = selected['flag'] ?? _flagForCountry(selectedCountry);
+      selectedFlag = selected['flag'] ?? _flagForCurrency(newCurrency);
       pushkaGoal = newGoal;
       _localPresets = _presetsForCurrency(newCurrency); // show immediately, no stream dependency
       // Force the preset controllers to re-sync from the new currency's
@@ -2016,26 +2020,25 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   }
 
 
-  String _flagForCountry(String country) {
-    switch (country) {
-      case 'México':        return '🇲🇽';
-      case 'España':        return '🇪🇸';
-      case 'Argentina':     return '🇦🇷';
-      case 'Brasil':        return '🇧🇷';
-      case 'Israel':        return '🇮🇱';
-      case 'Chile':         return '🇨🇱';
-      case 'Colombia':      return '🇨🇴';
-      case 'Reino Unido':   return '🇬🇧';
-      case 'Canadá':        return '🇨🇦';
-      case 'Uruguay':       return '🇺🇾';
-      case 'Perú':          return '🇵🇪';
-      case 'Bolivia':       return '🇧🇴';
-      case 'Guatemala':     return '🇬🇹';
-      case 'Rep. Dominicana': return '🇩🇴';
-      case 'Australia':     return '🇦🇺';
-      case 'Eurozona':      return '🇪🇺';
-      case 'Estados Unidos':
-      default:              return '🇺🇸';
+  String _flagForCurrency(String currency) {
+    switch (currency.toUpperCase()) {
+      case 'MXN': return '🇲🇽';
+      case 'EUR': return '🇪🇺';
+      case 'ILS': return '🇮🇱';
+      case 'ARS': return '🇦🇷';
+      case 'BRL': return '🇧🇷';
+      case 'CLP': return '🇨🇱';
+      case 'COP': return '🇨🇴';
+      case 'GBP': return '🇬🇧';
+      case 'CAD': return '🇨🇦';
+      case 'UYU': return '🇺🇾';
+      case 'PEN': return '🇵🇪';
+      case 'BOB': return '🇧🇴';
+      case 'GTQ': return '🇬🇹';
+      case 'DOP': return '🇩🇴';
+      case 'AUD': return '🇦🇺';
+      case 'USD':
+      default:    return '🇺🇸';
     }
   }
 
