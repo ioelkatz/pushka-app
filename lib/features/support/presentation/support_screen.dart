@@ -59,15 +59,17 @@ class SupportScreen extends ConsumerWidget {
 
           // Branding header — uses tenant brand instead of hardcoded "Jabad en Campus"
           Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+            crossAxisAlignment: CrossAxisAlignment.center,
             children: [
               Text(
                 brandName,
+                textAlign: TextAlign.center,
                 style: TextStyle(fontSize: 30, fontWeight: FontWeight.w700, color: cs.onSurface, letterSpacing: 0.5),
               ),
               const SizedBox(height: 4),
               Text(
                 tr.tagline1788,
+                textAlign: TextAlign.center,
                 style: TextStyle(fontSize: 14, color: cs.onSurfaceVariant, fontWeight: FontWeight.w400),
               ),
               const SizedBox(height: 16),
