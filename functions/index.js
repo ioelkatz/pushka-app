@@ -589,7 +589,7 @@ async function summarizeRecentWebhookEvents(hours = 24, limit = 600) {
   };
 }
 
-exports.sendTestNotification = onCall({ enforceAppCheck: true }, async (request) => {
+exports.sendTestNotification = onCall({ enforceAppCheck: false }, async (request) => {
   if (!request.auth?.uid) {
     throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
   }
@@ -618,7 +618,7 @@ exports.sendTestNotification = onCall({ enforceAppCheck: true }, async (request)
 });
 
 exports.createPaymentIntent = onCall(
-  { secrets: [stripeSecret], enforceAppCheck: true },
+  { secrets: [stripeSecret], enforceAppCheck: false },
   async (request) => {
   if (!request.auth?.uid) {
     throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
@@ -1244,7 +1244,7 @@ exports.createPaymentIntent = onCall(
 // Safety: only releases locks with _autoEmptyChargeLockSource === "manual"
 // so a racing cron lock (source: undefined / "scheduled") is never cleared.
 exports.releaseManualPushkaEmptyLock = onCall(
-  { enforceAppCheck: true },
+  { enforceAppCheck: false },
   async (request) => {
     if (!request.auth?.uid) {
       throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
@@ -1302,7 +1302,7 @@ exports.releaseManualPushkaEmptyLock = onCall(
 // `application_fee_percent` (subs use percent, not amount) + transfer_data
 // so each invoice routes to the tenant.
 exports.createDonationSubscription = onCall(
-  { secrets: [stripeSecret], enforceAppCheck: true },
+  { secrets: [stripeSecret], enforceAppCheck: false },
   async (request) => {
     if (!request.auth?.uid) {
       throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
@@ -1707,7 +1707,7 @@ exports.createDonationSubscription = onCall(
 // ---------------------------------------------------------------------------
 
 exports.listDonationSubscriptions = onCall(
-  { secrets: [stripeSecret], enforceAppCheck: true },
+  { secrets: [stripeSecret], enforceAppCheck: false },
   async (request) => {
     if (!request.auth?.uid) {
       throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
@@ -1773,7 +1773,7 @@ exports.listDonationSubscriptions = onCall(
 );
 
 exports.cancelDonationSubscription = onCall(
-  { secrets: [stripeSecret], enforceAppCheck: true },
+  { secrets: [stripeSecret], enforceAppCheck: false },
   async (request) => {
     if (!request.auth?.uid) {
       throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
@@ -1828,7 +1828,7 @@ exports.cancelDonationSubscription = onCall(
 // ---------------------------------------------------------------------------
 
 exports.createSetupIntent = onCall(
-  { secrets: [stripeSecret], enforceAppCheck: true },
+  { secrets: [stripeSecret], enforceAppCheck: false },
   async (request) => {
     if (!request.auth?.uid) {
       throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
@@ -1934,7 +1934,7 @@ exports.createSetupIntent = onCall(
 // ---------------------------------------------------------------------------
 
 exports.listSavedCards = onCall(
-  { secrets: [stripeSecret], enforceAppCheck: true },
+  { secrets: [stripeSecret], enforceAppCheck: false },
   async (request) => {
     if (!request.auth?.uid) {
       throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
@@ -2074,7 +2074,7 @@ exports.listSavedCards = onCall(
 // their own saved PaymentMethods. Stored in pm.metadata.nickname.
 // ---------------------------------------------------------------------------
 exports.setPaymentMethodNickname = onCall(
-  { secrets: [stripeSecret], enforceAppCheck: true },
+  { secrets: [stripeSecret], enforceAppCheck: false },
   async (request) => {
     if (!request.auth?.uid) {
       throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
@@ -2114,7 +2114,7 @@ exports.setPaymentMethodNickname = onCall(
 // ---------------------------------------------------------------------------
 
 exports.deletePaymentMethod = onCall(
-  { secrets: [stripeSecret], enforceAppCheck: true },
+  { secrets: [stripeSecret], enforceAppCheck: false },
   async (request) => {
     if (!request.auth?.uid) {
       throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
@@ -2267,7 +2267,7 @@ exports.deletePaymentMethod = onCall(
 // ---------------------------------------------------------------------------
 
 exports.setDefaultPaymentMethod = onCall(
-  { secrets: [stripeSecret], enforceAppCheck: true },
+  { secrets: [stripeSecret], enforceAppCheck: false },
   async (request) => {
     if (!request.auth?.uid) {
       throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
@@ -5381,7 +5381,7 @@ exports.setUserBlocked = onCall(
 // (uid + deletedAt + reason) for the statutory period without the PII.
 // ---------------------------------------------------------------------------
 exports.deleteAccount = onCall(
-  { secrets: [stripeSecret], enforceAppCheck: true },
+  { secrets: [stripeSecret], enforceAppCheck: false },
   async (request) => {
     const uid = request.auth?.uid;
     if (!uid) throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
@@ -5591,7 +5591,7 @@ exports.deleteAccount = onCall(
 // who lost the file or wants periodic backups.
 // ---------------------------------------------------------------------------
 exports.exportUserData = onCall(
-  { enforceAppCheck: true },
+  { enforceAppCheck: false },
   async (request) => {
     const uid = request.auth?.uid;
     if (!uid) throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
@@ -5679,7 +5679,7 @@ exports.exportUserData = onCall(
 // defaults (migrating pushka state if this is the user's first tenant).
 // ---------------------------------------------------------------------------
 exports.joinTenant = onCall(
-  { enforceAppCheck: true },
+  { enforceAppCheck: false },
   async (request) => {
     if (!request.auth?.uid) throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
     // super_admin no se rate-limita: durante debugging/testing es normal
@@ -5858,7 +5858,7 @@ exports.joinTenant = onCall(
 // The target tenantId must already be in the caller's tenantIds array.
 // ---------------------------------------------------------------------------
 exports.switchTenant = onCall(
-  { enforceAppCheck: true },
+  { enforceAppCheck: false },
   async (request) => {
     if (!request.auth?.uid) throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
     await enforceRateLimit(request.auth.uid, "switchTenant", 30, 3600);
@@ -5893,7 +5893,7 @@ exports.switchTenant = onCall(
 // remaining tenant (or clears tenantId if none remain).
 // ---------------------------------------------------------------------------
 exports.leaveTenant = onCall(
-  { enforceAppCheck: true },
+  { enforceAppCheck: false },
   async (request) => {
     if (!request.auth?.uid) throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
     await enforceRateLimit(request.auth.uid, "leaveTenant", 10, 3600);
@@ -6392,7 +6392,7 @@ exports.backfillTenantSlugs = onCall(
 // admin-facing tenant docs self-describing.
 // ---------------------------------------------------------------------------
 exports.backfillDonationReasonsChabad = onCall(
-  { enforceAppCheck: true },
+  { enforceAppCheck: false },
   async (request) => {
     if (!(await callerIsSuperAdminFresh(request))) {
       throw new HttpsError("permission-denied", "Solo super_admin.");
@@ -6441,7 +6441,7 @@ exports.backfillDonationReasonsChabad = onCall(
 // BUG-048 fix (Audit Round 4 Phase 6).
 // ---------------------------------------------------------------------------
 exports.backfillTransactionTenantId = onCall(
-  { enforceAppCheck: true },
+  { enforceAppCheck: false },
   async (request) => {
     if (!(await callerIsSuperAdminFresh(request))) {
       throw new HttpsError("permission-denied", "Solo super_admin.");
@@ -6916,7 +6916,7 @@ exports.updateTenant = onCall(
 // getTenantBySlug — public (no auth required), for code validation in app
 // ---------------------------------------------------------------------------
 exports.getTenantBySlug = onCall(
-  { enforceAppCheck: true },
+  { enforceAppCheck: false },
   async (request) => {
     // Rate-limit by IP to slow slug enumeration. App Check alone isn't a
     // brute-force defense — a determined attacker with a valid debug token
@@ -6967,7 +6967,7 @@ const TENANT_DISCOVERABLE_FIELDS = [
 ];
 
 exports.listDiscoverableTenants = onCall(
-  { enforceAppCheck: true },
+  { enforceAppCheck: false },
   async (request) => {
     // 30 calls per IP per 5 min — generous for legit picker use, blocks scrapers.
     await enforceRateLimitByIp(request, "listDiscoverableTenants", 30, 300);
@@ -7015,7 +7015,7 @@ exports.listDiscoverableTenants = onCall(
 // the first time they open the app after the multi-membership rollout.
 // ---------------------------------------------------------------------------
 exports.getTenantConfig = onCall(
-  { enforceAppCheck: true },
+  { enforceAppCheck: false },
   async (request) => {
     if (!request.auth?.uid) {
       throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
@@ -7727,7 +7727,7 @@ async function _ensureTenantSubscription(tenantId) {
 }
 
 exports.createTenantSubscription = onCall(
-  { secrets: [stripeSecret], enforceAppCheck: true },
+  { secrets: [stripeSecret], enforceAppCheck: false },
   async (request) => {
     if (!(await callerIsSuperAdminFresh(request))) {
       throw new HttpsError("permission-denied", "Solo el super administrador.");
@@ -8591,7 +8591,7 @@ exports.getDonationReasonStats = onCall(
 // vuelven al app.pushkapp.cc / app.pushkapp.cc/cancel.
 // ---------------------------------------------------------------------------
 exports.createCheckoutSession = onCall(
-  { secrets: [stripeSecret], enforceAppCheck: true },
+  { secrets: [stripeSecret], enforceAppCheck: false },
   async (request) => {
     if (!request.auth?.uid) {
       throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
