@@ -5,7 +5,6 @@
   "hosting": [
     {
       "target": "assetlinks",
-      "site": "pushka-app-ioel",
       "public": "public",
       "ignore": ["firebase.json", "**/.*", "**/node_modules/**"],
       "cleanUrls": true,
@@ -29,7 +28,6 @@
     },
     {
       "target": "pwa",
-      "site": "pushka-pwa",
       "public": "build/web",
       "ignore": ["firebase.json", "**/.*", "**/node_modules/**"],
       "cleanUrls": true,
