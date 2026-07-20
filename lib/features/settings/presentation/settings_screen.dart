@@ -49,6 +49,12 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   bool _loadedProfile = false;
   bool _uploadingPhoto = false;
   bool _avatarLoadFailed = false;
+  // Bump on every successful photo upload — appended as ?v=N query param
+  // to the NetworkImage URL. Firebase Storage returns the same download URL
+  // for the same path across uploads (the token is derived from the path),
+  // so without this cache-bust Flutter serves the OLD bytes and the user
+  // sees "photo updated!" toast + the old avatar still on screen.
+  int _photoBustKey = 0;
   List<double>? _localPresets;
   // Tracks the tenant whose state seeded our local mirrors. When the user
   // switches tenants (AccountSwitcherSheet, invite link, etc.) the
@@ -584,6 +590,16 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     );
   }
 
+  /// Appends ?v={_photoBustKey} (or &v={_photoBustKey}) to the photo URL so
+  /// Flutter's NetworkImage cache treats it as a distinct URL after each
+  /// successful upload. When _photoBustKey == 0 (first render, never uploaded
+  /// in this session) we return the raw URL to preserve CDN caching benefit.
+  String _bustedPhotoUrl(String url) {
+    if (_photoBustKey == 0) return url;
+    final sep = url.contains('?') ? '&' : '?';
+    return '$url${sep}v=$_photoBustKey';
+  }
+
   Widget _buildProfileNameRow(String name, String? uid, S tr, String? photoURL) {
     final blue = Theme.of(context).colorScheme.primary;
     final avatar = GestureDetector(
@@ -598,7 +614,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             // letter fallback. Combine with onForegroundImageError to swap to
             // initial-letter mode if the URL 404s or the network fails.
             foregroundImage: (photoURL != null && photoURL.isNotEmpty && !_avatarLoadFailed)
-                ? NetworkImage(photoURL)
+                ? NetworkImage(_bustedPhotoUrl(photoURL))
                 : null,
             onForegroundImageError: (photoURL != null && photoURL.isNotEmpty)
                 ? (_, _) {
@@ -723,11 +739,23 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     if (!mounted) return;
     setState(() => _uploadingPhoto = true);
     try {
-      await ref.read(userRepositoryProvider).uploadProfilePhoto(
+      final newUrl = await ref.read(userRepositoryProvider).uploadProfilePhoto(
         uid: uid,
         bytes: bytes,
       );
+      // Evict the cached bytes for the old URL so subsequent renders that
+      // read the same URL (before the Firestore snapshot propagates) still
+      // fetch fresh. Also bump _photoBustKey so this render + all future
+      // ones append ?v=N to the URL — bypasses Flutter's NetworkImage cache
+      // because Firebase Storage returns the SAME download URL for the same
+      // path across uploads. And reset _avatarLoadFailed in case a previous
+      // upload had 404'd (would otherwise persist as the letter fallback).
+      try { await NetworkImage(newUrl).evict(); } catch (_) {}
       if (!mounted) return;
+      setState(() {
+        _photoBustKey++;
+        _avatarLoadFailed = false;
+      });
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(tr.photoUpdated)),
       );
