@@ -107,6 +107,11 @@ class StripeService {
     String purpose = 'donation',
     String merchantDisplayName = 'Pushka',
     String? donorMessage,
+    // Web: Payment Sheet nativo NO existe en flutter_stripe web (experimental).
+    // Cuando llamen pay() desde PWA se debe redirigir a Stripe Checkout via
+    // createCheckoutSession CF. Ese flow se implementa en el próximo commit.
+    // Hasta entonces, tirar excepción clara en vez de crashear en runtime.
+    // NOTA: guard is at top of method body below, no aquí en params.
     /// Optional designation/destination chosen by the donor (e.g. "Familias
     /// necesitadas", "Estudio de Torá"). Stamped onto the Stripe PaymentIntent
     /// metadata and persisted on the transaction so admin dashboards can
@@ -119,6 +124,9 @@ class StripeService {
     /// partial payments where the leftover stays in the pushka.
     double? pushkaAmountAfter,
   }) async {
+    if (kIsWeb) {
+      throw const StripeServiceException('web_payment_sheet_not_supported');
+    }
     final sw = Stopwatch()..start();
     final cid = _newCorrelationId();
     final callable = FirebaseFunctions.instance.httpsCallable(
@@ -280,6 +288,9 @@ class StripeService {
     String? donationReason,
     String merchantDisplayName = 'Pushka',
   }) async {
+    if (kIsWeb) {
+      throw const StripeServiceException('web_payment_sheet_not_supported');
+    }
     final cid = _newCorrelationId();
     debugPrint('StripeService.subscribe[cid:$cid]: calling CF amount=$amountCents currency=$currency interval=$interval');
     final callable = FirebaseFunctions.instance
@@ -370,6 +381,9 @@ class StripeService {
   /// Opens the Stripe SetupIntent sheet so the user can save a card for
   /// future off-session charges. Returns the SetupIntent ID on success.
   Future<String> setupCard({String merchantDisplayName = 'Pushka'}) async {
+    if (kIsWeb) {
+      throw const StripeServiceException('web_payment_sheet_not_supported');
+    }
     final cid = _newCorrelationId();
     final callable = FirebaseFunctions.instance.httpsCallable('createSetupIntent');
     HttpsCallableResult result;

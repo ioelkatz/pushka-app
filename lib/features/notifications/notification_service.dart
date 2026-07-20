@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:timezone/data/latest.dart' as tz;
@@ -61,6 +62,11 @@ class NotificationService {
   }
 
   Future<void> initialize() async {
+    // Web (PWA) no soporta flutter_local_notifications (Android/iOS only).
+    // Los reminders programados quedan disabled hasta que el user pase a
+    // la app nativa (post migración Play Store / App Store). FirebaseMessaging
+    // web (para push desde el server) requiere vapidKey config aparte.
+    if (kIsWeb) return;
     await _configureLocalTimezone();
     try {
       await _requestPermissions();
@@ -122,12 +128,17 @@ class NotificationService {
   }
 
   Future<void> syncFcmToken(String uid) async {
+    // FCM en web requiere vapidKey (getToken(vapidKey: ...)) que todavía
+    // no está configurado. Cuando implementemos Web Push proper, este
+    // método debería recibir el vapidKey. Por ahora, skip en web.
+    if (kIsWeb) return;
     final token = await _messaging.getToken();
     if (token == null) return;
     await _saveToken(uid, token);
   }
 
   void listenForTokenRefresh(String uid) {
+    if (kIsWeb) return;
     if (_currentUid == uid && _tokenRefreshSub != null) return;
     _currentUid = uid;
     _tokenRefreshSub?.cancel();
@@ -368,6 +379,11 @@ class NotificationService {
   }
 
   Future<void> scheduleReminder(Reminder reminder, {S? tr}) async {
+    // Reminders programados no funcionan en PWA (flutter_local_notifications
+    // es mobile-only). Falla silencioso — el user puede crear un reminder
+    // en la PWA, se guarda en Firestore, pero no dispara hasta migrar
+    // a app nativa. Trade-off aceptado del sideload plan.
+    if (kIsWeb) return;
     if (!reminder.isEnabled) {
       await cancelReminder(reminder);
       return;
@@ -474,6 +490,7 @@ class NotificationService {
   }
 
   Future<void> cancelReminder(Reminder reminder) async {
+    if (kIsWeb) return;
     // 14 (7 days × 2 horarios) cancel calls fanned out in parallel — saves
     // ~14× the per-call platform-channel latency on app start, where the
     // app_initializer rescheduler cancels-then-reschedules every saved

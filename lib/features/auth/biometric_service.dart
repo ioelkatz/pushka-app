@@ -7,7 +7,13 @@ class BiometricService {
 
   final LocalAuthentication _auth = LocalAuthentication();
 
+  // Web (PWA) no soporta biometría — el package local_auth solo tiene
+  // implementaciones Android/iOS/macOS/Windows. Cualquier llamada en web
+  // tira UnimplementedError. Retornamos false silencioso para que la UI
+  // esconda los toggles biométricos, y authenticate() retorna false para
+  // que el caller siga sin bloquear.
   Future<bool> isAvailable() async {
+    if (kIsWeb) return false;
     try {
       final canCheck = await _auth.canCheckBiometrics;
       final isSupported = await _auth.isDeviceSupported();
@@ -21,6 +27,7 @@ class BiometricService {
   }
 
   Future<List<BiometricType>> availableTypes() async {
+    if (kIsWeb) return const [];
     try {
       return await _auth.getAvailableBiometrics();
     } catch (e, st) {
@@ -32,6 +39,7 @@ class BiometricService {
   Future<bool> authenticate({
     String reason = 'Confirm your identity to continue',
   }) async {
+    if (kIsWeb) return false;
     try {
       if (!await isAvailable()) return false;
       return await _auth.authenticate(
