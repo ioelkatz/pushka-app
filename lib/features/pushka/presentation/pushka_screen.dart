@@ -15,6 +15,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_crashlytics/firebase_crashlytics.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../analytics/analytics_service.dart';
 import '../../auth/biometric_service.dart';
@@ -343,7 +344,16 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
         _reportError(error, st, op: 'emptyPushka');
       }
       if (!mounted) return;
-      _showError(_donationErrorMessage(error, tr));
+      final reason = _donationErrorMessage(error, tr);
+      if (isUserCancel) {
+        // Cancels are not payment failures — keep the lightweight SnackBar
+        // so users who dismissed the sheet don't get a scary alert.
+        _showError(reason);
+      } else {
+        _showDonationErrorDialog(reason, () {
+          if (mounted) emptyPushka();
+        });
+      }
     } finally {
       if (mounted) setState(() => _isProcessing = false);
     }
@@ -601,9 +611,24 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
           SnackBar(content: Text(S.of(context).donationProcessed(formatMoney(donationAmount)))),
         );
       }
-    } catch (error) {
+    } catch (error, st) {
+      final isUserCancel = error is StripeServiceException && error.code == 'canceled';
+      if (!isUserCancel) {
+        _reportError(error, st, op: 'donateNow');
+      }
       if (!mounted) return;
-      _showError(_donationErrorMessage(error, S.of(context)));
+      final reason = _donationErrorMessage(error, S.of(context));
+      if (isUserCancel) {
+        _showError(reason);
+      } else {
+        // Retry re-opens the donate-now sheet from scratch. We do NOT
+        // stash the previous amount/reason/message — a failed payment
+        // often means the donor picked the wrong card or amount, so
+        // letting them start fresh is friendlier than auto-resubmitting.
+        _showDonationErrorDialog(reason, () {
+          if (mounted) _donateNow();
+        });
+      }
     } finally {
       if (mounted) setState(() => _isProcessing = false);
     }
@@ -664,9 +689,26 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
           ),
         ),
       );
-    } catch (error) {
+    } catch (error, st) {
+      final isUserCancel = error is StripeServiceException && error.code == 'canceled';
+      if (!isUserCancel) {
+        _reportError(error, st, op: 'processCardPayment');
+      }
       if (!mounted) return;
-      _showError(_donationErrorMessage(error, tr));
+      final reason = _donationErrorMessage(error, tr);
+      if (isUserCancel) {
+        _showError(reason);
+      } else {
+        _showDonationErrorDialog(reason, () {
+          if (mounted) {
+            _processCardPayment(
+              donationAmount,
+              donorMessage: donorMessage,
+              donationReason: donationReason,
+            );
+          }
+        });
+      }
     } finally {
       if (mounted) setState(() => _isProcessing = false);
     }
@@ -1616,6 +1658,116 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
       SnackBar(content: Text(message)),
     );
   }
+
+  /// Persistent error alert for donation failures. Replaces the previous
+  /// SnackBar-based UX (auto-dismissed in ~4s, easy to miss, no next-step).
+  ///
+  /// - `reason` is the sanitized failure message (from `_donationErrorMessage`).
+  /// - `onRetry` is invoked after the dialog closes; pass a closure that
+  ///   re-triggers the same donation flow the user just attempted.
+  ///
+  /// The dialog is `barrierDismissible: false` so users must explicitly pick
+  /// Retry / Contact / Close — a critical payment error should not vanish
+  /// on an accidental tap-outside.
+  Future<void> _showDonationErrorDialog(
+    String reason,
+    VoidCallback? onRetry,
+  ) async {
+    if (!mounted) return;
+    final tr = S.of(context);
+    // Prefer the active tenant's contactEmail; fall back to the app-wide
+    // support address so the "Contact rab" action never dead-ends when a
+    // tenant has no contact configured.
+    final tenantContact =
+        ref.read(tenantConfigProvider).valueOrNull?.contactEmail;
+    final supportEmail = (tenantContact != null && tenantContact.trim().isNotEmpty)
+        ? tenantContact.trim()
+        : 'support@pushkaapp.com';
+
+    await showDialog<void>(
+      context: context,
+      // Force explicit dismissal — payment failure is critical, tap-outside
+      // must not silently close the alert.
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: Row(
+          children: [
+            Container(
+              width: 36, height: 36,
+              decoration: BoxDecoration(
+                color: const Color(0xFFFFE5E5),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: const Icon(Icons.error_outline_rounded,
+                  color: Color(0xFFCC2936), size: 22),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                tr.donationFailedTitle,
+                style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
+              ),
+            ),
+          ],
+        ),
+        content: Text(
+          tr.donationFailedBody(reason),
+          style: const TextStyle(fontSize: 14, height: 1.4),
+        ),
+        actionsAlignment: MainAxisAlignment.end,
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: Text(tr.donationCloseBtn),
+          ),
+          TextButton(
+            onPressed: () async {
+              Navigator.of(ctx).pop();
+              // Build a mailto: with a pre-filled subject + body that
+              // includes the failure detail — saves the donor typing and
+              // gives the rab enough context to triage.
+              final uri = Uri(
+                scheme: 'mailto',
+                path: supportEmail,
+                query: _encodeMailtoQuery({
+                  'subject': tr.donationEmailSubject,
+                  'body': tr.donationEmailBody(reason),
+                }),
+              );
+              try {
+                await launchUrl(uri, mode: LaunchMode.externalApplication);
+              } catch (_) {
+                // launchUrl can throw on platforms without a mail handler;
+                // swallow — dialog already closed, user can try again.
+              }
+            },
+            child: Text(tr.donationContactRabBtn),
+          ),
+          if (onRetry != null)
+            FilledButton(
+              style: FilledButton.styleFrom(
+                backgroundColor: AppTokens.primaryBlue,
+                foregroundColor: Colors.white,
+              ),
+              onPressed: () {
+                Navigator.of(ctx).pop();
+                onRetry();
+              },
+              child: Text(tr.donationRetryBtn),
+            ),
+        ],
+      ),
+    );
+  }
+
+  /// `Uri(queryParameters: ...)` percent-encodes spaces as `+`, which some
+  /// mail clients render literally in the subject/body. Encode manually with
+  /// `%20` so the email opens clean on both Gmail and Apple Mail.
+  String _encodeMailtoQuery(Map<String, String> params) => params.entries
+      .map((e) =>
+          '${Uri.encodeComponent(e.key)}=${Uri.encodeQueryComponent(e.value).replaceAll('+', '%20')}')
+      .join('&');
 
   String _currencySymbol(String code) {
     const symbols = {

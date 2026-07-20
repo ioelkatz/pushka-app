@@ -526,6 +526,66 @@ async function writeActivityLog({ type, tenantId, tenantName, severity, requires
     createdAt: admin.firestore.FieldValue.serverTimestamp(),
     ttlAt: isPermanent ? null : admin.firestore.Timestamp.fromMillis(Date.now() + ninetyDaysMs),
   });
+
+  // Fire-and-forget email alert for critical events. Existing chargeback
+  // + tenant billing alerts already email separately; this catches the
+  // long-tail (stripe_connect_restricted, drift detection, backfill
+  // conflicts, etc). Deduped by type+ref via a rate-limit sentinel so
+  // a burst doesn't spam the inbox.
+  if (severity === "critical" || requiresAction === true) {
+    try {
+      const dataObj = data && typeof data === "object" ? data : {};
+      const refId = dataObj.transactionId || dataObj.tenantId || dataObj.id ||
+        dataObj.chargeId || dataObj.paymentIntentId || tenantId || "global";
+      const alertKey = `${type}:${refId}`
+        .replace(/[/#[\]*]/g, "_")
+        .slice(0, 300); // Firestore doc id constraints
+      const alertRef = db.collection("_activityAlertRate").doc(alertKey);
+      const snap = await alertRef.get().catch(() => null);
+      const now = Date.now();
+      const lastSentMs = snap?.exists ? (snap.data()?.lastSent?.toMillis?.() || 0) : 0;
+      const ALERT_COOLDOWN_MS = 15 * 60 * 1000; // 15 min per unique (type, ref)
+      if (now - lastSentMs > ALERT_COOLDOWN_MS) {
+        const severityLabel = severity === "critical" ? "CRITICAL" : "Action required";
+        const subject = `[Pushka] ${severityLabel}: ${type}`;
+        const escape = (s) => String(s ?? "")
+          .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+        let dataJson = "";
+        try {
+          dataJson = JSON.stringify(dataObj, null, 2).slice(0, 4000);
+        } catch (_) {
+          dataJson = "(unserializable)";
+        }
+        const html = `
+          <div style="font-family:-apple-system,BlinkMacSystemFont,sans-serif;padding:20px;">
+            <h2 style="color:#DC2626;">${escape(subject)}</h2>
+            <p><strong>Type:</strong> ${escape(type)}</p>
+            <p><strong>Severity:</strong> ${escape(severity)}</p>
+            <p><strong>Requires action:</strong> ${requiresAction ? "yes" : "no"}</p>
+            <p><strong>Ref ID:</strong> ${escape(refId)}</p>
+            <p><strong>Tenant:</strong> ${escape(tenantName || tenantId || "—")}</p>
+            <p><strong>Timestamp:</strong> ${new Date().toISOString()}</p>
+            <p><strong>Data:</strong></p>
+            <pre style="background:#F3F4F6;padding:12px;border-radius:6px;font-size:12px;overflow:auto;">${escape(dataJson)}</pre>
+            <p><a href="https://chabad-admin.web.app/activity">Ver en admin panel →</a></p>
+            <p style="color:#666;font-size:12px;margin-top:24px;">
+              Cooldown: 15 min por (type, refId). Los mismos eventos repetidos no re-envían email.
+            </p>
+          </div>
+        `;
+        // Best-effort — never fail the log write on email failure.
+        await sendEmail({ to: SUPER_ADMIN_EMAIL, subject, html });
+        await alertRef.set({
+          lastSent: admin.firestore.FieldValue.serverTimestamp(),
+          type,
+          refId,
+        }, { merge: true });
+      }
+    } catch (e) {
+      console.warn("writeActivityLog: alert email failed", { message: e?.message, type });
+    }
+  }
 }
 
 // Atomic counter increment on tenant doc — called after every confirmed donation.
@@ -534,12 +594,43 @@ async function incrementTenantRevenue(tenantId, amountUSD) {
   if (!tenantId || !Number.isFinite(amountUSD) || amountUSD <= 0) return;
   const now = new Date();
   const monthKey = `${now.getUTCFullYear()}_${String(now.getUTCMonth() + 1).padStart(2, "0")}`;
+  const yearKey  = `${now.getUTCFullYear()}`;
   try {
-    await db.collection("tenants").doc(tenantId).update({
-      [`revenueStats.${monthKey}.revenue`]: admin.firestore.FieldValue.increment(amountUSD),
-      [`revenueStats.${monthKey}.count`]:   admin.firestore.FieldValue.increment(1),
-      "revenueStats.allTime.revenue":       admin.firestore.FieldValue.increment(amountUSD),
-      "revenueStats.allTime.count":         admin.firestore.FieldValue.increment(1),
+    // Flat top-level fields (monthRevenueUSD / yearRevenueUSD / allTimeRevenueUSD /
+    // lastDonationAt) power the Rab dashboard KPI row via an onSnapshot subscription
+    // on tenants/{id}. When the month or year rolls over, the update path needs to
+    // RESET rather than increment — so we do a transaction that reads the current
+    // month/year keys and chooses set-vs-increment. The nested revenueStats.* map
+    // continues to be updated so historical queries (getSuperAdminDashboard,
+    // sumMonths, etc.) keep working unchanged.
+    await db.runTransaction(async (tx) => {
+      const ref = db.collection("tenants").doc(tenantId);
+      const snap = await tx.get(ref);
+      const data = snap.exists ? snap.data() : {};
+      const prevMonthKey = data?.monthYearKey || null;
+      const prevYearKey  = data?.yearKey || null;
+      const prevMonth = Number(data?.monthRevenueUSD) || 0;
+      const prevYear  = Number(data?.yearRevenueUSD)  || 0;
+      const prevAll   = Number(data?.allTimeRevenueUSD) || 0;
+
+      const monthValue = prevMonthKey === monthKey ? prevMonth + amountUSD : amountUSD;
+      const yearValue  = prevYearKey  === yearKey  ? prevYear  + amountUSD : amountUSD;
+
+      const updates = {
+        // Nested map — preserved for backward compatibility with existing dashboards.
+        [`revenueStats.${monthKey}.revenue`]: admin.firestore.FieldValue.increment(amountUSD),
+        [`revenueStats.${monthKey}.count`]:   admin.firestore.FieldValue.increment(1),
+        "revenueStats.allTime.revenue":       admin.firestore.FieldValue.increment(amountUSD),
+        "revenueStats.allTime.count":         admin.firestore.FieldValue.increment(1),
+        // Flat fields — real-time onSnapshot friendly.
+        monthRevenueUSD: monthValue,
+        monthYearKey: monthKey,
+        yearRevenueUSD: yearValue,
+        yearKey,
+        allTimeRevenueUSD: prevAll + amountUSD,
+        lastDonationAt: admin.firestore.FieldValue.serverTimestamp(),
+      };
+      tx.set(ref, updates, { merge: true });
     });
   } catch (err) {
     console.warn("incrementTenantRevenue: failed (non-fatal)", { tenantId, amountUSD, error: String(err?.message || err) });
@@ -559,10 +650,40 @@ async function decrementTenantRevenue(tenantId, amountUSD) {
   if (!tenantId || !Number.isFinite(amountUSD) || amountUSD <= 0) return;
   const now = new Date();
   const monthKey = `${now.getUTCFullYear()}_${String(now.getUTCMonth() + 1).padStart(2, "0")}`;
+  const yearKey  = `${now.getUTCFullYear()}`;
   try {
-    await db.collection("tenants").doc(tenantId).update({
-      [`revenueStats.${monthKey}.revenue`]: admin.firestore.FieldValue.increment(-amountUSD),
-      "revenueStats.allTime.revenue":       admin.firestore.FieldValue.increment(-amountUSD),
+    // Symmetric to incrementTenantRevenue: reduce the flat top-level fields so
+    // the Rab dashboard reflects refunds/chargebacks in real time. When the
+    // month/year has rolled over since the last increment we don't touch the
+    // stale bucket — we simply zero/refresh the current bucket at the next
+    // positive donation. Never go negative on the flat fields.
+    await db.runTransaction(async (tx) => {
+      const ref = db.collection("tenants").doc(tenantId);
+      const snap = await tx.get(ref);
+      const data = snap.exists ? snap.data() : {};
+      const prevMonthKey = data?.monthYearKey || null;
+      const prevYearKey  = data?.yearKey || null;
+      const prevMonth = Number(data?.monthRevenueUSD) || 0;
+      const prevYear  = Number(data?.yearRevenueUSD)  || 0;
+      const prevAll   = Number(data?.allTimeRevenueUSD) || 0;
+
+      const monthValue = prevMonthKey === monthKey ? Math.max(0, prevMonth - amountUSD) : prevMonth;
+      const yearValue  = prevYearKey  === yearKey  ? Math.max(0, prevYear  - amountUSD) : prevYear;
+      const allValue   = Math.max(0, prevAll - amountUSD);
+
+      const updates = {
+        // Nested map — preserved for backward compatibility.
+        [`revenueStats.${monthKey}.revenue`]: admin.firestore.FieldValue.increment(-amountUSD),
+        "revenueStats.allTime.revenue":       admin.firestore.FieldValue.increment(-amountUSD),
+        // Flat fields.
+        monthRevenueUSD: monthValue,
+        yearRevenueUSD: yearValue,
+        allTimeRevenueUSD: allValue,
+      };
+      // Keep the keys aligned so a later increment doesn't misidentify the bucket.
+      if (!prevMonthKey) updates.monthYearKey = monthKey;
+      if (!prevYearKey)  updates.yearKey = yearKey;
+      tx.set(ref, updates, { merge: true });
     });
   } catch (err) {
     console.warn("decrementTenantRevenue: failed (non-fatal)", { tenantId, amountUSD, error: String(err?.message || err) });
@@ -9762,3 +9883,115 @@ function _escapeHtmlForEmail(s) {
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#39;");
 }
+
+// ---------------------------------------------------------------------------
+// health — public liveness probe for external uptime monitors.
+// ---------------------------------------------------------------------------
+// Read by UptimeRobot / GCP Monitoring uptime check to detect prod outages.
+// No auth required so the monitor can hit it every 5 min without credentials.
+// Returns 200 with status=ok when Firestore + Stripe are reachable;
+// 503 with the failing component when either dep is down.
+//
+// TODO(ops): create _health/probe doc in Firestore once, or the first hit
+// will fall through the get() successfully anyway (Firestore returns an
+// empty snapshot for missing docs — read still succeeds), but writing an
+// explicit doc lets you attach ops metadata (last verified, etc.).
+exports.health = onRequest(
+  {
+    secrets: [stripeSecret],
+    region: "us-central1",
+    cors: false,
+    memory: "256MiB",
+    timeoutSeconds: 15,
+  },
+  async (req, res) => {
+    if (req.method !== "GET") {
+      res.status(405).json({ error: "GET only" });
+      return;
+    }
+
+    const started = Date.now();
+    const result = {
+      status: "ok",
+      timestamp: new Date().toISOString(),
+      firestore: "unknown",
+      stripe: "unknown",
+      latencyMs: 0,
+    };
+
+    // Firestore health: read a well-known doc (missing doc = still a valid read).
+    try {
+      await db.collection("_health").doc("probe").get();
+      result.firestore = "ok";
+    } catch (e) {
+      result.firestore = "error";
+      result.status = "degraded";
+      console.error("health: firestore probe failed", { message: e?.message });
+    }
+
+    // Stripe health: retrieve platform balance (lightweight, requires valid key).
+    try {
+      const stripe = require("stripe")(stripeSecret.value(), { timeout: 5000 });
+      await stripe.balance.retrieve();
+      result.stripe = "ok";
+    } catch (e) {
+      result.stripe = "error";
+      result.status = "degraded";
+      console.error("health: stripe probe failed", { message: e?.message });
+    }
+
+    result.latencyMs = Date.now() - started;
+    res.status(result.status === "ok" ? 200 : 503).json(result);
+  }
+);
+
+// ---------------------------------------------------------------------------
+// cleanupLegacyOAuthFields — one-shot sweep of stale tenant-doc OAuth state.
+// ---------------------------------------------------------------------------
+// Legacy tenants may still have stripeConnectOAuthState and
+// stripeConnectOAuthStateCreatedAt fields on their tenant doc. These were
+// moved to _stripeConnectOAuth/{token} in the OAuth harden pass, so the
+// tenant-doc fields are inert (nothing reads them) but represent residual
+// state. This function sweeps and removes them.
+//
+// Super_admin only. Idempotent. Safe to re-run.
+exports.cleanupLegacyOAuthFields = onCall(
+  { enforceAppCheck: false },
+  async (request) => {
+    if (!request.auth?.uid) throw new HttpsError("unauthenticated", "Auth required.");
+    if (!(await callerIsSuperAdminFresh(request))) {
+      throw new HttpsError("permission-denied", "super_admin only.");
+    }
+
+    let scanned = 0;
+    let cleaned = 0;
+    const BATCH = 100;
+    let lastDoc = null;
+    while (true) {
+      let q = db.collection("tenants").orderBy("__name__").limit(BATCH);
+      if (lastDoc) q = q.startAfter(lastDoc);
+      const snap = await q.get();
+      if (snap.empty) break;
+      const batch = db.batch();
+      let batchWrites = 0;
+      for (const doc of snap.docs) {
+        scanned += 1;
+        const data = doc.data();
+        if ("stripeConnectOAuthState" in data || "stripeConnectOAuthStateCreatedAt" in data) {
+          batch.update(doc.ref, {
+            stripeConnectOAuthState: admin.firestore.FieldValue.delete(),
+            stripeConnectOAuthStateCreatedAt: admin.firestore.FieldValue.delete(),
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          });
+          batchWrites += 1;
+          cleaned += 1;
+        }
+      }
+      if (batchWrites > 0) await batch.commit();
+      lastDoc = snap.docs[snap.docs.length - 1];
+      if (snap.size < BATCH) break;
+    }
+
+    return { scanned, cleaned };
+  }
+);

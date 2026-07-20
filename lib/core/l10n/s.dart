@@ -273,6 +273,36 @@ class S {
   String get paymentCanceled => _t('Pago cancelado', 'Payment canceled', 'Paiement annulé', 'התשלום בוטל');
   String paymentFailed(String msg) => _t('No se pudo completar el pago: $msg', 'Could not complete payment: $msg', 'Impossible de compléter le paiement : $msg', 'לא ניתן להשלים את התשלום: $msg');
   String get couldNotCompleteDonation => _t("No se pudo completar la donación", "Could not complete the donation", "Impossible de compléter le don", 'לא ניתן להשלים את התרומה');
+  // Donation-failure dialog (replaces the auto-dismiss SnackBar UX so the
+  // donor sees a persistent alert with clear next-steps: Retry, Contact rab,
+  // or Close).
+  String get donationFailedTitle => _t(
+    'El pago no se pudo procesar',
+    "Payment couldn't be processed",
+    "Le paiement n'a pas pu être traité",
+    'לא ניתן היה לעבד את התשלום',
+  );
+  String donationFailedBody(String reason) => _t(
+    'Detalle: $reason\n\nPodés intentar con otra tarjeta o contactar al rab para ayuda.',
+    'Details: $reason\n\nYou can try with another card or contact the rabbi for help.',
+    "Détails : $reason\n\nVous pouvez essayer avec une autre carte ou contacter le rabbin pour de l'aide.",
+    'פרטים: $reason\n\nניתן לנסות בכרטיס אחר או ליצור קשר עם הרב לעזרה.',
+  );
+  String get donationRetryBtn => _t('Reintentar', 'Retry', 'Réessayer', 'נסה שוב');
+  String get donationContactRabBtn => _t('Contactar al rab', 'Contact rabbi', 'Contacter le rabbin', 'צור קשר עם הרב');
+  String get donationCloseBtn => _t('Cerrar', 'Close', 'Fermer', 'סגור');
+  String get donationEmailSubject => _t(
+    'Ayuda con donación',
+    'Donation help',
+    'Aide pour un don',
+    'עזרה בתרומה',
+  );
+  String donationEmailBody(String reason) => _t(
+    'Hola,\n\nTuve un problema al procesar mi donación en la app.\n\nDetalle del error: $reason\n\nGracias.',
+    'Hello,\n\nI had an issue processing my donation in the app.\n\nError detail: $reason\n\nThank you.',
+    "Bonjour,\n\nJ'ai eu un problème pour traiter mon don dans l'application.\n\nDétail de l'erreur : $reason\n\nMerci.",
+    'שלום,\n\nהיתה לי בעיה בעיבוד תרומה באפליקציה.\n\nפירוט השגיאה: $reason\n\nתודה.',
+  );
   String get partialDonationTitle => _t('Donación parcial', 'Partial donation', 'Don partiel', 'תרומה חלקית');
   String availableInPushka(String amount) => _t('Disponible en Pushka: $amount', 'Available in Pushka: $amount', 'Disponible dans la Pushka : $amount', 'זמין בפושקה: $amount');
   String get quickSelect => _t('Selecciona rápido', 'Quick select', 'Sélection rapide', 'בחירה מהירה');
