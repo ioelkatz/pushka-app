@@ -2783,6 +2783,42 @@ exports.stripeWebhook = onRequest(
         amount: disputedAmount,
         outcome: "dispute_created",
       });
+
+      // Alerta email crítica a super_admin (Ioel). Fire-and-forget para no
+      // bloquear la escritura del webhook si SendGrid está caído. Los
+      // disputes son time-sensitive (7-21 días para responder con evidence)
+      // y perder uno = fee $15 + hit al risk score de Stripe.
+      try {
+        const disputeReason = dispute.reason || "sin razón especificada";
+        const dashboardUrl = event.livemode
+          ? `https://dashboard.stripe.com/disputes/${dispute.id}`
+          : `https://dashboard.stripe.com/test/disputes/${dispute.id}`;
+        sendEmail({
+          to: SUPER_ADMIN_EMAIL,
+          subject: `🚨 Chargeback recibido: ${currency} ${disputedAmount.toFixed(2)}`,
+          html: `
+            <h2 style="color:#dc2626;font-family:sans-serif">Chargeback recibido</h2>
+            <p style="font-family:sans-serif;font-size:15px;line-height:1.5">
+              Un donante inició un dispute en Stripe. Tenés <b>7 a 21 días</b> para responder con evidence o perdés el monto + $15 fee + hit al risk score de la cuenta.
+            </p>
+            <table style="font-family:sans-serif;font-size:14px;border-collapse:collapse;margin-top:16px">
+              <tr><td style="padding:4px 12px;color:#64748b">Monto:</td><td style="padding:4px 12px"><b>${currency} ${disputedAmount.toFixed(2)}</b></td></tr>
+              <tr><td style="padding:4px 12px;color:#64748b">Razón:</td><td style="padding:4px 12px">${disputeReason}</td></tr>
+              <tr><td style="padding:4px 12px;color:#64748b">Dispute ID:</td><td style="padding:4px 12px;font-family:monospace">${dispute.id}</td></tr>
+              <tr><td style="padding:4px 12px;color:#64748b">Charge ID:</td><td style="padding:4px 12px;font-family:monospace">${chargeId || "N/A"}</td></tr>
+              <tr><td style="padding:4px 12px;color:#64748b">Ambiente:</td><td style="padding:4px 12px">${event.livemode ? "LIVE (dinero real)" : "TEST"}</td></tr>
+            </table>
+            <p style="margin-top:24px">
+              <a href="${dashboardUrl}" style="display:inline-block;padding:12px 20px;background:#2563eb;color:#fff;text-decoration:none;border-radius:8px;font-family:sans-serif;font-weight:600">Ver en Stripe Dashboard →</a>
+            </p>
+            <p style="margin-top:24px;font-family:sans-serif;font-size:12px;color:#94a3b8">
+              Alerta automática de Chabad Pushka backend.
+            </p>
+          `,
+        }).catch(err => console.warn("dispute.created: alert email failed", { errorMessage: err?.message }));
+      } catch (alertErr) {
+        console.warn("dispute.created: alert email setup failed", { errorMessage: alertErr?.message });
+      }
     } else if (event.type === "charge.dispute.closed") {
       // Dispute resolved. If we WON, reverse the negating chargeback tx.
       const dispute = event.data.object;

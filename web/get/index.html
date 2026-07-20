@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="theme-color" content="#2563EB">
+  <title>Chabad Pushka — Descargar app</title>
+  <link rel="icon" type="image/png" href="/favicon.png">
+  <link rel="apple-touch-icon" href="/icons/Icon-192.png">
+  <meta name="description" content="Descargá Chabad Pushka en tu celular. Android e iPhone.">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: linear-gradient(180deg, #1E3A5F 0%, #2563EB 100%);
+      min-height: 100vh;
+      color: #fff;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 24px 20px;
+      -webkit-font-smoothing: antialiased;
+    }
+    .container { max-width: 420px; width: 100%; text-align: center; }
+    .logo {
+      width: 96px; height: 96px;
+      margin: 0 auto 24px;
+      background: #fff;
+      border-radius: 24px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.2);
+    }
+    .logo img { width: 72px; height: 72px; }
+    h1 { font-size: 28px; font-weight: 800; margin-bottom: 8px; letter-spacing: -0.5px; }
+    .subtitle { font-size: 15px; opacity: 0.85; margin-bottom: 40px; line-height: 1.5; }
+    .btn {
+      display: block;
+      width: 100%;
+      padding: 18px 24px;
+      margin-bottom: 12px;
+      border: none;
+      border-radius: 16px;
+      font-size: 16px;
+      font-weight: 700;
+      cursor: pointer;
+      text-decoration: none;
+      transition: transform 0.15s, box-shadow 0.15s;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+      color: #1E293B;
+      background: #fff;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+    }
+    .btn:active { transform: scale(0.98); }
+    .btn svg { width: 22px; height: 22px; flex-shrink: 0; }
+    .btn-primary { background: #fff; color: #1E3A5F; }
+    .platform-hint {
+      font-size: 13px;
+      opacity: 0.75;
+      margin: 32px 0 12px;
+      font-weight: 500;
+    }
+    .instructions {
+      margin-top: 32px;
+      padding: 20px;
+      background: rgba(255,255,255,0.1);
+      border-radius: 16px;
+      backdrop-filter: blur(10px);
+      text-align: left;
+      font-size: 14px;
+      line-height: 1.6;
+      opacity: 0.9;
+      display: none;
+    }
+    .instructions.active { display: block; }
+    .instructions h3 { font-size: 15px; font-weight: 700; margin-bottom: 10px; }
+    .instructions ol { padding-left: 20px; margin: 0; }
+    .instructions li { margin-bottom: 6px; }
+    .footer {
+      margin-top: 40px;
+      font-size: 12px;
+      opacity: 0.6;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="logo">
+      <img src="/icons/Icon-192.png" alt="Chabad Pushka">
+    </div>
+    <h1>Chabad Pushka</h1>
+    <p class="subtitle">Tu alcancía de tzedaká digital.<br>Descargala en tu celular.</p>
+
+    <a href="#" id="btn-ios" class="btn btn-primary">
+      <svg viewBox="0 0 24 24" fill="currentColor"><path d="M17.5 12.5c0-2.1 1.7-3.1 1.8-3.2-1-1.4-2.5-1.6-3-1.6-1.3-.1-2.5.8-3.2.8-.6 0-1.7-.7-2.8-.7-1.4 0-2.8.8-3.5 2.1-1.5 2.6-.4 6.4 1.1 8.5.7 1 1.5 2.2 2.6 2.1 1-.1 1.5-.7 2.7-.7 1.3 0 1.7.7 2.8.7 1.2 0 1.9-1 2.7-2 .8-1.1 1.1-2.2 1.1-2.3 0 0-2.3-1-2.3-3.7zM15.4 5.8c.5-.6 1-1.6.8-2.5-.8 0-1.9.6-2.4 1.1-.5.6-.9 1.5-.8 2.4.9 0 1.8-.4 2.4-1z"/></svg>
+      Instalar en iPhone
+    </a>
+    <a href="https://appdistribution.firebase.google.com/testerapps/1:846580817724:android:d1d1fc1eb5773e9198c839/releases/0237ssnbj87po" id="btn-android" class="btn">
+      <svg viewBox="0 0 24 24" fill="currentColor"><path d="M17.523 15.34c-.573 0-1.04-.467-1.04-1.04s.467-1.04 1.04-1.04 1.04.467 1.04 1.04-.467 1.04-1.04 1.04zm-11.046 0c-.573 0-1.04-.467-1.04-1.04s.467-1.04 1.04-1.04 1.04.467 1.04 1.04-.467 1.04-1.04 1.04zM17.897 9.316l2.077-3.594a.435.435 0 00-.755-.435l-2.1 3.638C15.505 8.14 13.803 7.784 12 7.784s-3.505.356-5.12.941l-2.099-3.638a.435.435 0 00-.755.435l2.077 3.594C2.483 11.15.09 14.548 0 18.542h24c-.09-3.994-2.483-7.392-6.103-9.226z"/></svg>
+      Descargar en Android
+    </a>
+
+    <div class="platform-hint" id="platform-hint"></div>
+
+    <div class="instructions" id="ios-instructions">
+      <h3>Cómo instalar en iPhone:</h3>
+      <ol>
+        <li>Tocá el botón "Instalar en iPhone" arriba</li>
+        <li>En Safari, tocá el ícono <b>Compartir</b> (cuadradito con flecha ↑)</li>
+        <li>Bajá y tocá <b>"Agregar a pantalla de inicio"</b></li>
+        <li>Confirmá — el ícono queda en tu pantalla</li>
+        <li>Tocá el ícono para abrir la app</li>
+      </ol>
+    </div>
+
+    <div class="instructions" id="android-instructions">
+      <h3>Cómo instalar en Android:</h3>
+      <ol>
+        <li>Tocá "Descargar en Android"</li>
+        <li>Iniciá sesión con tu cuenta Google</li>
+        <li>Descargá el archivo APK</li>
+        <li>Cuando termine, tocá el archivo → "Instalar"</li>
+        <li>Si Android pide permisos, activá <b>"Permitir instalar desde esta fuente"</b></li>
+      </ol>
+    </div>
+
+    <p class="footer">Colel Chabad USA · Donaciones seguras vía Stripe</p>
+  </div>
+
+  <script>
+    // Detectar plataforma y sugerir el botón correcto
+    (function() {
+      const ua = navigator.userAgent.toLowerCase();
+      const isIOS = /iphone|ipad|ipod/.test(ua);
+      const isAndroid = /android/.test(ua);
+      const btnIOS = document.getElementById('btn-ios');
+      const btnAndroid = document.getElementById('btn-android');
+      const hint = document.getElementById('platform-hint');
+      const iosInst = document.getElementById('ios-instructions');
+      const androidInst = document.getElementById('android-instructions');
+
+      // El botón iOS lleva a la PWA (raíz del site) que ya tiene el manifest
+      btnIOS.href = '/';
+
+      if (isIOS) {
+        hint.textContent = 'Detectamos iPhone — usá el botón azul de arriba';
+        iosInst.classList.add('active');
+      } else if (isAndroid) {
+        hint.textContent = 'Detectamos Android — usá el botón de descarga';
+        androidInst.classList.add('active');
+      } else {
+        hint.textContent = 'Elegí tu plataforma';
+      }
+    })();
+  </script>
+</body>
+</html>
