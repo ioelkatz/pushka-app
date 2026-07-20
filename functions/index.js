@@ -9887,15 +9887,23 @@ function _escapeHtmlForEmail(s) {
 // ---------------------------------------------------------------------------
 // health — public liveness probe for external uptime monitors.
 // ---------------------------------------------------------------------------
-// Read by UptimeRobot / GCP Monitoring uptime check to detect prod outages.
-// No auth required so the monitor can hit it every 5 min without credentials.
-// Returns 200 with status=ok when Firestore + Stripe are reachable;
-// 503 with the failing component when either dep is down.
+// Read by UptimeRobot / GCP Monitoring uptime check every 5 min. No auth
+// so the monitor can hit it without credentials.
 //
-// TODO(ops): create _health/probe doc in Firestore once, or the first hit
-// will fall through the get() successfully anyway (Firestore returns an
-// empty snapshot for missing docs — read still succeeds), but writing an
-// explicit doc lets you attach ops metadata (last verified, etc.).
+// DoS-hardened (round 6 audit):
+//  - maxInstances=3 caps concurrent CF invocations
+//  - Stripe probe result cached 60s in module memory — a burst of requests
+//    only hits Stripe once per minute per warm instance. Attacker/crawler
+//    can no longer exhaust the platform's 100 req/s Stripe limit.
+//  - Firestore probe is cheap ($0.06 per 100k reads) and self-scoped
+//    to a single doc; no cache needed but still bounded by maxInstances.
+//
+// TODO(ops): create _health/probe doc in Firestore once — missing doc is
+// still a valid read (returns empty snapshot), so this is optional; the
+// doc lets you attach ops metadata (last verified, etc.).
+let _stripeHealthCache = null; // { status, message, at }
+const STRIPE_HEALTH_TTL_MS = 60_000;
+
 exports.health = onRequest(
   {
     secrets: [stripeSecret],
@@ -9903,6 +9911,8 @@ exports.health = onRequest(
     cors: false,
     memory: "256MiB",
     timeoutSeconds: 15,
+    maxInstances: 3,
+    concurrency: 40,
   },
   async (req, res) => {
     if (req.method !== "GET") {
@@ -9916,10 +9926,11 @@ exports.health = onRequest(
       timestamp: new Date().toISOString(),
       firestore: "unknown",
       stripe: "unknown",
+      stripeCached: false,
       latencyMs: 0,
     };
 
-    // Firestore health: read a well-known doc (missing doc = still a valid read).
+    // Firestore probe (cheap, direct).
     try {
       await db.collection("_health").doc("probe").get();
       result.firestore = "ok";
@@ -9929,15 +9940,26 @@ exports.health = onRequest(
       console.error("health: firestore probe failed", { message: e?.message });
     }
 
-    // Stripe health: retrieve platform balance (lightweight, requires valid key).
-    try {
-      const stripe = require("stripe")(stripeSecret.value(), { timeout: 5000 });
-      await stripe.balance.retrieve();
-      result.stripe = "ok";
-    } catch (e) {
-      result.stripe = "error";
-      result.status = "degraded";
-      console.error("health: stripe probe failed", { message: e?.message });
+    // Stripe probe: cached 60s to prevent DoS on the Stripe API quota.
+    const now = Date.now();
+    if (_stripeHealthCache && now - _stripeHealthCache.at < STRIPE_HEALTH_TTL_MS) {
+      result.stripe = _stripeHealthCache.status;
+      result.stripeCached = true;
+      if (_stripeHealthCache.status !== "ok") {
+        result.status = "degraded";
+      }
+    } else {
+      try {
+        const stripe = require("stripe")(stripeSecret.value(), { timeout: 5000 });
+        await stripe.balance.retrieve();
+        result.stripe = "ok";
+        _stripeHealthCache = { status: "ok", message: null, at: now };
+      } catch (e) {
+        result.stripe = "error";
+        result.status = "degraded";
+        _stripeHealthCache = { status: "error", message: e?.message || null, at: now };
+        console.error("health: stripe probe failed", { message: e?.message });
+      }
     }
 
     result.latencyMs = Date.now() - started;

@@ -7,6 +7,7 @@
   <title>Jabad en Campus — Descargar app</title>
   <link rel="icon" type="image/png" href="/favicon.png">
   <link rel="apple-touch-icon" href="/icons/Icon-192.png">
+  <link rel="manifest" href="/manifest.json">
   <meta name="description" content="Descargá Jabad en Campus en tu celular. Android e iPhone.">
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -223,7 +224,7 @@
       </button>
     </div>
 
-    <a href="#" id="btn-ios" class="btn btn-primary">
+    <a href="/" id="btn-ios" class="btn btn-primary">
       <svg viewBox="0 0 24 24" fill="currentColor"><path d="M17.5 12.5c0-2.1 1.7-3.1 1.8-3.2-1-1.4-2.5-1.6-3-1.6-1.3-.1-2.5.8-3.2.8-.6 0-1.7-.7-2.8-.7-1.4 0-2.8.8-3.5 2.1-1.5 2.6-.4 6.4 1.1 8.5.7 1 1.5 2.2 2.6 2.1 1-.1 1.5-.7 2.7-.7 1.3 0 1.7.7 2.8.7 1.2 0 1.9-1 2.7-2 .8-1.1 1.1-2.2 1.1-2.3 0 0-2.3-1-2.3-3.7zM15.4 5.8c.5-.6 1-1.6.8-2.5-.8 0-1.9.6-2.4 1.1-.5.6-.9 1.5-.8 2.4.9 0 1.8-.4 2.4-1z"/></svg>
       Instalar en iPhone
     </a>
@@ -267,7 +268,7 @@
 
     <p class="advanced">
       ¿Preferís APK nativo?
-      <a href="https://appdistribution.firebase.google.com/testerapps/1:846580817724:android:d1d1fc1eb5773e9198c839/releases/05lnnce96vd30">Descargar acá</a>
+      <a href="https://appdistribution.firebase.google.com/testerapps/1:846580817724:android:d1d1fc1eb5773e9198c839/releases/40f8ber1nf890">Descargar acá</a>
     </p>
   </div>
 
@@ -284,8 +285,8 @@
       const iosInst = document.getElementById('ios-instructions');
       const androidInst = document.getElementById('android-instructions');
 
-      // El botón iOS lleva a la PWA (raíz del site) que ya tiene el manifest
-      btnIOS.href = '/';
+      // Nota: iOS href está hardcoded a "/" en HTML (btn-ios) para que funcione
+      // aunque este script nunca corra. Antes se seteaba aquí en runtime.
 
       if (isIOS) {
         hint.textContent = 'Detectamos iPhone — usá el botón azul de arriba';
@@ -308,6 +309,50 @@
       if (inAppBrowser) {
         const warning = document.getElementById('webview-warning');
         warning.classList.add('active');
+
+        // Round 6 fix: cuando estás dentro de un in-app browser, tocar
+        // "Instalar en iPhone/Android" no funciona (Chrome install prompt
+        // no fire, Add-to-Home-Screen no existe en WhatsApp WebView).
+        // Interceptar clicks: prevent default + copy URL + alert al user.
+        const interceptInAppClick = function(e) {
+          e.preventDefault();
+          e.stopPropagation();
+          const url = window.location.href;
+          const finish = () => {
+            alert(
+              'Copiamos el link.\n\n' +
+              'Ahora abrí ' + (isIOS ? 'Safari' : 'Chrome') +
+              ' y pegalo ahí para poder instalar la app.\n\n' +
+              (isAndroid
+                ? 'Tip: podés tocar el menú (⋮) arriba a la derecha → "Abrir en Chrome".'
+                : 'Tip: podés tocar el ⋯ arriba a la derecha → "Abrir en Safari".')
+            );
+          };
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(url).then(finish).catch(function() {
+              fallbackCopy(url, finish);
+            });
+          } else {
+            fallbackCopy(url, finish);
+          }
+        };
+        btnIOS.addEventListener('click', interceptInAppClick);
+        btnAndroid.addEventListener('click', interceptInAppClick);
+        // Visual: greyed out para señalar "no funciona directo"
+        btnIOS.style.opacity = '0.6';
+        btnAndroid.style.opacity = '0.6';
+      } else {
+        // Fuera de in-app browser: registrar el service worker para que Chrome
+        // acumule installability signals sobre esta página también (no solo /).
+        // Chrome PWA install prompt requiere manifest + SW + HTTPS + visita.
+        // Sin esto, tapear "Instalar en Android" navega a / donde recién se
+        // registra el SW y el prompt suele necesitar una visita adicional.
+        if ('serviceWorker' in navigator) {
+          window.addEventListener('load', function() {
+            navigator.serviceWorker.register('/flutter_service_worker.js', { scope: '/' })
+              .catch(function() { /* SW ya registrado por Flutter en /, no-op */ });
+          });
+        }
       }
 
       // Dismiss handlers (X y click en cualquier elemento con data-dismiss="warning"
