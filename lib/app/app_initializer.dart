@@ -38,11 +38,26 @@ void scheduleDeferredInit() {
 /// the auto-default Play Integrity provider would attestation-fail on debug.
 Future<void> activateAppCheck() async {
   if (kIsWeb) {
-    await FirebaseAppCheck.instance.activate(
-      providerWeb: ReCaptchaV3Provider(
-        const String.fromEnvironment('RECAPTCHA_SITE_KEY', defaultValue: ''),
-      ),
-    );
+    // Web: si NO tenemos reCAPTCHA v3 site key configurado (via
+    // --dart-define=RECAPTCHA_SITE_KEY=...), skip App Check activation
+    // completo. Activar ReCaptchaV3Provider con siteKey vacío hace que
+    // el provider tire error interno cada vez que el SDK pide token,
+    // y Firebase Auth Web SDK propaga eso como 'auth/network-request-failed'
+    // en cualquier operación (signup, signIn, etc.) — el user ve "Error
+    // de red" al intentar crear cuenta aunque la red esté perfecta.
+    //
+    // Sin App Check en web, las CFs con enforceAppCheck: true rechazan
+    // requests de web. Ese es un trade-off que aceptamos hasta configurar
+    // reCAPTCHA v3 site key en Firebase Console → App Check → Web app →
+    // Manage. Firebase Auth (signup/login) funciona sin App Check porque
+    // Identity Toolkit no está enforced en este proyecto.
+    const siteKey = String.fromEnvironment('RECAPTCHA_SITE_KEY', defaultValue: '');
+    if (siteKey.isNotEmpty) {
+      await FirebaseAppCheck.instance.activate(
+        providerWeb: ReCaptchaV3Provider(siteKey),
+      );
+    }
+    // else: no activar — evita el bug del provider con siteKey vacío.
   } else if (kReleaseMode) {
     await FirebaseAppCheck.instance.activate(
       providerAndroid: AndroidPlayIntegrityProvider(),
