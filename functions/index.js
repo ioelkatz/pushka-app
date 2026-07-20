@@ -1367,6 +1367,16 @@ exports.createDonationSubscription = onCall(
     if (amount > 99999999) {
       throw new HttpsError("invalid-argument", "El monto excede el límite permitido.");
     }
+    // Per-currency cap: without this a malicious authenticated user could
+    // create a $999,999/month recurring subscription. Mirrors the check
+    // already enforced on createPaymentIntent + createCheckoutSession.
+    const maxAmount = maxAmountForCurrency(currency);
+    if (amount > maxAmount) {
+      throw new HttpsError(
+        "invalid-argument",
+        `Monto máximo para ${currency.toUpperCase()} es ${formatAmount(maxAmount)}.`,
+      );
+    }
     const minAmount = minAmountForCurrency(currency);
     if (amount < minAmount) {
       throw new HttpsError(
@@ -7360,13 +7370,30 @@ exports.createStripeConnectLink = onCall(
     const clientId = stripeConnectClientId.value();
     if (!clientId) throw new HttpsError("failed-precondition", "Stripe Connect no configurado.");
 
-    // Generate a state token for CSRF protection — store it in Firestore
+    // Generate a state token for CSRF protection. Persisted in a
+    // server-only collection (_stripeConnectOAuth/{stateToken}) rather
+    // than on the tenant doc — any tenant member can read tenants/{id}
+    // per firestore.rules (see `match /tenants/{tenantId} { allow read }`),
+    // so storing the state there would let a tenant_collaborator steal it,
+    // complete OAuth with their own Stripe account, and hijack donations.
+    // The `_`-prefixed collection is covered by the existing deny-all
+    // rule pattern in firestore.rules.
+    //
+    // COMPAT: any state tokens lingering on tenants/{id}
+    // (stripeConnectOAuthState / ..CreatedAt) from before this fix are
+    // stale — the new handleStripeConnectOAuth only looks in
+    // _stripeConnectOAuth. There are no in-flight OAuth flows in prod
+    // at deploy time, so the one-shot break is intentional and no
+    // migration is required.
     const crypto = require("crypto");
     const state = crypto.randomBytes(20).toString("hex");
+    const nowMs = Date.now();
 
-    await db.collection("tenants").doc(tenantId).update({
-      stripeConnectOAuthState: state,
-      stripeConnectOAuthStateCreatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    await db.collection("_stripeConnectOAuth").doc(state).set({
+      tenantId,
+      callerUid,
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      expiresAt: admin.firestore.Timestamp.fromMillis(nowMs + 86400000),
     });
 
     // Dynamically derive the project ID so prod and dev deployments each
@@ -7406,25 +7433,47 @@ exports.handleStripeConnectOAuth = onRequest(
       return res.status(400).send("Parámetros inválidos.");
     }
 
-    // Find the tenant with this state token (CSRF check)
-    const tenantsSnap = await db.collection("tenants")
-      .where("stripeConnectOAuthState", "==", state)
-      .limit(1)
-      .get();
+    // Look up the OAuth state token in the server-only collection
+    // (_stripeConnectOAuth/{stateToken}) — see createStripeConnectLink
+    // for why the state no longer lives on the tenant doc.
+    //
+    // COMPAT: pre-fix state tokens stored on tenants/{id} are ignored
+    // here (there are no in-flight OAuth flows in prod at deploy time).
+    const stateRef = db.collection("_stripeConnectOAuth").doc(state);
+    const stateSnap = await stateRef.get();
 
-    if (tenantsSnap.empty) {
-      console.error("No tenant found for Stripe Connect state:", state);
+    if (!stateSnap.exists) {
+      console.error("No _stripeConnectOAuth entry for state:", state);
       return res.status(400).send("Estado inválido o expirado.");
     }
 
-    const tenantDoc = tenantsSnap.docs[0];
-    const tenantId = tenantDoc.id;
+    const stateData = stateSnap.data() || {};
+    const tenantId = stateData.tenantId;
+    const initiatorUid = stateData.callerUid || null;
 
-    // Validate state is not older than 24 hours
-    const stateCreatedAt = tenantDoc.data().stripeConnectOAuthStateCreatedAt?.toDate?.();
-    if (!stateCreatedAt || Date.now() - stateCreatedAt.getTime() > 86400000) {
-      await tenantDoc.ref.update({ stripeConnectOAuthState: null });
+    if (!tenantId) {
+      console.error("_stripeConnectOAuth entry missing tenantId:", state);
+      await stateRef.delete().catch(() => {});
+      return res.status(400).send("Estado inválido.");
+    }
+
+    // Validate state is not older than 24 hours (prefer explicit
+    // expiresAt; fall back to createdAt + 24h if a doc predates the
+    // expiresAt field for any reason).
+    const nowMs = Date.now();
+    const expiresAtMs = stateData.expiresAt?.toMillis?.() ??
+      ((stateData.createdAt?.toMillis?.() ?? 0) + 86400000);
+    if (!expiresAtMs || nowMs > expiresAtMs) {
+      await stateRef.delete().catch(() => {});
       return res.status(400).send("Enlace expirado. Genera uno nuevo desde el panel.");
+    }
+
+    const tenantRef = db.collection("tenants").doc(tenantId);
+    const tenantSnap = await tenantRef.get();
+    if (!tenantSnap.exists) {
+      console.error("Stripe Connect OAuth: tenant not found for state", { state, tenantId });
+      await stateRef.delete().catch(() => {});
+      return res.status(400).send("Tenant no encontrado.");
     }
 
     // Exchange code for access_token and stripe_user_id
@@ -7457,15 +7506,100 @@ exports.handleStripeConnectOAuth = onRequest(
         initialStatus = "restricted";
       }
 
-      await tenantDoc.ref.update({
+      // Snapshot prior account id so the alert email can tell the reader
+      // whether this was a first-time connection or a swap.
+      const priorTenantData = tenantSnap.data() || {};
+      const priorStripeConnectAccountId = priorTenantData.stripeConnectAccountId || null;
+
+      await tenantRef.update({
         stripeConnectAccountId,
         stripeConnectStatus: initialStatus,
-        stripeConnectOAuthState: null,
-        stripeConnectOAuthStateCreatedAt: null,
+        // COMPAT: legacy fields from the old (insecure) state-on-tenant
+        // scheme — clear them if present. FieldValue.delete() is a no-op
+        // when the field doesn't exist, so this is safe on new tenants.
+        stripeConnectOAuthState: admin.firestore.FieldValue.delete(),
+        stripeConnectOAuthStateCreatedAt: admin.firestore.FieldValue.delete(),
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       });
 
+      // Retire the state token so it can't be replayed. Failure to
+      // delete is logged but non-fatal — the 24h TTL still bounds abuse
+      // and a nightly sweep can GC leftovers.
+      await stateRef.delete().catch(err => {
+        console.warn("handleStripeConnectOAuth: failed to delete _stripeConnectOAuth entry", {
+          state, tenantId, error: err?.message,
+        });
+      });
+
       console.log(`Stripe Connect ${initialStatus} for tenant ${tenantId}: ${stripeConnectAccountId}`);
+
+      // FIX B: alert tenant admin + super_admin whenever a Stripe Connect
+      // account is (re)connected. A compromised tenant_admin could
+      // silently swap the payout account and drain donations; this email
+      // makes the swap visible to both the owner-of-record and the
+      // platform operator so it can be caught within minutes.
+      // Fire-and-forget: SendGrid outages must not fail the OAuth
+      // redirect (Stripe never retries the callback, and the rab would
+      // see a broken success page).
+      try {
+        const tenantData = priorTenantData;
+        const tenantName = tenantData.name || tenantData.appName || tenantId;
+        const adminEmail = tenantData.adminEmail || null;
+        const maskAcct = (id) => (id && typeof id === "string" && id.length > 12)
+          ? `${id.slice(0, 8)}…${id.slice(-4)}`
+          : (id || "(desconocido)");
+        const maskedNewAcct = maskAcct(stripeConnectAccountId);
+        const maskedPriorAcct = priorStripeConnectAccountId
+          ? maskAcct(priorStripeConnectAccountId)
+          : null;
+        const isSwap = priorStripeConnectAccountId &&
+          priorStripeConnectAccountId !== stripeConnectAccountId;
+        const whenIso = new Date().toISOString();
+        const subject = `[Pushka] Stripe Connect account changed for ${tenantName}`;
+        const priorRow = maskedPriorAcct
+          ? `<tr><td style="padding:4px 12px;color:#64748b">Cuenta anterior:</td><td style="padding:4px 12px;font-family:monospace">${maskedPriorAcct}</td></tr>`
+          : "";
+        const html = `
+          <p style="font-family:sans-serif;font-size:15px;line-height:1.5">
+            Se ${isSwap ? "<b>reemplazó</b>" : "conectó"} una cuenta de Stripe Connect para el tenant <strong>${tenantName}</strong>.
+          </p>
+          <table style="font-family:sans-serif;font-size:14px;border-collapse:collapse;margin-top:12px">
+            <tr><td style="padding:4px 12px;color:#64748b">Tenant:</td><td style="padding:4px 12px"><b>${tenantName}</b> (<code>${tenantId}</code>)</td></tr>
+            ${priorRow}
+            <tr><td style="padding:4px 12px;color:#64748b">Cuenta nueva:</td><td style="padding:4px 12px;font-family:monospace">${maskedNewAcct}</td></tr>
+            <tr><td style="padding:4px 12px;color:#64748b">Estado inicial:</td><td style="padding:4px 12px">${initialStatus}</td></tr>
+            <tr><td style="padding:4px 12px;color:#64748b">Iniciado por (UID):</td><td style="padding:4px 12px;font-family:monospace">${initiatorUid || "(desconocido)"}</td></tr>
+            <tr><td style="padding:4px 12px;color:#64748b">Fecha (UTC):</td><td style="padding:4px 12px">${whenIso}</td></tr>
+          </table>
+          <p style="margin-top:20px;padding:12px 16px;background:#fef2f2;border-left:4px solid #dc2626;color:#991b1b;font-family:sans-serif;font-size:14px;line-height:1.5">
+            <strong>Si vos no hiciste este cambio, contactanos inmediatamente.</strong>
+            Cambiar la cuenta de Stripe redirige todas las donaciones futuras a esa cuenta.
+          </p>
+          <p style="margin-top:24px;font-family:sans-serif;font-size:12px;color:#94a3b8">
+            Alerta automática de Chabad Pushka backend.
+          </p>
+        `;
+        const recipients = [];
+        if (adminEmail) recipients.push(adminEmail);
+        if (SUPER_ADMIN_EMAIL &&
+            SUPER_ADMIN_EMAIL.toLowerCase() !== (adminEmail || "").toLowerCase()) {
+          recipients.push(SUPER_ADMIN_EMAIL);
+        }
+        await Promise.all(
+          recipients.map(to =>
+            sendEmail({ to, subject, html }).catch(err =>
+              console.warn("handleStripeConnectOAuth: alert email failed", {
+                tenantId, to: _redactEmail(to), error: err?.message,
+              })
+            )
+          )
+        );
+      } catch (alertErr) {
+        console.warn("handleStripeConnectOAuth: alert block failed", {
+          tenantId, error: alertErr?.message,
+        });
+      }
+
       return res.redirect(`https://chabad-admin.web.app/tenants/${tenantId}?connect=success`);
     } catch (err) {
       console.error("Stripe Connect OAuth exchange error:", err);
@@ -8692,9 +8826,12 @@ exports.createCheckoutSession = onCall(
     let customerId = String(userData.stripeCustomerId || "").trim() || null;
     if (!customerId && customerEmail) {
       try {
+        // Metadata key MUST be `uid` — the webhook reads intent.metadata.uid
+        // to attribute the payment. Historic bug: this used `firebaseUid`
+        // which produced silent orphans (charge succeeds, no history row).
         const customer = await stripe.customers.create({
           email: customerEmail,
-          metadata: { firebaseUid: request.auth.uid },
+          metadata: { uid: request.auth.uid },
         });
         customerId = customer.id;
         await db.collection("users").doc(request.auth.uid).set({
@@ -8714,7 +8851,7 @@ exports.createCheckoutSession = onCall(
     const paymentIntentData = {
       transfer_data: { destination: tenantConnectAccountId },
       metadata: {
-        firebaseUid: request.auth.uid,
+        uid: request.auth.uid,
         tenantId,
         purpose,
         correlationId,
@@ -8760,7 +8897,7 @@ exports.createCheckoutSession = onCall(
         // Metadata a nivel de session también (además del payment_intent) para
         // que el webhook `checkout.session.completed` pueda leer sin re-fetch.
         metadata: {
-          firebaseUid: request.auth.uid,
+          uid: request.auth.uid,
           tenantId,
           purpose,
           correlationId,

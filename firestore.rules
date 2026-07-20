@@ -496,6 +496,16 @@ service cloud.firestore {
     match /_tenantSlugs/{slug} {
       allow read, write: if false;
     }
+    match /_stripeConnectOAuth/{stateToken} {
+      // Stripe Connect OAuth state tokens (CSRF nonce → tenantId +
+      // callerUid + 24h expiry). Server-only: previously stored on
+      // tenants/{id}, but any tenant member can read that doc — a
+      // tenant_collaborator could steal the state, complete OAuth with
+      // their own Stripe account, and hijack donations. Cloud Functions
+      // (createStripeConnectLink writes, handleStripeConnectOAuth reads
+      // + deletes) use admin SDK and bypass these rules.
+      allow read, write: if false;
+    }
     match /_stripeWebhookEvents/{document=**} {
       allow read, write: if false;
     }

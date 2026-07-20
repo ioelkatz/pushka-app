@@ -1,8 +1,10 @@
 import 'package:cloud_functions/cloud_functions.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../../app/router.dart';
 import '../../../app/theme/app_tokens.dart';
@@ -122,6 +124,32 @@ class _TenantCodeScreenState extends ConsumerState<TenantCodeScreen> {
         });
       }
     }
+  }
+
+  // Fallback para usuarios que perdieron el código: abre un mail a Ioel
+  // (super_admin) que puede guiarlos manualmente. Hardcoded porque en esta
+  // pantalla todavía no hay tenantId asociado al user.
+  Future<void> _contactSupport() async {
+    final uri = Uri(
+      scheme: 'mailto',
+      path: 'ioelkatz@gmail.com',
+      queryParameters: {'subject': 'Ayuda para unirme a mi organización'},
+    );
+    try {
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+    } catch (_) {
+      if (mounted) {
+        setState(() => _error = 'No se pudo abrir el mail. Escribí a ioelkatz@gmail.com.');
+      }
+    }
+  }
+
+  // Escape hatch: user firmado pero sin código válido puede salir y volver.
+  // El router (authStateChanges listener) redirige a /login automáticamente.
+  Future<void> _signOut() async {
+    try {
+      await FirebaseAuth.instance.signOut();
+    } catch (_) {}
   }
 
   // Mensajes específicos por código de error. Antes el catch mostraba
@@ -293,6 +321,47 @@ class _TenantCodeScreenState extends ConsumerState<TenantCodeScreen> {
                                         fontWeight: FontWeight.w600,
                                       ),
                                     ),
+                            ),
+                          ),
+                          const SizedBox(height: 18),
+                          // Fallback discreto: usuario que perdió el código
+                          // puede contactar soporte o cerrar sesión sin
+                          // quedar bloqueado en esta pantalla.
+                          TextButton(
+                            onPressed: _contactSupport,
+                            style: TextButton.styleFrom(
+                              foregroundColor: const Color(0xFF64748B),
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 12, vertical: 6),
+                              minimumSize: Size.zero,
+                              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                            ),
+                            child: const Text(
+                              '¿Perdiste el código? Contactá a tu rab',
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          TextButton(
+                            onPressed: _signOut,
+                            style: TextButton.styleFrom(
+                              foregroundColor: const Color(0xFF94A3B8),
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 12, vertical: 6),
+                              minimumSize: Size.zero,
+                              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                            ),
+                            child: const Text(
+                              'Cerrar sesión',
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w400,
+                              ),
                             ),
                           ),
                           // Reserve space so building image doesn't overlap content
