@@ -88,6 +88,27 @@ const CURRENCY_MINIMUMS = {
   cop: 200000,
 };
 
+// Max PRÁCTICO por transacción en la unidad menor de cada moneda
+// (~USD $1000 equivalent). Pre-launch sideload hardening: sin App Check
+// robusto de Play Integrity/App Attest, un attacker con cuenta Firebase
+// válida podía llamar createPaymentIntent con amountCents: 99999999
+// (=~$999k USD). Ahora el server rechaza cualquier monto por encima del
+// tope realista de la moneda. Tenants con casos legítimos > $1000 USD
+// deberían usar el flujo de subscription mensual o contactarnos para
+// aumentar el cap.
+const CURRENCY_MAX_AMOUNTS = {
+  usd: 100000,     // $1000
+  eur: 100000,     // €1000
+  gbp: 80000,      // £800
+  cad: 130000,     // C$1300
+  ils: 350000,     // ₪3500
+  mxn: 2000000,    // MX$20000 (~USD $1000)
+  brl: 500000,     // R$5000
+  ars: 100000000,  // AR$1M (~USD $1000)
+  clp: 90000000,   // CLP$900000
+  cop: 4000000000, // COP $4M (~USD $1000)
+};
+
 const SUPPORTED_CURRENCIES = new Set(Object.keys(CURRENCY_MINIMUMS));
 
 /**
@@ -135,6 +156,13 @@ function safeTenantCommissionRate(rawRate, tenantIdForLog) {
 function minAmountForCurrency(currency) {
   const code = String(currency || "usd").toLowerCase();
   return CURRENCY_MINIMUMS[code] ?? 100;
+}
+
+// Segundo tope, complementa el check numérico global. Fallback conservador
+// para monedas no listadas: 100000 cents (~$1000 USD equivalent aproximado).
+function maxAmountForCurrency(currency) {
+  const code = String(currency || "usd").toLowerCase();
+  return CURRENCY_MAX_AMOUNTS[code] ?? 100000;
 }
 
 // Sanitize donor messages before they enter Stripe metadata or our Firestore
@@ -752,6 +780,19 @@ exports.createPaymentIntent = onCall(
 
   if (!Number.isFinite(amount) || amount <= 0) {
     throw new HttpsError("invalid-argument", "Monto inválido.");
+  }
+  // Cap por currency (~USD $1000 equivalent). Pre-launch sideload hardening
+  // ver CURRENCY_MAX_AMOUNTS arriba. El cap global 99999999 sigue como
+  // segunda red por si CURRENCY_MAX_AMOUNTS quedara desactualizado.
+  const maxForCurrency = maxAmountForCurrency(currency);
+  if (amount > maxForCurrency) {
+    console.warn("createPaymentIntent: amount exceeds per-currency cap", {
+      uid: request.auth.uid, tenantId, currency, amount, maxForCurrency,
+    });
+    throw new HttpsError(
+      "invalid-argument",
+      `El monto excede el máximo permitido por transacción (${currency.toUpperCase()}).`
+    );
   }
   if (amount > 99999999) {
     throw new HttpsError("invalid-argument", "El monto excede el límite permitido.");
