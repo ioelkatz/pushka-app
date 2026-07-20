@@ -2,6 +2,7 @@ import 'dart:io' show Platform;
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_stripe/flutter_stripe.dart';
@@ -58,7 +59,12 @@ class _SavedCardsScreenState extends ConsumerState<SavedCardsScreen> {
     );
   }
 
-  Future<void> _loadCards({bool autoSetDefault = false, bool silent = false}) async {
+  /// Returns true when the list was refreshed from the CF successfully,
+  /// false when both attempts failed. Callers that need to make decisions
+  /// based on the post-load state (e.g. _addCard's duplicate detection)
+  /// must respect this — a false reload leaves `_cards` empty and would
+  /// otherwise falsely trip the "already saved" branch.
+  Future<bool> _loadCards({bool autoSetDefault = false, bool silent = false}) async {
     if (!silent) {
       setState(() {
         _loading = true;
@@ -75,7 +81,7 @@ class _SavedCardsScreenState extends ConsumerState<SavedCardsScreen> {
     for (var attempt = 0; attempt < 2; attempt++) {
       try {
         final result = await callable.call({});
-        if (!mounted) return;
+        if (!mounted) return true;
         final data = result.data as Map<dynamic, dynamic>;
         final rawCards = data['cards'] as List<dynamic>? ?? [];
         final cards = rawCards
@@ -102,7 +108,7 @@ class _SavedCardsScreenState extends ConsumerState<SavedCardsScreen> {
         if (autoSetDefault && defaultId == null && cards.isNotEmpty && mounted) {
           await _setDefault(cards.first['id'] as String);
         }
-        return;
+        return true;
       } catch (e) {
         lastError = e;
         if (attempt == 0 && mounted) {
@@ -113,17 +119,18 @@ class _SavedCardsScreenState extends ConsumerState<SavedCardsScreen> {
         }
       }
     }
-    if (!mounted) return;
+    if (!mounted) return false;
     // Silent refresh failures keep whatever's already on screen — no need
     // to wipe the cache-rendered list just because a background refresh
     // hiccuped.
-    if (silent) return;
+    if (silent) return false;
     // Treat repeated load errors as empty state — user can still add a card.
     setState(() {
       _cards = [];
       _error = lastError?.toString();
       _loading = false;
     });
+    return false;
   }
 
   Future<void> _addCard() async {
@@ -142,8 +149,21 @@ class _SavedCardsScreenState extends ConsumerState<SavedCardsScreen> {
         merchantDisplayName: ref.read(tenantConfigProvider).valueOrNull?.appName ?? 'Pushka',
       );
       if (!mounted) return;
-      await _loadCards(autoSetDefault: true);
+      // Capture the reload outcome. If _loadCards fails (e.g. flaky
+      // network right after the SetupIntent confirmed), _cards resets to
+      // [] which would make `_cards.length <= cardCountBefore` trivially
+      // true — falsely telling the donor "esta tarjeta ya estaba guardada"
+      // when in reality the card WAS just added on Stripe. In that case
+      // we assume success + skip duplicate detection + skip auto-default
+      // promotion (both need a trustworthy post-add snapshot).
+      final loadOk = await _loadCards(autoSetDefault: true);
       if (!mounted) return;
+      if (!loadOk) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(tr.cardAdded)),
+        );
+        return;
+      }
       final isDuplicate = _cards.length <= cardCountBefore;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -208,8 +228,19 @@ class _SavedCardsScreenState extends ConsumerState<SavedCardsScreen> {
     } on StripeServiceException catch (e) {
       if (!mounted) return;
       if (e.code == 'canceled') return;
+      // Web (PWA): setupCard() is not supported via the flutter_stripe
+      // Payment Sheet. Instead of a generic "error loading cards" that
+      // reads as a bug, tell the donor the exact workaround: donate
+      // normally and Stripe will attach + save that card on the customer.
+      // TODO(web): implement a Stripe Checkout Session in setup mode
+      // (mode='setup') via a new CF `createCheckoutSetupSession` so PWA
+      // donors can save a card without a real donation.
+      final message = e.code == 'web_add_card_not_available'
+          ? 'Para agregar una tarjeta desde el navegador, hacé una '
+              'donación normal — se guarda automáticamente en tu cuenta.'
+          : tr.errorLoadingCards;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(tr.errorLoadingCards)),
+        SnackBar(content: Text(message)),
       );
     } catch (e) {
       if (!mounted) return;
@@ -989,10 +1020,13 @@ class _SavedCardsScreenState extends ConsumerState<SavedCardsScreen> {
                           // PaymentSheet, so listing the wrong one would
                           // mislead the user.
                           final wallets = <_WalletKind>[
-                            if (Platform.isAndroid) _WalletKind.googlePay,
-                            if (Platform.isIOS) _WalletKind.applePay,
+                            if (!kIsWeb && Platform.isAndroid) _WalletKind.googlePay,
+                            if (!kIsWeb && Platform.isIOS) _WalletKind.applePay,
                           ];
-                          return ListView.separated(
+                          return RefreshIndicator(
+                            onRefresh: () => _loadCards(),
+                            child: ListView.separated(
+                            physics: const AlwaysScrollableScrollPhysics(),
                           padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
                           itemCount: _cards.length + wallets.length,
                           separatorBuilder: (_, _) => Divider(
@@ -1025,7 +1059,8 @@ class _SavedCardsScreenState extends ConsumerState<SavedCardsScreen> {
                               tr: tr,
                             );
                           },
-                        );
+                        ),
+                      );
                         }),
             ),
 

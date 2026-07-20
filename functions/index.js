@@ -23,6 +23,25 @@ const _tenantAppNameCache = new Map();
 const TENANT_APPNAME_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
 // ---------------------------------------------------------------------------
+// Stripe error shape helpers
+// ---------------------------------------------------------------------------
+/**
+ * True when a Stripe error indicates the referenced resource no longer exists
+ * on Stripe's side (customer deleted, mode mismatch, stale ID from a restore).
+ * Callers use this to distinguish "the customer is genuinely gone → clear our
+ * cached ID and rebuild" from a generic Stripe outage that should be retried.
+ */
+function _isStripeResourceMissing(e) {
+  if (!e) return false;
+  if (e.statusCode === 404) return true;
+  if (e.code === "resource_missing") return true;
+  if (e.type === "StripeInvalidRequestError" &&
+      typeof e.raw?.code === "string" &&
+      e.raw.code.includes("resource_missing")) return true;
+  return false;
+}
+
+// ---------------------------------------------------------------------------
 // Rate limiting — Firestore-backed sliding window counter
 // ---------------------------------------------------------------------------
 /**
@@ -1935,13 +1954,19 @@ exports.listDonationSubscriptions = onCall(
       const price = item?.price;
       const tenantId = s.metadata?.tenantId || "";
       const tc = tenantCache.get(tenantId) || { name: "", appName: "" };
+      // Stripe API 2025-04+ moved current_period_end from the subscription
+      // root onto each subscription item. Old field is still populated for
+      // backwards compat but WILL be removed. Read root first (works today
+      // on older API versions) and fall back to items[0] (works on new
+      // API); either path yields the same value for single-item subs.
+      const cpe = s.current_period_end ?? item?.current_period_end ?? null;
       return {
         id: s.id,
         status: s.status,
         currency: (price?.currency || s.currency || "").toLowerCase(),
         amount: Number(price?.unit_amount || 0),
         interval: price?.recurring?.interval || "month",
-        currentPeriodEnd: s.current_period_end ? s.current_period_end * 1000 : null,
+        currentPeriodEnd: cpe ? cpe * 1000 : null,
         tenantId,
         tenantName: tc.name,
         tenantAppName: tc.appName,
@@ -2097,13 +2122,65 @@ exports.createSetupIntent = onCall(
     // same attempt reuse the key (Stripe dedupes), but a fresh attempt
     // (after a cancel/error) gets a fresh key — avoids the
     // "SetupIntent in status canceled" failure on retry.
-    const siIdempotencyKey = `si_${uid}_${correlationId}`;
-    const setupIntent = await stripe.setupIntents.create({
-      customer: customerId,
-      payment_method_types: ["card"],
-      usage: "off_session",
-      metadata: { uid },
-    }, { idempotencyKey: siIdempotencyKey });
+    //
+    // Stale-customer self-heal: if the cached customerId points at a
+    // customer Stripe no longer knows about (hard-deleted / mode mismatch),
+    // setupIntents.create throws resource_missing and — without this
+    // catch — the user is bricked (every Add-Card tap surfaces INTERNAL).
+    // Clear the stale IDs, mint a fresh customer, and retry ONCE.
+    let setupIntent;
+    let retryCount = 0;
+    while (true) {
+      const siIdempotencyKey = retryCount === 0
+        ? `si_${uid}_${correlationId}`
+        : `si_${uid}_${correlationId}_r${retryCount}`;
+      try {
+        setupIntent = await stripe.setupIntents.create({
+          customer: customerId,
+          payment_method_types: ["card"],
+          usage: "off_session",
+          metadata: { uid },
+        }, { idempotencyKey: siIdempotencyKey });
+        break;
+      } catch (siErr) {
+        if (retryCount === 0 && _isStripeResourceMissing(siErr)) {
+          console.warn("createSetupIntent: stale customerId — clearing and retrying once", {
+            uid, staleCustomerId: customerId, errorMessage: siErr?.message,
+          });
+          await userRef.set({
+            stripeCustomerId: admin.firestore.FieldValue.delete(),
+            stripeCustomerIdPending: admin.firestore.FieldValue.delete(),
+            stripeDefaultPaymentMethodId: admin.firestore.FieldValue.delete(),
+            stripeDefaultPaymentMethodLast4: admin.firestore.FieldValue.delete(),
+            stripeDefaultPaymentMethodBrand: admin.firestore.FieldValue.delete(),
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          }, { merge: true }).catch(() => {});
+          // Mint a fresh customer (mirror the customer-create branch above).
+          // Use a fresh idempotency key so we don't collide with the doomed
+          // one that pointed at the deleted customer.
+          try {
+            const freshCustomer = await stripe.customers.create({
+              email: customerEmail || undefined,
+              metadata: { uid },
+            }, { idempotencyKey: `customer_create_${uid}_r${Date.now()}` });
+            customerId = freshCustomer.id;
+            await userRef.set({
+              stripeCustomerId: customerId,
+              stripeCustomerIdPending: admin.firestore.FieldValue.delete(),
+              updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            }, { merge: true });
+          } catch (createErr) {
+            console.error("createSetupIntent: recreate customer failed", {
+              uid, errorMessage: createErr?.message,
+            });
+            throw new HttpsError("internal", "No se pudo preparar tu método de pago. Intentá de nuevo.");
+          }
+          retryCount += 1;
+          continue;
+        }
+        throw siErr;
+      }
+    }
 
     return { clientSecret: setupIntent.client_secret };
   }
@@ -2138,14 +2215,42 @@ exports.listSavedCards = onCall(
     // customers.retrieve and paymentMethods.list are independent — running
     // them in parallel halves this prep step (~150-300ms saved on the
     // critical path of opening Saved Cards).
-    const [customer, pmList] = await Promise.all([
-      stripe.customers.retrieve(customerId),
-      stripe.paymentMethods.list({
-        customer: customerId,
-        type: "card",
-        limit: 100,
-      }),
-    ]);
+    //
+    // Hard-404 protection: a stale customerId (mode mismatch after a Stripe
+    // restore, or the customer was hard-deleted in Stripe Dashboard) throws
+    // resource_missing here. Without a catch, Firebase surfaces it as
+    // INTERNAL and the Saved Cards screen is bricked for that user forever
+    // — no self-heal path. Mirror the customer.deleted branch below: clear
+    // the stale IDs on users/{uid} and return an empty list. Next call to
+    // createSetupIntent will mint a fresh customer.
+    let customer;
+    let pmList;
+    try {
+      [customer, pmList] = await Promise.all([
+        stripe.customers.retrieve(customerId),
+        stripe.paymentMethods.list({
+          customer: customerId,
+          type: "card",
+          limit: 100,
+        }),
+      ]);
+    } catch (stripeErr) {
+      if (_isStripeResourceMissing(stripeErr)) {
+        console.warn("listSavedCards: stale customerId (resource_missing) — clearing", {
+          uid, customerId, errorMessage: stripeErr?.message,
+        });
+        await db.collection("users").doc(uid).set({
+          stripeCustomerId: admin.firestore.FieldValue.delete(),
+          stripeCustomerIdPending: admin.firestore.FieldValue.delete(),
+          stripeDefaultPaymentMethodId: admin.firestore.FieldValue.delete(),
+          stripeDefaultPaymentMethodLast4: admin.firestore.FieldValue.delete(),
+          stripeDefaultPaymentMethodBrand: admin.firestore.FieldValue.delete(),
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        }, { merge: true }).catch(() => {});
+        return { cards: [], defaultPaymentMethodId: null };
+      }
+      throw stripeErr;
+    }
 
     // Customer was deleted directly in Stripe — clear the stale ID and return empty.
     if (customer.deleted) {
@@ -2204,13 +2309,50 @@ exports.listSavedCards = onCall(
     // races, but it's a no-op when state is clean).
     const lastDedupeAt = userData._lastPmDedupePassAt?.toMillis?.() ?? 0;
     const dedupeStale = (Date.now() - lastDedupeAt) > (2 * 60 * 60 * 1000);
+    // Subscription-pinning guard: if a "loser" PM is currently the
+    // default_payment_method of an active subscription, detaching it silently
+    // breaks the next invoice (Stripe drops the reference → invoice fails →
+    // donor sees a scary "tarjeta declinada" that isn't really about their
+    // card). Skip those losers and log a warning — accepting a visible
+    // duplicate is strictly better than breaking a recurring donation.
+    let pinnedPmIds = new Set();
     if (detachQueue.length > 0 && dedupeStale) {
+      try {
+        const subsList = await stripe.subscriptions.list({
+          customer: customerId, status: "all", limit: 100,
+        });
+        const ACTIVE_SUB_STATUSES = new Set(["active", "trialing", "past_due", "unpaid"]);
+        for (const s of subsList.data || []) {
+          if (!ACTIVE_SUB_STATUSES.has(s.status)) continue;
+          const pinned = typeof s.default_payment_method === "string"
+            ? s.default_payment_method
+            : s.default_payment_method?.id;
+          if (pinned) pinnedPmIds.add(pinned);
+        }
+      } catch (subListErr) {
+        // Non-fatal — if we can't enumerate subs, be conservative and
+        // don't detach anything this pass (safer than breaking a sub).
+        console.warn("listSavedCards: sub-pin check failed — skipping detach pass", {
+          uid, customerId, errorMessage: subListErr?.message,
+        });
+        pinnedPmIds = new Set(detachQueue.map((pm) => pm.id));
+      }
+    }
+    const safeDetachQueue = detachQueue.filter((pm) => !pinnedPmIds.has(pm.id));
+    const skippedForPin = detachQueue.length - safeDetachQueue.length;
+    if (skippedForPin > 0) {
+      console.warn("listSavedCards: skipping detach of PMs pinned to active subs", {
+        uid, customerId, skippedCount: skippedForPin,
+      });
+    }
+    if (safeDetachQueue.length > 0 && dedupeStale) {
       console.info("listSavedCards: deduping fingerprint dupes", {
         uid, customerId,
         kept: keep.length,
-        detaching: detachQueue.length,
+        detaching: safeDetachQueue.length,
+        skippedForPin,
       });
-      await Promise.all(detachQueue.map((pm) =>
+      await Promise.all(safeDetachQueue.map((pm) =>
         stripe.paymentMethods.detach(pm.id).catch((detachErr) => {
           console.warn("listSavedCards: detach failed", {
             uid, customerId,
@@ -2344,6 +2486,47 @@ exports.deletePaymentMethod = onCall(
 
     if (pm.customer !== customerId) {
       throw new HttpsError("permission-denied", "Este método de pago no pertenece a tu cuenta.");
+    }
+
+    // Last-card + active-recurring guard: if detaching this PM would leave
+    // the customer with ZERO cards AND they have an active donation
+    // subscription, the next invoice cycle silently fails
+    // (invoice.payment_failed → cleanupIncompleteDonationSubscriptions
+    // eventually cancels, but the donor never realizes their recurring
+    // giving stopped). Block the delete and tell them to cancel the sub
+    // first from the "Mis donaciones" screen.
+    try {
+      const [survivorsList, activeSubsList] = await Promise.all([
+        stripe.paymentMethods.list({ customer: customerId, type: "card", limit: 100 }),
+        stripe.subscriptions.list({ customer: customerId, status: "all", limit: 100 }),
+      ]);
+      const survivorCount = (survivorsList.data || []).filter((p) => p.id !== pmId).length;
+      if (survivorCount === 0) {
+        const ACTIVE_SUB_STATUSES = new Set(["active", "trialing", "past_due"]);
+        const activeRecurring = (activeSubsList.data || []).filter((s) =>
+          ACTIVE_SUB_STATUSES.has(s.status) &&
+          (s.metadata?.purpose === "donation_recurring" ||
+           s.metadata?.type === "donation_recurring"),
+        );
+        if (activeRecurring.length > 0) {
+          console.warn("deletePaymentMethod: blocked — last card with active recurring donations", {
+            uid, customerId, pmId, activeSubCount: activeRecurring.length,
+          });
+          throw new HttpsError(
+            "failed-precondition",
+            "No podés borrar tu última tarjeta mientras tenés donaciones recurrentes activas. Cancelá primero desde Mis donaciones.",
+          );
+        }
+      }
+    } catch (guardErr) {
+      // Re-throw HttpsErrors so client sees the friendly message.
+      if (guardErr instanceof HttpsError) throw guardErr;
+      // Any other error here (Stripe outage) — log but don't block the
+      // delete. The user can retry; the cleanup cron will still catch a
+      // truly broken sub within 7 days.
+      console.warn("deletePaymentMethod: last-card guard check failed (non-fatal)", {
+        uid, pmId, errorMessage: guardErr?.message,
+      });
     }
 
     // Detach — a concurrent request may have beaten us; that's fine.
@@ -2900,11 +3083,25 @@ exports.stripeWebhook = onRequest(
             for (const [k, v] of Object.entries(cumulativeSnap)) {
               negativeSnap[k] = typeof v === "number" ? -v : v;
             }
+            // Resolve tenantId from the original tx (refunds inherit it) BEFORE
+            // writing the refund tx doc — so the doc gets stamped with
+            // tenantId and shows up in tenant-scoped queries
+            // (getRecentTransactions, LiveDonations widget). Without this
+            // stamp, the CG rule that requires tenantId in resource.data
+            // silently hides refunds from tenant admins — the donation still
+            // appears as a positive in their history, but the offset is
+            // invisible, making net-revenue reconciliation impossible.
+            // Legacy positives that lack tenantId leave the refund null too
+            // (super_admin-only visibility, same as the original).
+            const refundTenantId = (originalTxSnap.exists
+              ? originalTxSnap.data()?.tenantId
+              : (invoiceTxSnap?.exists ? invoiceTxSnap.data()?.tenantId : null)) ?? null;
             tx.set(refundTxRef, {
               type: "refund",
               amount: -refundedAmount,
               currencyCode: currency,
               ...negativeSnap,
+              ...(refundTenantId ? { tenantId: refundTenantId } : {}),
               description: "Reembolso Stripe",
               originalPaymentIntentId: paymentIntentId,
               originalInvoiceId: invoiceId || null,
@@ -2917,10 +3114,6 @@ exports.stripeWebhook = onRequest(
 
             // BUG-024 fix: also decrement tenant revenue counter so admin
             // finance dashboards show net donations (gross minus refunds).
-            // Resolve tenantId from the original tx (refunds inherit it).
-            const refundTenantId = (originalTxSnap.exists
-              ? originalTxSnap.data()?.tenantId
-              : (invoiceTxSnap?.exists ? invoiceTxSnap.data()?.tenantId : null)) ?? null;
             if (refundTenantId && deltaSnap.amountUSD > 0) {
               const now = new Date();
               const monthKey = `${now.getUTCFullYear()}_${String(now.getUTCMonth() + 1).padStart(2, "0")}`;
@@ -2981,30 +3174,14 @@ exports.stripeWebhook = onRequest(
           for (const [k, v] of Object.entries(txSnap)) {
             negativeSnap[k] = typeof v === "number" ? -v : v;
           }
-          await db
-            .collection("users")
-            .doc(uid)
-            .collection("transactions")
-            .doc(`dispute_${dispute.id}`)
-            .set({
-              type: "chargeback",
-              amount: -disputedAmount,
-              currencyCode: currency,
-              ...negativeSnap,
-              description: "Contracargo (Stripe dispute)",
-              disputeId: dispute.id,
-              originalChargeId: chargeId,
-              originalPaymentIntentId: paymentIntentId,
-              disputeStatus: dispute.status || "needs_response",
-              createdAt: admin.firestore.FieldValue.serverTimestamp(),
-            }, { merge: true });
-
-          // Decrement tenant revenue so admin dashboards reflect the loss
-          // (mirrors the refund handler). Resolve tenantId from the original
-          // tx — try both PI-keyed (regular donations) and inv-keyed
-          // (subscription-generated charges) doc paths.
+          // Resolve tenantId BEFORE writing the chargeback tx so the doc
+          // itself carries `tenantId` — otherwise the tenant-scoped
+          // history query (`where tenantId == X`) silently hides the loss
+          // from the Rab, defeating the whole point of a negating row.
+          // Try PI-keyed doc first (regular donations), then invoice-keyed
+          // (subscription-generated charges).
+          let refundTenantId = null;
           try {
-            let refundTenantId = null;
             if (paymentIntentId) {
               const origSnap = await db.collection("users").doc(uid)
                 .collection("transactions").doc(paymentIntentId).get();
@@ -3020,6 +3197,33 @@ exports.stripeWebhook = onRequest(
                 if (invSnap.exists) refundTenantId = invSnap.data()?.tenantId ?? null;
               }
             }
+          } catch (tidErr) {
+            console.warn("dispute.created: tenantId lookup failed (non-fatal)", {
+              uid, chargeId, err: tidErr?.message,
+            });
+          }
+          await db
+            .collection("users")
+            .doc(uid)
+            .collection("transactions")
+            .doc(`dispute_${dispute.id}`)
+            .set({
+              type: "chargeback",
+              amount: -disputedAmount,
+              currencyCode: currency,
+              ...negativeSnap,
+              ...(refundTenantId ? { tenantId: refundTenantId } : {}),
+              description: "Contracargo (Stripe dispute)",
+              disputeId: dispute.id,
+              originalChargeId: chargeId,
+              originalPaymentIntentId: paymentIntentId,
+              disputeStatus: dispute.status || "needs_response",
+              createdAt: admin.firestore.FieldValue.serverTimestamp(),
+            }, { merge: true });
+
+          // Decrement tenant revenue so admin dashboards reflect the loss
+          // (mirrors the refund handler). tenantId already resolved above.
+          try {
             if (refundTenantId && txSnap.amountUSD > 0) {
               await decrementTenantRevenue(refundTenantId, txSnap.amountUSD);
             }
@@ -3371,6 +3575,60 @@ exports.stripeWebhook = onRequest(
         const amountPaid = (invoice.amount_paid ?? 0) / currencyUnitDivisor(invoice.currency || "usd");
         const txCurrency = String(invoice.currency || "usd").toUpperCase();
         const docId = `inv_${invoice.id}`;
+        // Recurring-donation Connect drift detection (mirrors the PI drift
+        // check in payment_intent.succeeded above). A subscription pins
+        // transfer_data.destination at sub-creation time — if the tenant
+        // later rotated their Connect account (Stripe verification
+        // failed, they re-onboarded, etc.), every future invoice keeps
+        // routing to the OLD account until someone updates the sub. Money
+        // arrives at an account the tenant may not control anymore; the
+        // Firestore tenant doc points at the new account. Alert loud so
+        // Ioel can decide (refund + recreate sub, or push a sub update).
+        // Do NOT auto-refund or auto-cancel — that's a business decision.
+        if (tenantId) {
+          try {
+            const invoiceDest = invoice.transfer_data?.destination
+              ?? invoice.parent?.subscription_details?.metadata?.connectAccountId
+              ?? null;
+            const invoiceDestId = typeof invoiceDest === "string"
+              ? invoiceDest
+              : invoiceDest?.id ?? null;
+            if (invoiceDestId) {
+              const tenantSnap = await db.collection("tenants").doc(tenantId).get();
+              const currentConnect = tenantSnap.data()?.stripeConnectAccountId ?? null;
+              if (currentConnect && currentConnect !== invoiceDestId) {
+                console.error("stripeWebhook: recurring connectAccountId DRIFT", {
+                  uid, tenantId, invoiceId: invoice.id, subId,
+                  invoiceDestination: invoiceDestId,
+                  currentConnect,
+                });
+                try {
+                  await writeActivityLog({
+                    type: "stripe_connect_drift_recurring",
+                    tenantId,
+                    tenantName: tenantSnap.data()?.name ?? tenantId,
+                    severity: "critical",
+                    requiresAction: true,
+                    data: {
+                      uid,
+                      subscriptionId: subId,
+                      invoiceId: invoice.id,
+                      invoiceDestination: invoiceDestId,
+                      currentConnect,
+                      note: "Recurring invoice routed to old Connect account. Decide: refund + recreate sub (donor keeps giving to correct account) or ignore (money stays with old account).",
+                    },
+                  });
+                } catch (logErr) {
+                  console.warn("stripeWebhook: recurring drift activityLog failed", { err: logErr?.message });
+                }
+              }
+            }
+          } catch (driftErr) {
+            console.warn("stripeWebhook: recurring drift check failed", {
+              tenantId, subId, err: driftErr?.message,
+            });
+          }
+        }
         if (uid) {
           const txRates = await getExchangeRates(null);
           const txSnap = buildCurrencySnapshot(amountPaid, txCurrency, txRates);
@@ -9420,14 +9678,37 @@ exports.createCheckoutSession = onCall(
       : require("crypto").randomBytes(8).toString("hex");
 
     // Success / cancel URLs — el cliente PWA los provee; caemos a defaults
-    // seguros si vienen malformed o vacíos. Solo aceptamos HTTPS (previene
-    // open redirect a schemes exóticos).
+    // seguros si vienen malformed o vacíos. Solo aceptamos HTTPS Y un origin
+    // en la lista blanca (previene open redirect a hosts arbitrarios que
+    // podrían capturar el session_id via referer + phishing UI).
+    //
+    // Sin este chequeo, un atacante que engañe al cliente para pasar
+    // successUrl=https://evil.com/steal?sid={CHECKOUT_SESSION_ID} podría
+    // interceptar el ID de la sesión (aunque no el cargo — Stripe ya
+    // capturó los fondos). Igual: mejor cerrar el vector.
+    const ALLOWED_REDIRECT_ORIGINS = new Set([
+      "https://pushka-pwa.web.app",
+      "https://pushka-app-ioel.web.app",
+      "https://pushka-app-ioel-test.web.app",
+      "https://pushkapp.cc",
+      "https://www.pushkapp.cc",
+      "https://app.pushkapp.cc",
+    ]);
+    function _isAllowedRedirect(u) {
+      if (typeof u !== "string" || !u.startsWith("https://")) return false;
+      try {
+        const parsed = new URL(u);
+        return ALLOWED_REDIRECT_ORIGINS.has(`${parsed.protocol}//${parsed.host}`);
+      } catch (_) {
+        return false;
+      }
+    }
     const rawSuccessUrl = String(request.data?.successUrl || "").trim();
     const rawCancelUrl = String(request.data?.cancelUrl || "").trim();
     const defaultSuccessUrl = "https://pushka-pwa.web.app/donation-success?session_id={CHECKOUT_SESSION_ID}";
     const defaultCancelUrl = "https://pushka-pwa.web.app/donation-cancel";
-    const successUrl = rawSuccessUrl.startsWith("https://") ? rawSuccessUrl : defaultSuccessUrl;
-    const cancelUrl = rawCancelUrl.startsWith("https://") ? rawCancelUrl : defaultCancelUrl;
+    const successUrl = _isAllowedRedirect(rawSuccessUrl) ? rawSuccessUrl : defaultSuccessUrl;
+    const cancelUrl = _isAllowedRedirect(rawCancelUrl) ? rawCancelUrl : defaultCancelUrl;
 
     const stripe = require("stripe")(stripeSecret.value(), { timeout: 15000 });
     const customerEmail = request.auth.token?.email
@@ -9444,10 +9725,13 @@ exports.createCheckoutSession = onCall(
         // Metadata key MUST be `uid` — the webhook reads intent.metadata.uid
         // to attribute the payment. Historic bug: this used `firebaseUid`
         // which produced silent orphans (charge succeeds, no history row).
+        // Idempotency key mirrors createSetupIntent/createPaymentIntent: if
+        // two Checkout attempts race for the same uid, Stripe dedupes to a
+        // single customer instead of leaving two duplicate customers behind.
         const customer = await stripe.customers.create({
           email: customerEmail,
           metadata: { uid: request.auth.uid },
-        });
+        }, { idempotencyKey: `customer_create_${request.auth.uid}` });
         customerId = customer.id;
         await db.collection("users").doc(request.auth.uid).set({
           stripeCustomerId: customerId,

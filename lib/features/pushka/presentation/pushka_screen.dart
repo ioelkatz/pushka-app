@@ -10,6 +10,7 @@ import 'bill_fall_animation.dart';
 import '../../../core/pushka_style_provider.dart';
 import '../../../core/l10n/s.dart';
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
@@ -397,6 +398,11 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                         ),
                       ),
                       const SizedBox(height: 16),
+                      // Hide the "Monthly" (recurring) chip on web —
+                      // `StripeService.subscribe()` throws on web because
+                      // flutter_stripe's SetupIntent + Payment Sheet flow
+                      // isn't supported there. Showing the chip would let
+                      // donors pick a path that always errors out.
                       Row(children: [
                         Expanded(
                           child: _FrequencyChip(
@@ -405,16 +411,18 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                             onTap: () => setDialogState(() => monthly = false),
                           ),
                         ),
-                        const SizedBox(width: 10),
-                        Expanded(
-                          child: _FrequencyChip(
-                            label: tr.donateMonthly,
-                            selected: monthly,
-                            icon: Icons.favorite,
-                            iconColor: const Color(0xFFCC2936),
-                            onTap: () => setDialogState(() => monthly = true),
+                        if (!kIsWeb) ...[
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: _FrequencyChip(
+                              label: tr.donateMonthly,
+                              selected: monthly,
+                              icon: Icons.favorite,
+                              iconColor: const Color(0xFFCC2936),
+                              onTap: () => setDialogState(() => monthly = true),
+                            ),
                           ),
-                        ),
+                        ],
                       ]),
                       const SizedBox(height: 14),
                       TextField(
@@ -1840,22 +1848,39 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
 
   String _donationErrorMessage(Object error, S tr) {
     if (error is FirebaseFunctionsException) {
-      return switch (error.code) {
-        'unauthenticated' =>
-          tr.errorSessionInvalid,
-        'failed-precondition' =>
-          tr.errorSecurityCheck,
-        'permission-denied' =>
-          tr.errorAccessDenied,
-        'internal' =>
-          tr.errorPaymentServer,
-        'unavailable' =>
-          tr.errorServerUnavailable,
-        // Unknown codes: surface the message but sanitize first — backend
-        // could in theory throw `HttpsError("foo", err.stack)` which would
-        // dump a multi-line trace into a SnackBar otherwise.
-        _ => _sanitizeUserFacingError(error.message) ?? tr.couldNotStartPayment,
-      };
+      // For codes where the backend intentionally forwards a user-facing
+      // message (business-rule violations, tenant-not-ready reasons, Stripe
+      // decline reasons), prefer the sanitized backend text over the generic
+      // fallback so donors see the actionable detail (e.g. "El monto excede
+      // el límite permitido" instead of "Verificación de seguridad fallida").
+      switch (error.code) {
+        case 'unauthenticated':
+          return tr.errorSessionInvalid;
+        case 'failed-precondition':
+          final backendMsg = _sanitizeUserFacingError(error.message);
+          if (backendMsg != null) return backendMsg;
+          return tr.errorSecurityCheck;
+        case 'permission-denied':
+          final backendMsg = _sanitizeUserFacingError(error.message);
+          if (backendMsg != null) return backendMsg;
+          return tr.errorAccessDenied;
+        case 'internal':
+          // Stripe decline reasons are forwarded via HttpsError('internal', ...).
+          // Translate the common decline codes/messages into user-friendly
+          // Spanish so the donor knows whether to retry, use another card,
+          // or complete 3-D Secure. Fall back to the generic server error
+          // when the message doesn't look like a decline.
+          final declineMsg = _translateStripeDeclineReason(error.message);
+          if (declineMsg != null) return declineMsg;
+          return tr.errorPaymentServer;
+        case 'unavailable':
+          return tr.errorServerUnavailable;
+        default:
+          // Unknown codes: surface the message but sanitize first — backend
+          // could in theory throw `HttpsError("foo", err.stack)` which would
+          // dump a multi-line trace into a SnackBar otherwise.
+          return _sanitizeUserFacingError(error.message) ?? tr.couldNotStartPayment;
+      }
     }
     if (error is StripeServiceException) {
       if (error.code == 'canceled') return tr.paymentCanceled;
@@ -1885,6 +1910,60 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
         stripped.length > 400;
     if (looksLikeStack) return null;
     return stripped.length > 200 ? '${stripped.substring(0, 200)}…' : stripped;
+  }
+
+  /// Maps a Stripe decline reason (either a decline code like
+  /// `card_declined` / `insufficient_funds` or a human-readable message
+  /// containing them) into a short user-facing Spanish string.
+  ///
+  /// Returns `null` when the input doesn't look like a payment decline —
+  /// the caller then falls back to the generic payment-server error.
+  ///
+  /// The `error.message` string from a Cloud Function `HttpsError('internal',
+  /// ...)` is the raw Stripe error message the CF forwarded, which may be
+  /// either the machine code or the English description.
+  String? _translateStripeDeclineReason(String? raw) {
+    if (raw == null) return null;
+    final msg = raw.trim();
+    if (msg.isEmpty) return null;
+    final lower = msg.toLowerCase();
+
+    // Match by decline code / keyword — order matters (specific → generic).
+    if (lower.contains('insufficient_funds') || lower.contains('insufficient funds')) {
+      return 'Fondos insuficientes en la tarjeta.';
+    }
+    if (lower.contains('expired_card') || lower.contains('expired card')) {
+      return 'La tarjeta expiró. Probá con otra.';
+    }
+    if (lower.contains('incorrect_cvc') || lower.contains('cvc') && lower.contains('incorrect')) {
+      return 'Código CVC incorrecto.';
+    }
+    if (lower.contains('incorrect_number') || (lower.contains('card number') && lower.contains('incorrect'))) {
+      return 'Número de tarjeta incorrecto.';
+    }
+    if (lower.contains('authentication_required') || lower.contains('authentication required')) {
+      return 'La tarjeta requiere autenticación adicional. Intentá de nuevo.';
+    }
+    if (lower.contains('do_not_honor') || lower.contains('generic_decline')) {
+      return 'La tarjeta fue rechazada por el banco. Probá con otra.';
+    }
+    if (lower.contains('lost_card') || lower.contains('stolen_card')) {
+      return 'La tarjeta fue rechazada por el banco. Probá con otra.';
+    }
+    if (lower.contains('processing_error')) {
+      return 'Error procesando la tarjeta. Intentá de nuevo en unos minutos.';
+    }
+    if (lower.contains('card_declined') || lower.contains('card declined')) {
+      return 'La tarjeta fue rechazada. Probá con otra tarjeta.';
+    }
+    // Generic "declin..." catch-all — surface the original message so the
+    // donor at least sees the specific reason.
+    if (lower.contains('declin')) {
+      final sanitized = _sanitizeUserFacingError(msg);
+      if (sanitized != null) return 'Tarjeta rechazada: $sanitized';
+      return 'La tarjeta fue rechazada. Probá con otra tarjeta.';
+    }
+    return null;
   }
 
   String _currencyCodeFromProfile() {

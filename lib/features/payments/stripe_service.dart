@@ -108,6 +108,11 @@ class StripeService {
     String purpose = 'donation',
     String merchantDisplayName = 'Pushka',
     String? donorMessage,
+    /// Optional tenant scope. When set, the pushka-empty lock release
+    /// hits the same tenant that the createPaymentIntent CF locked —
+    /// otherwise the CF falls back to the caller's active tenant, which
+    /// may not be the right one for multi-tenant donors.
+    String? tenantId,
     // Web: Payment Sheet nativo NO existe en flutter_stripe web (experimental).
     // Cuando llamen pay() desde PWA se debe redirigir a Stripe Checkout via
     // createCheckoutSession CF. Ese flow se implementa en el próximo commit.
@@ -169,7 +174,13 @@ class StripeService {
       // "Tu Pushka se está vaciando automáticamente". Release the lock
       // server-side and try once more.
       if (e.code == 'aborted') {
-        await _releaseManualPushkaEmptyLock();
+        // Only release the pushka-empty lock when THIS attempt actually
+        // took one (purpose='pushka_empty'). For 'donation' the CF never
+        // set the lock, so releasing on the caller's active tenant is a
+        // no-op at best and a stray write at worst.
+        if (purpose == 'pushka_empty') {
+          await _releaseManualPushkaEmptyLock(tenantId: tenantId);
+        }
         try {
           result = await callOnce();
         } on FirebaseFunctionsException catch (e2, st2) {
@@ -248,7 +259,7 @@ class StripeService {
       // "Tu Pushka se está vaciando automáticamente". Best-effort: a
       // failure here just means the user waits the TTL.
       if (purpose == 'pushka_empty') {
-        await _releaseManualPushkaEmptyLock();
+        await _releaseManualPushkaEmptyLock(tenantId: tenantId);
       }
       final code = e.error.code;
       if (code == FailureCode.Canceled) {
@@ -262,7 +273,7 @@ class StripeService {
     } catch (e, st) {
       // Same lock-release for unexpected non-Stripe errors.
       if (purpose == 'pushka_empty') {
-        await _releaseManualPushkaEmptyLock();
+        await _releaseManualPushkaEmptyLock(tenantId: tenantId);
       }
       _recordPaymentError('pay/PaymentSheet_unknown', e, st,
           cid: cid, purpose: purpose, amountCents: amountCents, currency: currency);
@@ -272,11 +283,19 @@ class StripeService {
     return _extractIdFromSecret(clientSecret, 'pi_');
   }
 
-  Future<void> _releaseManualPushkaEmptyLock() async {
+  /// Best-effort call to the server-side lock-release CF. `tenantId` is
+  /// passed through so the CF can scope the lock clear to the right tenant
+  /// (a donor who belongs to multiple tenants would otherwise release the
+  /// wrong lock or a no-op lock on the caller's default tenant). Callers
+  /// SHOULD pass the tenantId of the pushka they were charging; if omitted
+  /// the CF falls back to the caller's active tenant.
+  Future<void> _releaseManualPushkaEmptyLock({String? tenantId}) async {
     try {
       await FirebaseFunctions.instance
           .httpsCallable('releaseManualPushkaEmptyLock')
-          .call({});
+          .call({
+        if (tenantId != null && tenantId.isNotEmpty) 'tenantId': tenantId,
+      });
     } catch (e) {
       debugPrint('StripeService.pay: lock release failed (non-fatal): $e');
     }
@@ -300,8 +319,13 @@ class StripeService {
     String? donationReason,
     String merchantDisplayName = 'Pushka',
   }) async {
+    // TODO(web): Monthly recurring donations require a native Payment
+    // Sheet today. The caller (pushka_screen _FrequencyChip Monthly) MUST
+    // hide the Monthly option on kIsWeb to avoid reaching this throw —
+    // otherwise the donor picks Monthly and sees a scary error. Long-term:
+    // implement recurring via Stripe Checkout Session (mode='subscription').
     if (kIsWeb) {
-      throw const StripeServiceException('web_payment_sheet_not_supported');
+      throw const StripeServiceException('web_recurring_not_available');
     }
     final cid = _newCorrelationId();
     debugPrint('StripeService.subscribe[cid:$cid]: calling CF amount=$amountCents currency=$currency interval=$interval');
@@ -349,18 +373,34 @@ class StripeService {
     final hasEphemeralAuth = ephemeralKeySecret != null && ephemeralKeySecret.isNotEmpty;
     final hasCustomerContext = customerId != null && customerId.isNotEmpty && (hasSessionAuth || hasEphemeralAuth);
 
-    await Stripe.instance.initPaymentSheet(
-      paymentSheetParameters: SetupPaymentSheetParameters(
-        paymentIntentClientSecret: clientSecret,
-        merchantDisplayName: merchantDisplayName,
-        allowsDelayedPaymentMethods: false,
-        customerId: hasCustomerContext ? customerId : null,
-        customerSessionClientSecret: hasCustomerContext && hasSessionAuth ? customerSessionClientSecret : null,
-        customerEphemeralKeySecret: hasCustomerContext && !hasSessionAuth ? ephemeralKeySecret : null,
-        applePay: _applePayConfig,
-        googlePay: _googlePayConfigFor(currency),
-      ),
-    );
+    try {
+      await Stripe.instance.initPaymentSheet(
+        paymentSheetParameters: SetupPaymentSheetParameters(
+          paymentIntentClientSecret: clientSecret,
+          merchantDisplayName: merchantDisplayName,
+          allowsDelayedPaymentMethods: false,
+          customerId: hasCustomerContext ? customerId : null,
+          customerSessionClientSecret: hasCustomerContext && hasSessionAuth ? customerSessionClientSecret : null,
+          customerEphemeralKeySecret: hasCustomerContext && !hasSessionAuth ? ephemeralKeySecret : null,
+          applePay: _applePayConfig,
+          googlePay: _googlePayConfigFor(currency),
+        ),
+      );
+    } on StripeException catch (e, st) {
+      // Translate StripeException → StripeServiceException so the caller's
+      // 'canceled' short-circuit works uniformly (initPaymentSheet can
+      // itself throw Canceled if the user dismisses an intermediate
+      // wallet prompt before the sheet mounts).
+      debugPrint('StripeService.subscribe: initPaymentSheet error code=${e.error.code} message=${e.error.message}');
+      final code = e.error.code;
+      if (code == FailureCode.Canceled) {
+        throw const StripeServiceException('canceled');
+      }
+      _recordPaymentError('subscribe/initPaymentSheet', e, st,
+          cid: cid, amountCents: amountCents, currency: currency,
+          interval: interval, extraCode: code.name);
+      throw StripeServiceException(code.name);
+    }
 
     try {
       debugPrint('StripeService.subscribe: presenting PaymentSheet');
@@ -394,7 +434,12 @@ class StripeService {
   /// future off-session charges. Returns the SetupIntent ID on success.
   Future<String> setupCard({String merchantDisplayName = 'Pushka'}) async {
     if (kIsWeb) {
-      throw const StripeServiceException('web_payment_sheet_not_supported');
+      // Web: flutter_stripe's Payment Sheet is native-only. A proper fix
+      // is a Stripe Checkout Session in setup mode (mode='setup') via a
+      // new CF `createCheckoutSetupSession` — TODO. For now we surface a
+      // friendlier code so the caller (SavedCardsScreen) can show the
+      // exact workaround instead of a generic error.
+      throw const StripeServiceException('web_add_card_not_available');
     }
     final cid = _newCorrelationId();
     final callable = FirebaseFunctions.instance.httpsCallable('createSetupIntent');
@@ -487,8 +532,7 @@ class StripeService {
       throw const StripeServiceException('checkout_session_failed');
     }
     final data = Map<String, dynamic>.from(result.data as Map);
-    final url = String.fromEnvironment('', defaultValue: '') +
-        (data['url'] as String? ?? '');
+    final url = (data['url'] as String? ?? '');
     final sessionId = data['sessionId'] as String? ?? '';
     if (url.isEmpty || sessionId.isEmpty) {
       throw const StripeServiceException('checkout_session_invalid_response');
