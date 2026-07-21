@@ -129,5 +129,34 @@
   
   <script src="flutter_bootstrap.js" async=""></script>
 
+  <!--
+    Force reload when a new service worker takes control. Without this,
+    users stay on the old cached JS bundle after we deploy a new version —
+    they'd only get the fix on a manual hard-refresh or on the SECOND
+    reopen of the PWA (which most users never do). Causes the "sin
+    conexión" banner from an old buggy connectivity_plus build to
+    persist even after the opportunistic-detection fix was deployed.
+
+    'controllerchange' fires when a new SW claims the page. First load
+    after we deploy: OLD SW serves the app, new SW installs silently.
+    User reloads (or comes back later): new SW activates + fires
+    controllerchange → this listener reloads once → user gets fresh code.
+    The `refreshing` guard prevents an infinite loop on the second load.
+  -->
+  <script>
+    if ('serviceWorker' in navigator) {
+      let refreshing = false;
+      navigator.serviceWorker.addEventListener('controllerchange', function () {
+        if (refreshing) return;
+        refreshing = true;
+        window.location.reload();
+      });
+    }
+  </script>
+
+  <!-- Version marker for debugging cache issues — grep this string on
+       deployed HTML to confirm the newest build is being served.
+       Bump the date on each significant deploy. -->
+  <meta name="pushka-version" content="2026-07-21-offline-opportunistic">
 
 </body></html>
