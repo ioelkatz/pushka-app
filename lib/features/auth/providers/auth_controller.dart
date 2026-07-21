@@ -143,9 +143,36 @@ class AuthController {
     UserCredential result;
 
     if (kIsWeb) {
-      // Web: use Firebase Auth popup — no extra client ID needed
+      // Web: use signInWithRedirect INSTEAD of signInWithPopup because iOS
+      // Safari in installed PWA standalone mode BLOCKS popups entirely —
+      // window.open() returns null and the sign-in silently fails. Popup
+      // works in a regular browser tab but breaks the moment the user
+      // installs the PWA to home screen (which is exactly what we want them
+      // to do for the 500-user launch).
+      //
+      // Redirect works everywhere: desktop, Safari, iOS PWA, Android PWA.
+      // Trade-off: full-page navigation instead of a popup. UX-wise it's
+      // slightly worse on desktop but identical on mobile.
+      //
+      // Flow: signInWithRedirect navigates the browser to Google → user
+      // approves → Google redirects back to our origin with the credential
+      // in the URL fragment → Firebase Auth JS SDK auto-detects on page
+      // load and fires authStateChanges. The router (router.dart:57
+      // GoRouterRefreshStream on authStateChanges) picks it up and
+      // navigates to /home. This function's future NEVER completes
+      // because the page unloads before signInWithRedirect resolves —
+      // that's expected. The caller's `await` is discarded when the
+      // page unloads; the auth flow completes across page loads.
       final provider = GoogleAuthProvider();
-      result = await _auth.signInWithPopup(provider);
+      await _auth.signInWithRedirect(provider);
+      // Execution effectively ends here on web — page navigates to Google.
+      // The line below is only reached if signInWithRedirect returns
+      // synchronously with an error (rare — bad config, provider not
+      // enabled). Throw a friendly error so the login screen catches it.
+      throw FirebaseAuthException(
+        code: 'redirect-did-not-fire',
+        message: 'No pudimos abrir Google. Reintentá.',
+      );
     } else {
       // Mobile: use google_sign_in package
       final googleUser = await GoogleSignIn().signIn();

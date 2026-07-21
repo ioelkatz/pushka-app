@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -12,6 +13,7 @@ import '../features/tenant/presentation/tenant_theme_provider.dart';
 import '../features/tenant/data/tenant_repository.dart';
 import '../features/auth/providers/auth_controller.dart';
 import '../features/auth/providers/auth_state_provider.dart';
+import '../features/users/data/user_repository.dart';
 import 'router.dart';
 
 class PushkaApp extends ConsumerStatefulWidget {
@@ -125,6 +127,25 @@ class _PushkaAppState extends ConsumerState<PushkaApp> with WidgetsBindingObserv
       FeedbackService.instance.updatePreferences(
         sound: (profile['soundEnabled'] as bool?) ?? true,
         vibration: (profile['vibrationEnabled'] as bool?) ?? true,
+      );
+    });
+
+    // Ensure a users/{uid} Firestore doc exists whenever the auth state
+    // flips to a signed-in user. Covers auth paths that bypass
+    // AuthController.signInWith* — most importantly Google via
+    // signInWithRedirect on iOS PWA (Firebase auto-detects the redirect
+    // credential on page load and fires authStateChanges without going
+    // through our signInWithGoogle method). ensureUserDocument is
+    // idempotent (checks existence + set-with-merge), so calling on every
+    // auth transition is safe — just wastes one Firestore read per login.
+    ref.listen(authStateChangesProvider, (prev, next) {
+      final user = next.valueOrNull;
+      if (user == null) return;
+      // Fire and forget — this runs during app boot / router refresh and
+      // shouldn't block anything. UserRepository catches its own errors.
+      UserRepository(FirebaseFirestore.instance).ensureUserDocument(
+        user: user,
+        displayName: user.displayName,
       );
     });
 
