@@ -189,7 +189,23 @@ class AuthController {
           '846580817724-flf3up2e57c80cjb00u0ce8tf012ae90.apps.googleusercontent.com';
       final GoogleSignIn googleSignIn = GoogleSignIn(
         serverClientId: webOAuthClientId,
+        // Explicit scopes force Google to issue an id_token with the profile
+        // claims we need for the account chooser. Without them, some Android
+        // devices return only the access_token and idToken stays null.
+        scopes: const ['email', 'profile', 'openid'],
       );
+
+      // Sign out any cached Google session first. Fixes the "chooser →
+      // pick account → stuck → back to login" loop Ioel reported on S25:
+      // a stale cached session from a previous failed attempt would return
+      // the account without prompting, but the idToken issuance path was
+      // broken so the flow silently restarted. A fresh signIn() forces
+      // Google to run the full OAuth handshake and emit a valid idToken.
+      try {
+        await googleSignIn.signOut();
+      } catch (_) {
+        // signOut can throw if there was never a signed-in user — safe to ignore.
+      }
 
       GoogleSignInAccount? googleUser;
       try {

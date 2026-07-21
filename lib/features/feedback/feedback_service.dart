@@ -53,8 +53,13 @@ class FeedbackService {
       }
       await _successPlayer.setSource(AssetSource('sounds/success.wav'));
       await _billPlayer.setSource(AssetSource('sounds/bill_flutter.wav'));
+      // Preload coin_drop too — was previously loaded on first play, which
+      // added ~200-300ms of Android MediaPlayer startup latency. That made
+      // the coin sound "hit" way after the visual entry into the slot.
+      await _coinPlayer.setSource(AssetSource('sounds/coin_drop.wav'));
       await _successPlayer.setVolume(1.0);
       await _billPlayer.setVolume(0.8);
+      await _coinPlayer.setVolume(0.85);
       _initialized = true;
     } catch (e, st) {
       debugPrint('FeedbackService init error: $e\n$st');
@@ -180,19 +185,23 @@ class FeedbackService {
   /// instantly when the user toggles "sonido" off in settings.
   Future<void> playCoinDrop() async {
     if (!soundEnabled) return;
-    // 800 ms delay para que el sparkle suene cerca del momento en que
-    // la moneda entra por la ranura, no cuando recién empieza a caer
-    // desde arriba. Ioel ajustó este timing visualmente.
+    // Sync with CoinFallAnimation: total duration 1500ms, coin enters slot
+    // in the FINAL 25% (t=0.75 → 1125ms). The coin_drop.wav has ~75ms
+    // silence before the impact peak, so playing at ~1050ms puts the peak
+    // right at the visual entry (1125ms). Preloading in init() eliminates
+    // the previous ~200-300ms MediaPlayer startup latency that made the
+    // sound arrive too late after the coin already entered the slot.
     //
-    // Nota web/iOS Safari: el user gesture (tap) puede "expirarse" tras
-    // ~500ms — si el coin drop no suena en PWA iOS, mover el delay
-    // dentro de un cambio de flujo o preloadear el buffer antes.
-    await Future<void>.delayed(const Duration(milliseconds: 800));
+    // If the animation duration ever changes, update this delay to
+    // (animation_ms * 0.75) - 75ms.
+    await Future<void>.delayed(const Duration(milliseconds: 1050));
     unawaited(_fadeAmbientTo(_ambientDuck));
     try {
-      await _coinPlayer.stop();
-      await _coinPlayer.setVolume(0.85);
-      await _coinPlayer.play(AssetSource('sounds/coin_drop.wav'));
+      // Use resume() on the preloaded player rather than play(AssetSource)
+      // which re-loads the source on each call. resume() from position 0
+      // is instantaneous on Android/iOS since the sample is already decoded.
+      await _coinPlayer.seek(Duration.zero);
+      await _coinPlayer.resume();
       // Coin sound is shorter than the bill flutter (no 2.5s fade tail).
       // Restore ambient after the typical sample length.
       unawaited(Future.delayed(const Duration(milliseconds: 1500), () {
