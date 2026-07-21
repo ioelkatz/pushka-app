@@ -9,6 +9,7 @@ import 'building_770_widget.dart';
 import 'bill_fall_animation.dart';
 import '../../../core/pushka_style_provider.dart';
 import '../../../core/l10n/s.dart';
+import '../../../core/network_status_provider.dart';
 
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
@@ -262,6 +263,12 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
   
   Future<void> emptyPushka() async {
     if (pushkaAmount <= 0 || _isProcessing) return;
+    // Offline gate: payments require a live CF call. Bail with a friendly
+    // dialog instead of firing a callable that will fail with a scary
+    // network error. Firestore-cached data (pushka amount, history) keeps
+    // working while offline — only the checkout / auto-empty path is gated.
+    if (!await _ensureOnlineForPayment()) return;
+    if (!mounted) return;
     final tr = S.of(context);
     // Hold _isProcessing true for the ENTIRE flow including blocking dialogs.
     // Previously we set it false before showing the partial-payment / confirm
@@ -367,6 +374,8 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
 
   Future<void> _donateNow() async {
     if (_isProcessing) return;
+    if (!await _ensureOnlineForPayment()) return;
+    if (!mounted) return;
     final tr = S.of(context);
     // Prefer the tenant's custom donationReasons; fall back to the locale's
     // default list only when the tenant hasn't configured one. Pre-fix this
@@ -648,6 +657,8 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
   }
 
   Future<void> _processCardPayment(double donationAmount, {String? donorMessage, String? donationReason}) async {
+    if (!mounted) return;
+    if (!await _ensureOnlineForPayment()) return;
     if (!mounted) return;
     final tr = S.of(context);
     setState(() => _isProcessing = true);
@@ -1670,6 +1681,35 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(message)),
     );
+  }
+
+  /// Offline gate for payment flows. Payments require network — Firestore
+  /// persistence is fine for browsing but Stripe callables MUST reach the
+  /// server. If we've confirmed offline (opportunistic detection via
+  /// [networkStatusProvider]), show a friendly modal instead of firing a
+  /// callable that will fail with a scary error. Returns true if online (or
+  /// unknown — trust that state until proven otherwise).
+  Future<bool> _ensureOnlineForPayment() async {
+    if (!ref.read(isOfflineProvider)) return true;
+    if (!mounted) return false;
+    final tr = S.of(context);
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: Text(tr.offlineDialogTitle,
+            style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w700)),
+        content: Text(tr.offlineDonationBlocked,
+            style: const TextStyle(fontSize: 14, height: 1.4)),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: Text(tr.commonUnderstood),
+          ),
+        ],
+      ),
+    );
+    return false;
   }
 
   /// Persistent error alert for donation failures. Replaces the previous

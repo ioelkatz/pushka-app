@@ -336,7 +336,10 @@ class S {
   String get settingsApplied => _t('Configuración aplicada', 'Settings applied', 'Paramètres appliqués', 'הגדרות הוחלו');
   String get customGoal => _t('Meta personalizada', 'Custom goal', 'Objectif personnalisé', 'יעד מותאם אישית');
   String get customGoalHint => _t('Ej: 4500', 'E.g.: 4500', 'Ex : 4500', 'לדוגמה: 4500');
-  String get offlineMessage => _t('Sin conexión a internet', 'No internet connection', 'Pas de connexion internet', 'אין חיבור לאינטרנט');
+  String get offlineMessage => _t('Sin conexión — algunos datos pueden estar desactualizados', 'Offline — some data may be out of date', 'Hors ligne — certaines données peuvent être obsolètes', 'לא מקוון — חלק מהנתונים עשויים להיות לא מעודכנים');
+  String get offlineDonationBlocked => _t('Necesitás conexión a internet para procesar el pago. Verificá tu WiFi o datos.', 'You need an internet connection to process the payment. Check your WiFi or mobile data.', 'Vous avez besoin d\'une connexion internet pour traiter le paiement. Vérifiez votre WiFi ou vos données mobiles.', 'נדרש חיבור לאינטרנט לעיבוד התשלום. בדוק את ה-WiFi או הנתונים שלך.');
+  String get offlineDialogTitle => _t('Sin conexión', 'Offline', 'Hors ligne', 'לא מקוון');
+  String get commonUnderstood => _t('Entendido', 'Got it', 'Compris', 'הבנתי');
   String get offlineSaved => _t(
     'Sin conexión estable. Guardamos localmente y se sincronizará al reconectar.',
     'No stable connection. Saved locally, will sync on reconnect.',

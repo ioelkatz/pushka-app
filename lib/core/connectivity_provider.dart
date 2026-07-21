@@ -1,33 +1,13 @@
-import 'package:connectivity_plus/connectivity_plus.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
-
-// StreamProvider async* — seedeamos con checkConnectivity() antes de suscribirnos
-// al stream de cambios. Sin este seed, en PWA/web (especialmente iOS Safari) el
-// primer evento de onConnectivityChanged puede tardar o no emitirse hasta un
-// cambio real de estado — el user queda con el banner "sin conexión" pegado
-// aunque tenga internet perfecto.
-final connectivityProvider = StreamProvider<bool>((ref) async* {
-  final conn = Connectivity();
-  try {
-    final initial = await conn.checkConnectivity();
-    yield initial.any((r) => r != ConnectivityResult.none);
-  } catch (_) {
-    // Si checkConnectivity falla (raro), asumimos online — es mejor mostrar la
-    // app y que una request real falle con su propio error que bloquear con un
-    // banner incorrecto.
-    yield true;
-  }
-  yield* conn.onConnectivityChanged.map(
-    (results) => results.any((r) => r != ConnectivityResult.none),
-  );
-});
-
-final isOfflineProvider = Provider<bool>((ref) {
-  return ref.watch(connectivityProvider).maybeWhen(
-    data: (online) => !online,
-    // Default a ONLINE mientras se resuelve el estado inicial. Antes era true
-    // ("assume offline until first event") pero en PWA eso pintaba el banner
-    // por segundos innecesariamente, y si el stream nunca emitía quedaba forever.
-    orElse: () => false,
-  );
-});
+// Legacy compatibility shim. The real signal now lives in
+// network_status_provider.dart which uses opportunistic detection
+// (react to actual request success/failure) instead of browser APIs.
+//
+// Old approach used connectivity_plus which lies on web (navigator.onLine
+// reports true when connected to WiFi with no internet, and can emit a
+// stray ConnectivityResult.none on tab suspend). That caused a persistent
+// false-positive "Sin conexión" banner in PWA even when the user had
+// perfect internet.
+//
+// This shim keeps the old symbols working while new code should import
+// network_status_provider.dart directly.
+export 'network_status_provider.dart' show isOfflineProvider;

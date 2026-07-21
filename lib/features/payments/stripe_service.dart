@@ -7,6 +7,7 @@ import 'package:flutter_stripe/flutter_stripe.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../config/stripe_config.dart';
+import '../../core/network_status_provider.dart';
 import '../../firebase_options.dart';
 
 /// 16-char hex correlation ID — generated client-side at the start of a
@@ -166,7 +167,9 @@ class StripeService {
     HttpsCallableResult result;
     try {
       result = await callOnce();
+      NetworkStatusReporter.recordSuccess();
     } on FirebaseFunctionsException catch (e, st) {
+      NetworkStatusReporter.recordMaybeNetworkFailure(e);
       // Self-heal a stuck "manual" auto-empty lock: a prior attempt that
       // the donor cancelled (or that crashed mid-PaymentSheet) leaves
       // _autoEmptyChargeLockAt set on tenantState for up to 10 min. Without
@@ -183,12 +186,15 @@ class StripeService {
         }
         try {
           result = await callOnce();
+          NetworkStatusReporter.recordSuccess();
         } on FirebaseFunctionsException catch (e2, st2) {
+          NetworkStatusReporter.recordMaybeNetworkFailure(e2);
           _recordPaymentError('pay/createPaymentIntent_retry', e2, st2,
               cid: cid, purpose: purpose, amountCents: amountCents,
               currency: currency, extraCode: e2.code);
           rethrow;
         } catch (e2, st2) {
+          NetworkStatusReporter.recordMaybeNetworkFailure(e2);
           _recordPaymentError('pay/createPaymentIntent_retry_unknown', e2, st2,
               cid: cid, purpose: purpose, amountCents: amountCents, currency: currency);
           throw const StripeServiceException('network-error');
@@ -200,6 +206,7 @@ class StripeService {
         rethrow;
       }
     } catch (e, st) {
+      NetworkStatusReporter.recordMaybeNetworkFailure(e);
       _recordPaymentError('pay/createPaymentIntent_unknown', e, st,
           cid: cid, purpose: purpose, amountCents: amountCents, currency: currency);
       throw const StripeServiceException('network-error');
@@ -343,13 +350,16 @@ class StripeService {
         if (donorMessage != null && donorMessage.isNotEmpty)
           'donorMessage': donorMessage,
       });
+      NetworkStatusReporter.recordSuccess();
     } on FirebaseFunctionsException catch (e, st) {
+      NetworkStatusReporter.recordMaybeNetworkFailure(e);
       debugPrint('StripeService.subscribe: CF error code=${e.code} message=${e.message}');
       _recordPaymentError('subscribe/createDonationSubscription', e, st,
           cid: cid, amountCents: amountCents, currency: currency,
           interval: interval, extraCode: e.code);
       rethrow;
     } catch (e, st) {
+      NetworkStatusReporter.recordMaybeNetworkFailure(e);
       debugPrint('StripeService.subscribe: network error $e');
       _recordPaymentError('subscribe/createDonationSubscription_unknown', e, st,
           cid: cid, amountCents: amountCents, currency: currency, interval: interval);
