@@ -514,6 +514,12 @@ class StripeService {
     final callable = FirebaseFunctions.instance.httpsCallable(
       'createCheckoutSession',
     );
+    // Anchor Stripe's success/cancel redirects to the ORIGIN the PWA is
+    // being served from (pushkapp.cc, pushka-pwa.web.app, pushka-app-ioel[-test].web.app).
+    // Without this the CF falls back to a hardcoded default that may not match
+    // the origin the donor is using, breaking the return trip. The CF still
+    // validates the origin against a whitelist server-side.
+    final origin = kIsWeb ? Uri.base.origin : null;
     HttpsCallableResult result;
     try {
       result = await callable.call({
@@ -525,6 +531,8 @@ class StripeService {
           'donationReason': donationReason,
         if (donorMessage != null && donorMessage.isNotEmpty)
           'donorMessage': donorMessage,
+        if (origin != null) 'successUrl': '$origin/donation-success?session_id={CHECKOUT_SESSION_ID}',
+        if (origin != null) 'cancelUrl': '$origin/donation-cancel',
       });
     } catch (e, st) {
       _recordPaymentError('createCheckoutSession', e, st,

@@ -236,8 +236,7 @@ class _SavedCardsScreenState extends ConsumerState<SavedCardsScreen> {
       // (mode='setup') via a new CF `createCheckoutSetupSession` so PWA
       // donors can save a card without a real donation.
       final message = e.code == 'web_add_card_not_available'
-          ? 'Para agregar una tarjeta desde el navegador, hacé una '
-              'donación normal — se guarda automáticamente en tu cuenta.'
+          ? tr.webAddCardNotAvailable
           : tr.errorLoadingCards;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(message)),
@@ -404,6 +403,12 @@ class _SavedCardsScreenState extends ConsumerState<SavedCardsScreen> {
     if (!confirmed || !mounted) return;
 
     setState(() => _processing = true);
+    // Snapshot state BEFORE the optimistic removal so we can roll back on
+    // CF failure — otherwise the card stays in Stripe but the UI shows it
+    // deleted (a silent lie). Declared outside the try block so the catch
+    // handlers can restore state.
+    final previousCards = List<Map<String, dynamic>>.of(_cards);
+    final previousDefault = _defaultPaymentMethodId;
     try {
       // Clear the now-stale autoEmptyPaymentMethodId on the current
       // tenantState BEFORE deleting the PM. If we deleted first and the
@@ -500,11 +505,40 @@ class _SavedCardsScreenState extends ConsumerState<SavedCardsScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(tr.cardDeleted)),
       );
+    } on FirebaseFunctionsException catch (e) {
+      if (!mounted) return;
+      // Roll back the optimistic UI so the card reappears — otherwise the
+      // donor sees a "deleted" card that still exists in Stripe.
+      setState(() {
+        _cards = previousCards;
+        _defaultPaymentMethodId = previousDefault;
+      });
+      // failed-precondition is thrown by deletePaymentMethod when the user
+      // tries to remove their last card while an active subscription /
+      // auto-empty still depends on it — the CF's Spanish message is the
+      // most helpful thing to show verbatim.
+      if (e.code == 'failed-precondition' && (e.message?.isNotEmpty ?? false)) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(e.message!)),
+        );
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(tr.errorLoadingCards)),
+        );
+        // Resync from the source of truth in case the CF partially succeeded.
+        await _loadCards(silent: true);
+      }
     } catch (e) {
       if (!mounted) return;
+      // Roll back optimistic removal + resync from the CF.
+      setState(() {
+        _cards = previousCards;
+        _defaultPaymentMethodId = previousDefault;
+      });
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(tr.errorLoadingCards)),
       );
+      await _loadCards(silent: true);
     } finally {
       if (mounted) setState(() => _processing = false);
     }
@@ -1024,7 +1058,13 @@ class _SavedCardsScreenState extends ConsumerState<SavedCardsScreen> {
                             if (!kIsWeb && Platform.isIOS) _WalletKind.applePay,
                           ];
                           return RefreshIndicator(
-                            onRefresh: () => _loadCards(),
+                            // silent:true so RefreshIndicator's own spinner is
+                            // the only loading affordance — flipping _loading
+                            // would swap the ListView for a full-page spinner
+                            // and unmount the RefreshIndicator mid-swipe.
+                            onRefresh: () async {
+                              await _loadCards(silent: true);
+                            },
                             child: ListView.separated(
                             physics: const AlwaysScrollableScrollPhysics(),
                           padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),

@@ -312,6 +312,10 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
       // single owner of this write.
       final remaining = (pushkaAmount - amountToEmpty).clamp(0.0, double.infinity);
 
+      // Pass the active tenantId so the pushka-empty lock release (on
+      // cancel/failure) scopes to the same tenant the CF locked — multi-
+      // tenant donors would otherwise release the wrong lock.
+      final activeTenantId = ref.read(userProfileProvider).valueOrNull?['tenantId'] as String?;
       await StripeService.instance.pay(
         amountCents: amountCents,
         currency: currency,
@@ -320,6 +324,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
         merchantDisplayName: ref.read(tenantConfigProvider).valueOrNull?.appName ?? 'Pushka',
         donorMessage: details.message.isEmpty ? null : details.message,
         pushkaAmountAfter: remaining,
+        tenantId: activeTenantId,
       );
 
       await AnalyticsService.instance.logPushkaEmpty(amountToEmpty);

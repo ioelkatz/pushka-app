@@ -1212,10 +1212,48 @@ exports.createPaymentIntent = onCall(
       });
     });
   } catch (dedupeErr) {
-    console.warn("createPaymentIntent: dedupe pass failed (non-fatal)", {
-      uid: request.auth.uid, customerId,
-      errorMessage: dedupeErr?.message,
-    });
+    // Stale-customer self-heal during dedupe: if the cached customerId
+    // points at a customer Stripe no longer knows (hard-deleted / mode
+    // mismatch), clear the stale IDs, mint a fresh customer, and continue
+    // with the new customerId. Without this the downstream paymentIntents
+    // .create call would also fail with resource_missing and — until its
+    // own retry — the whole donation attempt bricks.
+    if (_isStripeResourceMissing(dedupeErr)) {
+      console.warn("createPaymentIntent: stale customerId in dedupe — clearing and regenerating", {
+        uid: request.auth.uid, staleCustomerId: customerId,
+        errorMessage: dedupeErr?.message,
+      });
+      const selfHealRef = db.collection("users").doc(request.auth.uid);
+      await selfHealRef.set({
+        stripeCustomerId: admin.firestore.FieldValue.delete(),
+        stripeCustomerIdPending: admin.firestore.FieldValue.delete(),
+        stripeDefaultPaymentMethodId: admin.firestore.FieldValue.delete(),
+        stripeDefaultPaymentMethodLast4: admin.firestore.FieldValue.delete(),
+        stripeDefaultPaymentMethodBrand: admin.firestore.FieldValue.delete(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      }, { merge: true }).catch(() => {});
+      try {
+        const freshCustomer = await stripe.customers.create({
+          email: customerEmail || undefined,
+          metadata: { uid: request.auth.uid },
+        }, { idempotencyKey: `customer_create_${request.auth.uid}_r1` });
+        customerId = freshCustomer.id;
+        await selfHealRef.set({
+          stripeCustomerId: customerId,
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        }, { merge: true });
+      } catch (createErr) {
+        console.error("createPaymentIntent: recreate customer failed after dedupe stale", {
+          uid: request.auth.uid, errorMessage: createErr?.message,
+        });
+        throw new HttpsError("internal", "No se pudo preparar el pago. Intentá de nuevo.");
+      }
+    } else {
+      console.warn("createPaymentIntent: dedupe pass failed (non-fatal)", {
+        uid: request.auth.uid, customerId,
+        errorMessage: dedupeErr?.message,
+      });
+    }
   }
 
   // Build the PaymentIntent + CustomerSession in parallel — neither depends
@@ -1312,10 +1350,54 @@ exports.createPaymentIntent = onCall(
   // Fire both Stripe API calls concurrently. allSettled (not all) so a
   // CustomerSession failure doesn't tank the PaymentIntent — we fall back
   // to ephemeralKey in that branch.
-  const [piResult, sessionResult] = await Promise.allSettled([
+  let [piResult, sessionResult] = await Promise.allSettled([
     stripe.paymentIntents.create(piParams, { idempotencyKey }),
     stripe.customerSessions.create(customerSessionParams),
   ]);
+
+  // Stale-customer self-heal for paymentIntents.create: if the customerId
+  // in piParams points at a customer Stripe no longer knows about
+  // (hard-deleted / mode mismatch), clear the stale IDs, mint a fresh
+  // customer, re-pin piParams.customer, and retry ONCE. Also re-run the
+  // customer session create with the fresh customer id so PaymentSheet
+  // gets a working session. Retry is capped at 1 to avoid infinite loops.
+  if (piResult.status === "rejected" && _isStripeResourceMissing(piResult.reason)) {
+    console.warn("createPaymentIntent: stale customerId — clearing and retrying once", {
+      uid: request.auth.uid, staleCustomerId: customerId,
+      errorMessage: piResult.reason?.message,
+    });
+    const selfHealRef = db.collection("users").doc(request.auth.uid);
+    await selfHealRef.set({
+      stripeCustomerId: admin.firestore.FieldValue.delete(),
+      stripeCustomerIdPending: admin.firestore.FieldValue.delete(),
+      stripeDefaultPaymentMethodId: admin.firestore.FieldValue.delete(),
+      stripeDefaultPaymentMethodLast4: admin.firestore.FieldValue.delete(),
+      stripeDefaultPaymentMethodBrand: admin.firestore.FieldValue.delete(),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    }, { merge: true }).catch(() => {});
+    try {
+      const freshCustomer = await stripe.customers.create({
+        email: customerEmail || undefined,
+        metadata: { uid: request.auth.uid },
+      }, { idempotencyKey: `customer_create_${request.auth.uid}_r1` });
+      customerId = freshCustomer.id;
+      piParams.customer = customerId;
+      customerSessionParams.customer = customerId;
+      await selfHealRef.set({
+        stripeCustomerId: customerId,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      }, { merge: true });
+    } catch (createErr) {
+      console.error("createPaymentIntent: recreate customer failed", {
+        uid: request.auth.uid, errorMessage: createErr?.message,
+      });
+      throw new HttpsError("internal", "No se pudo preparar el pago. Intentá de nuevo.");
+    }
+    [piResult, sessionResult] = await Promise.allSettled([
+      stripe.paymentIntents.create(piParams, { idempotencyKey: `${idempotencyKey}_r1` }),
+      stripe.customerSessions.create(customerSessionParams),
+    ]);
+  }
 
   if (piResult.status === "rejected") {
     const err = piResult.reason;
@@ -1707,6 +1789,14 @@ exports.createDonationSubscription = onCall(
         purpose: "donation_recurring",
         donorMessage,
         ...(donationReason ? { donationReason } : {}),
+        // Stamp the Connect destination so the invoice.payment_succeeded
+        // drift-detection fallback (invoice.parent.subscription_details
+        // .metadata.connectAccountId) can catch cases where transfer_data
+        // on the invoice is missing/rotated but the sub was originally
+        // pinned to a specific tenant Connect account.
+        ...(tenantConnectAccountId
+          ? { connectAccountId: tenantConnectAccountId }
+          : {}),
       },
     };
 
@@ -1777,10 +1867,32 @@ exports.createDonationSubscription = onCall(
         }
       }
     } catch (cleanupErr) {
-      console.warn("createDonationSubscription: cleanup pass failed", {
-        uid: request.auth.uid,
-        err: cleanupErr.message,
-      });
+      // Stale-customer self-heal for the list call: if the cached customerId
+      // points at a customer Stripe no longer knows (hard-deleted / mode
+      // mismatch), clear the stale IDs so the retry-once block on
+      // subscriptions.create below can mint a fresh customer. Continue with
+      // an empty subs list — there was nothing to cancel anyway (the old
+      // customer is gone from Stripe's perspective).
+      if (_isStripeResourceMissing(cleanupErr)) {
+        console.warn("createDonationSubscription: stale customerId in list — clearing", {
+          uid: request.auth.uid, staleCustomerId: customerId,
+          errorMessage: cleanupErr?.message,
+        });
+        try {
+          await db.collection("users").doc(request.auth.uid).set({
+            stripeCustomerId: admin.firestore.FieldValue.delete(),
+            stripeDefaultPaymentMethodId: admin.firestore.FieldValue.delete(),
+            stripeDefaultPaymentMethodLast4: admin.firestore.FieldValue.delete(),
+            stripeDefaultPaymentMethodBrand: admin.firestore.FieldValue.delete(),
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          }, { merge: true });
+        } catch (_) { /* best-effort */ }
+      } else {
+        console.warn("createDonationSubscription: cleanup pass failed", {
+          uid: request.auth.uid,
+          err: cleanupErr.message,
+        });
+      }
     }
 
     console.info("createDonationSubscription: creating sub", {
@@ -1800,33 +1912,80 @@ exports.createDonationSubscription = onCall(
     // 'canceled'" client-side).
     const subIdempotencyKey = `sub_${request.auth.uid}_${correlationId}`;
     let subscription;
-    try {
-      subscription = await stripe.subscriptions.create(subParams, { idempotencyKey: subIdempotencyKey });
-      console.info("createDonationSubscription: sub created", {
-        subId: subscription.id,
-        status: subscription.status,
-      });
-    } catch (stripeErr) {
-      console.error("createDonationSubscription: Stripe error", {
-        uid: request.auth.uid,
-        err: stripeErr.message,
-        type: stripeErr.type,
-        code: stripeErr.code,
-        param: stripeErr.param,
-      });
-      // Translate the most common Stripe rejections to user-friendly Spanish
-      // so the client can render a clean message instead of leaking raw
-      // English Stripe text. Pre-cleanup above usually prevents the
-      // currency-mix error, but a half-cancelled sub or one outside the
-      // donation_recurring scope could still trip it.
-      const msg = String(stripeErr.message || "").toLowerCase();
-      if (msg.includes("combine currencies on a single customer")) {
-        throw new HttpsError(
-          "failed-precondition",
-          "Tenés una suscripción activa en otra moneda. Cancelala desde tu cuenta antes de crear una nueva.",
-        );
+    // Stale-customer self-heal: mirrors createSetupIntent (lines ~2131-2183).
+    // If the cached customerId points at a customer Stripe no longer knows
+    // about (hard-deleted / mode mismatch), subscriptions.create throws
+    // resource_missing and — without this retry — every recurring donation
+    // attempt bricks with an opaque INTERNAL error. Clear the stale IDs,
+    // mint a fresh customer, re-pin subParams.customer, and retry ONCE.
+    let subRetryCount = 0;
+    const userRefForSelfHeal = db.collection("users").doc(request.auth.uid);
+    while (true) {
+      const attemptKey = subRetryCount === 0
+        ? subIdempotencyKey
+        : `sub_create_${request.auth.uid}_r${subRetryCount}`;
+      try {
+        subscription = await stripe.subscriptions.create(subParams, { idempotencyKey: attemptKey });
+        console.info("createDonationSubscription: sub created", {
+          subId: subscription.id,
+          status: subscription.status,
+          retry: subRetryCount,
+        });
+        break;
+      } catch (stripeErr) {
+        if (subRetryCount === 0 && _isStripeResourceMissing(stripeErr)) {
+          console.warn("createDonationSubscription: stale customerId — clearing and retrying once", {
+            uid: request.auth.uid, staleCustomerId: customerId,
+            errorMessage: stripeErr?.message,
+          });
+          await userRefForSelfHeal.set({
+            stripeCustomerId: admin.firestore.FieldValue.delete(),
+            stripeDefaultPaymentMethodId: admin.firestore.FieldValue.delete(),
+            stripeDefaultPaymentMethodLast4: admin.firestore.FieldValue.delete(),
+            stripeDefaultPaymentMethodBrand: admin.firestore.FieldValue.delete(),
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          }, { merge: true }).catch(() => {});
+          try {
+            const freshCustomer = await stripe.customers.create({
+              email: customerEmail || undefined,
+              metadata: { uid: request.auth.uid },
+            }, { idempotencyKey: `customer_create_${request.auth.uid}_r1` });
+            customerId = freshCustomer.id;
+            subParams.customer = customerId;
+            await userRefForSelfHeal.set({
+              stripeCustomerId: customerId,
+              updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            }, { merge: true });
+          } catch (createErr) {
+            console.error("createDonationSubscription: recreate customer failed", {
+              uid: request.auth.uid, errorMessage: createErr?.message,
+            });
+            throw new HttpsError("internal", "No se pudo preparar tu suscripción. Intentá de nuevo.");
+          }
+          subRetryCount += 1;
+          continue;
+        }
+        console.error("createDonationSubscription: Stripe error", {
+          uid: request.auth.uid,
+          err: stripeErr.message,
+          type: stripeErr.type,
+          code: stripeErr.code,
+          param: stripeErr.param,
+        });
+        // Translate the most common Stripe rejections to user-friendly Spanish
+        // so the client can render a clean message instead of leaking raw
+        // English Stripe text. Pre-cleanup above usually prevents the
+        // currency-mix error, but a half-cancelled sub or one outside the
+        // donation_recurring scope could still trip it.
+        const msg = String(stripeErr.message || "").toLowerCase();
+        if (msg.includes("combine currencies on a single customer")) {
+          throw new HttpsError(
+            "failed-precondition",
+            "Tenés una suscripción activa en otra moneda. Cancelala desde tu cuenta antes de crear una nueva.",
+          );
+        }
+        throw new HttpsError("internal", `sub-create: ${stripeErr.message}`);
       }
-      throw new HttpsError("internal", `sub-create: ${stripeErr.message}`);
     }
 
     // Newer Stripe API (2024-09-30+): invoice carries `confirmation_secret`
@@ -2473,7 +2632,7 @@ exports.deletePaymentMethod = onCall(
         stripe.customers.retrieve(customerId),
       ]);
     } catch (stripeErr) {
-      if (stripeErr.statusCode === 404 || stripeErr.code === "resource_missing") {
+      if (_isStripeResourceMissing(stripeErr)) {
         return { success: true }; // Already gone — idempotent success.
       }
       throw new HttpsError("internal", "Error al verificar el método de pago.");
@@ -2533,7 +2692,7 @@ exports.deletePaymentMethod = onCall(
     try {
       await stripe.paymentMethods.detach(pmId);
     } catch (stripeErr) {
-      if (stripeErr.statusCode !== 404 && stripeErr.code !== "resource_missing") {
+      if (!_isStripeResourceMissing(stripeErr)) {
         throw new HttpsError("internal", "Error al eliminar el método de pago.");
       }
       // Race: already detached between retrieve and detach — success.
@@ -3530,12 +3689,20 @@ exports.stripeWebhook = onRequest(
           status === "canceled" ? "suspended" :
           null; // ignore incomplete/incomplete_expired noise
         if (tenantStatus) {
+          // Stripe API 2025-04+ removed sub.current_period_end from the
+          // top-level subscription object — it now lives on the first item
+          // (a sub can technically have multiple items on different cycles).
+          // Fall back to the item's value so billingNextDue keeps working.
+          // Mirrors the pattern used in listDonationSubscriptions.
+          const cpe = sub.current_period_end
+            ?? sub.items?.data?.[0]?.current_period_end
+            ?? null;
           await db.collection("tenants").doc(tenantId).set({
             status: tenantStatus,
             paymentStatus: status,
             stripeSubscriptionId: sub.id,
-            ...(sub.current_period_end
-              ? { billingNextDue: admin.firestore.Timestamp.fromMillis(sub.current_period_end * 1000) }
+            ...(cpe
+              ? { billingNextDue: admin.firestore.Timestamp.fromMillis(cpe * 1000) }
               : {}),
             updatedAt: admin.firestore.FieldValue.serverTimestamp(),
           }, { merge: true });

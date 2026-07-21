@@ -1227,6 +1227,12 @@ class S {
   String get deleteConfirm => _t('Eliminar', 'Delete', 'Supprimer', 'מחק');
   String get loadingCards => _t('Cargando tarjetas...', 'Loading cards...', 'Chargement des cartes...', 'טוען כרטיסים...');
   String get errorLoadingCards => _t('Error al cargar las tarjetas', 'Error loading cards', 'Erreur lors du chargement des cartes', 'שגיאה בטעינת כרטיסים');
+  String get webAddCardNotAvailable => _t(
+    'Para agregar una tarjeta desde el navegador, hacé una donación normal — se guarda automáticamente en tu cuenta.',
+    'To add a card from the browser, make a normal donation — it will be saved to your account automatically.',
+    'Pour ajouter une carte depuis le navigateur, faites un don normal — elle sera enregistrée automatiquement dans votre compte.',
+    'כדי להוסיף כרטיס מהדפדפן, בצע תרומה רגילה — הכרטיס יישמר אוטומטית בחשבונך.',
+  );
 
   // ---------------------------------------------------------------------------
   // DONATION SUBSCRIPTIONS
