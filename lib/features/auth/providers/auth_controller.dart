@@ -174,21 +174,65 @@ class AuthController {
         message: 'No pudimos abrir Google. Reintentá.',
       );
     } else {
-      // Mobile: use google_sign_in package
-      final googleUser = await GoogleSignIn().signIn();
+      // Mobile: use google_sign_in package. Pass serverClientId EXPLICITLY
+      // (the Web OAuth 2.0 client) so the plugin doesn't rely on auto-discovery
+      // from google-services.json — that fails intermittently on newer Android
+      // (14+) and on APKs distributed outside Play Store where the manifest
+      // metadata reading order can differ. Without the correct web client id
+      // Google returns a valid access token but a NULL idToken, and Firebase
+      // Auth rejects the credential with 'invalid-credential'.
+      //
+      // This is the Web (client_type: 3) OAuth 2.0 client ID from Google
+      // Cloud Console for the pushka-app-ioel project — same value that lives
+      // in android/app/src/prod/google-services.json.
+      const webOAuthClientId =
+          '846580817724-flf3up2e57c80cjb00u0ce8tf012ae90.apps.googleusercontent.com';
+      final GoogleSignIn googleSignIn = GoogleSignIn(
+        serverClientId: webOAuthClientId,
+      );
+
+      GoogleSignInAccount? googleUser;
+      try {
+        googleUser = await googleSignIn.signIn();
+      } catch (e, st) {
+        // Log the raw plugin error to Crashlytics so we can see the exact
+        // failure mode (ApiException 10 = DEVELOPER_ERROR = SHA-1 mismatch;
+        // ApiException 12500 = SIGN_IN_FAILED; etc). Otherwise we'd only see
+        // a generic FirebaseAuthException upstream.
+        _recordNonFatal(e, st, op: 'signInWithGoogle.plugin', uid: null);
+        rethrow;
+      }
       if (googleUser == null) {
         // User dismissed the Google sign-in dialog — treat like a cancellation.
         throw FirebaseAuthException(code: 'sign_in_canceled');
       }
       final googleAuth = await googleUser.authentication;
       if (googleAuth.idToken == null) {
+        // Null idToken usually means the serverClientId (web OAuth client) is
+        // wrong or the SHA-1 of the signing key isn't registered in Firebase.
+        // Log both to Crashlytics for triage.
+        _recordNonFatal(
+          Exception(
+            'googleAuth.idToken was null. serverClientId=$webOAuthClientId '
+            'accessTokenPresent=${googleAuth.accessToken != null} — '
+            'likely SHA-1 or web OAuth client id mismatch',
+          ),
+          StackTrace.current,
+          op: 'signInWithGoogle.nullIdToken',
+          uid: null,
+        );
         throw FirebaseAuthException(code: 'sign_in_failed');
       }
       final credential = GoogleAuthProvider.credential(
         accessToken: googleAuth.accessToken,
         idToken: googleAuth.idToken,
       );
-      result = await _auth.signInWithCredential(credential);
+      try {
+        result = await _auth.signInWithCredential(credential);
+      } catch (e, st) {
+        _recordNonFatal(e, st, op: 'signInWithGoogle.signInWithCredential', uid: null);
+        rethrow;
+      }
     }
 
     await _userRepository.ensureUserDocument(
