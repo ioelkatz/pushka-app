@@ -251,14 +251,87 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     try {
       await ref.read(authControllerProvider).signInWithGoogle();
     } on FirebaseAuthException catch (e) {
-      if (mounted) _showMessage(_mapGoogleAuthError(e.code));
+      if (mounted) {
+        // 'sign_in_canceled' is legit (user tapped back) — silent SnackBar.
+        // Anything else is a real error — show a DIALOG with the raw code
+        // + message so the user (and support) can see what actually failed.
+        // Previously we mapped every non-canceled code to a generic message
+        // that often didn't render (SnackBar auto-dismiss + async gap made
+        // it easy to miss), and the user saw "chooser → nothing" with no
+        // hint what went wrong — S25 Google Sign-In loop was invisible.
+        if (e.code == 'sign_in_canceled' || e.code == 'sign_in_cancelled') {
+          _showMessage(_mapGoogleAuthError(e.code));
+        } else {
+          _showAuthErrorDialog(
+            code: e.code,
+            message: e.message ?? '(sin mensaje)',
+            source: 'FirebaseAuthException',
+          );
+        }
+      }
     } on PlatformException catch (e) {
-      if (mounted) _showMessage(_mapGoogleAuthError(e.code));
+      if (mounted) {
+        _showAuthErrorDialog(
+          code: e.code,
+          message: '${e.message ?? '(sin mensaje)'} | details=${e.details}',
+          source: 'PlatformException',
+        );
+      }
     } on Exception catch (e) {
-      if (mounted) _showMessage(_tr.googleError('$e'));
+      if (mounted) {
+        _showAuthErrorDialog(
+          code: 'unknown',
+          message: e.toString(),
+          source: 'Exception',
+        );
+      }
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
+  }
+
+  Future<void> _showAuthErrorDialog({
+    required String code,
+    required String message,
+    required String source,
+  }) async {
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Login con Google — Error'),
+        content: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text('No pudimos iniciar sesión. Detalle técnico:',
+                  style: TextStyle(fontSize: 13)),
+              const SizedBox(height: 8),
+              SelectableText('Source: $source',
+                  style: const TextStyle(fontFamily: 'monospace', fontSize: 11)),
+              SelectableText('Code:   $code',
+                  style: const TextStyle(fontFamily: 'monospace', fontSize: 11)),
+              const SizedBox(height: 6),
+              const Text('Message:', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
+              SelectableText(message,
+                  style: const TextStyle(fontFamily: 'monospace', fontSize: 11)),
+              const SizedBox(height: 12),
+              const Text(
+                'Copiá este detalle y mandalo por WhatsApp para diagnosticar.',
+                style: TextStyle(fontSize: 12, color: Colors.grey),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('Cerrar'),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _signInWithApple() async {

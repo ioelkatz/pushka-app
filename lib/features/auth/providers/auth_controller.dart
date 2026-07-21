@@ -219,8 +219,33 @@ class AuthController {
         rethrow;
       }
       if (googleUser == null) {
-        // User dismissed the Google sign-in dialog — treat like a cancellation.
-        throw FirebaseAuthException(code: 'sign_in_canceled');
+        // Google Sign-In plugin returned null. Historically we treated this
+        // as "user canceled" (silent). BUT on newer Android (14+) with the
+        // legacy google_sign_in v6, the plugin returns null AFTER a
+        // successful account pick when the id_token issuance fails
+        // downstream (bad serverClientId, SHA mismatch, Play Services
+        // outdated, etc). Silently treating as cancel hides real bugs —
+        // exactly the S25 loop Ioel reported: chooser → pick → back to
+        // login with no message.
+        //
+        // Log + throw a DIFFERENT code so the login screen surfaces a
+        // visible error dialog (not the silent snackbar for cancels).
+        _recordNonFatal(
+          Exception(
+            'GoogleSignIn.signIn() returned null after account chooser. '
+            'Likely idToken issuance failure (bad serverClientId, SHA-1 mismatch, '
+            'or outdated Play Services). serverClientId=$webOAuthClientId',
+          ),
+          StackTrace.current,
+          op: 'signInWithGoogle.pluginReturnedNull',
+          uid: null,
+        );
+        throw FirebaseAuthException(
+          code: 'sign_in_failed',
+          message:
+              'Google devolvió null tras elegir cuenta. Probable idToken issuance failed. '
+              'serverClientId=$webOAuthClientId',
+        );
       }
       final googleAuth = await googleUser.authentication;
       if (googleAuth.idToken == null) {
