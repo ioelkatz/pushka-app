@@ -141,12 +141,21 @@ class _PushkaAppState extends ConsumerState<PushkaApp> with WidgetsBindingObserv
     ref.listen(authStateChangesProvider, (prev, next) {
       final user = next.valueOrNull;
       if (user == null) return;
-      // Fire and forget — this runs during app boot / router refresh and
-      // shouldn't block anything. UserRepository catches its own errors.
-      UserRepository(FirebaseFirestore.instance).ensureUserDocument(
-        user: user,
-        displayName: user.displayName,
-      );
+      // Fire and forget — but explicitly swallow errors. Previously an
+      // unhandled Firestore permission-denied here (e.g. rules deny a
+      // brand-new user's first write before onCreate runs) could crash
+      // the auth flow on web / freeze the redirect return handoff.
+      Future(() async {
+        try {
+          await UserRepository(FirebaseFirestore.instance).ensureUserDocument(
+            user: user,
+            displayName: user.displayName,
+          );
+        } catch (e) {
+          // ignore: avoid_print
+          debugPrint('ensureUserDocument listener error (non-fatal): $e');
+        }
+      });
     });
 
     // Navigate to /suspended if the tenant gets suspended while the app is open

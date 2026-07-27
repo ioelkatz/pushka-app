@@ -69,88 +69,21 @@ Future<void> activateAppCheck() async {
 }
 
 Future<void> _performDeferredInit() async {
-  // Google Sign-In v7: MUST call initialize() before any authenticate() call.
-  // On Android it wires up the Credential Manager with our web OAuth client
-  // ID so Google issues a valid idToken (not just an access token, which
-  // Firebase Auth rejects). Failing here shouldn't block the app — the user
-  // can still sign in with email/password or Apple, and Google Sign-In will
-  // throw a clientConfigurationError with a legible message when tapped.
+  // Parallelize independent init tasks — before this refactor every await
+  // was serial, adding up to 2-3s on cold start of the APK. Sound wouldn't
+  // work until FCM / Stripe / reminders resync finished. Now each task
+  // runs concurrently, cutting perceived boot time to the SLOWEST single
+  // task (usually FCM token sync ~500ms).
   //
-  // serverClientId is the Web (client_type: 3) OAuth 2.0 client for
-  // pushka-app-ioel — same value hardcoded in auth_controller.signInWithGoogle
-  // (kept in sync manually; if it ever rotates update BOTH places).
-  if (!kIsWeb) {
-    try {
-      await GoogleSignIn.instance.initialize(
-        serverClientId:
-            '846580817724-flf3up2e57c80cjb00u0ce8tf012ae90.apps.googleusercontent.com',
-      );
-    } catch (e, st) {
-      debugPrint('appDeferredInit: GoogleSignIn.initialize failed: $e');
-      try {
-        FirebaseCrashlytics.instance.recordError(
-          e,
-          st,
-          reason: 'appDeferredInit.googleSignInInitialize',
-          fatal: false,
-        );
-      } catch (_) {}
-    }
-  }
-
-  if (!kIsWeb) {
-    await NotificationService.instance.initialize();
-    final user = FirebaseAuth.instance.currentUser;
-    if (user != null) {
-      await NotificationService.instance.syncFcmToken(user.uid);
-      NotificationService.instance.listenForTokenRefresh(user.uid);
-      // Re-arm OS-level alarms for any reminder saved in Firestore. The
-      // plugin persists its own AlarmManager schedule across reboots, but
-      // an uninstall (or clear-data) wipes those — leaving Firestore
-      // reminders orphaned (visible in the UI but never firing). This
-      // resync is idempotent: scheduleReminder calls cancelReminder first.
-      //
-      // Gated on `needsResync` so we don't cancel+reschedule every reminder
-      // on every cold start. Default is true on fresh install / upgrade /
-      // clear-data; CRUD paths flip it back on so the next launch reconciles.
-      // Skipping when the flag is false saves N × (14 cancel + 14 schedule)
-      // platform-channel round-trips per launch for users who never touch
-      // reminders between sessions.
-      final ns = NotificationService.instance;
-      if (ns.needsResync) {
-        try {
-          final repo = ReminderRepository(FirebaseFirestore.instance);
-          final reminders = await repo.fetchAll(user.uid);
-          // Fan out per-reminder scheduling — each scheduleReminder is itself
-          // a parallelized batch of cancel + zonedSchedule calls. Across many
-          // reminders the outer for-await previously serialized everything
-          // and pushed ~hundreds of milliseconds onto cold start.
-          //
-          // Explicit `tr:` arg would need BuildContext; scheduleReminder
-          // itself falls back to NotificationService.localizedTranslator()
-          // when tr is null — reads the same Hive language key the
-          // LocaleNotifier writes, so EN/FR/HE users keep their translated
-          // reminder body after a cold start.
-          await Future.wait(
-            reminders.map((r) => ns.scheduleReminder(r)),
-          );
-          await ns.markResyncDone();
-        } catch (e) {
-          debugPrint('appDeferredInit: reminder resync failed: $e');
-        }
-      }
-    }
-  }
-
-  if (!kIsWeb && StripeConfig.publishableKey.isNotEmpty) {
-    Stripe.publishableKey = StripeConfig.publishableKey;
-    if (StripeConfig.merchantIdentifier.isNotEmpty) {
-      Stripe.merchantIdentifier = StripeConfig.merchantIdentifier;
-    }
-    await Stripe.instance.applySettings();
-  }
-
-  await FeedbackService.instance.init();
+  // Each helper wraps its own try/catch — one failing task must NOT prevent
+  // the others from completing. Future.wait with eagerError:false lets all
+  // futures settle even if one rejects.
+  await Future.wait<void>([
+    if (!kIsWeb) _initGoogleSignIn(),
+    if (!kIsWeb) _initNotificationsChain(),
+    if (!kIsWeb) _initStripe(),
+    _initFeedback(),
+  ], eagerError: false);
 
   // App Tracking Transparency (iOS only). Apple rejects apps that ship with
   // any IDFA-equivalent SDK (Firebase Analytics counts) without prompting
@@ -219,5 +152,78 @@ Future<void> _performDeferredInit() async {
       }
       router.go('/join/$slug');
     });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Parallel init helpers — each is self-contained + swallows its own errors so
+// _performDeferredInit's Future.wait completes even if one fails.
+// ---------------------------------------------------------------------------
+
+Future<void> _initGoogleSignIn() async {
+  try {
+    await GoogleSignIn.instance.initialize(
+      serverClientId:
+          '846580817724-flf3up2e57c80cjb00u0ce8tf012ae90.apps.googleusercontent.com',
+    );
+  } catch (e, st) {
+    debugPrint('appDeferredInit: GoogleSignIn.initialize failed: $e');
+    try {
+      FirebaseCrashlytics.instance.recordError(
+        e,
+        st,
+        reason: 'appDeferredInit.googleSignInInitialize',
+        fatal: false,
+      );
+    } catch (_) {}
+  }
+}
+
+Future<void> _initNotificationsChain() async {
+  try {
+    await NotificationService.instance.initialize();
+    final user = FirebaseAuth.instance.currentUser;
+    if (user != null) {
+      await NotificationService.instance.syncFcmToken(user.uid);
+      NotificationService.instance.listenForTokenRefresh(user.uid);
+      // Reminder resync — gated on needsResync to skip N*(cancel+schedule)
+      // platform-channel round-trips on cold starts where nothing changed.
+      final ns = NotificationService.instance;
+      if (ns.needsResync) {
+        try {
+          final repo = ReminderRepository(FirebaseFirestore.instance);
+          final reminders = await repo.fetchAll(user.uid);
+          await Future.wait(
+            reminders.map((r) => ns.scheduleReminder(r)),
+          );
+          await ns.markResyncDone();
+        } catch (e) {
+          debugPrint('appDeferredInit: reminder resync failed: $e');
+        }
+      }
+    }
+  } catch (e) {
+    debugPrint('appDeferredInit: notifications chain failed: $e');
+  }
+}
+
+Future<void> _initStripe() async {
+  try {
+    if (StripeConfig.publishableKey.isEmpty) return;
+    Stripe.publishableKey = StripeConfig.publishableKey;
+    if (StripeConfig.merchantIdentifier.isNotEmpty) {
+      Stripe.merchantIdentifier = StripeConfig.merchantIdentifier;
+    }
+    await Stripe.instance.applySettings();
+  } catch (e) {
+    debugPrint('appDeferredInit: Stripe init failed: $e');
+  }
+}
+
+Future<void> _initFeedback() async {
+  try {
+    await FeedbackService.instance.init();
+  } catch (e) {
+    debugPrint('appDeferredInit: FeedbackService init failed: $e');
   }
 }

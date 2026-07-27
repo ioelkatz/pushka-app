@@ -159,36 +159,57 @@ class AuthController {
     UserCredential result;
 
     if (kIsWeb) {
-      // Web: use signInWithRedirect INSTEAD of signInWithPopup because iOS
-      // Safari in installed PWA standalone mode BLOCKS popups entirely —
-      // window.open() returns null and the sign-in silently fails. Popup
-      // works in a regular browser tab but breaks the moment the user
-      // installs the PWA to home screen (which is exactly what we want them
-      // to do for the 500-user launch).
+      // Web strategy: try popup FIRST. Popup works in desktop browsers +
+      // Chrome/Firefox Android + Safari mobile tab. It fails ONLY inside
+      // installed PWA standalone mode on iOS (window.open returns null)
+      // and inside in-app browsers (WhatsApp/Instagram WebView) where the
+      // COOP/COEP defaults block cross-origin popups.
       //
-      // Redirect works everywhere: desktop, Safari, iOS PWA, Android PWA.
-      // Trade-off: full-page navigation instead of a popup. UX-wise it's
-      // slightly worse on desktop but identical on mobile.
+      // Popup UX is dramatically better: user stays on the app, no full
+      // page unload, no risk of losing state. We only fall back to
+      // signInWithRedirect when the popup path explicitly fails with a
+      // popup-related error code.
       //
-      // Flow: signInWithRedirect navigates the browser to Google → user
-      // approves → Google redirects back to our origin with the credential
-      // in the URL fragment → Firebase Auth JS SDK auto-detects on page
-      // load and fires authStateChanges. The router (router.dart:57
-      // GoRouterRefreshStream on authStateChanges) picks it up and
-      // navigates to /home. This function's future NEVER completes
-      // because the page unloads before signInWithRedirect resolves —
-      // that's expected. The caller's `await` is discarded when the
-      // page unloads; the auth flow completes across page loads.
+      // Bug this fixes: with pure redirect, some browsers (esp. Chrome
+      // desktop with third-party cookie restrictions or COEP) navigate
+      // to Google but the return leg fails to hand the credential back
+      // to the Firebase Auth JS SDK — user sees "returned to login page"
+      // with no error. Popup keeps the credential handoff in-process.
       final provider = GoogleAuthProvider();
-      await _auth.signInWithRedirect(provider);
-      // Execution effectively ends here on web — page navigates to Google.
-      // The line below is only reached if signInWithRedirect returns
-      // synchronously with an error (rare — bad config, provider not
-      // enabled). Throw a friendly error so the login screen catches it.
-      throw FirebaseAuthException(
-        code: 'redirect-did-not-fire',
-        message: 'No pudimos abrir Google. Reintentá.',
-      );
+      try {
+        final result = await _auth.signInWithPopup(provider);
+        await _userRepository.ensureUserDocument(
+          user: result.user,
+          displayName: result.user?.displayName,
+        );
+        final user = result.user;
+        if (user != null) {
+          try {
+            await AnalyticsService.instance.setUserId(user.uid);
+            await AnalyticsService.instance.logLogin('google');
+          } catch (_) {}
+        }
+        return;
+      } on FirebaseAuthException catch (e) {
+        // Fall back to redirect ONLY when popup itself failed to open
+        // (installed PWA on iOS, in-app browser, or user blocked popups).
+        // Other errors (canceled, network, config) rethrow so the login
+        // screen surfaces them properly.
+        final fallbackCodes = <String>{
+          'popup-blocked',
+          'popup-closed-by-user', // user tapped away — try redirect instead
+          'operation-not-supported-in-this-environment', // iOS PWA standalone
+          'auth/popup-blocked-by-browser',
+          'auth/popup-closed-by-user',
+        };
+        if (!fallbackCodes.contains(e.code)) rethrow;
+        // Popup unavailable — try redirect. Page will navigate away.
+        await _auth.signInWithRedirect(provider);
+        throw FirebaseAuthException(
+          code: 'redirect-did-not-fire',
+          message: 'No pudimos abrir Google. Reintentá.',
+        );
+      }
     } else {
       // Mobile: google_sign_in v7 (Android Credential Manager on Android 14+,
       // ASWebAuthenticationSession on iOS). Completely different API from v6:
