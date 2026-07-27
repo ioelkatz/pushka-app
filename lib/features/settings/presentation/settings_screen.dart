@@ -377,24 +377,24 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           ),
           const SizedBox(height: 18),
 
-          // SOUND
+          // SOUND (unified control — a single "Sonido" toggle now gates BOTH
+          // audio + haptic vibration. Ioel simplified the UX: users were
+          // confused by two separate toggles that felt like the same thing.
+          // vibrationEnabled is mirrored server-side inside
+          // FeedbackService.updatePreferences so nothing else changes.)
           _buildToggleRow(
             tr.sound,
             soundEnabled,
             onChanged: (value) {
-              setState(() => soundEnabled = value);
-              _updateSettingsSilent(user, soundEnabled: value);
-            },
-          ),
-          const SizedBox(height: 18),
-
-          // VIBRATION
-          _buildToggleRow(
-            tr.vibration,
-            vibrationEnabled,
-            onChanged: (value) {
-              setState(() => vibrationEnabled = value);
-              _updateSettingsSilent(user, vibrationEnabled: value);
+              setState(() {
+                soundEnabled = value;
+                vibrationEnabled = value;
+              });
+              _updateSettingsSilent(
+                user,
+                soundEnabled: value,
+                vibrationEnabled: value,
+              );
             },
           ),
           const SizedBox(height: 18),

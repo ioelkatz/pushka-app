@@ -10108,11 +10108,16 @@ exports.createCheckoutSession = onCall(
       throw new HttpsError("failed-precondition", "Stripe no configurado.");
     }
 
-    // Purpose: por ahora solo 'donation'. pushka_empty en web se puede
-    // agregar después con el lock cron equivalente al de createPaymentIntent.
+    // Purpose: accept both 'donation' (Donate button) AND 'pushka_empty'
+    // (Empty Pushka button on the classic flow). On mobile PaymentSheet
+    // pushka_empty uses a Firestore lock to prevent double-empty races
+    // between manual + scheduled auto-empty; on web Checkout the whole
+    // page navigates away so there's no equivalent race — the Stripe
+    // Checkout Session itself is idempotent. Stamp the purpose in the
+    // PI metadata so the webhook applies pushka reset logic when needed.
     const purpose = String(request.data?.purpose || "donation").toLowerCase();
-    if (purpose !== "donation") {
-      throw new HttpsError("invalid-argument", "Solo donation soportado en Checkout web por ahora.");
+    if (purpose !== "donation" && purpose !== "pushka_empty") {
+      throw new HttpsError("invalid-argument", "Propósito de pago inválido.");
     }
 
     // Auth + blocked + tenant lookup (mismo patrón que createPaymentIntent).

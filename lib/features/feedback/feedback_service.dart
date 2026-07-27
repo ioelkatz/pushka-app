@@ -31,35 +31,25 @@ class FeedbackService {
       'https://storage.googleapis.com/pushka-app-ioel.firebasestorage.app/ambient/nigunim.mp3';
 
   Future<void> init() async {
-    if (_initialized) return;
+    if (_initialized || kIsWeb) return;
     try {
-      // AudioContext es Android/iOS-specific — no aplica en web.
-      // En web, HTMLAudioElement respeta las autoplay policies del
-      // browser; el primer play desde un user gesture (tap del donor)
-      // desbloquea el audio para la sesión.
-      if (!kIsWeb) {
-        await AudioPlayer.global.setAudioContext(AudioContext(
-          android: AudioContextAndroid(
-            contentType: AndroidContentType.music,
-            usageType: AndroidUsageType.media,
-            audioFocus: AndroidAudioFocus.gain,
-            isSpeakerphoneOn: false,
-            stayAwake: false,
-          ),
-          iOS: AudioContextIOS(
-            category: AVAudioSessionCategory.playback,
-          ),
-        ));
-      }
+      // Set persistent audio focus so sounds aren't blocked by each other on Android.
+      await AudioPlayer.global.setAudioContext(AudioContext(
+        android: AudioContextAndroid(
+          contentType: AndroidContentType.music,
+          usageType: AndroidUsageType.media,
+          audioFocus: AndroidAudioFocus.gain,
+          isSpeakerphoneOn: false,
+          stayAwake: false,
+        ),
+        iOS: AudioContextIOS(
+          category: AVAudioSessionCategory.playback,
+        ),
+      ));
       await _successPlayer.setSource(AssetSource('sounds/success.wav'));
       await _billPlayer.setSource(AssetSource('sounds/bill_flutter.wav'));
-      // Preload coin_drop too — was previously loaded on first play, which
-      // added ~200-300ms of Android MediaPlayer startup latency. That made
-      // the coin sound "hit" way after the visual entry into the slot.
-      await _coinPlayer.setSource(AssetSource('sounds/coin_drop.wav'));
       await _successPlayer.setVolume(1.0);
       await _billPlayer.setVolume(0.8);
-      await _coinPlayer.setVolume(0.85);
       _initialized = true;
     } catch (e, st) {
       debugPrint('FeedbackService init error: $e\n$st');
@@ -71,8 +61,17 @@ class FeedbackService {
     bool? vibration,
     bool? ambient,
   }) {
-    if (sound != null) soundEnabled = sound;
-    if (vibration != null) vibrationEnabled = vibration;
+    // "Sonido" toggle in Settings now controls BOTH audio + haptic feedback
+    // — per user request to simplify the UI (they were confusingly separate
+    // toggles doing similar things). When `sound` is passed, vibration
+    // mirrors it. The `vibration` param is still accepted for legacy call
+    // sites but no-ops unless `sound` is null.
+    if (sound != null) {
+      soundEnabled = sound;
+      vibrationEnabled = sound;
+    } else if (vibration != null) {
+      vibrationEnabled = vibration;
+    }
     if (ambient != null && ambient != ambientEnabled) {
       ambientEnabled = ambient;
       if (ambient) {
@@ -129,11 +128,8 @@ class FeedbackService {
   }
 
   Future<void> playSuccess() async {
-    if (!soundEnabled) return;
-    // Vibración solo en mobile — no hay API estable en web (iOS Safari
-    // no soporta navigator.vibrate). Sonidos SÍ funcionan en web via
-    // HTMLAudioElement cuando el trigger es un user gesture.
-    if (vibrationEnabled && !kIsWeb) {
+    if (!soundEnabled || kIsWeb) return;
+    if (vibrationEnabled) {
       HapticFeedback.mediumImpact();
       unawaited(Future.delayed(const Duration(milliseconds: 100), HapticFeedback.mediumImpact));
       unawaited(Future.delayed(const Duration(milliseconds: 200), HapticFeedback.heavyImpact));
@@ -158,7 +154,7 @@ class FeedbackService {
 
   /// Soft flutter at start of bill fall, then a thud at 2.5 s when it enters.
   Future<void> playBillFall() async {
-    if (!soundEnabled) return;
+    if (!soundEnabled || kIsWeb) return;
     unawaited(_fadeAmbientTo(_ambientDuck));
     try {
       await _billPlayer.stop();
@@ -184,24 +180,16 @@ class FeedbackService {
   /// soundEnabled gate as the rest of FeedbackService — flips to silent
   /// instantly when the user toggles "sonido" off in settings.
   Future<void> playCoinDrop() async {
-    if (!soundEnabled) return;
-    // Sync with CoinFallAnimation: total duration 1500ms, coin enters slot
-    // in the FINAL 25% (t=0.75 → 1125ms). The coin_drop.wav has ~75ms
-    // silence before the impact peak, so playing at ~1050ms puts the peak
-    // right at the visual entry (1125ms). Preloading in init() eliminates
-    // the previous ~200-300ms MediaPlayer startup latency that made the
-    // sound arrive too late after the coin already entered the slot.
-    //
-    // If the animation duration ever changes, update this delay to
-    // (animation_ms * 0.75) - 75ms.
-    await Future<void>.delayed(const Duration(milliseconds: 1050));
+    if (!soundEnabled || kIsWeb) return;
+    // 800 ms delay para que el sparkle suene cerca del momento en que
+    // la moneda entra por la ranura, no cuando recién empieza a caer
+    // desde arriba. Ioel ajustó este timing visualmente.
+    await Future<void>.delayed(const Duration(milliseconds: 800));
     unawaited(_fadeAmbientTo(_ambientDuck));
     try {
-      // Use resume() on the preloaded player rather than play(AssetSource)
-      // which re-loads the source on each call. resume() from position 0
-      // is instantaneous on Android/iOS since the sample is already decoded.
-      await _coinPlayer.seek(Duration.zero);
-      await _coinPlayer.resume();
+      await _coinPlayer.stop();
+      await _coinPlayer.setVolume(0.85);
+      await _coinPlayer.play(AssetSource('sounds/coin_drop.wav'));
       // Coin sound is shorter than the bill flutter (no 2.5s fade tail).
       // Restore ambient after the typical sample length.
       unawaited(Future.delayed(const Duration(milliseconds: 1500), () {
