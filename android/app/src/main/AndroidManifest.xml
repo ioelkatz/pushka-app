@@ -57,6 +57,24 @@
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
+        <!-- Default FCM notification channel + icon. When the app is killed or
+             backgrounded, Firebase Messaging builds the system notification
+             itself instead of routing through FlutterLocalNotifications — so
+             it needs the channel id embedded in the manifest. Without this
+             meta-data, killed-state FCM lands in the low-importance
+             "Miscellaneous" fallback channel (silent + collapsed on One UI),
+             defeating our pre-created high-importance `pushka_notifications`
+             channel.
+             TODO: replace @mipmap/ic_launcher with @drawable/ic_notification
+             (monochrome Pushka silhouette) so the status-bar glyph doesn't
+             render as a generic white blob. Same for a @color/notification_color
+             resource — skipped until the asset lands. -->
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_channel_id"
+            android:value="pushka_notifications" />
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_icon"
+            android:resource="@mipmap/ic_launcher" />
         <!-- flutter_local_notifications v17+ requires these receivers to be
              declared explicitly. Without them, AlarmManager fires the
              scheduled broadcast but no receiver is registered, so the

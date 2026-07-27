@@ -44,7 +44,14 @@ dependencies:
   cloud_firestore: ^6.0.0
   firebase_messaging: ^16.0.0
   flutter_local_notifications: ^17.2.4
-  google_sign_in: ^6.2.1
+  # v7 migration (2026-07-27): v6 was deprecated and its native flow on
+  # Android 14+ went through the legacy GoogleApiClient path which returns
+  # null after the account chooser when idToken issuance fails. v7 uses
+  # Android's Credential Manager (system-level, replaces the plugin's own
+  # UI) which is Google's official supported flow post Android 14. API is
+  # completely different — see auth_controller.signInWithGoogle + the
+  # GoogleSignIn.instance.initialize() call in app_initializer.dart.
+  google_sign_in: ^7.2.0
   sign_in_with_apple: ^7.0.1
   country_picker: ^2.0.26
   timezone: ^0.9.4

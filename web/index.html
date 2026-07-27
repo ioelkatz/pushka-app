@@ -154,6 +154,27 @@
     }
   </script>
 
+  <!--
+    Register the Firebase Cloud Messaging service worker so iOS/Android PWAs
+    can receive server-sent push notifications while the app is closed.
+    Uses an explicit scope of "/firebase-cloud-messaging-push-scope" — the
+    default scope the Firebase Web SDK looks for — to keep it out of the way
+    of Flutter's own /flutter_service_worker.js. Registration is fire-and-
+    forget: a failure here MUST NOT block app boot (e.g. Safari private mode
+    disables SWs), so we only log to console.
+  -->
+  <script>
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', function () {
+        navigator.serviceWorker
+          .register('/firebase-messaging-sw.js', { scope: '/firebase-cloud-messaging-push-scope' })
+          .catch(function (err) {
+            console.warn('[pushka] FCM service worker registration failed:', err);
+          });
+      });
+    }
+  </script>
+
   <!-- Version marker for debugging cache issues — grep this string on
        deployed HTML to confirm the newest build is being served.
        Bump the date on each significant deploy. -->

@@ -1143,7 +1143,19 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   void _commitPreset(int idx) {
     final raw = _presetCtrls[idx].text.trim().replaceAll(',', '.');
     final parsed = double.tryParse(raw);
-    final basePresets = _localPresets ?? _presetsForCurrency(selectedCurrency);
+    // Base MUST reflect the current source-of-truth for the OTHER two slots,
+    // otherwise editing one slot would silently overwrite the others with
+    // currency defaults. Priority: pending local edits → persisted profile
+    // presets → currency defaults (only if the profile has no custom presets).
+    final rawPresets = ref.read(userProfileProvider).valueOrNull?['presetAmounts'];
+    List<double>? profilePresets;
+    if (rawPresets is List && rawPresets.length >= 3) {
+      final converted = rawPresets.whereType<num>().map((e) => e.toDouble()).toList();
+      final valid = converted.where((v) => v > 0).toList();
+      if (valid.length >= 3) profilePresets = valid.take(3).toList();
+    }
+    final basePresets =
+        _localPresets ?? profilePresets ?? _presetsForCurrency(selectedCurrency);
     if (parsed == null || parsed <= 0) {
       // Invalid → restore the controller text from the previous value
       _presetCtrls[idx].text = _formatPresetVal(basePresets[idx]);
@@ -1488,7 +1500,13 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               SizedBox(width: double.infinity, height: 48, child: ElevatedButton(
                 style: ElevatedButton.styleFrom(backgroundColor: AppTokens.primaryBlue, foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
                 onPressed: () {
-                  final value = isPhone ? '$phonePrefix ${controller.text.trim()}'.trim() : controller.text.trim();
+                  final typed = controller.text.trim();
+                  // For phone, only prepend the country prefix when the user
+                  // actually typed a number. Empty input must stay empty so
+                  // the field can be cleared (not submitted as "+1").
+                  final value = isPhone
+                      ? (typed.isEmpty ? '' : '$phonePrefix $typed'.trim())
+                      : typed;
                   final validationError = _validateByKey(fieldKey, value);
                   if (validationError != null) { setDialogState(() => errorText = validationError); return; }
                   Navigator.pop(ctx, value);
@@ -1817,13 +1835,29 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                             AppleIDAuthorizationScopes.fullName,
                           ],
                         );
+                        final identityToken = appleCredential.identityToken;
+                        if (identityToken == null) {
+                          // Apple returned a credential without an identity
+                          // token — cannot build a Firebase OAuth credential.
+                          throw StateError('apple-reauth: missing identityToken');
+                        }
                         final credential = OAuthProvider('apple.com').credential(
-                          idToken: appleCredential.identityToken,
+                          idToken: identityToken,
                           accessToken: appleCredential.authorizationCode,
                         );
                         await user.reauthenticateWithCredential(credential);
                         if (ctx.mounted) Navigator.pop(ctx, true);
-                      } catch (_) {
+                      } on SignInWithAppleAuthorizationException catch (e) {
+                        // User taps Cancel on Apple's sheet → do NOT surface
+                        // "verification failed". Just reset the button.
+                        if (e.code == AuthorizationErrorCode.canceled) {
+                          if (ctx.mounted) setSS(() => loading = false);
+                          return;
+                        }
+                        debugPrint('apple re-auth error: ${e.code} ${e.message}');
+                        if (ctx.mounted) setSS(() { loading = false; errorText = tr.reAuthFailed; });
+                      } catch (e, st) {
+                        debugPrint('apple re-auth error: $e\n$st');
                         if (ctx.mounted) setSS(() { loading = false; errorText = tr.reAuthFailed; });
                       }
                     },
@@ -1860,8 +1894,12 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     void Function(bool) setLoading,
     void Function(String?) setError,
   ) async {
-    final password = ctrl.text.trim();
-    if (password.isEmpty) { setSS(() => setError(tr.enterYourPassword)); return; }
+    // Do NOT .trim() — login_screen.dart doesn't trim either, and users with
+    // legitimate leading/trailing whitespace in their password would get a
+    // "wrong password" here while login works. Keep only the isEmpty guard
+    // for the blank-field case, applied to the trimmed view.
+    final password = ctrl.text;
+    if (password.trim().isEmpty) { setSS(() => setError(tr.enterYourPassword)); return; }
     final email = user.email;
     if (email == null || email.isEmpty) {
       // Apple Sign-In hides the email after the first sign-in, so reauth via
@@ -2130,7 +2168,13 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   }
 
   String? _validateByKey(String key, String value) {
-    if (value.isEmpty) return S.of(context).fieldRequired;
+    // billingEmail / phone / mailingAddress are all OPTIONAL — an empty
+    // submission is how the user clears the field. Only validate the format
+    // when the user actually typed something.
+    const optionalKeys = {'billingEmail', 'phone', 'mailingAddress'};
+    if (value.isEmpty) {
+      return optionalKeys.contains(key) ? null : S.of(context).fieldRequired;
+    }
     switch (key) {
       case 'billingEmail':
         final isValid = RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$').hasMatch(value);

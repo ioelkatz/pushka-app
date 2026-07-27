@@ -1,11 +1,7 @@
 {
   "applinks": {
     "apps": [],
-    "details": [
-      {
-        "appID": "TEAM_ID.com.pushka.app",
-        "paths": ["/join/*"]
-      }
-    ]
-  }
+    "details": []
+  },
+  "_TODO": "Replace details[0] with {\"appID\": \"<TEAM_ID>.com.pushka.app\", \"paths\": [\"/join/*\"]} once the Apple Developer account is provisioned and a real TEAM_ID is available. Serving an empty details[] avoids the previous broken literal 'TEAM_ID.com.pushka.app' which iOS silently rejects."
 }

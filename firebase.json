@@ -24,6 +24,13 @@
             { "key": "Referrer-Policy", "value": "strict-origin-when-cross-origin" }
           ]
         }
+      ],
+      "redirects": [
+        {
+          "source": "/join/**",
+          "destination": "https://pushka-pwa.web.app/get",
+          "type": 302
+        }
       ]
     },
     {

@@ -32,13 +32,54 @@ void stopDeepLinkListener() {
   _linkSubscription = null;
 }
 
+/// Trusted origins that may deliver a join link. Anything else is rejected
+/// so a hostile link like https://evil.example/join/legit-slug can't drive
+/// the user into a real tenant.
+const _trustedHttpsHosts = <String>{
+  'pushka-app-ioel.web.app',
+  'pushka-app-ioel.firebaseapp.com',
+  'pushka-pwa.web.app',
+  'pushka-pwa.firebaseapp.com',
+  'pushkapp.cc',
+  'www.pushkapp.cc',
+  'app.pushkapp.cc',
+};
+
 String? _slugFromUri(Uri uri) {
-  // Handles: https://pushka-app-ioel.web.app/join/chabadmexico
-  //      and: pushka:///join/chabadmexico
-  final segments = uri.pathSegments;
-  if (segments.length >= 2 && segments[0] == 'join') {
-    final slug = segments[1].trim().toLowerCase();
-    return slug.isNotEmpty ? slug : null;
+  // Handles:
+  //   https://<trusted-host>/join/<slug>   — universal / app link
+  //   pushka:///join/<slug>                — custom scheme, 3-slash form
+  //   pushka://join/<slug>                 — custom scheme, 2-slash form
+  //     (Users often type/share the shorter form; without normalization the
+  //     slug ends up in uri.host and pathSegments has only [<slug>], so the
+  //     old code silently dropped it.)
+  final scheme = uri.scheme.toLowerCase();
+  final host = uri.host.toLowerCase();
+
+  final bool schemeOk = scheme == 'pushka' ||
+      (scheme == 'https' && _trustedHttpsHosts.contains(host));
+  if (!schemeOk) {
+    assert(() {
+      // Only visible in debug builds; production stays silent.
+      // ignore: avoid_print
+      print('[deep_link] rejected untrusted origin: ${uri.scheme}://${uri.host}');
+      return true;
+    }());
+    return null;
   }
-  return null;
+
+  final segments = uri.pathSegments;
+
+  String? rawSlug;
+  if (scheme == 'pushka' && host == 'join') {
+    // 2-slash form: pushka://join/<slug>  → host='join', pathSegments=[<slug>]
+    if (segments.isNotEmpty) rawSlug = segments[0];
+  } else if (segments.length >= 2 && segments[0] == 'join') {
+    // 3-slash form and https form: /join/<slug>
+    rawSlug = segments[1];
+  }
+
+  if (rawSlug == null) return null;
+  final slug = rawSlug.trim().toLowerCase();
+  return slug.isNotEmpty ? slug : null;
 }

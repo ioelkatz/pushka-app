@@ -62,7 +62,11 @@ class AuthController {
     }
   }
 
-  Future<void> signUp({
+  /// Creates the account and returns `true` if the verification email was
+  /// dispatched successfully. Returns `false` when `sendEmailVerification`
+  /// fails (rate limit, SMTP hiccup, network) — callers should NOT claim
+  /// "we sent you a verification email" in that case.
+  Future<bool> signUp({
     required String name,
     required String email,
     required String password,
@@ -76,8 +80,17 @@ class AuthController {
       user: credential.user,
       displayName: name,
     );
-    // Send verification email — non-blocking so the user can continue.
-    try { await credential.user?.sendEmailVerification(); } catch (_) {}
+    // Send verification email — non-blocking for account creation, but we
+    // MUST track whether it actually went out so the register screen doesn't
+    // lie to the user (previously the try/catch was silent and the UI always
+    // said "email sent" even when Firebase rate-limited or SMTP failed).
+    var emailVerificationSent = false;
+    try {
+      await credential.user?.sendEmailVerification();
+      emailVerificationSent = credential.user != null;
+    } catch (e, st) {
+      _recordNonFatal(e, st, op: 'signUp.sendEmailVerification', uid: credential.user?.uid);
+    }
     final user = credential.user;
     if (user != null) {
       try {
@@ -93,6 +106,7 @@ class AuthController {
         }
       }
     }
+    return emailVerificationSent;
   }
 
   Future<void> signOut() async {
@@ -112,7 +126,9 @@ class AuthController {
       }
       if (!kIsWeb) {
         try {
-          await GoogleSignIn().signOut();
+          // v7: singleton instance instead of `GoogleSignIn()` constructor.
+          // initialize() was already called from app_initializer at startup.
+          await GoogleSignIn.instance.signOut();
         } catch (e, st) {
           _recordNonFatal(e, st, op: 'signOut.googleSignOut', uid: uid);
         }
@@ -174,98 +190,112 @@ class AuthController {
         message: 'No pudimos abrir Google. Reintentá.',
       );
     } else {
-      // Mobile: use google_sign_in package. Pass serverClientId EXPLICITLY
-      // (the Web OAuth 2.0 client) so the plugin doesn't rely on auto-discovery
-      // from google-services.json — that fails intermittently on newer Android
-      // (14+) and on APKs distributed outside Play Store where the manifest
-      // metadata reading order can differ. Without the correct web client id
-      // Google returns a valid access token but a NULL idToken, and Firebase
-      // Auth rejects the credential with 'invalid-credential'.
+      // Mobile: google_sign_in v7 (Android Credential Manager on Android 14+,
+      // ASWebAuthenticationSession on iOS). Completely different API from v6:
       //
-      // This is the Web (client_type: 3) OAuth 2.0 client ID from Google
-      // Cloud Console for the pushka-app-ioel project — same value that lives
-      // in android/app/src/prod/google-services.json.
+      //   - `GoogleSignIn.instance` (singleton) instead of `GoogleSignIn()`
+      //     constructor. All config now lives in the one-time initialize()
+      //     call in app_initializer._performDeferredInit — including the
+      //     serverClientId (web OAuth 2.0 client) that makes Google issue
+      //     idTokens instead of just access tokens.
+      //
+      //   - `authenticate()` REPLACES `signIn()`. Returns a
+      //     GoogleSignInAccount directly (never null) or THROWS a
+      //     GoogleSignInException. The v6 "returns null after account pick"
+      //     failure mode — root cause of the S25 loop Ioel hit — no longer
+      //     exists: any failure now surfaces as a typed exception with
+      //     a code + description we can display.
+      //
+      //   - `authentication` is a synchronous getter (was Future in v6) and
+      //     only exposes `idToken`. For access tokens you'd have to go through
+      //     the separate authorizationClient — but Firebase Auth only needs
+      //     the idToken, so we ignore access tokens entirely.
+      //
+      // Reference: https://pub.dev/packages/google_sign_in (v7 migration guide)
       const webOAuthClientId =
           '846580817724-flf3up2e57c80cjb00u0ce8tf012ae90.apps.googleusercontent.com';
-      final GoogleSignIn googleSignIn = GoogleSignIn(
-        serverClientId: webOAuthClientId,
-        // Explicit scopes force Google to issue an id_token with the profile
-        // claims we need for the account chooser. Without them, some Android
-        // devices return only the access_token and idToken stays null.
-        scopes: const ['email', 'profile', 'openid'],
-      );
 
-      // Sign out any cached Google session first. Fixes the "chooser →
-      // pick account → stuck → back to login" loop Ioel reported on S25:
-      // a stale cached session from a previous failed attempt would return
-      // the account without prompting, but the idToken issuance path was
-      // broken so the flow silently restarted. A fresh signIn() forces
-      // Google to run the full OAuth handshake and emit a valid idToken.
+      // Sign out any cached Google session first. Same rationale as before
+      // (S25 chooser loop): forces Google to run the full OAuth handshake
+      // instead of silently returning a stale credential that might not
+      // include a fresh idToken.
       try {
-        await googleSignIn.signOut();
+        await GoogleSignIn.instance.signOut();
       } catch (_) {
-        // signOut can throw if there was never a signed-in user — safe to ignore.
+        // signOut throws if no user was ever signed in — safe to ignore.
       }
 
-      GoogleSignInAccount? googleUser;
+      final GoogleSignInAccount googleUser;
       try {
-        googleUser = await googleSignIn.signIn();
+        googleUser = await GoogleSignIn.instance.authenticate(
+          // scopeHint (v7) is advisory only — the actual scopes granted come
+          // from the OAuth consent screen config. `openid` isn't a valid
+          // OAuth scope name to request explicitly in v7 (the plugin handles
+          // it internally); asking for it triggers clientConfigurationError.
+          scopeHint: const ['email', 'profile'],
+        );
+      } on GoogleSignInException catch (e, st) {
+        // Typed exception with code + description. Map to FirebaseAuthException
+        // so the login screen surfaces a visible error dialog with the exact
+        // failure mode — no more "silent restart" mystery.
+        _recordNonFatal(
+          e,
+          st,
+          op: 'signInWithGoogle.authenticate.${e.code.name}',
+          uid: null,
+        );
+        if (e.code == GoogleSignInExceptionCode.canceled) {
+          // User dismissed the account chooser — treat as cancel. Use
+          // 'sign_in_canceled' to match the code the login screen already
+          // recognizes as a silent snackbar (login_screen.dart:262 + :399).
+          throw FirebaseAuthException(
+            code: 'sign_in_canceled',
+            message: 'canceled',
+          );
+        }
+        throw FirebaseAuthException(
+          code: 'sign_in_failed',
+          message:
+              'Google Sign-In v7 falló: code=${e.code.name} '
+              'description=${e.description ?? "(sin descripción)"} '
+              'details=${e.details ?? "(sin details)"} '
+              'serverClientId=$webOAuthClientId',
+        );
       } catch (e, st) {
-        // Log the raw plugin error to Crashlytics so we can see the exact
-        // failure mode (ApiException 10 = DEVELOPER_ERROR = SHA-1 mismatch;
-        // ApiException 12500 = SIGN_IN_FAILED; etc). Otherwise we'd only see
-        // a generic FirebaseAuthException upstream.
-        _recordNonFatal(e, st, op: 'signInWithGoogle.plugin', uid: null);
+        // Non-GoogleSignInException (PlatformException from the Credential
+        // Manager underneath, StateError if initialize wasn't called, etc).
+        _recordNonFatal(e, st, op: 'signInWithGoogle.authenticate.other', uid: null);
         rethrow;
       }
-      if (googleUser == null) {
-        // Google Sign-In plugin returned null. Historically we treated this
-        // as "user canceled" (silent). BUT on newer Android (14+) with the
-        // legacy google_sign_in v6, the plugin returns null AFTER a
-        // successful account pick when the id_token issuance fails
-        // downstream (bad serverClientId, SHA mismatch, Play Services
-        // outdated, etc). Silently treating as cancel hides real bugs —
-        // exactly the S25 loop Ioel reported: chooser → pick → back to
-        // login with no message.
-        //
-        // Log + throw a DIFFERENT code so the login screen surfaces a
-        // visible error dialog (not the silent snackbar for cancels).
+
+      final googleAuth = googleUser.authentication;
+      if (googleAuth.idToken == null) {
+        // v7 with a valid serverClientId shouldn't hit this — the Credential
+        // Manager either returns an idToken or throws providerConfigurationError.
+        // If we DO land here it means the OAuth client is misconfigured on the
+        // Firebase Console side (SHA-1 not registered for this signing key,
+        // or the web client id in initialize() is wrong for this project).
         _recordNonFatal(
           Exception(
-            'GoogleSignIn.signIn() returned null after account chooser. '
-            'Likely idToken issuance failure (bad serverClientId, SHA-1 mismatch, '
-            'or outdated Play Services). serverClientId=$webOAuthClientId',
+            'v7: googleAuth.idToken was null despite authenticate() succeeding. '
+            'serverClientId=$webOAuthClientId — likely SHA-1 not registered in '
+            'Firebase Console for this signing key.',
           ),
           StackTrace.current,
-          op: 'signInWithGoogle.pluginReturnedNull',
+          op: 'signInWithGoogle.nullIdTokenV7',
           uid: null,
         );
         throw FirebaseAuthException(
           code: 'sign_in_failed',
-          message:
-              'Google devolvió null tras elegir cuenta. Probable idToken issuance failed. '
-              'serverClientId=$webOAuthClientId',
+          message: 'idToken null tras authenticate() exitoso — SHA-1 mismatch probable',
         );
       }
-      final googleAuth = await googleUser.authentication;
-      if (googleAuth.idToken == null) {
-        // Null idToken usually means the serverClientId (web OAuth client) is
-        // wrong or the SHA-1 of the signing key isn't registered in Firebase.
-        // Log both to Crashlytics for triage.
-        _recordNonFatal(
-          Exception(
-            'googleAuth.idToken was null. serverClientId=$webOAuthClientId '
-            'accessTokenPresent=${googleAuth.accessToken != null} — '
-            'likely SHA-1 or web OAuth client id mismatch',
-          ),
-          StackTrace.current,
-          op: 'signInWithGoogle.nullIdToken',
-          uid: null,
-        );
-        throw FirebaseAuthException(code: 'sign_in_failed');
-      }
+
+      // v7: accessToken is no longer available from authentication. Firebase
+      // Auth accepts idToken alone for Google credentials — the accessToken
+      // was only needed if we wanted to call Google APIs directly (Calendar,
+      // Drive, etc), which we don't.
       final credential = GoogleAuthProvider.credential(
-        accessToken: googleAuth.accessToken,
         idToken: googleAuth.idToken,
       );
       try {
@@ -309,17 +339,68 @@ class AuthController {
       ],
     );
 
+    // Apple documents identityToken as nullable — happens on entitlement
+    // misconfig, revoked provider consent, or transient AppleID service
+    // errors. Firebase's OAuthProvider.credential accepts null and then
+    // signInWithCredential surfaces an opaque 'invalid-credential' with no
+    // hint of the real cause. Detect and throw a typed error so the login
+    // screen can surface something actionable (and Crashlytics records it).
+    final identityToken = appleCredential.identityToken;
+    if (identityToken == null) {
+      final err = FirebaseAuthException(
+        code: 'apple_no_identity_token',
+        message:
+            'Apple no devolvió identityToken. Suele indicar Sign in with Apple '
+            'no habilitado en el bundle id, consentimiento del proveedor revocado, '
+            'o un error transitorio del AppleID service. Reintentá desde Ajustes '
+            '> Apple ID > Sign in with Apple.',
+      );
+      _recordNonFatal(err, StackTrace.current, op: 'signInWithApple.nullIdentityToken');
+      throw err;
+    }
+
+    // Capture given/family name BEFORE calling Firebase — Apple ONLY populates
+    // these on the FIRST authorization for the app. On every subsequent call
+    // they're null, so if we don't grab them now the user's display name will
+    // be blank forever (leaderboards, profile, tenant admin lists).
+    final given = appleCredential.givenName?.trim() ?? '';
+    final family = appleCredential.familyName?.trim() ?? '';
+    final appleDisplayName = [given, family]
+        .where((s) => s.isNotEmpty)
+        .join(' ')
+        .trim();
+
     final oauthCredential = OAuthProvider('apple.com').credential(
-      idToken: appleCredential.identityToken,
+      idToken: identityToken,
       accessToken: appleCredential.authorizationCode,
     );
 
     final result = await _auth.signInWithCredential(oauthCredential);
-    await _userRepository.ensureUserDocument(
-      user: result.user,
-      displayName: result.user?.displayName,
-    );
     final user = result.user;
+
+    // If Firebase came back with a blank displayName (typical on first Apple
+    // sign-in) AND Apple gave us a name, persist it to the Firebase user and
+    // Firestore. On subsequent sign-ins appleDisplayName will be empty — leave
+    // whatever is already on the account.
+    final firebaseDisplayName = user?.displayName?.trim() ?? '';
+    final effectiveDisplayName = firebaseDisplayName.isNotEmpty
+        ? firebaseDisplayName
+        : appleDisplayName;
+    if (user != null &&
+        firebaseDisplayName.isEmpty &&
+        appleDisplayName.isNotEmpty) {
+      try {
+        await user.updateDisplayName(appleDisplayName);
+      } catch (e, st) {
+        _recordNonFatal(e, st,
+            op: 'signInWithApple.updateDisplayName', uid: user.uid);
+      }
+    }
+
+    await _userRepository.ensureUserDocument(
+      user: user,
+      displayName: effectiveDisplayName.isNotEmpty ? effectiveDisplayName : null,
+    );
     if (user != null) {
       try {
         await AnalyticsService.instance.setUserId(user.uid);

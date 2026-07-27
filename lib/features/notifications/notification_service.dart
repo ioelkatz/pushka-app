@@ -6,10 +6,12 @@ import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:hive_flutter/hive_flutter.dart';
 import 'package:timezone/data/latest.dart' as tz;
 import 'package:timezone/timezone.dart' as tz;
 
 import '../reminders/domain/reminder.dart';
+import '../../core/hive_cache.dart';
 import '../../core/l10n/s.dart';
 
 class NotificationService {
@@ -23,6 +25,83 @@ class NotificationService {
   StreamSubscription<String>? _tokenRefreshSub;
   String? _currentUid;
   bool _useUtcScheduling = false;
+
+  /// Set to true when [_configureLocalTimezone] fell back to raw UTC because
+  /// no IANA/Etc zone matched the device. In that mode, `matchDateTimeComponents`
+  /// pins a UTC instant which doesn't shift with the device's DST — so post-DST
+  /// recurring reminders fire an hour off. We surface the flag via
+  /// [utcFallbackActive] so a caller (e.g. reminders screen) can warn the user.
+  bool get utcFallbackActive => _useUtcScheduling;
+
+  /// Dedicated Hive box for reminder metadata that doesn't belong on the
+  /// Firestore doc (device-local, per-install):
+  ///   `os:<id>` → int millisSinceEpoch for one-shot reminders (chooseDate)
+  ///   `needs_resync` → bool flag driving cold-start resync gating
+  ///   `utc_fallback` → bool flag stamped when the tz DB has no local zone
+  static const _remindersMetaBox = 'reminders_meta';
+  static const _kOneShotPrefix = 'os:';
+  static const _kNeedsResync = 'needs_resync';
+  static const _kUtcFallback = 'utc_fallback';
+  Box? _metaBox;
+
+  Future<Box?> _openMetaBox() async {
+    if (_metaBox != null) return _metaBox;
+    try {
+      // HiveCache.init() calls Hive.initFlutter() once. Ensure it's ready before
+      // opening our own box — otherwise Hive.openBox throws HiveError on cold
+      // start when NotificationService.initialize() beats HiveCache.init().
+      await HiveCache.instance.init();
+      _metaBox = await Hive.openBox(_remindersMetaBox);
+    } catch (e) {
+      debugPrint('NotificationService: openMetaBox failed: $e');
+    }
+    return _metaBox;
+  }
+
+  /// One-shot chooseDate metadata — persisted device-local so cold-start
+  /// resync can distinguish "custom recurring on this weekday" from
+  /// "one-shot on this date". Firestore has no dateOnly field (schema owned
+  /// by another agent), so we cache it locally per install.
+  Future<void> setOneShotDate(String reminderId, DateTime date) async {
+    final box = await _openMetaBox();
+    if (box == null) return;
+    await box.put('$_kOneShotPrefix$reminderId',
+        DateTime(date.year, date.month, date.day).millisecondsSinceEpoch);
+  }
+
+  Future<void> clearOneShotDate(String reminderId) async {
+    final box = await _openMetaBox();
+    if (box == null) return;
+    await box.delete('$_kOneShotPrefix$reminderId');
+  }
+
+  DateTime? _readOneShotDate(String reminderId) {
+    final v = _metaBox?.get('$_kOneShotPrefix$reminderId');
+    if (v is int) return DateTime.fromMillisecondsSinceEpoch(v);
+    return null;
+  }
+
+  /// Public read for the reminders form so re-editing a chooseDate reminder
+  /// can restore the picked date. Synchronous — assumes the Hive box was
+  /// opened during initialize(); returns null if not.
+  DateTime? readOneShotDateForReminder(String reminderId) =>
+      _readOneShotDate(reminderId);
+
+  /// True when a resync is needed on cold-start. Defaults to true when the
+  /// key has never been written (fresh install, upgrade, or clear-data).
+  bool get needsResync => (_metaBox?.get(_kNeedsResync) as bool?) ?? true;
+
+  Future<void> markResyncDone() async {
+    final box = await _openMetaBox();
+    if (box == null) return;
+    await box.put(_kNeedsResync, false);
+  }
+
+  Future<void> _markResyncNeeded() async {
+    final box = await _openMetaBox();
+    if (box == null) return;
+    await box.put(_kNeedsResync, true);
+  }
 
   // Monotonically increasing ID so notifications never overwrite each other.
   // hashCode is not unique across different objects — a counter is safe.
@@ -67,6 +146,9 @@ class NotificationService {
     // la app nativa (post migración Play Store / App Store). FirebaseMessaging
     // web (para push desde el server) requiere vapidKey config aparte.
     if (kIsWeb) return;
+    // Open the reminders_meta box early so needsResync + one-shot-date reads
+    // during cold-start resync return real values (not defaults).
+    await _openMetaBox();
     await _configureLocalTimezone();
     try {
       await _requestPermissions();
@@ -122,7 +204,14 @@ class NotificationService {
     final type = data['type'] as String?;
     return switch (type) {
       'pushkaEmpty' => '/history',
-      'reminder' => '/',
+      'reminder' => '/reminders',
+      // A donation cleared, refund landed, chargeback opened, or the
+      // scheduled pushka auto-empty failed — surface the ledger so the user
+      // can see the entry rather than dropping the tap on the floor.
+      'tzedaka' => '/history',
+      'refund' => '/history',
+      'chargeback' => '/history',
+      'pushkaAutoEmptyFailed' => '/',
       _ => null,
     };
   }
@@ -237,7 +326,24 @@ class NotificationService {
 
     tz.setLocalLocation(tz.UTC);
     _useUtcScheduling = true;
+    debugPrint(
+      'NotificationService: WARNING no IANA/Etc zone matched device tz — '
+      'falling back to raw UTC. matchDateTimeComponents pins a UTC instant '
+      'that does NOT shift with the device DST; recurring reminders will '
+      'fire an hour off after every DST transition until the device zone '
+      'DB is patched or FlutterNativeTimezone integration lands.',
+    );
+    try {
+      final box = await _openMetaBox();
+      await box?.put(_kUtcFallback, true);
+    } catch (e) {
+      debugPrint('NotificationService: could not stamp UTC fallback flag: $e');
+    }
   }
+
+  /// Exposed so a settings/diagnostics screen can surface the warning.
+  bool get utcFallbackPersisted =>
+      (_metaBox?.get(_kUtcFallback) as bool?) ?? false;
 
   Future<void> _requestPermissions() async {
     await _messaging.requestPermission(
@@ -341,11 +447,18 @@ class NotificationService {
       iOS: iosDetails,
     );
 
+    // Foreground FCM: derive the route via the same whitelist used for
+    // background/terminated taps and hand it in as payload. Without this the
+    // tap fires `onDidReceiveNotificationResponse` with a null payload and
+    // navigation never runs.
+    final route = _routeFromMessage(message);
+
     await _localNotifications.show(
       _nextNotificationId++,
       notification.title,
       notification.body,
       details,
+      payload: route,
     );
   }
 
@@ -378,6 +491,23 @@ class NotificationService {
     }, SetOptions(merge: true));
   }
 
+  /// Builds an [S] instance for the user's persisted language preference,
+  /// falling back to Spanish if Hive isn't ready or the key is unset.
+  ///
+  /// Cold-start reminder resync runs without a [BuildContext] (main() has no
+  /// widget tree yet), so we can't reach the S delegate through Localizations.
+  /// Reading the same Hive key the LocaleNotifier writes on every language
+  /// change keeps EN/FR/HE users from getting their reminder body reset to
+  /// Spanish after every app relaunch.
+  static S localizedTranslator() {
+    try {
+      final code = HiveCache.instance.loadLanguage();
+      return S(Locale(code ?? 'es'));
+    } catch (_) {
+      return S(const Locale('es'));
+    }
+  }
+
   Future<void> scheduleReminder(Reminder reminder, {S? tr}) async {
     // Reminders programados no funcionan en PWA (flutter_local_notifications
     // es mobile-only). Falla silencioso — el user puede crear un reminder
@@ -397,10 +527,14 @@ class NotificationService {
         'secondDays=${reminder.secondDays} mode=${_androidScheduleMode.name} '
         'utcScheduling=$_useUtcScheduling');
 
-    final body = tr != null ? reminder.subtitleFor(tr) : reminder.subtitle;
-    final bodySecondary = tr != null
-        ? reminder.subtitleSecondaryFor(tr)
-        : reminder.subtitleSecondary;
+    // Default the translator to the persisted language when the caller
+    // didn't supply one (cold-start resync path — no BuildContext available).
+    // Previously this fell through to the Spanish-only `reminder.subtitle`
+    // getter, so EN/FR/HE users saw their reminder body revert to Spanish
+    // after every app relaunch.
+    final effectiveTr = tr ?? localizedTranslator();
+    final body = reminder.subtitleFor(effectiveTr);
+    final bodySecondary = reminder.subtitleSecondaryFor(effectiveTr);
 
     // Build the schedule plan up-front (cheap, in-memory) then fan out the
     // platform-channel calls in parallel. Sequential awaits used to take
@@ -409,6 +543,35 @@ class NotificationService {
     // dominated app start. Future.wait fans them out in one batch — the
     // plugin's underlying NotificationManager handles concurrent inserts
     // safely (each notification has a distinct integer ID via _notificationId).
+    // One-shot chooseDate override. When the reminder was created with
+    // "elegir fecha", we persisted the picked date in the reminders_meta
+    // Hive box. Schedule a single non-recurring alarm — the previous code
+    // path (days=[weekday] + dayOfWeekAndTime) reinterpreted the pick as
+    // "every week on this weekday forever", which fires on the WRONG date
+    // if today is not the picked weekday, and then keeps firing weekly.
+    final oneShot = _readOneShotDate(reminder.id);
+    if (oneShot != null) {
+      final when = _oneShotAt(oneShot, reminder.time, reminder.minutesBefore);
+      if (when == null) {
+        // Date is fully in the past — a leftover one-shot from an install
+        // whose owner never opened the app in time. Drop it and clear the
+        // local flag so we don't keep trying every cold-start.
+        await clearOneShotDate(reminder.id);
+        await _markResyncNeeded();
+        return;
+      }
+      await _safeZonedSchedule(
+        id: _notificationId(reminder.id, 0),
+        title: reminder.title,
+        body: body,
+        when: when,
+        payload: '/reminders',
+        recurring: false,
+      );
+      await _markResyncNeeded();
+      return;
+    }
+
     final futures = <Future<void>>[];
     var index = 0;
     for (final weekday in reminder.days) {
@@ -422,6 +585,7 @@ class NotificationService {
         title: reminder.title,
         body: body,
         when: scheduleTime,
+        payload: '/reminders',
       ));
     }
     if (reminder.secondTime != null && reminder.secondDays.isNotEmpty) {
@@ -436,10 +600,31 @@ class NotificationService {
           title: reminder.title,
           body: bodySecondary ?? body,
           when: scheduleTime,
+          payload: '/reminders',
         ));
       }
     }
     await Future.wait(futures);
+    // CRUD path — mark the meta flag so the NEXT cold-start resync knows the
+    // Firestore state has diverged from OS-level alarms (defensive; the
+    // schedule we just wrote is already correct).
+    await _markResyncNeeded();
+  }
+
+  /// Builds the absolute wall-clock instant for a chooseDate one-shot.
+  /// Returns null if the resulting DateTime is already in the past — the
+  /// caller must then drop/cancel the reminder.
+  tz.TZDateTime? _oneShotAt(DateTime date, TimeOfDay time, int? minutesBefore) {
+    var scheduledLocal = DateTime(date.year, date.month, date.day,
+        time.hour, time.minute);
+    if (minutesBefore != null) {
+      scheduledLocal = scheduledLocal.subtract(Duration(minutes: minutesBefore));
+    }
+    if (scheduledLocal.isBefore(DateTime.now())) return null;
+    if (_useUtcScheduling) {
+      return tz.TZDateTime.from(scheduledLocal.toUtc(), tz.UTC);
+    }
+    return tz.TZDateTime.from(scheduledLocal, tz.local);
   }
 
   /// Wraps `zonedSchedule` so an `exact_alarms_not_permitted` PlatformException
@@ -450,10 +635,18 @@ class NotificationService {
     required String title,
     required String body,
     required tz.TZDateTime when,
+    String? payload,
+    // Recurring reminders match on dayOfWeekAndTime so the OS re-fires
+    // weekly. One-shot chooseDate reminders MUST omit this — otherwise the
+    // OS treats them as weekly recurrences on the same weekday.
+    bool recurring = true,
   }) async {
     debugPrint('NotificationService._safeZonedSchedule: id=$id '
         'when=$when timezone=${when.location.name} '
-        'now=${tz.TZDateTime.now(when.location)}');
+        'now=${tz.TZDateTime.now(when.location)} recurring=$recurring '
+        'payload=$payload');
+    final matchComponents =
+        recurring ? DateTimeComponents.dayOfWeekAndTime : null;
     try {
       await _localNotifications.zonedSchedule(
         id,
@@ -464,7 +657,8 @@ class NotificationService {
         androidScheduleMode: _androidScheduleMode,
         uiLocalNotificationDateInterpretation:
             UILocalNotificationDateInterpretation.absoluteTime,
-        matchDateTimeComponents: DateTimeComponents.dayOfWeekAndTime,
+        matchDateTimeComponents: matchComponents,
+        payload: payload,
       );
     } catch (e) {
       final msg = e.toString();
@@ -481,7 +675,8 @@ class NotificationService {
           androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
           uiLocalNotificationDateInterpretation:
               UILocalNotificationDateInterpretation.absoluteTime,
-          matchDateTimeComponents: DateTimeComponents.dayOfWeekAndTime,
+          matchDateTimeComponents: matchComponents,
+          payload: payload,
         );
       } else {
         rethrow;
@@ -501,6 +696,14 @@ class NotificationService {
       for (var i = 0; i < maxSlots; i++)
         _localNotifications.cancel(_notificationId(reminder.id, i)),
     ]);
+    await _markResyncNeeded();
+  }
+
+  /// Called from the reminders repo delete path so we don't leave a stale
+  /// one-shot Hive entry pointing to a nonexistent reminder.
+  Future<void> forgetReminder(Reminder reminder) async {
+    await cancelReminder(reminder);
+    await clearOneShotDate(reminder.id);
   }
 
   int _notificationId(String reminderId, int index) {

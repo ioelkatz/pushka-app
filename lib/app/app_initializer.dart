@@ -7,6 +7,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_app_check/firebase_app_check.dart';
 import 'package:firebase_crashlytics/firebase_crashlytics.dart';
 import 'package:flutter_stripe/flutter_stripe.dart';
+import 'package:google_sign_in/google_sign_in.dart';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 
@@ -68,6 +69,35 @@ Future<void> activateAppCheck() async {
 }
 
 Future<void> _performDeferredInit() async {
+  // Google Sign-In v7: MUST call initialize() before any authenticate() call.
+  // On Android it wires up the Credential Manager with our web OAuth client
+  // ID so Google issues a valid idToken (not just an access token, which
+  // Firebase Auth rejects). Failing here shouldn't block the app — the user
+  // can still sign in with email/password or Apple, and Google Sign-In will
+  // throw a clientConfigurationError with a legible message when tapped.
+  //
+  // serverClientId is the Web (client_type: 3) OAuth 2.0 client for
+  // pushka-app-ioel — same value hardcoded in auth_controller.signInWithGoogle
+  // (kept in sync manually; if it ever rotates update BOTH places).
+  if (!kIsWeb) {
+    try {
+      await GoogleSignIn.instance.initialize(
+        serverClientId:
+            '846580817724-flf3up2e57c80cjb00u0ce8tf012ae90.apps.googleusercontent.com',
+      );
+    } catch (e, st) {
+      debugPrint('appDeferredInit: GoogleSignIn.initialize failed: $e');
+      try {
+        FirebaseCrashlytics.instance.recordError(
+          e,
+          st,
+          reason: 'appDeferredInit.googleSignInInitialize',
+          fatal: false,
+        );
+      } catch (_) {}
+    }
+  }
+
   if (!kIsWeb) {
     await NotificationService.instance.initialize();
     final user = FirebaseAuth.instance.currentUser;
@@ -79,18 +109,35 @@ Future<void> _performDeferredInit() async {
       // an uninstall (or clear-data) wipes those — leaving Firestore
       // reminders orphaned (visible in the UI but never firing). This
       // resync is idempotent: scheduleReminder calls cancelReminder first.
-      try {
-        final repo = ReminderRepository(FirebaseFirestore.instance);
-        final reminders = await repo.fetchAll(user.uid);
-        // Fan out per-reminder scheduling — each scheduleReminder is itself
-        // a parallelized batch of cancel + zonedSchedule calls. Across many
-        // reminders the outer for-await previously serialized everything
-        // and pushed ~hundreds of milliseconds onto cold start.
-        await Future.wait(
-          reminders.map(NotificationService.instance.scheduleReminder),
-        );
-      } catch (e) {
-        debugPrint('appDeferredInit: reminder resync failed: $e');
+      //
+      // Gated on `needsResync` so we don't cancel+reschedule every reminder
+      // on every cold start. Default is true on fresh install / upgrade /
+      // clear-data; CRUD paths flip it back on so the next launch reconciles.
+      // Skipping when the flag is false saves N × (14 cancel + 14 schedule)
+      // platform-channel round-trips per launch for users who never touch
+      // reminders between sessions.
+      final ns = NotificationService.instance;
+      if (ns.needsResync) {
+        try {
+          final repo = ReminderRepository(FirebaseFirestore.instance);
+          final reminders = await repo.fetchAll(user.uid);
+          // Fan out per-reminder scheduling — each scheduleReminder is itself
+          // a parallelized batch of cancel + zonedSchedule calls. Across many
+          // reminders the outer for-await previously serialized everything
+          // and pushed ~hundreds of milliseconds onto cold start.
+          //
+          // Explicit `tr:` arg would need BuildContext; scheduleReminder
+          // itself falls back to NotificationService.localizedTranslator()
+          // when tr is null — reads the same Hive language key the
+          // LocaleNotifier writes, so EN/FR/HE users keep their translated
+          // reminder body after a cold start.
+          await Future.wait(
+            reminders.map((r) => ns.scheduleReminder(r)),
+          );
+          await ns.markResyncDone();
+        } catch (e) {
+          debugPrint('appDeferredInit: reminder resync failed: $e');
+        }
       }
     }
   }

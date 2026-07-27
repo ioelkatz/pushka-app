@@ -3610,6 +3610,96 @@ exports.stripeWebhook = onRequest(
         accountId,
         outcome: "account_updated",
       });
+    } else if (event.type === "account.application.deauthorized") {
+      // A tenant admin revoked Pushka's access from their Stripe dashboard.
+      // Without this handler, tenants/{id}.stripeConnectStatus would stay
+      // "active" and subsequent donations would fail cryptically inside
+      // createPaymentIntent when Stripe rejects the transfer_data
+      // destination. Flip status to "disconnected" and alert.
+      const account = event.data.object;
+      const accountId = (event.account) || account.id || null;
+
+      let disconnectedTenantId = null;
+      let disconnectedTenantData = null;
+      if (accountId) {
+        const tenantsSnap = await db.collection("tenants")
+          .where("stripeConnectAccountId", "==", accountId)
+          .limit(1)
+          .get();
+
+        if (!tenantsSnap.empty) {
+          const tenantRef = tenantsSnap.docs[0].ref;
+          disconnectedTenantId = tenantsSnap.docs[0].id;
+          disconnectedTenantData = tenantsSnap.docs[0].data() || {};
+
+          await tenantRef.update({
+            stripeConnectStatus: "disconnected",
+            stripeConnectAccountId: admin.firestore.FieldValue.delete(),
+            // Also drop any pending confirmation on the same tenant — the
+            // rab revoked from Stripe, so the pending offer is dead too.
+            pendingStripeConnect: admin.firestore.FieldValue.delete(),
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          });
+
+          await writeActivityLog({
+            type: "stripe_connect_deauthorized",
+            tenantId: disconnectedTenantId,
+            tenantName: disconnectedTenantData.name ?? disconnectedTenantId,
+            severity: "critical",
+            requiresAction: true,
+            data: { accountId },
+          });
+
+          // Fire-and-forget email to tenant admin + super_admin.
+          try {
+            const tenantName = disconnectedTenantData.name || disconnectedTenantData.appName || disconnectedTenantId;
+            const adminEmail = disconnectedTenantData.adminEmail || null;
+            const whenIso = new Date().toISOString();
+            const subject = `[Pushka] Stripe Connect DESCONECTADO para ${tenantName}`;
+            const html = `
+              <p style="font-family:sans-serif;font-size:15px;line-height:1.5">
+                Se revocó el acceso de Pushka a la cuenta de Stripe de <strong>${tenantName}</strong>. Las donaciones nuevas <b>van a fallar</b> hasta que se reconecte una cuenta.
+              </p>
+              <table style="font-family:sans-serif;font-size:14px;border-collapse:collapse;margin-top:12px">
+                <tr><td style="padding:4px 12px;color:#64748b">Tenant:</td><td style="padding:4px 12px"><b>${tenantName}</b> (<code>${disconnectedTenantId}</code>)</td></tr>
+                <tr><td style="padding:4px 12px;color:#64748b">Cuenta desconectada:</td><td style="padding:4px 12px;font-family:monospace">${accountId}</td></tr>
+                <tr><td style="padding:4px 12px;color:#64748b">Fecha (UTC):</td><td style="padding:4px 12px">${whenIso}</td></tr>
+              </table>
+              <p style="margin-top:20px;padding:12px 16px;background:#fef2f2;border-left:4px solid #dc2626;color:#991b1b;font-family:sans-serif;font-size:14px;line-height:1.5">
+                <strong>Acción requerida:</strong> ingresá al panel y volvé a conectar Stripe para reanudar los pagos.
+              </p>
+            `;
+            const recipients = [];
+            if (adminEmail) recipients.push(adminEmail);
+            if (SUPER_ADMIN_EMAIL &&
+                SUPER_ADMIN_EMAIL.toLowerCase() !== (adminEmail || "").toLowerCase()) {
+              recipients.push(SUPER_ADMIN_EMAIL);
+            }
+            await Promise.all(recipients.map(to =>
+              sendEmail({ to, subject, html }).catch(err =>
+                console.warn("stripeWebhook: deauthorized alert email failed", {
+                  tenantId: disconnectedTenantId, to: _redactEmail(to), error: err?.message,
+                })
+              )
+            ));
+          } catch (alertErr) {
+            console.warn("stripeWebhook: deauthorized alert block failed", {
+              tenantId: disconnectedTenantId, error: alertErr?.message,
+            });
+          }
+        } else {
+          console.warn("stripeWebhook: account.application.deauthorized — no tenant found", { accountId });
+        }
+      } else {
+        console.warn("stripeWebhook: account.application.deauthorized without accountId", { eventId: event.id });
+      }
+
+      await finalizeWebhookEvent(eventRef, {
+        status: "processed",
+        accountId,
+        tenantId: disconnectedTenantId,
+        outcome: "account_deauthorized",
+      });
     } else if (event.type === "application_fee.created") {
       // Our commission was collected — log for tracking
       const fee = event.data.object;
@@ -5456,7 +5546,16 @@ exports.setAdminClaim = onCall(
       // Only the first tenant admin can revoke access
       if (revoke) {
         const tenantDoc = await db.collection("tenants").doc(callerClaims.tenantId).get();
-        const isFirstAdmin = tenantDoc.exists && tenantDoc.data().adminEmail === callerRecord.email;
+        // Normalize both sides — Firebase Auth stores emails case-preserving
+        // and tenants.adminEmail was written from raw operator input, so a
+        // direct === would let a legitimate first admin be blocked (or, in
+        // the opposite direction, let the wrong person impersonate the
+        // first admin) depending on how the two strings were cased at
+        // creation vs sign-up time. Mirrors the sibling super_admin check.
+        const tenantAdminEmail = (tenantDoc.exists && tenantDoc.data().adminEmail) || "";
+        const callerEmail = callerRecord.email || "";
+        const isFirstAdmin = tenantDoc.exists &&
+          tenantAdminEmail.toLowerCase().trim() === callerEmail.toLowerCase().trim();
         if (!isFirstAdmin) {
           throw new HttpsError("permission-denied", "Solo el primer administrador puede revocar accesos.");
         }
@@ -5471,10 +5570,15 @@ exports.setAdminClaim = onCall(
       throw new HttpsError("permission-denied", "No se pueden revocar los permisos del super administrador.");
     }
 
-    // First tenant admin of an org can never be revoked
+    // First tenant admin of an org can never be revoked.
+    // Compare case-insensitively — same rationale as the sibling caller
+    // check above and the SUPER_ADMIN_EMAIL guard: a case mismatch would
+    // wrongly allow revocation of the org's first admin.
     if (revoke && targetExistingClaims.tenantId) {
       const tenantDoc = await db.collection("tenants").doc(targetExistingClaims.tenantId).get();
-      if (tenantDoc.exists && tenantDoc.data().adminEmail === targetEmail) {
+      const tenantAdminEmail = (tenantDoc.exists && tenantDoc.data().adminEmail) || "";
+      if (tenantDoc.exists &&
+          tenantAdminEmail.toLowerCase().trim() === String(targetEmail).toLowerCase().trim()) {
         throw new HttpsError("permission-denied", "No se puede revocar al primer administrador de la organización.");
       }
     }
@@ -7143,31 +7247,20 @@ exports.createTenant = onCall(
 
     console.info("createTenant", { id: tenantRef.id, slug: normalizedSlug, adminEmail: _redactEmail(adminEmail) });
 
-    // Generate Stripe Connect link and send welcome email — errors are logged, never thrown.
+    // Welcome email — errors are logged, never thrown.
+    //
+    // Previously this generated a Stripe Connect OAuth link directly and
+    // wrote the state token to tenants/{id}.stripeConnectOAuthState. That
+    // was broken end-to-end: handleStripeConnectOAuth reads from
+    // _stripeConnectOAuth/{state}, so every embedded welcome-email OAuth
+    // link failed with "Estado inválido o expirado".
+    //
+    // Simpler + safer flow: the welcome email just points at the admin
+    // panel. The tenant admin signs in there (using the password-setup
+    // link above), and clicks the panel's "Conectar Stripe" button, which
+    // calls createStripeConnectLink and gets a state token that IS in
+    // sync with handleStripeConnectOAuth.
     const adminPanelUrl = "https://chabad-admin.web.app";
-    let stripeConnectUrl = null;
-    try {
-      const clientId = stripeConnectClientId.value();
-      if (clientId && !clientId.startsWith("PLACEHOLDER")) {
-        const crypto = require("crypto");
-        const state = crypto.randomBytes(20).toString("hex");
-        await tenantRef.update({
-          stripeConnectOAuthState: state,
-          stripeConnectOAuthStateCreatedAt: admin.firestore.FieldValue.serverTimestamp(),
-        });
-        const redirectUri = "https://us-central1-pushka-app-ioel.cloudfunctions.net/handleStripeConnectOAuth";
-        const params = new URLSearchParams({
-          response_type: "code",
-          client_id: clientId,
-          scope: "read_write",
-          state,
-          redirect_uri: redirectUri,
-        });
-        stripeConnectUrl = `https://connect.stripe.com/oauth/authorize?${params.toString()}`;
-      }
-    } catch (e) {
-      console.warn("createTenant: Stripe Connect link generation failed:", e.message);
-    }
 
     try {
       await sendEmail({
@@ -7178,7 +7271,7 @@ exports.createTenant = onCall(
           adminEmail: adminEmail.trim(),
           adminPanelUrl,
           passwordSetupLink,
-          stripeConnectUrl,
+          stripeConnectUrl: null,
         }),
       });
     } catch (e) {
@@ -8332,6 +8425,24 @@ exports.createStripeConnectLink = onCall(
     const state = crypto.randomBytes(20).toString("hex");
     const nowMs = Date.now();
 
+    // Invalidate any prior state tokens for this tenant so a leaked or
+    // screen-shared old link can't sit hot for 24h. Best-effort: failure
+    // to delete leaves the natural TTL as a fallback bound.
+    try {
+      const priorSnap = await db.collection("_stripeConnectOAuth")
+        .where("tenantId", "==", tenantId)
+        .get();
+      if (!priorSnap.empty) {
+        const batch = db.batch();
+        priorSnap.docs.forEach((d) => batch.delete(d.ref));
+        await batch.commit();
+      }
+    } catch (e) {
+      console.warn("createStripeConnectLink: prior state cleanup failed (non-fatal)", {
+        tenantId, error: e?.message,
+      });
+    }
+
     await db.collection("_stripeConnectOAuth").doc(state).set({
       tenantId,
       callerUid,
@@ -8429,34 +8540,69 @@ exports.handleStripeConnectOAuth = onRequest(
 
       const stripeConnectAccountId = response.stripe_user_id;
 
-      // BUG-019 fix: verify the account is actually able to accept charges
-      // BEFORE marking it active. OAuth completion only means the rab
-      // authorized; KYC/banking can still be pending. If we mark "active"
-      // prematurely, createPaymentIntent will route charges with
-      // transfer_data, Stripe will reject "destination account cannot accept
-      // charges", and the donor sees a generic error.
-      let initialStatus = "active";
+      // SECURITY (2-step confirmation, "silent swap" fix):
+      // We intentionally DO NOT write stripeConnectAccountId here. The person
+      // whose browser completed OAuth may not be the person who owns the
+      // tenant's Stripe (e.g. someone logged into the wrong Stripe account
+      // in that tab, or a compromised tenant_admin trying to redirect
+      // payouts). Instead we stash the details in tenants/{id}.pendingStripeConnect
+      // and require an explicit confirmStripeConnectAccount call from a
+      // super_admin or the tenant's tenant_admin — with the fetched details
+      // visible — before donations start routing to this account.
+      //
+      // This is what prevents "wrong Stripe accidentally connected because
+      // the person on the browser at OAuth time was logged into the wrong
+      // Stripe" (which is how tenant chabadmexico briefly pointed at
+      // AI Systems / Ioel's Stripe).
+      let businessName = null;
+      let acctCountry = null;
+      let acctEmail = null;
+      let chargesEnabled = false;
+      let payoutsEnabled = false;
       try {
         const acct = await stripe.accounts.retrieve(stripeConnectAccountId);
-        const ready = acct.charges_enabled === true && acct.payouts_enabled === true;
-        initialStatus = ready ? "active" : "restricted";
+        businessName = acct.business_profile?.name
+          || acct.settings?.dashboard?.display_name
+          || acct.company?.name
+          || (acct.individual
+                ? `${acct.individual.first_name || ""} ${acct.individual.last_name || ""}`.trim() || null
+                : null)
+          || acct.email
+          || null;
+        acctCountry = acct.country || null;
+        acctEmail = acct.email || null;
+        chargesEnabled = acct.charges_enabled === true;
+        payoutsEnabled = acct.payouts_enabled === true;
       } catch (acctErr) {
-        // Defensive: if retrieve fails, leave status pending so the next
-        // account.updated webhook reconciles correctly.
+        // Defensive: if retrieve fails we still store what we have — the
+        // confirm step will re-fetch and refuse to activate an account
+        // that isn't ready.
         console.warn("handleStripeConnectOAuth: account retrieve failed", {
           tenantId, stripeConnectAccountId, error: acctErr?.message,
         });
-        initialStatus = "restricted";
       }
 
-      // Snapshot prior account id so the alert email can tell the reader
-      // whether this was a first-time connection or a swap.
+      // Snapshot prior account id so the pending email can tell the reader
+      // whether this would be a first-time connection or a swap.
       const priorTenantData = tenantSnap.data() || {};
       const priorStripeConnectAccountId = priorTenantData.stripeConnectAccountId || null;
 
+      const pendingPayload = {
+        accountId: stripeConnectAccountId,
+        businessName: businessName || null,
+        country: acctCountry || null,
+        email: acctEmail || null,
+        chargesEnabled,
+        payoutsEnabled,
+        initiatedByUid: initiatorUid || null,
+        initiatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        // 7-day window to confirm — after that the confirm CF will refuse
+        // and require a fresh OAuth cycle.
+        expiresAt: admin.firestore.Timestamp.fromMillis(Date.now() + 7 * 86400000),
+      };
+
       await tenantRef.update({
-        stripeConnectAccountId,
-        stripeConnectStatus: initialStatus,
+        pendingStripeConnect: pendingPayload,
         // COMPAT: legacy fields from the old (insecure) state-on-tenant
         // scheme — clear them if present. FieldValue.delete() is a no-op
         // when the field doesn't exist, so this is safe on new tenants.
@@ -8474,16 +8620,12 @@ exports.handleStripeConnectOAuth = onRequest(
         });
       });
 
-      console.log(`Stripe Connect ${initialStatus} for tenant ${tenantId}: ${stripeConnectAccountId}`);
+      console.log(`Stripe Connect PENDING confirmation for tenant ${tenantId}: ${stripeConnectAccountId}`);
 
-      // FIX B: alert tenant admin + super_admin whenever a Stripe Connect
-      // account is (re)connected. A compromised tenant_admin could
-      // silently swap the payout account and drain donations; this email
-      // makes the swap visible to both the owner-of-record and the
-      // platform operator so it can be caught within minutes.
-      // Fire-and-forget: SendGrid outages must not fail the OAuth
-      // redirect (Stripe never retries the callback, and the rab would
-      // see a broken success page).
+      // Notify tenant admin + super_admin of the PENDING account with the
+      // details fetched from Stripe so the human can spot a wrong account
+      // BEFORE it goes live. Fire-and-forget: SendGrid outages must not
+      // fail the OAuth redirect.
       try {
         const tenantData = priorTenantData;
         const tenantName = tenantData.name || tenantData.appName || tenantId;
@@ -8498,25 +8640,32 @@ exports.handleStripeConnectOAuth = onRequest(
         const isSwap = priorStripeConnectAccountId &&
           priorStripeConnectAccountId !== stripeConnectAccountId;
         const whenIso = new Date().toISOString();
-        const subject = `[Pushka] Stripe Connect account changed for ${tenantName}`;
+        const subject = `[Pushka] Confirmá la cuenta de Stripe para ${tenantName}`;
         const priorRow = maskedPriorAcct
           ? `<tr><td style="padding:4px 12px;color:#64748b">Cuenta anterior:</td><td style="padding:4px 12px;font-family:monospace">${maskedPriorAcct}</td></tr>`
           : "";
+        const confirmUrl = `https://chabad-admin.web.app/tenants/${tenantId}/confirm-stripe`;
         const html = `
           <p style="font-family:sans-serif;font-size:15px;line-height:1.5">
-            Se ${isSwap ? "<b>reemplazó</b>" : "conectó"} una cuenta de Stripe Connect para el tenant <strong>${tenantName}</strong>.
+            Se autorizó una cuenta de Stripe Connect ${isSwap ? "para <b>reemplazar</b> la actual" : "para el tenant"} <strong>${tenantName}</strong>. <b>Todavía NO está activa</b> — revisá los datos y confirmá.
           </p>
           <table style="font-family:sans-serif;font-size:14px;border-collapse:collapse;margin-top:12px">
             <tr><td style="padding:4px 12px;color:#64748b">Tenant:</td><td style="padding:4px 12px"><b>${tenantName}</b> (<code>${tenantId}</code>)</td></tr>
             ${priorRow}
             <tr><td style="padding:4px 12px;color:#64748b">Cuenta nueva:</td><td style="padding:4px 12px;font-family:monospace">${maskedNewAcct}</td></tr>
-            <tr><td style="padding:4px 12px;color:#64748b">Estado inicial:</td><td style="padding:4px 12px">${initialStatus}</td></tr>
+            <tr><td style="padding:4px 12px;color:#64748b">Nombre comercial:</td><td style="padding:4px 12px"><b>${businessName || "(no disponible)"}</b></td></tr>
+            <tr><td style="padding:4px 12px;color:#64748b">País:</td><td style="padding:4px 12px">${acctCountry || "(no disponible)"}</td></tr>
+            <tr><td style="padding:4px 12px;color:#64748b">Email Stripe:</td><td style="padding:4px 12px">${acctEmail || "(no disponible)"}</td></tr>
+            <tr><td style="padding:4px 12px;color:#64748b">Estado KYC:</td><td style="padding:4px 12px">charges_enabled=${chargesEnabled}, payouts_enabled=${payoutsEnabled}</td></tr>
             <tr><td style="padding:4px 12px;color:#64748b">Iniciado por (UID):</td><td style="padding:4px 12px;font-family:monospace">${initiatorUid || "(desconocido)"}</td></tr>
             <tr><td style="padding:4px 12px;color:#64748b">Fecha (UTC):</td><td style="padding:4px 12px">${whenIso}</td></tr>
           </table>
+          <p style="margin-top:20px">
+            <a href="${confirmUrl}" style="display:inline-block;background:#10b981;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:600;font-family:sans-serif">Revisar y confirmar →</a>
+          </p>
           <p style="margin-top:20px;padding:12px 16px;background:#fef2f2;border-left:4px solid #dc2626;color:#991b1b;font-family:sans-serif;font-size:14px;line-height:1.5">
-            <strong>Si vos no hiciste este cambio, contactanos inmediatamente.</strong>
-            Cambiar la cuenta de Stripe redirige todas las donaciones futuras a esa cuenta.
+            <strong>Si el nombre comercial NO coincide con tu organización, rechazá la conexión.</strong>
+            Confirmar una cuenta equivocada redirige todas las donaciones futuras a esa cuenta.
           </p>
           <p style="margin-top:24px;font-family:sans-serif;font-size:12px;color:#94a3b8">
             Alerta automática de Chabad Pushka backend.
@@ -8543,12 +8692,196 @@ exports.handleStripeConnectOAuth = onRequest(
         });
       }
 
-      return res.redirect(`https://chabad-admin.web.app/tenants/${tenantId}?connect=success`);
+      return res.redirect(`https://chabad-admin.web.app/tenants/${tenantId}/confirm-stripe`);
     } catch (err) {
       console.error("Stripe Connect OAuth exchange error:", err);
       return res.status(500).send("Error al conectar con Stripe. Intentá de nuevo.");
     }
   }
+);
+
+// ---------------------------------------------------------------------------
+// confirmStripeConnectAccount — apply a pending Stripe Connect account
+// ---------------------------------------------------------------------------
+// Second step of the 2-phase Stripe Connect flow. handleStripeConnectOAuth
+// only stashes the returned stripe_user_id + fetched account details into
+// tenants/{id}.pendingStripeConnect. A human (super_admin OR the tenant's
+// tenant_admin) must then eyeball those details and confirm — this is what
+// prevents accidentally activating the wrong Stripe account when the browser
+// was logged into someone else's Stripe at OAuth time.
+exports.confirmStripeConnectAccount = onCall(
+  { secrets: [stripeSecret], enforceAppCheck: false },
+  async (request) => {
+    const callerUid = request.auth?.uid;
+    if (!callerUid) throw new HttpsError("unauthenticated", "Debes estar autenticado.");
+    await enforceRateLimit(callerUid, "confirmStripeConnectAccount", 20, 3600);
+
+    const callerClaims = request.auth?.token ?? {};
+    const isSuperAdminCaller = await callerIsSuperAdminFresh(request);
+    const isTenantAdminCaller = callerClaims.role === "tenant_admin";
+    if (!isSuperAdminCaller && !isTenantAdminCaller) {
+      throw new HttpsError("permission-denied", "Acceso denegado.");
+    }
+
+    const tenantId = String(request.data?.tenantId || "").trim();
+    if (!tenantId) throw new HttpsError("invalid-argument", "tenantId requerido.");
+
+    if (!isSuperAdminCaller && callerClaims.tenantId !== tenantId) {
+      throw new HttpsError("permission-denied", "Solo podés confirmar la cuenta de tu propia organización.");
+    }
+
+    const tenantRef = db.collection("tenants").doc(tenantId);
+    const tenantSnap = await tenantRef.get();
+    if (!tenantSnap.exists) throw new HttpsError("not-found", "Tenant no encontrado.");
+    const tenantData = tenantSnap.data() || {};
+    const pending = tenantData.pendingStripeConnect || null;
+    if (!pending || !pending.accountId) {
+      throw new HttpsError("failed-precondition", "No hay ninguna cuenta pendiente de confirmar.");
+    }
+
+    // Expiry check: reject stale pending records (force fresh OAuth).
+    const expMs = pending.expiresAt?.toMillis?.() ?? null;
+    if (expMs && Date.now() > expMs) {
+      await tenantRef.update({
+        pendingStripeConnect: admin.firestore.FieldValue.delete(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+      throw new HttpsError("deadline-exceeded", "La solicitud pendiente venció. Iniciá una nueva conexión.");
+    }
+
+    // Re-verify status directly against Stripe. We refuse to activate an
+    // account that isn't charges+payouts ready — donors would get generic
+    // errors otherwise. If retrieve fails, we mark it "restricted" and let
+    // the next account.updated webhook flip it to "active".
+    const stripe = require("stripe")(stripeSecret.value());
+    let initialStatus = "restricted";
+    try {
+      const acct = await stripe.accounts.retrieve(pending.accountId);
+      initialStatus = (acct.charges_enabled === true && acct.payouts_enabled === true)
+        ? "active"
+        : "restricted";
+    } catch (e) {
+      console.warn("confirmStripeConnectAccount: account retrieve failed", {
+        tenantId, accountId: pending.accountId, error: e?.message,
+      });
+    }
+
+    const priorStripeConnectAccountId = tenantData.stripeConnectAccountId || null;
+
+    await tenantRef.update({
+      stripeConnectAccountId: pending.accountId,
+      stripeConnectStatus: initialStatus,
+      pendingStripeConnect: admin.firestore.FieldValue.delete(),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+
+    console.info("confirmStripeConnectAccount: applied", {
+      tenantId, accountId: pending.accountId, callerUid, initialStatus,
+    });
+
+    // Existing "Stripe Connect account changed" alert — fires now that the
+    // account is truly active. Mirrors the pre-refactor behavior.
+    try {
+      const tenantName = tenantData.name || tenantData.appName || tenantId;
+      const adminEmail = tenantData.adminEmail || null;
+      const maskAcct = (id) => (id && typeof id === "string" && id.length > 12)
+        ? `${id.slice(0, 8)}…${id.slice(-4)}`
+        : (id || "(desconocido)");
+      const maskedNewAcct = maskAcct(pending.accountId);
+      const maskedPriorAcct = priorStripeConnectAccountId ? maskAcct(priorStripeConnectAccountId) : null;
+      const isSwap = priorStripeConnectAccountId && priorStripeConnectAccountId !== pending.accountId;
+      const whenIso = new Date().toISOString();
+      const subject = `[Pushka] Stripe Connect account CONFIRMED for ${tenantName}`;
+      const priorRow = maskedPriorAcct
+        ? `<tr><td style="padding:4px 12px;color:#64748b">Cuenta anterior:</td><td style="padding:4px 12px;font-family:monospace">${maskedPriorAcct}</td></tr>`
+        : "";
+      const html = `
+        <p style="font-family:sans-serif;font-size:15px;line-height:1.5">
+          Se ${isSwap ? "<b>reemplazó</b>" : "activó"} la cuenta de Stripe Connect para <strong>${tenantName}</strong>. Las donaciones futuras van a esta cuenta.
+        </p>
+        <table style="font-family:sans-serif;font-size:14px;border-collapse:collapse;margin-top:12px">
+          <tr><td style="padding:4px 12px;color:#64748b">Tenant:</td><td style="padding:4px 12px"><b>${tenantName}</b> (<code>${tenantId}</code>)</td></tr>
+          ${priorRow}
+          <tr><td style="padding:4px 12px;color:#64748b">Cuenta activa:</td><td style="padding:4px 12px;font-family:monospace">${maskedNewAcct}</td></tr>
+          <tr><td style="padding:4px 12px;color:#64748b">Nombre comercial:</td><td style="padding:4px 12px"><b>${pending.businessName || "(no disponible)"}</b></td></tr>
+          <tr><td style="padding:4px 12px;color:#64748b">Estado inicial:</td><td style="padding:4px 12px">${initialStatus}</td></tr>
+          <tr><td style="padding:4px 12px;color:#64748b">Confirmado por (UID):</td><td style="padding:4px 12px;font-family:monospace">${callerUid}</td></tr>
+          <tr><td style="padding:4px 12px;color:#64748b">Fecha (UTC):</td><td style="padding:4px 12px">${whenIso}</td></tr>
+        </table>
+        <p style="margin-top:20px;padding:12px 16px;background:#fef2f2;border-left:4px solid #dc2626;color:#991b1b;font-family:sans-serif;font-size:14px;line-height:1.5">
+          <strong>Si vos no hiciste este cambio, contactanos inmediatamente.</strong>
+        </p>
+      `;
+      const recipients = [];
+      if (adminEmail) recipients.push(adminEmail);
+      if (SUPER_ADMIN_EMAIL && SUPER_ADMIN_EMAIL.toLowerCase() !== (adminEmail || "").toLowerCase()) {
+        recipients.push(SUPER_ADMIN_EMAIL);
+      }
+      await Promise.all(recipients.map(to =>
+        sendEmail({ to, subject, html }).catch(err =>
+          console.warn("confirmStripeConnectAccount: alert email failed", {
+            tenantId, to: _redactEmail(to), error: err?.message,
+          })
+        )
+      ));
+    } catch (alertErr) {
+      console.warn("confirmStripeConnectAccount: alert block failed", {
+        tenantId, error: alertErr?.message,
+      });
+    }
+
+    return {
+      success: true,
+      accountId: pending.accountId,
+      stripeConnectStatus: initialStatus,
+    };
+  },
+);
+
+// ---------------------------------------------------------------------------
+// rejectStripeConnectAccount — discard a pending Stripe Connect account
+// ---------------------------------------------------------------------------
+exports.rejectStripeConnectAccount = onCall(
+  { enforceAppCheck: false },
+  async (request) => {
+    const callerUid = request.auth?.uid;
+    if (!callerUid) throw new HttpsError("unauthenticated", "Debes estar autenticado.");
+    await enforceRateLimit(callerUid, "rejectStripeConnectAccount", 20, 3600);
+
+    const callerClaims = request.auth?.token ?? {};
+    const isSuperAdminCaller = await callerIsSuperAdminFresh(request);
+    const isTenantAdminCaller = callerClaims.role === "tenant_admin";
+    if (!isSuperAdminCaller && !isTenantAdminCaller) {
+      throw new HttpsError("permission-denied", "Acceso denegado.");
+    }
+
+    const tenantId = String(request.data?.tenantId || "").trim();
+    if (!tenantId) throw new HttpsError("invalid-argument", "tenantId requerido.");
+
+    if (!isSuperAdminCaller && callerClaims.tenantId !== tenantId) {
+      throw new HttpsError("permission-denied", "Solo podés rechazar la cuenta de tu propia organización.");
+    }
+
+    const tenantRef = db.collection("tenants").doc(tenantId);
+    const tenantSnap = await tenantRef.get();
+    if (!tenantSnap.exists) throw new HttpsError("not-found", "Tenant no encontrado.");
+    const pending = tenantSnap.data()?.pendingStripeConnect || null;
+    if (!pending) {
+      // Idempotent — already clear.
+      return { success: true, cleared: false };
+    }
+
+    await tenantRef.update({
+      pendingStripeConnect: admin.firestore.FieldValue.delete(),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+
+    console.info("rejectStripeConnectAccount: cleared", {
+      tenantId, accountId: pending.accountId, callerUid,
+    });
+
+    return { success: true, cleared: true, accountId: pending.accountId || null };
+  },
 );
 
 // ===========================================================================
@@ -10467,4 +10800,132 @@ exports.cleanupLegacyOAuthFields = onCall(
 
     return { scanned, cleaned };
   }
+);
+
+// ---------------------------------------------------------------------------
+// onUserDocCreated — auto-apply pending tenant admin invitations
+// ---------------------------------------------------------------------------
+// Before this trigger existed, an invited tenant_admin who opened the
+// Flutter mobile app FIRST (before the admin web) never had their
+// invitation applied: the app doesn't call claimPendingTenantAdmin, and
+// setAdminClaim only queued a `_pendingTenantAdmins/{email}` doc that
+// waited for a web sign-in. Same problem for tenant_collaborators.
+//
+// This trigger fires when any users/{uid} doc is created (Flutter and
+// admin web both create these on first sign-in), looks up the caller's
+// email in `_pendingTenantAdmins`, and applies the claim + team membership
+// automatically — regardless of which client the invitee hits first.
+//
+// Safety mirrors claimPendingTenantAdmin:
+//   - Refuses to apply if the email isn't verified (a password-provider
+//     signup with someone else's email would otherwise steal the invitation).
+//   - Checks pending doc TTL; deletes expired docs.
+//   - Refuses if the tenant no longer exists.
+//   - Preserves any pre-existing customClaims via spread — never wipes them.
+//   - Idempotent: no pending doc → no-op.
+exports.onUserDocCreated = onDocumentCreated(
+  "users/{uid}",
+  async (event) => {
+    const uid = event.params.uid;
+    if (!uid) return;
+
+    let userRecord;
+    try {
+      userRecord = await admin.auth().getUser(uid);
+    } catch (e) {
+      console.warn("onUserDocCreated: getUser failed", { uid, error: e?.message });
+      return;
+    }
+
+    if (!userRecord?.emailVerified) {
+      // Skip silently — user will call claimPendingTenantAdmin explicitly
+      // after verifying their email, or the trigger will effectively be
+      // superseded by that call.
+      return;
+    }
+
+    const email = String(userRecord.email || "").toLowerCase().trim();
+    if (!email) return;
+
+    const pendingRef = db.collection("_pendingTenantAdmins").doc(email);
+    const pendingSnap = await pendingRef.get();
+    if (!pendingSnap.exists) return;
+
+    const pending = pendingSnap.data() || {};
+    const role = pending.role;
+    const tenantId = pending.tenantId;
+
+    const expiresAtMs = pending.expiresAt?.toMillis?.() ?? null;
+    if (expiresAtMs && Date.now() > expiresAtMs) {
+      await pendingRef.delete().catch(() => {});
+      console.info("onUserDocCreated: pending invitation expired", { uid, email: _redactEmail(email) });
+      return;
+    }
+
+    if (role !== "tenant_admin" && role !== "tenant_collaborator") {
+      await pendingRef.delete().catch(() => {});
+      return;
+    }
+    if (!tenantId) {
+      await pendingRef.delete().catch(() => {});
+      return;
+    }
+
+    const tenantSnap = await db.collection("tenants").doc(tenantId).get();
+    if (!tenantSnap.exists) {
+      await pendingRef.delete().catch(() => {});
+      return;
+    }
+
+    // Preserve any pre-existing claims (very unlikely for a fresh user
+    // doc, but belt-and-suspenders — matches setAdminClaim's discipline).
+    const existingClaims = userRecord.customClaims || {};
+    try {
+      await admin.auth().setCustomUserClaims(uid, {
+        ...existingClaims,
+        role,
+        tenantId,
+      });
+    } catch (e) {
+      console.error("onUserDocCreated: setCustomUserClaims failed", {
+        uid, tenantId, role, error: e?.message,
+      });
+      return;
+    }
+
+    // Mirror into tenant team subcollection so admin dashboards see them.
+    try {
+      await db.collection("tenants").doc(tenantId).collection("team").doc(uid).set({
+        uid,
+        email: userRecord.email,
+        displayName: userRecord.displayName ?? null,
+        role,
+        addedAt: admin.firestore.FieldValue.serverTimestamp(),
+        addedBy: pending.invitedBy ?? null,
+        claimedFromPending: true,
+        claimedVia: "onUserDocCreated",
+      });
+    } catch (e) {
+      console.warn("onUserDocCreated: team subcollection update failed (non-fatal)", {
+        uid, tenantId, error: e?.message,
+      });
+    }
+
+    // Force the user's next ID token to include the new claims — otherwise
+    // the client would keep its no-claim token until 1h expiry.
+    try {
+      await admin.auth().revokeRefreshTokens(uid);
+    } catch (e) {
+      console.warn("onUserDocCreated: revokeRefreshTokens failed (non-fatal)", {
+        uid, error: e?.message,
+      });
+    }
+
+    // Single-use: retire the pending doc.
+    await pendingRef.delete().catch(() => {});
+
+    console.info("onUserDocCreated: pending invitation applied", {
+      uid, email: _redactEmail(email), role, tenantId,
+    });
+  },
 );

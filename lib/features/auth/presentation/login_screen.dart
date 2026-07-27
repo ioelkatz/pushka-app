@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:flutter/services.dart';
+import 'package:sign_in_with_apple/sign_in_with_apple.dart'
+    show SignInWithAppleAuthorizationException, AuthorizationErrorCode;
 
 import '../../../core/l10n/s.dart';
 import '../providers/auth_controller.dart';
@@ -338,8 +340,27 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     setState(() => _isLoading = true);
     try {
       await ref.read(authControllerProvider).signInWithApple();
+    } on SignInWithAppleAuthorizationException catch (e) {
+      // Apple's typed error for the whole authorization pipeline. Cancel
+      // must be silent (matches Google's sign_in_canceled path); every
+      // other code is a real failure worth surfacing.
+      if (!mounted) return;
+      if (e.code == AuthorizationErrorCode.canceled) {
+        _showMessage(_tr.signInCanceled);
+      } else {
+        _showMessage(_tr.appleError('${e.code.name}: ${e.message}'));
+      }
     } on FirebaseAuthException catch (e) {
-      if (mounted) _showMessage(_mapAuthError(e.code));
+      if (mounted) {
+        // 'apple_no_identity_token' carries a rich Spanish explanation from
+        // the controller — surface e.message directly instead of collapsing
+        // to the generic _mapAuthError bucket.
+        if (e.code == 'apple_no_identity_token') {
+          _showMessage(e.message ?? _mapAuthError(e.code));
+        } else {
+          _showMessage(_mapAuthError(e.code));
+        }
+      }
     } on Exception catch (e) {
       if (mounted) _showMessage(_tr.appleError('$e'));
     } finally {
