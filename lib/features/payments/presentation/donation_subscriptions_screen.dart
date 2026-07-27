@@ -468,8 +468,17 @@ class _DonationSubscriptionsScreenState
     } on StripeServiceException catch (e) {
       if (e.code == 'canceled') return;
       if (!mounted) return;
+      // Surface specific known codes with actionable copy instead of the
+      // generic "Error" that leaves the user staring at a red snackbar
+      // with no hint what to do next.
+      final message = switch (e.code) {
+        'web_recurring_not_available' => tr.recurringNotSupportedOnWeb,
+        'web_payment_sheet_not_supported' => tr.recurringNotSupportedOnWeb,
+        'network-error' => tr.errorPaymentServer,
+        _ => tr.error,
+      };
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(tr.error)),
+        SnackBar(content: Text(message)),
       );
     } catch (_) {
       if (!mounted) return;

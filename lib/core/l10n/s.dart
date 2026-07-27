@@ -1236,6 +1236,12 @@ class S {
     'Pour ajouter une carte depuis le navigateur, faites un don normal — elle sera enregistrée automatiquement dans votre compte.',
     'כדי להוסיף כרטיס מהדפדפן, בצע תרומה רגילה — הכרטיס יישמר אוטומטית בחשבונך.',
   );
+  String get recurringNotSupportedOnWeb => _t(
+    'Las donaciones mensuales por ahora solo funcionan desde la app instalada en Android. Descargala o hacé una donación única desde el navegador.',
+    'Monthly donations currently work only from the installed Android app. Install it, or make a one-time donation from the browser.',
+    "Les dons mensuels ne fonctionnent actuellement que depuis l'application Android installée. Installez-la, ou faites un don unique depuis le navigateur.",
+    'תרומות חודשיות פועלות כרגע רק מהאפליקציה המותקנת ב-Android. התקן אותה, או בצע תרומה חד-פעמית מהדפדפן.',
+  );
 
   // ---------------------------------------------------------------------------
   // DONATION SUBSCRIPTIONS

@@ -302,8 +302,15 @@ PreferredSizeWidget? _buildAppBar(BuildContext context, String location) {
     return AppBar(title: Text(tr.navHistory), centerTitle: true);
   } else if (location == '/settings') {
     return AppBar(title: Text(tr.navSettings), centerTitle: true);
-  } else if (location == '/settings/donation-subs') {
+  } else if (location == '/settings/donation-subs' ||
+      location == '/wallet/donation-subs') {
+    // Same screen mounted under both /settings and /wallet — user reported
+    // navbar disappearing when navigating from Wallet because this branch
+    // only matched /settings/... The back button target depends on the
+    // parent so the user returns to whichever screen they came from.
     final isRtl = Directionality.of(context) == TextDirection.rtl;
+    final backTarget =
+        location.startsWith('/wallet') ? '/wallet' : '/settings';
     return AppBar(
       title: Text(tr.mySubscriptions),
       centerTitle: true,
@@ -314,7 +321,7 @@ PreferredSizeWidget? _buildAppBar(BuildContext context, String location) {
           if (shellNav != null && shellNav.canPop()) {
             shellNav.pop();
           } else {
-            context.go('/settings');
+            context.go(backTarget);
           }
         },
       ),
