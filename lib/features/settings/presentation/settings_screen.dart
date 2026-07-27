@@ -1143,19 +1143,23 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   void _commitPreset(int idx) {
     final raw = _presetCtrls[idx].text.trim().replaceAll(',', '.');
     final parsed = double.tryParse(raw);
-    // Base MUST reflect the current source-of-truth for the OTHER two slots,
-    // otherwise editing one slot would silently overwrite the others with
-    // currency defaults. Priority: pending local edits → persisted profile
-    // presets → currency defaults (only if the profile has no custom presets).
-    final rawPresets = ref.read(userProfileProvider).valueOrNull?['presetAmounts'];
-    List<double>? profilePresets;
+    // Base MUST reflect the current source-of-truth for the OTHER two slots.
+    // BUG (fixed): previously read presetAmounts from userProfileProvider
+    // (root user doc). But presetAmounts is per-tenant → lives in
+    // tenantStateProvider, not the root profile. Reading from the wrong
+    // source returned null → basePresets fell back to currency defaults →
+    // editing one slot silently reset the OTHER two to defaults.
+    // Now correctly reads from tenantState.
+    final rawPresets =
+        ref.read(tenantStateProvider).valueOrNull?['presetAmounts'];
+    List<double>? tenantPresets;
     if (rawPresets is List && rawPresets.length >= 3) {
       final converted = rawPresets.whereType<num>().map((e) => e.toDouble()).toList();
       final valid = converted.where((v) => v > 0).toList();
-      if (valid.length >= 3) profilePresets = valid.take(3).toList();
+      if (valid.length >= 3) tenantPresets = valid.take(3).toList();
     }
     final basePresets =
-        _localPresets ?? profilePresets ?? _presetsForCurrency(selectedCurrency);
+        _localPresets ?? tenantPresets ?? _presetsForCurrency(selectedCurrency);
     if (parsed == null || parsed <= 0) {
       // Invalid → restore the controller text from the previous value
       _presetCtrls[idx].text = _formatPresetVal(basePresets[idx]);
@@ -1369,42 +1373,64 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   Future<bool> _authenticateWithBiometrics() async {
     final tr = S.of(context);
     final auth = LocalAuthentication();
+    // Show a DIALOG (not snackbar) with the specific failure reason. Snackbars
+    // auto-dismiss in 4s and users miss them — critical to distinguish
+    // "hardware missing" vs "no fingerprint enrolled" vs "user canceled" so
+    // the donor knows what to do (enroll in system Settings vs contact support).
+    Future<void> showBiometricError(String message) async {
+      if (!mounted) return;
+      await showDialog<void>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          title: Text(tr.biometricAuth),
+          content: Text(message),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(),
+              child: Text(tr.commonUnderstood),
+            ),
+          ],
+        ),
+      );
+    }
+
     try {
-      final canAuth = await auth.canCheckBiometrics || await auth.isDeviceSupported();
-      if (!canAuth) {
-        if (!mounted) return false;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(tr.noBiometric)),
-        );
+      final canCheck = await auth.canCheckBiometrics;
+      final isSupported = await auth.isDeviceSupported();
+      if (!canCheck && !isSupported) {
+        await showBiometricError(tr.noBiometric);
         return false;
       }
 
       final biometrics = await auth.getAvailableBiometrics();
       if (biometrics.isEmpty) {
-        if (!mounted) return false;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(tr.configureDeviceSecurity),
-              duration: const Duration(seconds: 4)),
-        );
+        // Hardware exists but no fingerprint/face enrolled. Common on S25 when
+        // user never set up screen lock beyond a PIN, OR when only PIN is
+        // enrolled without fingerprint. Direct them to system Settings.
+        await showBiometricError(tr.configureDeviceSecurity);
         return false;
       }
 
-      return await auth.authenticate(
+      final ok = await auth.authenticate(
         localizedReason: tr.biometricReasonEnable,
       );
-    } catch (e) {
-      final msg = e.toString();
-      if (!mounted) return false;
-      if (msg.contains('NoCredentialSet') || msg.contains('notEnrolled') || msg.contains('notAvailable')) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(tr.configureDeviceSecurity),
-              duration: const Duration(seconds: 4)),
-        );
-      } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(tr.authCouldNotComplete)),
-        );
+      if (!ok) {
+        // User canceled the prompt or auth failed. Silent — no dialog needed;
+        // user knows they hit cancel. Toggle stays off.
+        return false;
       }
+      return true;
+    } catch (e, st) {
+      debugPrint('_authenticateWithBiometrics error: $e\n$st');
+      final msg = e.toString();
+      final friendly = (msg.contains('NoCredentialSet') ||
+              msg.contains('notEnrolled') ||
+              msg.contains('notAvailable') ||
+              msg.contains('LockedOut'))
+          ? tr.configureDeviceSecurity
+          : '${tr.authCouldNotComplete}\n\n(${msg.length > 200 ? msg.substring(0, 200) : msg})';
+      await showBiometricError(friendly);
       return false;
     }
   }
