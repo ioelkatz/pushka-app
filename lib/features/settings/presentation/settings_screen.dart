@@ -1792,15 +1792,34 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     onPressed: loading ? null : () async {
                       setSS(() => loading = true);
                       try {
-                        final googleUser = await GoogleSignIn().signIn();
-                        if (googleUser == null) { setSS(() => loading = false); return; }
-                        final googleAuth = await googleUser.authentication;
+                        // google_sign_in v7 (Credential Manager): singleton
+                        // + authenticate() returns non-null or throws.
+                        // GoogleSignIn.instance.initialize() ran at app boot
+                        // (app_initializer._performDeferredInit).
+                        final googleUser = await GoogleSignIn.instance.authenticate(
+                          scopeHint: const ['email', 'profile'],
+                        );
+                        final googleAuth = googleUser.authentication;
+                        final idToken = googleAuth.idToken;
+                        if (idToken == null) {
+                          if (ctx.mounted) setSS(() { loading = false; errorText = tr.reAuthFailed; });
+                          return;
+                        }
                         final credential = GoogleAuthProvider.credential(
-                          accessToken: googleAuth.accessToken,
-                          idToken: googleAuth.idToken,
+                          // v7 exposes only idToken (accessToken split off
+                          // to authorizationClient). Firebase Auth accepts
+                          // idToken-only credentials.
+                          idToken: idToken,
                         );
                         await user.reauthenticateWithCredential(credential);
                         if (ctx.mounted) Navigator.pop(ctx, true);
+                      } on GoogleSignInException catch (e) {
+                        // Silent on user cancel — match Apple re-auth pattern.
+                        if (e.code == GoogleSignInExceptionCode.canceled) {
+                          if (ctx.mounted) setSS(() => loading = false);
+                          return;
+                        }
+                        if (ctx.mounted) setSS(() { loading = false; errorText = tr.reAuthFailed; });
                       } catch (_) {
                         if (ctx.mounted) setSS(() { loading = false; errorText = tr.reAuthFailed; });
                       }
