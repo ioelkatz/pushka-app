@@ -89,6 +89,7 @@ dependencies:
   # every screen mount re-downloads the same logo from Firebase Storage,
   # spending bandwidth and adding visible flicker on slow networks.
   cached_network_image: ^3.4.1
+  flutter_timezone: ^5.1.0
 
 
 dev_dependencies:

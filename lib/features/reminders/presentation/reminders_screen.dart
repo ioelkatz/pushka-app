@@ -351,6 +351,10 @@ class _RemindersScreenState extends ConsumerState<RemindersScreen> {
       secondTime: draft.secondTime,
       secondDays: draft.secondDays,
       secondIsHoliday: draft.secondIsHoliday,
+      // Stage 3: persist to Firestore alongside the existing Hive write
+      // (kept as backup for 2 releases per adversarial R-5). The server-side
+      // scheduler (processDueReminders CF) reads oneShotDate from Firestore.
+      oneShotDate: draft.oneShotDate,
     );
 
     if (existingId == null) {

@@ -10,6 +10,7 @@ import 'package:flutter_stripe/flutter_stripe.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter_timezone/flutter_timezone.dart';
 
 import '../features/notifications/notification_service.dart';
 import '../features/reminders/data/reminder_repository.dart';
@@ -80,7 +81,13 @@ Future<void> _performDeferredInit() async {
   // futures settle even if one rejects.
   await Future.wait<void>([
     if (!kIsWeb) _initGoogleSignIn(),
-    if (!kIsWeb) _initNotificationsChain(),
+    // Notifications chain: cross-platform since Stage 2. On web it opens
+    // the Hive box, registers FCM listeners (onMessage / opened / initial),
+    // and silent-refreshes the FCM token if the user previously opted in.
+    _initNotificationsChain(),
+    // Cross-platform: syncs the user's IANA timezone to Firestore so the
+    // server-side reminder scheduler fires at the right local moment.
+    _syncUserTimezone(),
     if (!kIsWeb) _initStripe(),
     _initFeedback(),
   ], eagerError: false);
@@ -176,6 +183,52 @@ Future<void> _initGoogleSignIn() async {
         fatal: false,
       );
     } catch (_) {}
+  }
+}
+
+/// Persists the user's IANA timezone to users/{uid}.timezone so the
+/// server-side reminders scheduler (processDueReminders) can compute
+/// nextTriggerAt in the user's local wall-clock time.
+///
+/// Runs on every cold start after sign-in. Cheap: only writes when the
+/// value changed vs the local cache (SharedPreferences via Hive). Follows
+/// the "hybrid" strategy from the adversarial review (R-2) — auto-detect
+/// on first boot; user-visible mismatches after travel are handled by a
+/// separate manual toggle in Settings (future).
+Future<void> _syncUserTimezone() async {
+  try {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return;
+    String tz;
+    try {
+      // flutter_timezone 5.x returns TimezoneInfo { identifier, offset }.
+      // We want the IANA identifier (e.g. 'America/Mexico_City') to feed
+      // the server-side scheduler.
+      final info = await FlutterTimezone.getLocalTimezone();
+      tz = info.identifier;
+    } catch (e) {
+      debugPrint('_syncUserTimezone: FlutterTimezone failed: $e');
+      return;
+    }
+    if (tz.isEmpty || tz.length > 60) return;
+
+    // Cheap dedupe: read the current value BEFORE writing so an idle
+    // cold-start doesn't rack up Firestore write ops. Falls through to a
+    // write on any read error (safer to write than to skip if unsure).
+    try {
+      final snap = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(user.uid)
+          .get();
+      if (snap.exists && snap.get('timezone') == tz) return;
+    } catch (_) { /* fall through to write */ }
+
+    await FirebaseFirestore.instance
+        .collection('users')
+        .doc(user.uid)
+        .set({'timezone': tz}, SetOptions(merge: true));
+  } catch (e) {
+    debugPrint('_syncUserTimezone failed: $e');
   }
 }
 
