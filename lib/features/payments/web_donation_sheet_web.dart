@@ -33,6 +33,9 @@ Future<String?> showWebDonationSheet({
   required String currency,
   required String merchantDisplayName,
   required String returnUrl,
+  /// If non-null, renders a "monthly" / "yearly" badge next to the amount
+  /// so the donor sees clearly this is a recurring commitment (Stage 6).
+  String? recurringInterval,
 }) async {
   return showModalBottomSheet<String?>(
     context: context,
@@ -47,6 +50,35 @@ Future<String?> showWebDonationSheet({
       currency: currency,
       merchantDisplayName: merchantDisplayName,
       returnUrl: returnUrl,
+      recurringInterval: recurringInterval,
+    ),
+  );
+}
+
+/// Setup-mode variant of the sheet: collects card details WITHOUT charging.
+/// Backed by a Stripe SetupIntent instead of a PaymentIntent. Used by the
+/// "+Agregar tarjeta" button in /wallet/saved-cards on web (native uses
+/// the flutter_stripe PaymentSheet in setupIntent mode).
+///
+/// Returns 'saved' on success, null on user cancellation.
+Future<String?> showWebCardSetupSheet({
+  required BuildContext context,
+  required String clientSecret,
+  required String? customerSessionClientSecret,
+  required String merchantDisplayName,
+  required String returnUrl,
+}) async {
+  return showModalBottomSheet<String?>(
+    context: context,
+    isScrollControlled: true,
+    isDismissible: true,
+    enableDrag: true,
+    backgroundColor: Colors.transparent,
+    builder: (ctx) => _WebCardSetupSheet(
+      clientSecret: clientSecret,
+      customerSessionClientSecret: customerSessionClientSecret,
+      merchantDisplayName: merchantDisplayName,
+      returnUrl: returnUrl,
     ),
   );
 }
@@ -59,6 +91,7 @@ class _WebDonationSheet extends StatefulWidget {
     required this.currency,
     required this.merchantDisplayName,
     required this.returnUrl,
+    this.recurringInterval,
   });
 
   final String clientSecret;
@@ -67,6 +100,7 @@ class _WebDonationSheet extends StatefulWidget {
   final String currency;
   final String merchantDisplayName;
   final String returnUrl;
+  final String? recurringInterval; // 'month' | 'year' | null (one-off)
 
   @override
   State<_WebDonationSheet> createState() => _WebDonationSheetState();
@@ -173,6 +207,18 @@ class _WebDonationSheetState extends State<_WebDonationSheet> {
                   color: theme.colorScheme.primary,
                 ),
               ),
+              if (widget.recurringInterval != null) ...[
+                const SizedBox(height: 4),
+                Text(
+                  tr.donateMonthly, // Only monthly is UI-exposed today (Stage 6)
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: theme.colorScheme.secondary,
+                    letterSpacing: 0.4,
+                  ),
+                ),
+              ],
 
               const SizedBox(height: 20),
 
@@ -256,3 +302,173 @@ class _WebDonationSheetState extends State<_WebDonationSheet> {
   }
 }
 
+class _WebCardSetupSheet extends StatefulWidget {
+  const _WebCardSetupSheet({
+    required this.clientSecret,
+    required this.customerSessionClientSecret,
+    required this.merchantDisplayName,
+    required this.returnUrl,
+  });
+
+  final String clientSecret;
+  final String? customerSessionClientSecret;
+  final String merchantDisplayName;
+  final String returnUrl;
+
+  @override
+  State<_WebCardSetupSheet> createState() => _WebCardSetupSheetState();
+}
+
+class _WebCardSetupSheetState extends State<_WebCardSetupSheet> {
+  bool _submitting = false;
+  bool _elementReady = false;
+  String? _errorText;
+
+  Future<void> _handleConfirm() async {
+    if (_submitting) return;
+    setState(() {
+      _submitting = true;
+      _errorText = null;
+    });
+    try {
+      // confirmSetupElement returns void — on resolve without throw, the
+      // SetupIntent is confirmed and the PM is attached to the customer.
+      // The Firestore transactions listener is NOT relevant here (no txn
+      // is written by setup). The caller reloads /wallet/saved-cards to
+      // see the new card via listSavedCards CF.
+      await WebStripe.instance.confirmSetupElement(
+        ConfirmSetupElementOptions(
+          confirmParams: ConfirmSetupParams(
+            return_url: widget.returnUrl,
+          ),
+          redirect: SetupConfirmationRedirect.ifRequired,
+        ),
+      );
+      if (!mounted) return;
+      Navigator.of(context).pop('saved');
+    } catch (e) {
+      if (!mounted) return;
+      final s = e.toString();
+      setState(() {
+        _submitting = false;
+        _errorText = s.length > 200 ? '${s.substring(0, 200)}…' : s;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final tr = S.of(context);
+    final theme = Theme.of(context);
+    final bottomInset = MediaQuery.of(context).viewInsets.bottom;
+
+    return DraggableScrollableSheet(
+      initialChildSize: 0.85,
+      minChildSize: 0.5,
+      maxChildSize: 0.95,
+      expand: false,
+      builder: (ctx, scrollController) => Container(
+        decoration: BoxDecoration(
+          color: theme.colorScheme.surface,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+        ),
+        padding: EdgeInsets.only(bottom: bottomInset),
+        child: SingleChildScrollView(
+          controller: scrollController,
+          padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Center(
+                child: Container(
+                  width: 40,
+                  height: 4,
+                  margin: const EdgeInsets.only(bottom: 16),
+                  decoration: BoxDecoration(
+                    color: theme.colorScheme.outlineVariant,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+              ),
+              Text(
+                tr.addCard,
+                style: theme.textTheme.titleLarge?.copyWith(
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+              const SizedBox(height: 20),
+              Container(
+                constraints: const BoxConstraints(minHeight: 320),
+                child: PaymentElement(
+                  clientSecret: widget.clientSecret,
+                  customerSessionClientSecret: widget.customerSessionClientSecret,
+                  onCardChanged: (event) {
+                    if (mounted && !_elementReady) {
+                      setState(() => _elementReady = true);
+                    }
+                  },
+                ),
+              ),
+              if (_errorText != null) ...[
+                const SizedBox(height: 12),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                  decoration: BoxDecoration(
+                    color: theme.colorScheme.errorContainer,
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Text(
+                    _errorText!,
+                    style: TextStyle(
+                      color: theme.colorScheme.onErrorContainer,
+                      fontSize: 13,
+                      height: 1.35,
+                    ),
+                  ),
+                ),
+              ],
+              const SizedBox(height: 20),
+              SizedBox(
+                height: 52,
+                child: ElevatedButton(
+                  onPressed: (_submitting || !_elementReady) ? null : _handleConfirm,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: theme.colorScheme.primary,
+                    foregroundColor: theme.colorScheme.onPrimary,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                  ),
+                  child: _submitting
+                      ? const SizedBox(
+                          width: 22,
+                          height: 22,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2.4,
+                            color: Colors.white,
+                          ),
+                        )
+                      : Text(
+                          tr.addCard,
+                          style: const TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                ),
+              ),
+              const SizedBox(height: 8),
+              TextButton(
+                onPressed: _submitting
+                    ? null
+                    : () => Navigator.of(context).pop(null),
+                child: Text(tr.cancel),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}

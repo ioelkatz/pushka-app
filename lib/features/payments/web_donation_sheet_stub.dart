@@ -13,8 +13,22 @@ Future<String?> showWebDonationSheet({
   required String currency,
   required String merchantDisplayName,
   required String returnUrl,
+  String? recurringInterval, // 'month', 'year', or null for one-off
 }) {
   throw UnsupportedError(
     'showWebDonationSheet only available on web builds',
+  );
+}
+
+/// Returns 'saved' on success, null on cancel. Throws on Stripe error.
+Future<String?> showWebCardSetupSheet({
+  required BuildContext context,
+  required String clientSecret,
+  required String? customerSessionClientSecret,
+  required String merchantDisplayName,
+  required String returnUrl,
+}) {
+  throw UnsupportedError(
+    'showWebCardSetupSheet only available on web builds',
   );
 }

@@ -11,7 +11,6 @@ import '../../../core/pushka_style_provider.dart';
 import '../../../core/l10n/s.dart';
 import '../../../core/network_status_provider.dart';
 
-import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
@@ -413,11 +412,10 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                         ),
                       ),
                       const SizedBox(height: 16),
-                      // Hide the "Monthly" (recurring) chip on web —
-                      // `StripeService.subscribe()` throws on web because
-                      // flutter_stripe's SetupIntent + Payment Sheet flow
-                      // isn't supported there. Showing the chip would let
-                      // donors pick a path that always errors out.
+                      // Monthly (recurring) chip: enabled on web too in
+                      // Stage 6 — StripeService.subscribe() now routes to
+                      // the Elements inline sheet on web via
+                      // showWebDonationSheet(recurringInterval: 'month').
                       Row(children: [
                         Expanded(
                           child: _FrequencyChip(
@@ -426,18 +424,16 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                             onTap: () => setDialogState(() => monthly = false),
                           ),
                         ),
-                        if (!kIsWeb) ...[
-                          const SizedBox(width: 10),
-                          Expanded(
-                            child: _FrequencyChip(
-                              label: tr.donateMonthly,
-                              selected: monthly,
-                              icon: Icons.favorite,
-                              iconColor: const Color(0xFFCC2936),
-                              onTap: () => setDialogState(() => monthly = true),
-                            ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: _FrequencyChip(
+                            label: tr.donateMonthly,
+                            selected: monthly,
+                            icon: Icons.favorite,
+                            iconColor: const Color(0xFFCC2936),
+                            onTap: () => setDialogState(() => monthly = true),
                           ),
-                        ],
+                        ),
                       ]),
                       const SizedBox(height: 14),
                       TextField(
@@ -612,6 +608,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
           donorMessage: donationMessage.isEmpty ? null : donationMessage,
           donationReason: (donationReason == null || donationReason.isEmpty) ? null : donationReason,
           merchantDisplayName: ref.read(tenantConfigProvider).valueOrNull?.appName ?? 'Pushka',
+          sheetContext: context,
         );
       } else {
         await StripeService.instance.pay(

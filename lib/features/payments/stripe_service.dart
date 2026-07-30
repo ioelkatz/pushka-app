@@ -351,15 +351,11 @@ class StripeService {
     /// it in the webhook handler.
     String? donationReason,
     String merchantDisplayName = 'Pushka',
+    /// Web-only: BuildContext for opening the Elements sheet. If null on
+    /// web we throw web_recurring_not_available so the UI shows a friendly
+    /// message instead of crashing.
+    BuildContext? sheetContext,
   }) async {
-    // TODO(web): Monthly recurring donations require a native Payment
-    // Sheet today. The caller (pushka_screen _FrequencyChip Monthly) MUST
-    // hide the Monthly option on kIsWeb to avoid reaching this throw —
-    // otherwise the donor picks Monthly and sees a scary error. Long-term:
-    // implement recurring via Stripe Checkout Session (mode='subscription').
-    if (kIsWeb) {
-      throw const StripeServiceException('web_recurring_not_available');
-    }
     final cid = _newCorrelationId();
     debugPrint('StripeService.subscribe[cid:$cid]: calling CF amount=$amountCents currency=$currency interval=$interval');
     final callable = FirebaseFunctions.instance
@@ -400,6 +396,40 @@ class StripeService {
     final subscriptionId = result.data['subscriptionId'] as String?;
     if (clientSecret == null || clientSecret.isEmpty) {
       throw const StripeServiceException('no-client-secret');
+    }
+
+    // Web branch: mount Elements sheet with the first invoice's PI
+    // client_secret. Same backend CF as native — only the confirm path
+    // differs (WebStripe.confirmPaymentElement vs flutter_stripe
+    // PaymentSheet). The subscription is already created server-side by
+    // createDonationSubscription in status='incomplete'; a successful
+    // confirm here transitions it to 'active' and stamps invoice.paid.
+    if (kIsWeb) {
+      if (sheetContext == null) {
+        throw const StripeServiceException('web_recurring_not_available');
+      }
+      final origin = Uri.base.origin;
+      final returnUrl = '$origin/wallet/donation-subs';
+      if (!sheetContext.mounted) {
+        throw const StripeServiceException('canceled');
+      }
+      final piId = await showWebDonationSheet(
+        context: sheetContext,
+        clientSecret: clientSecret,
+        customerSessionClientSecret: customerSessionClientSecret,
+        amountCents: amountCents,
+        currency: currency,
+        merchantDisplayName: merchantDisplayName,
+        returnUrl: returnUrl,
+        recurringInterval: interval,
+      );
+      if (piId == null || piId.isEmpty) {
+        // User cancelled. Note: the subscription doc on Stripe is left in
+        // 'incomplete' state — Stripe auto-cancels after 24h. No cleanup
+        // needed client-side. Mirror native's Canceled exception.
+        throw const StripeServiceException('canceled');
+      }
+      return subscriptionId ?? '';
     }
 
     // flutter_stripe v12 requires that if customerId is set, at least one auth
@@ -468,15 +498,13 @@ class StripeService {
 
   /// Opens the Stripe SetupIntent sheet so the user can save a card for
   /// future off-session charges. Returns the SetupIntent ID on success.
-  Future<String> setupCard({String merchantDisplayName = 'Pushka'}) async {
-    if (kIsWeb) {
-      // Web: flutter_stripe's Payment Sheet is native-only. A proper fix
-      // is a Stripe Checkout Session in setup mode (mode='setup') via a
-      // new CF `createCheckoutSetupSession` — TODO. For now we surface a
-      // friendlier code so the caller (SavedCardsScreen) can show the
-      // exact workaround instead of a generic error.
-      throw const StripeServiceException('web_add_card_not_available');
-    }
+  Future<String> setupCard({
+    String merchantDisplayName = 'Pushka',
+    /// Web-only: context for opening the Stripe Elements setup sheet.
+    /// Native builds ignore this. On web without a context we throw
+    /// web_add_card_not_available so the UI shows a hint instead.
+    BuildContext? sheetContext,
+  }) async {
     final cid = _newCorrelationId();
     final callable = FirebaseFunctions.instance.httpsCallable('createSetupIntent');
     HttpsCallableResult result;
@@ -489,6 +517,38 @@ class StripeService {
     } catch (e, st) {
       _recordPaymentError('setupCard/createSetupIntent_unknown', e, st, cid: cid);
       throw const StripeServiceException('network-error');
+    }
+
+    // Web branch: mount Stripe Elements in a bottom sheet. Reuses the
+    // same createSetupIntent CF as native — the only difference is the
+    // client-side confirm path (WebStripe.instance.confirmSetupElement
+    // vs flutter_stripe PaymentSheet).
+    if (kIsWeb) {
+      if (sheetContext == null) {
+        throw const StripeServiceException('web_add_card_not_available');
+      }
+      final clientSecret = result.data['clientSecret'] as String?;
+      if (clientSecret == null || clientSecret.isEmpty) {
+        throw const StripeServiceException('no-client-secret');
+      }
+      final customerSessionClientSecret =
+          result.data['customerSessionClientSecret'] as String?;
+      final origin = Uri.base.origin;
+      final returnUrl = '$origin/wallet/saved-cards';
+      if (!sheetContext.mounted) {
+        throw const StripeServiceException('canceled');
+      }
+      final outcome = await showWebCardSetupSheet(
+        context: sheetContext,
+        clientSecret: clientSecret,
+        customerSessionClientSecret: customerSessionClientSecret,
+        merchantDisplayName: merchantDisplayName,
+        returnUrl: returnUrl,
+      );
+      if (outcome == null) {
+        throw const StripeServiceException('canceled');
+      }
+      return _extractIdFromSecret(clientSecret, 'seti_');
     }
 
     final clientSecret = result.data['clientSecret'] as String?;
