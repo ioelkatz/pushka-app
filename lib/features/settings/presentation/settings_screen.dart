@@ -382,34 +382,40 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           // confused by two separate toggles that felt like the same thing.
           // vibrationEnabled is mirrored server-side inside
           // FeedbackService.updatePreferences so nothing else changes.)
-          _buildToggleRow(
-            tr.sound,
-            soundEnabled,
-            onChanged: (value) {
-              setState(() {
-                soundEnabled = value;
-                vibrationEnabled = value;
-              });
-              _updateSettingsSilent(
-                user,
-                soundEnabled: value,
-                vibrationEnabled: value,
-              );
-            },
-          ),
-          const SizedBox(height: 18),
+          //
+          // Hidden in PWA — FeedbackService.init() is a no-op on web
+          // (audioplayers requires user gesture; haptic APIs missing on
+          // iOS Safari). Showing the toggle without effect is confusing UX.
+          if (!kIsWeb) ...[
+            _buildToggleRow(
+              tr.sound,
+              soundEnabled,
+              onChanged: (value) {
+                setState(() {
+                  soundEnabled = value;
+                  vibrationEnabled = value;
+                });
+                _updateSettingsSilent(
+                  user,
+                  soundEnabled: value,
+                  vibrationEnabled: value,
+                );
+              },
+            ),
+            const SizedBox(height: 18),
 
-          // AMBIENT MUSIC
-          _buildToggleRow(
-            tr.ambientMusic,
-            ambientEnabled,
-            onChanged: (value) {
-              setState(() => ambientEnabled = value);
-              FeedbackService.instance.updatePreferences(ambient: value);
-              _updateSettingsSilent(user, ambientEnabled: value);
-            },
-          ),
-          const SizedBox(height: 18),
+            // AMBIENT MUSIC — same web guard.
+            _buildToggleRow(
+              tr.ambientMusic,
+              ambientEnabled,
+              onChanged: (value) {
+                setState(() => ambientEnabled = value);
+                FeedbackService.instance.updatePreferences(ambient: value);
+                _updateSettingsSilent(user, ambientEnabled: value);
+              },
+            ),
+            const SizedBox(height: 18),
+          ],
 
           // PARTIAL PAYMENTS
           _buildToggleRow(
@@ -422,45 +428,51 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           ),
           const SizedBox(height: 18),
 
-          _buildToggleRow(
-            tr.biometricAuth,
-            biometricAuthenticationEnabled,
-            onChanged: (value) async {
-              final messenger = ScaffoldMessenger.of(context);
-              if (value) {
-                final success = await _authenticateWithBiometrics();
-                if (!success || !mounted) return;
-              }
-              setState(() => biometricAuthenticationEnabled = value);
-              _updateSettingsSilent(user, biometricAuthenticationEnabled: value);
-              if (value) {
-                if (!mounted) return;
-                messenger.showSnackBar(
-                  SnackBar(content: Text(tr.biometricActivated)),
-                );
-              }
-            },
-          ),
-          if (biometricAuthenticationEnabled)
-            Padding(
-              padding: const EdgeInsetsDirectional.only(top: 8, start: 4),
-              child: FutureBuilder<List<BiometricType>>(
-                future: LocalAuthentication().getAvailableBiometrics(),
-                builder: (context, snapshot) {
-                  final biometrics = snapshot.data ?? [];
-                  if (biometrics.isEmpty) return const SizedBox.shrink();
-                  return Wrap(spacing: 8, runSpacing: 6, children: [
-                    if (biometrics.contains(BiometricType.fingerprint))
-                      _biometricChip(Icons.fingerprint, tr.fingerprint),
-                    if (biometrics.contains(BiometricType.face))
-                      _biometricChip(Icons.face, tr.faceRecognition),
-                    if (biometrics.contains(BiometricType.strong) || biometrics.contains(BiometricType.weak))
-                      _biometricChip(Icons.lock_outline, tr.pinPattern),
-                  ]);
-                },
-              ),
+          // Biometric: hidden entirely in PWA. local_auth has no web
+          // implementation (WebAuthn/Passkey would be the equivalent — big
+          // Stage TODO). Prevents the "your device does not support biometrics"
+          // dialog from misleading users about their hardware.
+          if (!kIsWeb) ...[
+            _buildToggleRow(
+              tr.biometricAuth,
+              biometricAuthenticationEnabled,
+              onChanged: (value) async {
+                final messenger = ScaffoldMessenger.of(context);
+                if (value) {
+                  final success = await _authenticateWithBiometrics();
+                  if (!success || !mounted) return;
+                }
+                setState(() => biometricAuthenticationEnabled = value);
+                _updateSettingsSilent(user, biometricAuthenticationEnabled: value);
+                if (value) {
+                  if (!mounted) return;
+                  messenger.showSnackBar(
+                    SnackBar(content: Text(tr.biometricActivated)),
+                  );
+                }
+              },
             ),
-          const SizedBox(height: 18),
+            if (biometricAuthenticationEnabled)
+              Padding(
+                padding: const EdgeInsetsDirectional.only(top: 8, start: 4),
+                child: FutureBuilder<List<BiometricType>>(
+                  future: LocalAuthentication().getAvailableBiometrics(),
+                  builder: (context, snapshot) {
+                    final biometrics = snapshot.data ?? [];
+                    if (biometrics.isEmpty) return const SizedBox.shrink();
+                    return Wrap(spacing: 8, runSpacing: 6, children: [
+                      if (biometrics.contains(BiometricType.fingerprint))
+                        _biometricChip(Icons.fingerprint, tr.fingerprint),
+                      if (biometrics.contains(BiometricType.face))
+                        _biometricChip(Icons.face, tr.faceRecognition),
+                      if (biometrics.contains(BiometricType.strong) || biometrics.contains(BiometricType.weak))
+                        _biometricChip(Icons.lock_outline, tr.pinPattern),
+                    ]);
+                  },
+                ),
+              ),
+            const SizedBox(height: 18),
+          ],
           Container(
             height: 5,
             width: double.infinity,

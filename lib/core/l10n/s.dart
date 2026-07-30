@@ -1243,6 +1243,13 @@ class S {
     'תרומות חודשיות פועלות כרגע רק מהאפליקציה המותקנת ב-Android. התקן אותה, או בצע תרומה חד-פעמית מהדפדפן.',
   );
 
+  String get appleSignInNotAvailableOnWeb => _t(
+    'Iniciar sesión con Apple no está disponible en el navegador. Usá Google o email.',
+    'Sign in with Apple is not available in the browser. Use Google or email.',
+    "La connexion avec Apple n'est pas disponible dans le navigateur. Utilise Google ou email.",
+    'התחברות עם Apple לא זמינה בדפדפן. השתמש ב-Google או באימייל.',
+  );
+
   // ---------------------------------------------------------------------------
   // DONATION SUBSCRIPTIONS
   // ---------------------------------------------------------------------------

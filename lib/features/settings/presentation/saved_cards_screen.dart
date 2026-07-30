@@ -1104,32 +1104,65 @@ class _SavedCardsScreenState extends ConsumerState<SavedCardsScreen> {
                         }),
             ),
 
-            // Add card button — always visible
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
-              child: SizedBox(
-                height: 50,
-                child: ElevatedButton.icon(
-                  onPressed: (_processing || _loading) ? null : _addCard,
-                  icon: _processing
-                      ? const SizedBox(
-                          width: 18,
-                          height: 18,
-                          child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-                        )
-                      : const Icon(Icons.add_card_outlined),
-                  label: Text(
-                    tr.addCard,
-                    style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15),
+            // Add card: TEMPORARILY hidden in PWA — the flutter_stripe
+            // SetupIntent flow only runs natively. Instead we show a static
+            // hint explaining that cards get attached automatically on the
+            // first donation. Re-enable in Stage 5 (Stripe Elements setup).
+            if (kIsWeb)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
+                child: Container(
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                    border: Border.all(color: Theme.of(context).colorScheme.outlineVariant),
+                    borderRadius: BorderRadius.circular(12),
                   ),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: actionColor,
-                    foregroundColor: Colors.white,
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Icon(Icons.info_outline, size: 20, color: Theme.of(context).colorScheme.onSurfaceVariant),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          tr.webAddCardNotAvailable,
+                          style: TextStyle(
+                            fontSize: 13,
+                            height: 1.35,
+                            color: Theme.of(context).colorScheme.onSurfaceVariant,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              )
+            else
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
+                child: SizedBox(
+                  height: 50,
+                  child: ElevatedButton.icon(
+                    onPressed: (_processing || _loading) ? null : _addCard,
+                    icon: _processing
+                        ? const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                          )
+                        : const Icon(Icons.add_card_outlined),
+                    label: Text(
+                      tr.addCard,
+                      style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15),
+                    ),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: actionColor,
+                      foregroundColor: Colors.white,
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    ),
                   ),
                 ),
               ),
-            ),
           ],
         ),
       ),

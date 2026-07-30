@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -95,7 +96,12 @@ class AppDrawer extends ConsumerWidget {
               children: [
                 _item(context, DrawerItem.pushka, tr.myPushka, '/', Icons.home, blue),
                 _item(context, DrawerItem.wallet, tr.wallet, '/wallet', Icons.account_balance_wallet, blue),
-                _item(context, DrawerItem.reminders, tr.reminders, '/reminders', Icons.notifications, blue),
+                // Reminders: TEMPORARILY hidden in PWA until Stage 3 (server-side
+                // scheduling via Cloud Scheduler + FCM push) is deployed. Local
+                // notifications don't fire on web/iOS PWA — hiding avoids the
+                // "created but never notifies" trap. Re-enable in Stage 3.
+                if (!kIsWeb)
+                  _item(context, DrawerItem.reminders, tr.reminders, '/reminders', Icons.notifications, blue),
                 _item(context, DrawerItem.history, tr.history, '/history', Icons.history, blue),
                 _item(context, DrawerItem.settings, tr.settings, '/settings', Icons.settings, blue),
                 _item(context, DrawerItem.prayers, tr.prayersAndSegulot, '/prayers', Icons.menu_book, blue),

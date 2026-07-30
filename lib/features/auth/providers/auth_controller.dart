@@ -350,7 +350,10 @@ class AuthController {
 
   Future<void> signInWithApple() async {
     if (kIsWeb) {
-      throw Exception('Apple Sign-In is not available on web');
+      // Defensive: UI already hides the Apple button on web (login_screen
+      // and settings_screen delete-account both guard with !kIsWeb). If this
+      // ever fires, the caller should catch and show S.appleSignInNotAvailableOnWeb.
+      throw Exception('apple_signin_not_available_on_web');
     }
     // Apple Sign-In is only available on iOS and macOS
     final appleCredential = await SignInWithApple.getAppleIDCredential(

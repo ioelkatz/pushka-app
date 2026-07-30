@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_analytics/firebase_analytics.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
@@ -207,7 +208,11 @@ final router = GoRouter(
             ),
           ],
         ),
-        GoRoute(path: '/reminders', pageBuilder: (context, state) => _slidePage(state, const RemindersScreen())),
+        GoRoute(
+          path: '/reminders',
+          redirect: (context, state) => kIsWeb ? '/' : null,
+          pageBuilder: (context, state) => _slidePage(state, const RemindersScreen()),
+        ),
         GoRoute(path: '/history', pageBuilder: (context, state) => _slidePage(state, const HistoryScreen())),
         GoRoute(
           path: '/settings',

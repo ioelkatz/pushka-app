@@ -471,9 +471,13 @@ class _DonationSubscriptionsScreenState
       // Surface specific known codes with actionable copy instead of the
       // generic "Error" that leaves the user staring at a red snackbar
       // with no hint what to do next.
+      // Note: 'web_payment_sheet_not_supported' would show the recurring copy
+      // by mistake (this screen only ever fires the recurring flow, but the
+      // shared StripeService can throw it from any pay() path). Prefer the
+      // more accurate 'errorPaymentServer' if that specific code sneaks in.
       final message = switch (e.code) {
         'web_recurring_not_available' => tr.recurringNotSupportedOnWeb,
-        'web_payment_sheet_not_supported' => tr.recurringNotSupportedOnWeb,
+        'web_payment_sheet_not_supported' => tr.errorPaymentServer,
         'network-error' => tr.errorPaymentServer,
         _ => tr.error,
       };

@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_web_plugins/url_strategy.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_crashlytics/firebase_crashlytics.dart';
@@ -14,6 +15,11 @@ import 'core/deep_link_handler.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // Use clean URLs on web (pushkapp.cc/join/slug instead of pushkapp.cc/#/join/slug).
+  // Required for App Links / Universal Links to match the go_router path. On
+  // non-web platforms this call is a no-op (safe to call unconditionally).
+  usePathUrlStrategy();
 
   // Hide the Android system navigation bar entirely (back/home/recents
   // strip at the bottom). User can still reveal it temporarily by
