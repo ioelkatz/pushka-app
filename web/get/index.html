@@ -185,6 +185,113 @@
     }
     .webview-copy-btn:active { transform: scale(0.97); }
     .webview-copy-btn.copied { background: #16A34A; color: #fff; }
+
+    /* ---------- Install modals ---------- */
+    .install-modal-backdrop {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.55);
+      z-index: 100;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+      -webkit-backdrop-filter: blur(4px);
+      backdrop-filter: blur(4px);
+    }
+    .install-modal-backdrop.active { display: flex; }
+    .install-modal {
+      background: #fff;
+      color: #1E293B;
+      border-radius: 20px;
+      padding: 24px 22px;
+      max-width: 340px;
+      width: 100%;
+      text-align: center;
+      box-shadow: 0 20px 40px rgba(0,0,0,0.3);
+      animation: modalIn 0.25s ease-out;
+    }
+    @keyframes modalIn {
+      from { opacity: 0; transform: translateY(20px) scale(0.95); }
+      to { opacity: 1; transform: translateY(0) scale(1); }
+    }
+    .install-modal h3 { font-size: 20px; font-weight: 800; margin-bottom: 8px; }
+    .install-modal p { font-size: 14px; line-height: 1.5; opacity: 0.85; margin-bottom: 16px; }
+    .install-step {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 12px;
+      padding: 12px;
+      background: #F1F5F9;
+      border-radius: 12px;
+      text-align: left;
+    }
+    .install-step-num {
+      flex-shrink: 0;
+      width: 28px;
+      height: 28px;
+      background: #2563EB;
+      color: #fff;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 800;
+      font-size: 13px;
+    }
+    .install-step-icon {
+      flex-shrink: 0;
+      font-size: 22px;
+    }
+    .install-step-text {
+      flex: 1;
+      font-size: 13px;
+      line-height: 1.35;
+    }
+    .install-modal-btn {
+      background: #2563EB;
+      color: #fff;
+      border: none;
+      padding: 12px 20px;
+      border-radius: 12px;
+      font-weight: 700;
+      font-size: 15px;
+      cursor: pointer;
+      width: 100%;
+      margin-top: 6px;
+    }
+    .install-modal-btn:active { transform: scale(0.98); }
+    .install-modal-btn.secondary {
+      background: transparent;
+      color: #64748B;
+      font-weight: 500;
+      margin-top: 4px;
+    }
+    /* iOS Share icon SVG */
+    .share-icon {
+      width: 24px;
+      height: 24px;
+      display: inline-block;
+      vertical-align: middle;
+    }
+    .success-check {
+      width: 64px;
+      height: 64px;
+      background: #16A34A;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin: 0 auto 14px;
+      font-size: 36px;
+      color: #fff;
+      animation: checkPop 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+    }
+    @keyframes checkPop {
+      from { transform: scale(0); }
+      to { transform: scale(1); }
+    }
   </style>
 </head>
 <body>
@@ -254,6 +361,108 @@
     <p class="footer">Jabad en Campus · Ciudad de México</p>
   </div>
 
+  <!-- ==================== INSTALL MODALS ==================== -->
+
+  <!-- iOS visual install guide — shown after tapping "Instalar en iPhone".
+       iOS Safari does NOT expose a programmatic install API, so all we can
+       do is walk the user through the Share → Add to Home Screen flow with
+       clear visual anchors. -->
+  <div class="install-modal-backdrop" id="ios-install-modal" role="dialog" aria-modal="true">
+    <div class="install-modal">
+      <h3>Instalá Jabad en Campus</h3>
+      <p>Solo 3 pasos. Después la app queda como un ícono en tu pantalla.</p>
+
+      <div class="install-step">
+        <div class="install-step-num">1</div>
+        <div class="install-step-icon">
+          <svg class="share-icon" viewBox="0 0 24 24" fill="none" stroke="#2563EB" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M4 12v8a2 2 0 002 2h12a2 2 0 002-2v-8"/>
+            <polyline points="16 6 12 2 8 6"/>
+            <line x1="12" y1="2" x2="12" y2="15"/>
+          </svg>
+        </div>
+        <div class="install-step-text">
+          Tocá el ícono <b>Compartir</b> (cuadradito con flecha ↑) abajo en Safari.
+        </div>
+      </div>
+
+      <div class="install-step">
+        <div class="install-step-num">2</div>
+        <div class="install-step-icon">➕</div>
+        <div class="install-step-text">
+          Deslizá y tocá <b>"Agregar a pantalla de inicio"</b>.
+        </div>
+      </div>
+
+      <div class="install-step">
+        <div class="install-step-num">3</div>
+        <div class="install-step-icon">✅</div>
+        <div class="install-step-text">
+          Tocá <b>"Agregar"</b>. Listo — el ícono queda en tu pantalla.
+        </div>
+      </div>
+
+      <button class="install-modal-btn" type="button" data-close-modal="ios-install-modal">
+        Entendido
+      </button>
+    </div>
+  </div>
+
+  <!-- Android fallback modal — shown when beforeinstallprompt event NOT
+       available (older Chrome, in-app browser, or user already dismissed
+       the browser's install banner). Directs them to the 3-dot menu. -->
+  <div class="install-modal-backdrop" id="android-fallback-modal" role="dialog" aria-modal="true">
+    <div class="install-modal">
+      <h3>Instalá Jabad en Campus</h3>
+      <p>Tu Chrome no ofreció el prompt automático. Es 1 tap desde el menú:</p>
+
+      <div class="install-step">
+        <div class="install-step-num">1</div>
+        <div class="install-step-icon">⋮</div>
+        <div class="install-step-text">
+          Tocá el menú (⋮) arriba a la derecha en Chrome.
+        </div>
+      </div>
+
+      <div class="install-step">
+        <div class="install-step-num">2</div>
+        <div class="install-step-icon">📱</div>
+        <div class="install-step-text">
+          Tocá <b>"Instalar app"</b> o <b>"Agregar a pantalla de inicio"</b>.
+        </div>
+      </div>
+
+      <div class="install-step">
+        <div class="install-step-num">3</div>
+        <div class="install-step-icon">✅</div>
+        <div class="install-step-text">
+          Confirmá — el ícono queda en tu pantalla.
+        </div>
+      </div>
+
+      <button class="install-modal-btn" type="button" data-close-modal="android-fallback-modal">
+        Entendido
+      </button>
+    </div>
+  </div>
+
+  <!-- Success modal — fires when appinstalled event is detected (or when
+       already-installed check returns true on subsequent visits). CTA
+       primary is "Abrir app" which navigates to /. -->
+  <div class="install-modal-backdrop" id="install-success-modal" role="dialog" aria-modal="true">
+    <div class="install-modal">
+      <div class="success-check">✓</div>
+      <h3>¡Listo! App instalada</h3>
+      <p>Ya tenés el ícono <b>Jabad en Campus</b> en tu pantalla de inicio.<br>Podés abrirla desde ahí cuando quieras.</p>
+      <button class="install-modal-btn" type="button" id="open-installed-app">
+        Abrir app ahora
+      </button>
+      <button class="install-modal-btn secondary" type="button" data-close-modal="install-success-modal">
+        Cerrar
+      </button>
+    </div>
+  </div>
+
   <script>
     // Detectar plataforma y sugerir el botón correcto
     (function() {
@@ -270,12 +479,13 @@
       // Nota: iOS href está hardcoded a "/" en HTML (btn-ios) para que funcione
       // aunque este script nunca corra. Antes se seteaba aquí en runtime.
 
+      // Platform hint only — the old .instructions blocks are now redundant
+      // (the modals handle the walkthrough). Kept the hint text to nudge the
+      // user toward the right button.
       if (isIOS) {
-        hint.textContent = 'Detectamos iPhone — usá el botón azul de arriba';
-        iosInst.classList.add('active');
+        hint.textContent = 'Detectamos iPhone — tocá el botón azul';
       } else if (isAndroid) {
-        hint.textContent = 'Detectamos Android — usá el botón blanco de arriba';
-        androidInst.classList.add('active');
+        hint.textContent = 'Detectamos Android — tocá el botón blanco';
       }
 
       // Detectar in-app browsers (WhatsApp, Instagram, Facebook, TikTok)
@@ -288,30 +498,119 @@
       const isAndroidWebView = isAndroid && /; wv\)/.test(uaRaw);
       const inAppBrowser = isWhatsApp || isInstagram || isFacebook || isTikTok || isAndroidWebView;
 
-      if (inAppBrowser) {
+      // ==================== INSTALL MODAL PLUMBING ====================
+      // Modal helpers — used by all install flows below.
+      function openModal(id) {
+        const m = document.getElementById(id);
+        if (m) m.classList.add('active');
+      }
+      function closeModal(id) {
+        const m = document.getElementById(id);
+        if (m) m.classList.remove('active');
+      }
+      // Wire all data-close-modal="<id>" buttons
+      document.querySelectorAll('[data-close-modal]').forEach(function (el) {
+        el.addEventListener('click', function () {
+          const target = el.getAttribute('data-close-modal');
+          if (target) closeModal(target);
+        });
+      });
+      // "Abrir app ahora" button in the success modal — navigates to PWA root
+      const openInstalledBtn = document.getElementById('open-installed-app');
+      if (openInstalledBtn) {
+        openInstalledBtn.addEventListener('click', function () {
+          window.location.href = '/';
+        });
+      }
+
+      // ==================== ANDROID: beforeinstallprompt ====================
+      // Chrome fires this ONCE when the page meets PWA installability criteria
+      // (manifest + SW + HTTPS + user engagement). We stash the event so the
+      // install button can call .prompt() imperatively — that shows Chrome's
+      // native install dialog immediately, no 3-dot menu required.
+      //
+      // Firefox / Samsung Internet / older Chrome may never fire this event;
+      // in that case the button falls back to the android-fallback-modal.
+      let deferredInstallPrompt = null;
+      window.addEventListener('beforeinstallprompt', function (e) {
+        e.preventDefault(); // suppress Chrome's own auto-banner; we'll prompt on tap
+        deferredInstallPrompt = e;
+      });
+
+      // Success: fires after user actually installs the app (Chrome + Edge).
+      // At that point the icon is on their home screen — we surface a
+      // celebratory modal with "Abrir app" so they can jump straight in
+      // without hunting for the icon.
+      window.addEventListener('appinstalled', function () {
+        deferredInstallPrompt = null;
+        openModal('install-success-modal');
+      });
+
+      // Already installed? If the page loaded in a standalone display mode,
+      // the user is IN the installed PWA — skip the install pitch and hide
+      // the buttons. Also true if we detect via matchMedia on desktop Chrome
+      // where the site is already added to shelf.
+      const isStandalone =
+        (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) ||
+        window.navigator.standalone === true;
+
+      // ==================== BUTTON HANDLERS ====================
+      function handleAndroidInstall(e) {
+        e.preventDefault();
+        if (deferredInstallPrompt) {
+          // Chrome install dialog available — fire it inline. This is the
+          // "one tap" install the user asked for.
+          deferredInstallPrompt.prompt();
+          deferredInstallPrompt.userChoice.then(function (choice) {
+            // 'accepted' → appinstalled fires shortly after and opens success modal
+            // 'dismissed' → do nothing (user chose not to install)
+            deferredInstallPrompt = null;
+          }).catch(function () { /* prompt already used or errored — no-op */ });
+        } else {
+          // No prompt available. Reasons: page not "engaged enough" yet, user
+          // dismissed the browser banner before, Firefox/Samsung Internet, etc.
+          // Fall back to the visual instructions modal (3-dot menu path).
+          openModal('android-fallback-modal');
+        }
+      }
+
+      function handleIOSInstall(e) {
+        e.preventDefault();
+        // iOS Safari has no programmatic install API — show visual guide.
+        openModal('ios-install-modal');
+      }
+
+      // If we're already installed, both buttons just open the app.
+      if (isStandalone) {
+        btnIOS.textContent = 'Abrir la app';
+        btnAndroid.textContent = 'Abrir la app';
+        btnIOS.addEventListener('click', function (e) {
+          e.preventDefault();
+          window.location.href = '/';
+        });
+        btnAndroid.addEventListener('click', function (e) {
+          e.preventDefault();
+          window.location.href = '/';
+        });
+      } else if (inAppBrowser) {
+        // In-app browser (WhatsApp/IG/FB WebView) — no install possible from
+        // here. Show warning + intercept clicks to copy URL + prompt user to
+        // open in real browser. Same behavior as before this refactor.
         const warning = document.getElementById('webview-warning');
         warning.classList.add('active');
-
-        // Round 6 fix: cuando estás dentro de un in-app browser, tocar
-        // "Instalar en iPhone/Android" no funciona (Chrome install prompt
-        // no fire, Add-to-Home-Screen no existe en WhatsApp WebView).
-        // Interceptar clicks: prevent default + copy URL + alert al user.
-        const interceptInAppClick = function(e) {
+        const interceptInAppClick = function (e) {
           e.preventDefault();
           e.stopPropagation();
           const url = window.location.href;
-          const finish = () => {
+          const finish = function () {
             alert(
               'Copiamos el link.\n\n' +
               'Ahora abrí ' + (isIOS ? 'Safari' : 'Chrome') +
-              ' y pegalo ahí para poder instalar la app.\n\n' +
-              (isAndroid
-                ? 'Tip: podés tocar el menú (⋮) arriba a la derecha → "Abrir en Chrome".'
-                : 'Tip: podés tocar el ⋯ arriba a la derecha → "Abrir en Safari".')
+              ' y pegalo ahí para poder instalar la app.'
             );
           };
           if (navigator.clipboard && navigator.clipboard.writeText) {
-            navigator.clipboard.writeText(url).then(finish).catch(function() {
+            navigator.clipboard.writeText(url).then(finish).catch(function () {
               fallbackCopy(url, finish);
             });
           } else {
@@ -320,19 +619,23 @@
         };
         btnIOS.addEventListener('click', interceptInAppClick);
         btnAndroid.addEventListener('click', interceptInAppClick);
-        // Visual: greyed out para señalar "no funciona directo"
         btnIOS.style.opacity = '0.6';
         btnAndroid.style.opacity = '0.6';
       } else {
-        // Fuera de in-app browser: registrar el service worker para que Chrome
-        // acumule installability signals sobre esta página también (no solo /).
-        // Chrome PWA install prompt requiere manifest + SW + HTTPS + visita.
-        // Sin esto, tapear "Instalar en Android" navega a / donde recién se
-        // registra el SW y el prompt suele necesitar una visita adicional.
+        // Normal browser (not in-app, not yet installed) — wire the smart
+        // install handlers. Android: fire beforeinstallprompt if available,
+        // else show fallback modal. iOS: show visual Share→Add guide.
+        btnAndroid.addEventListener('click', handleAndroidInstall);
+        btnIOS.addEventListener('click', handleIOSInstall);
+
+        // Register the Flutter service worker on this landing page too, so
+        // Chrome accumulates installability signals from the first visit.
+        // Without this, first-time visitors often see the fallback modal
+        // because beforeinstallprompt hasn't fired yet.
         if ('serviceWorker' in navigator) {
-          window.addEventListener('load', function() {
+          window.addEventListener('load', function () {
             navigator.serviceWorker.register('/flutter_service_worker.js', { scope: '/' })
-              .catch(function() { /* SW ya registrado por Flutter en /, no-op */ });
+              .catch(function () { /* Flutter SW already registered, no-op */ });
           });
         }
       }
