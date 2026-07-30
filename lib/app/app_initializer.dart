@@ -88,7 +88,10 @@ Future<void> _performDeferredInit() async {
     // Cross-platform: syncs the user's IANA timezone to Firestore so the
     // server-side reminder scheduler fires at the right local moment.
     _syncUserTimezone(),
-    if (!kIsWeb) _initStripe(),
+    // Stripe: publishableKey needs to be set on ALL platforms — Stage 4 uses
+    // Stripe Elements inline on web (flutter_stripe_web PaymentElement widget)
+    // and it will fail to mount without it.
+    _initStripe(),
     _initFeedback(),
   ], eagerError: false);
 

@@ -332,6 +332,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
         donorMessage: details.message.isEmpty ? null : details.message,
         pushkaAmountAfter: remaining,
         tenantId: activeTenantId,
+        sheetContext: context,
       );
 
       await AnalyticsService.instance.logPushkaEmpty(amountToEmpty);
@@ -621,6 +622,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
           merchantDisplayName: ref.read(tenantConfigProvider).valueOrNull?.appName ?? 'Pushka',
           donorMessage: donationMessage.isEmpty ? null : donationMessage,
           donationReason: (donationReason == null || donationReason.isEmpty) ? null : donationReason,
+          sheetContext: context,
         );
       }
 
@@ -693,6 +695,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
         merchantDisplayName: ref.read(tenantConfigProvider).valueOrNull?.appName ?? 'Pushka',
         donorMessage: donorMessage,
         donationReason: finalReason,
+        sheetContext: context,
       );
 
       await AnalyticsService.instance.logDonation(donationAmount, currency);

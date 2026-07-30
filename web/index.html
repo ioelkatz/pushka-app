@@ -147,6 +147,15 @@
     } catch (e) { /* private mode / storage disabled — safe no-op */ }
   </script>
 
+  <!--
+    Load Stripe.js at boot so the Payment Element widget can mount without
+    a first-use race. Async keeps it non-blocking. The Flutter code awaits
+    window.Stripe.loadStripe(...) internally (via flutter_stripe_web), so
+    if this script isn't fully loaded yet when the sheet opens, the wrapper
+    will re-load it on demand. Belt + suspenders.
+  -->
+  <script src="https://js.stripe.com/v3/" async></script>
+
   <script src="flutter_bootstrap.js" async=""></script>
 
   <!--

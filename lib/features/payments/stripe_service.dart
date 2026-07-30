@@ -3,12 +3,14 @@ import 'dart:math';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_crashlytics/firebase_crashlytics.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/widgets.dart' show BuildContext;
 import 'package:flutter_stripe/flutter_stripe.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../config/stripe_config.dart';
 import '../../core/network_status_provider.dart';
 import '../../firebase_options.dart';
+import 'web_donation_sheet.dart';
 
 /// 16-char hex correlation ID — generated client-side at the start of a
 /// payment flow and threaded through createPaymentIntent → Stripe metadata
@@ -114,11 +116,6 @@ class StripeService {
     /// otherwise the CF falls back to the caller's active tenant, which
     /// may not be the right one for multi-tenant donors.
     String? tenantId,
-    // Web: Payment Sheet nativo NO existe en flutter_stripe web (experimental).
-    // Cuando llamen pay() desde PWA se debe redirigir a Stripe Checkout via
-    // createCheckoutSession CF. Ese flow se implementa en el próximo commit.
-    // Hasta entonces, tirar excepción clara en vez de crashear en runtime.
-    // NOTA: guard is at top of method body below, no aquí en params.
     /// Optional designation/destination chosen by the donor (e.g. "Familias
     /// necesitadas", "Estudio de Torá"). Stamped onto the Stripe PaymentIntent
     /// metadata and persisted on the transaction so admin dashboards can
@@ -130,13 +127,42 @@ class StripeService {
     /// record. Defaults to 0 (full empty); pass a non-zero number for
     /// partial payments where the leftover stays in the pushka.
     double? pushkaAmountAfter,
+    /// Web-only: BuildContext used to open the Stripe Elements bottom sheet.
+    /// If null on web, we fall back to the legacy Stripe Checkout redirect
+    /// flow — same UX as before Stage 4. On native this is ignored.
+    BuildContext? sheetContext,
   }) async {
-    // Web (PWA): flutter_stripe web no tiene Payment Sheet, así que
-    // delegamos a Stripe Checkout via createCheckoutSession CF. Después de
-    // que Stripe procese el pago el user vuelve a success_url (o cancel_url
-    // si abandona). Retorna el session ID como si fuese payment intent id
-    // para mantener la signature del método.
+    // Web (PWA): use Stripe Elements inline in a bottom sheet — user stays
+    // inside the PWA (no full-page redirect to hosted Checkout). Falls back
+    // to the legacy Checkout redirect if the caller didn't pass a context
+    // OR if Elements fails to load (adblocker, Stripe.js CSP block).
     if (kIsWeb) {
+      if (sheetContext != null) {
+        try {
+          return await _payWithElementsInline(
+            sheetContext: sheetContext,
+            amountCents: amountCents,
+            currency: currency,
+            customerEmail: customerEmail,
+            purpose: purpose,
+            merchantDisplayName: merchantDisplayName,
+            donorMessage: donorMessage,
+            donationReason: donationReason,
+            pushkaAmountAfter: pushkaAmountAfter,
+            tenantId: tenantId,
+          );
+        } on StripeServiceException {
+          rethrow; // canceled / user-friendly errors — surface as-is
+        } catch (e, st) {
+          // Unexpected Elements failure (Stripe.js blocked, PaymentElement
+          // mount race, etc). Fall back to the legacy Checkout redirect so
+          // the donor is not stranded. Log to Crashlytics for triage.
+          debugPrint('StripeService.pay: Elements inline failed, falling back to redirect: $e');
+          _recordPaymentError('pay/elements_fallback', e, st,
+              cid: 'fallback', purpose: purpose,
+              amountCents: amountCents, currency: currency);
+        }
+      }
       return _payWithCheckoutRedirect(
         amountCents: amountCents,
         currency: currency,
@@ -572,5 +598,111 @@ class StripeService {
     // el sessionId para que el caller no se cuelgue esperando un future
     // que nunca resuelve.
     return sessionId;
+  }
+
+  /// Web-only: Stripe Elements INLINE. Same CF backend as native (reuses
+  /// createPaymentIntent) — the difference is entirely client-side: we
+  /// mount the Payment Element widget in a bottom sheet instead of
+  /// launching Stripe Checkout in a new tab.
+  ///
+  /// UX win vs redirect: user stays in the PWA standalone context (crucial
+  /// for iOS PWA — a Safari redirect breaks the "add to home screen"
+  /// illusion and the user can't easily return). The exception is a
+  /// bank-forced 3DS full-page redirect — Stripe.js may still redirect
+  /// out; DonationResultScreen handles the return leg from that path.
+  ///
+  /// Fallback: if this throws for any reason not user-visible, `pay()`
+  /// catches and falls back to _payWithCheckoutRedirect. Cancelled
+  /// (throws StripeServiceException('canceled')) does NOT fall back.
+  Future<String> _payWithElementsInline({
+    required BuildContext sheetContext,
+    required int amountCents,
+    required String currency,
+    required String? customerEmail,
+    required String purpose,
+    required String merchantDisplayName,
+    required String? donorMessage,
+    required String? donationReason,
+    required double? pushkaAmountAfter,
+    required String? tenantId,
+  }) async {
+    final cid = _newCorrelationId();
+    // Reuse the same CF as native — it already returns everything Elements
+    // needs (clientSecret + customerSessionClientSecret for saved cards).
+    final callable = FirebaseFunctions.instance.httpsCallable(
+      'createPaymentIntent',
+    );
+    HttpsCallableResult result;
+    try {
+      result = await callable.call({
+        'amount': amountCents,
+        'currency': currency.toLowerCase(),
+        if (customerEmail != null) 'customerEmail': customerEmail,
+        'purpose': purpose,
+        'correlationId': cid,
+        if (donorMessage != null && donorMessage.isNotEmpty)
+          'donorMessage': donorMessage,
+        if (donationReason != null && donationReason.isNotEmpty)
+          'donationReason': donationReason,
+        if (purpose == 'pushka_empty')
+          'pushkaAmountAfter': pushkaAmountAfter ?? 0,
+      });
+      NetworkStatusReporter.recordSuccess();
+    } on FirebaseFunctionsException catch (e, st) {
+      NetworkStatusReporter.recordMaybeNetworkFailure(e);
+      _recordPaymentError('pay/createPaymentIntent(web)', e, st,
+          cid: cid, purpose: purpose,
+          amountCents: amountCents, currency: currency);
+      rethrow;
+    } catch (e, st) {
+      _recordPaymentError('pay/createPaymentIntent(web)_unknown', e, st,
+          cid: cid, purpose: purpose,
+          amountCents: amountCents, currency: currency);
+      throw const StripeServiceException('network-error');
+    }
+
+    final data = Map<String, dynamic>.from(result.data as Map);
+    final clientSecret = data['clientSecret'] as String? ?? '';
+    if (clientSecret.isEmpty) {
+      throw const StripeServiceException('no-client-secret');
+    }
+    final customerSessionClientSecret =
+        data['customerSessionClientSecret'] as String?;
+
+    // Return URL for the RARE case where the issuer forces a full-page
+    // 3DS redirect (some LATAM banks). Anchored to the current origin so
+    // the return trip lands back on the PWA host; /wallet is an existing
+    // route that shows the updated balance via the transactions listener
+    // as soon as the Stripe webhook writes the completed txn.
+    final origin = kIsWeb ? Uri.base.origin : '';
+    final returnUrl = '$origin/wallet';
+
+    // Guard: BuildContext could have been torn down between the pay() call
+    // and now. The caller doesn't know about that internal await; check it
+    // ourselves.
+    if (!sheetContext.mounted) {
+      throw const StripeServiceException('canceled');
+    }
+
+    final piId = await showWebDonationSheet(
+      context: sheetContext,
+      clientSecret: clientSecret,
+      customerSessionClientSecret: customerSessionClientSecret,
+      amountCents: amountCents,
+      currency: currency,
+      merchantDisplayName: merchantDisplayName,
+      returnUrl: returnUrl,
+    );
+
+    if (piId == null || piId.isEmpty) {
+      // User dismissed the sheet without paying. Mirror native's
+      // Canceled → StripeServiceException('canceled') so callers use the
+      // existing branch (release pushka-empty lock, silent UX no-op, etc).
+      if (purpose == 'pushka_empty') {
+        await _releaseManualPushkaEmptyLock(tenantId: tenantId);
+      }
+      throw const StripeServiceException('canceled');
+    }
+    return piId;
   }
 }

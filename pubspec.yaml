@@ -90,6 +90,7 @@ dependencies:
   # spending bandwidth and adding visible flicker on slow networks.
   cached_network_image: ^3.4.1
   flutter_timezone: ^5.1.0
+  flutter_stripe_web: ^7.6.0
 
 
 dev_dependencies:
