@@ -1021,7 +1021,7 @@
           installFallbackTimer = null;
         }
         const elapsed = Date.now() - installStartTime;
-        const MIN_SPINNER_MS = 2000;
+        const MIN_SPINNER_MS = 5000;
         const remaining = Math.max(0, MIN_SPINNER_MS - elapsed);
         setTimeout(function () {
           closeModal('install-installing-modal');
