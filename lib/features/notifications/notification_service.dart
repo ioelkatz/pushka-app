@@ -201,15 +201,17 @@ class NotificationService {
 
   // Only these routes may be opened via FCM — prevents deep-link injection.
   static const _allowedRoutes = {
-    '/', '/history', '/reminders', '/settings',
-    '/prayers', '/support', '/about',
+    '/', '/history', '/reminders', '/settings', '/settings/saved-cards',
+    '/wallet', '/prayers', '/support', '/about',
   };
 
   String? _routeFromMessage(RemoteMessage message) {
     final data = message.data;
-    // Cloud Functions can send { "route": "/history" } etc.
-    // Always validate against the whitelist before navigating.
-    final explicit = data['route'] as String?;
+    // Cloud Functions can send either `data.route` (legacy) or
+    // `data.click_action` (the key the SW reads on web — kept in sync so a
+    // single payload works everywhere). Both go through the whitelist to
+    // prevent deep-link injection.
+    final explicit = (data['route'] as String?) ?? (data['click_action'] as String?);
     if (explicit != null && _allowedRoutes.contains(explicit)) return explicit;
 
     final type = data['type'] as String?;

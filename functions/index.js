@@ -320,6 +320,13 @@ async function getUserLanguage(uid) {
   return "es";
 }
 
+// Returns [{ token, platform }] — platform ∈ 'android' | 'ios' | 'web' |
+// undefined (legacy tokens without the field). sendToUser routes payloads
+// differently by platform to prevent the "double notification" bug in web
+// (browser auto-shows the notification block AND the SW's onBackgroundMessage
+// handler also calls showNotification). Native builds still need the
+// notification block because their OS displays it while the app is closed
+// via the SDK's built-in handler (avoids requiring Flutter background isolate).
 async function getUserTokens(uid) {
   const snap = await db
     .collection("users")
@@ -327,7 +334,9 @@ async function getUserTokens(uid) {
     .collection("fcmTokens")
     .get();
 
-  return snap.docs.map((doc) => doc.id).filter(Boolean);
+  return snap.docs
+    .map((doc) => ({ token: doc.id, platform: doc.get("platform") }))
+    .filter((t) => t.token);
 }
 
 async function cleanupInvalidTokens(uid, tokens, response) {
@@ -352,17 +361,59 @@ async function cleanupInvalidTokens(uid, tokens, response) {
   await batch.commit();
 }
 
+// Web-safe payload: hoist notification.title/body into data.* and drop the
+// notification block entirely. The firebase-messaging-sw.js reads
+// data.title/data.body as fallbacks and calls self.registration.showNotification
+// once — no duplicate. Native tokens (or unknown platform, treated as native
+// for backwards-compat safety) keep the notification block so the OS can
+// display while the app is closed.
+function flattenPayloadForWeb(payload) {
+  const notif = payload.notification || {};
+  const flatData = {
+    ...(payload.data || {}),
+    ...(notif.title ? { title: String(notif.title) } : {}),
+    ...(notif.body ? { body: String(notif.body) } : {}),
+  };
+  const cleaned = { ...payload, data: flatData };
+  delete cleaned.notification;
+  return cleaned;
+}
+
 async function sendToUser(uid, payload) {
-  const tokens = await getUserTokens(uid);
-  if (tokens.length === 0) return { successCount: 0 };
+  const tokenInfos = await getUserTokens(uid);
+  if (tokenInfos.length === 0) return { successCount: 0 };
 
-  const response = await messaging.sendEachForMulticast({
-    tokens,
-    ...payload,
-  });
+  // Split tokens by web vs native. Unknown platform falls into native (safe
+  // default per adversarial review R-4: notification block preserves iOS
+  // wake-app behavior; the worst case is a legacy user with an unclassified
+  // Chrome token seeing the old-behavior duplicate — same as today).
+  const webTokens = tokenInfos
+    .filter((t) => t.platform === "web")
+    .map((t) => t.token);
+  const nativeTokens = tokenInfos
+    .filter((t) => t.platform !== "web")
+    .map((t) => t.token);
 
-  await cleanupInvalidTokens(uid, tokens, response);
-  return response;
+  const sends = [];
+  if (nativeTokens.length > 0) {
+    sends.push(
+      messaging
+        .sendEachForMulticast({ tokens: nativeTokens, ...payload })
+        .then((response) => cleanupInvalidTokens(uid, nativeTokens, response).then(() => response))
+    );
+  }
+  if (webTokens.length > 0) {
+    const webPayload = flattenPayloadForWeb(payload);
+    sends.push(
+      messaging
+        .sendEachForMulticast({ tokens: webTokens, ...webPayload })
+        .then((response) => cleanupInvalidTokens(uid, webTokens, response).then(() => response))
+    );
+  }
+
+  const results = await Promise.all(sends);
+  const successCount = results.reduce((n, r) => n + (r.successCount || 0), 0);
+  return { successCount, responses: results };
 }
 
 // Stuck-event TTL: if a previous delivery crashed between reserveWebhookEvent
@@ -776,6 +827,7 @@ exports.sendTestNotification = onCall({ enforceAppCheck: false }, async (request
     notification: { title, body },
     data: {
       type: "test",
+      click_action: "/settings",
     },
   });
 
@@ -4110,7 +4162,7 @@ exports.onTransactionCreated = onDocumentCreated(
 
     await sendToUser(uid, {
       notification: { title, body },
-      data: { type, amount: String(amount), tenantId },
+      data: { type, amount: String(amount), tenantId, click_action: "/wallet" },
     });
 
     // Track monthly active user — best-effort, non-blocking
@@ -4956,7 +5008,11 @@ async function _runPushkaAutoEmptyTick() {
           };
           await sendToUser(uid, {
             notification: { title: failTitles[failLang], body: failBodies[failLang] },
-            data: { type: "pushkaAutoEmptyFailed", tenantId: plan.tenantId },
+            data: {
+              type: "pushkaAutoEmptyFailed",
+              tenantId: plan.tenantId,
+              click_action: "/settings/saved-cards",
+            },
           }).catch(() => {});
           failed += 1;
           continue;
@@ -5046,7 +5102,12 @@ async function _runPushkaAutoEmptyTick() {
           };
           await sendToUser(uid, {
             notification: { title: emptyTitles[emptyLang], body: emptyBodies[emptyLang] },
-            data: { type: "pushkaEmpty", amount: String(emptiedAmount), tenantId: plan.tenantId },
+            data: {
+              type: "pushkaEmpty",
+              amount: String(emptiedAmount),
+              tenantId: plan.tenantId,
+              click_action: "/wallet",
+            },
           }).catch(() => {});
         } catch (notifErr) {
           console.warn("processPushkaAutoEmpty: notification_failed", {
