@@ -292,6 +292,25 @@
       from { transform: scale(0); }
       to { transform: scale(1); }
     }
+
+    /* Installing spinner — simple circular, brand blue */
+    .installing-spinner {
+      width: 56px;
+      height: 56px;
+      margin: 4px auto 18px;
+      border: 5px solid #E2E8F0;
+      border-top-color: #2563EB;
+      border-radius: 50%;
+      animation: spin 0.9s linear infinite;
+    }
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+    .installing-sub {
+      font-size: 12px;
+      color: #94A3B8;
+      margin-top: -6px;
+    }
   </style>
 </head>
 <body>
@@ -446,8 +465,22 @@
     </div>
   </div>
 
-  <!-- Success modal — fires when appinstalled event is detected (or when
-       already-installed check returns true on subsequent visits). CTA
+  <!-- Installing progress modal — appears the moment the user confirms
+       "Install" in Chrome's native dialog. Held for a MIN of 2s so the
+       transition to success doesn't flash when Chrome installs in <1s
+       on fast devices, but yields immediately once actual `appinstalled`
+       fires (whichever is later). Fallback timeout at 8s so the modal
+       never gets stuck if `appinstalled` somehow doesn't fire. -->
+  <div class="install-modal-backdrop" id="install-installing-modal" role="dialog" aria-modal="true">
+    <div class="install-modal">
+      <div class="installing-spinner" aria-hidden="true"></div>
+      <h3>Instalando tu app...</h3>
+      <p class="installing-sub">Se está agregando a tu pantalla</p>
+    </div>
+  </div>
+
+  <!-- Success modal — fires after the installing modal has shown for
+       min 2s AND `appinstalled` confirmed (or the 8s fallback). CTA
        primary is "Abrir app" which navigates to /. -->
   <div class="install-modal-backdrop" id="install-success-modal" role="dialog" aria-modal="true">
     <div class="install-modal">
@@ -537,13 +570,46 @@
         deferredInstallPrompt = e;
       });
 
+      // Install-progress state. When the user confirms in Chrome's dialog,
+      // we open the "Instalando..." modal and record the start time. We
+      // hold that modal for a minimum of 2s so a fast install (<1s) doesn't
+      // flash a spinner and then a checkmark — the transition feels
+      // deliberate. If `appinstalled` fires AFTER the 2s minimum, we
+      // transition immediately. If it never fires (browser bug, user
+      // background-tabbed the install, etc.), an 8s fallback promotes to
+      // success anyway so the modal never gets stuck.
+      let installStartTime = 0;
+      let installFallbackTimer = null;
+      let installInProgress = false;
+
+      function finishInstallFlow() {
+        if (!installInProgress) return;
+        installInProgress = false;
+        if (installFallbackTimer) {
+          clearTimeout(installFallbackTimer);
+          installFallbackTimer = null;
+        }
+        const elapsed = Date.now() - installStartTime;
+        const MIN_SPINNER_MS = 2000;
+        const remaining = Math.max(0, MIN_SPINNER_MS - elapsed);
+        setTimeout(function () {
+          closeModal('install-installing-modal');
+          openModal('install-success-modal');
+        }, remaining);
+      }
+
       // Success: fires after user actually installs the app (Chrome + Edge).
-      // At that point the icon is on their home screen — we surface a
-      // celebratory modal with "Abrir app" so they can jump straight in
-      // without hunting for the icon.
+      // We route through finishInstallFlow() so the installing-modal gets
+      // its guaranteed minimum display time before switching to success.
       window.addEventListener('appinstalled', function () {
         deferredInstallPrompt = null;
-        openModal('install-success-modal');
+        if (installInProgress) {
+          finishInstallFlow();
+        } else {
+          // Edge case: install happened without going through our button
+          // (e.g. Chrome's own banner). Just show success directly.
+          openModal('install-success-modal');
+        }
       });
 
       // Already installed? If the page loaded in a standalone display mode,
@@ -562,8 +628,17 @@
           // "one tap" install the user asked for.
           deferredInstallPrompt.prompt();
           deferredInstallPrompt.userChoice.then(function (choice) {
-            // 'accepted' → appinstalled fires shortly after and opens success modal
-            // 'dismissed' → do nothing (user chose not to install)
+            if (choice && choice.outcome === 'accepted') {
+              // User confirmed. Show "Instalando..." spinner with 2s
+              // minimum + 8s fallback in case appinstalled never fires.
+              installStartTime = Date.now();
+              installInProgress = true;
+              openModal('install-installing-modal');
+              installFallbackTimer = setTimeout(function () {
+                if (installInProgress) finishInstallFlow();
+              }, 8000);
+            }
+            // 'dismissed' → user chose not to install, no modal.
             deferredInstallPrompt = null;
           }).catch(function () { /* prompt already used or errored — no-op */ });
         } else {
