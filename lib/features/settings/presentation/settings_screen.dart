@@ -11,6 +11,9 @@ import 'package:local_auth/local_auth.dart';
 import 'package:sign_in_with_apple/sign_in_with_apple.dart';
 
 import '../../auth/providers/auth_controller.dart';
+import '../../notifications/notification_service.dart';
+import '../../notifications/web_platform_stub.dart'
+    if (dart.library.html) '../../notifications/web_platform_web.dart';
 import '../../users/data/user_repository.dart';
 import '../../users/presentation/user_profile_provider.dart';
 import '../../tenant/data/tenant_repository.dart';
@@ -471,6 +474,15 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   },
                 ),
               ),
+            const SizedBox(height: 18),
+          ],
+
+          // Web push notifications — only shown in PWA. Native builds route
+          // through the flutter_local_notifications channels above. The
+          // toggle triggers a user-gesture-scoped permission prompt (browsers
+          // reject requestPermission() without one).
+          if (kIsWeb) ...[
+            _buildWebPushToggle(user, tr),
             const SizedBox(height: 18),
           ],
           Container(
@@ -1344,6 +1356,71 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       ],
     );
   }
+
+  /// Web push toggle: opts the user in/out of PWA push notifications. This
+  /// is the ONLY place we invoke Notification.requestPermission() (browsers
+  /// require a user gesture; cold-start calls would silently deny). iOS
+  /// Safari has an extra constraint: push only works inside a standalone
+  /// PWA (Add-to-Home-Screen'd), so if the user is browsing in Safari tab
+  /// we surface an explanation instead of asking for permission.
+  Widget _buildWebPushToggle(User? user, S tr) {
+    final enabled = NotificationService.instance.webPushIsEnabled();
+    final ua = kIsWeb ? _webUserAgent() : '';
+    final isIOS = RegExp(r'iPad|iPhone|iPod').hasMatch(ua);
+    // Safari standalone (Add-to-Home-Screen) sets navigator.standalone=true;
+    // matchMedia display-mode:standalone also flags installed PWA on Chrome.
+    final isStandalone = _webIsStandalone();
+    // If the user is on iOS Safari NOT installed as PWA, push is impossible
+    // — Apple only wires webpush inside the installed-PWA context.
+    final iosBlocked = isIOS && !isStandalone;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _buildToggleRow(
+          tr.pushNotifications,
+          enabled,
+          onChanged: iosBlocked || user == null
+              ? (_) {}
+              : (value) => _onWebPushToggle(user, value, tr),
+        ),
+        const SizedBox(height: 6),
+        Text(
+          iosBlocked
+              ? tr.pushRequiresInstalledPwa
+              : tr.pushNotificationsSubtitle,
+          style: TextStyle(
+            fontSize: 13,
+            color: Theme.of(context).colorScheme.onSurfaceVariant,
+            height: 1.35,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Future<void> _onWebPushToggle(User user, bool enable, S tr) async {
+    final messenger = ScaffoldMessenger.of(context);
+    if (enable) {
+      final ok = await NotificationService.instance.enableWebPush(user.uid);
+      if (!mounted) return;
+      if (ok) {
+        setState(() {}); // refresh toggle state from Hive
+        messenger.showSnackBar(SnackBar(content: Text(tr.pushEnabled)));
+      } else {
+        messenger.showSnackBar(SnackBar(content: Text(tr.pushPermissionDenied)));
+      }
+    } else {
+      await NotificationService.instance.disableWebPush(user.uid);
+      if (!mounted) return;
+      setState(() {});
+    }
+  }
+
+  // Conditional-import helpers (see top of file): webUserAgent() +
+  // webIsStandalonePwa() are stubs on native, real dart:html reads on web.
+  String _webUserAgent() => webUserAgent();
+  bool _webIsStandalone() => webIsStandalonePwa();
 
   Widget _buildProfileField(String label, String value) {
     return Padding(

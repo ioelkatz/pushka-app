@@ -141,26 +141,37 @@ class NotificationService {
   }
 
   Future<void> initialize() async {
-    // Web (PWA) no soporta flutter_local_notifications (Android/iOS only).
-    // Los reminders programados quedan disabled hasta que el user pase a
-    // la app nativa (post migración Play Store / App Store). FirebaseMessaging
-    // web (para push desde el server) requiere vapidKey config aparte.
-    if (kIsWeb) return;
-    // Open the reminders_meta box early so needsResync + one-shot-date reads
-    // during cold-start resync return real values (not defaults).
+    // Open the reminders_meta box early — needsResync + one-shot-date reads
+    // during cold-start resync return real values (not defaults). Safe on
+    // web too (Hive uses IndexedDB there).
     await _openMetaBox();
-    await _configureLocalTimezone();
-    try {
-      await _requestPermissions();
-    } catch (e) {
-      debugPrint('NotificationService.initialize: FCM permission request failed: $e');
+
+    // Web (PWA) doesn't support flutter_local_notifications and doesn't need
+    // the timezone DB (both are for LOCAL scheduling only). But it DOES need
+    // the Firebase Messaging listeners registered so foreground/background
+    // push routes work. The permission request itself must NOT run at cold
+    // start on web — browsers reject requestPermission() without a user
+    // gesture. Instead we register an opt-in UI (see enableWebPush()) and
+    // silent-refresh here only if the user previously opted in.
+    if (!kIsWeb) {
+      await _configureLocalTimezone();
+      try {
+        await _requestPermissions();
+      } catch (e) {
+        debugPrint('NotificationService.initialize: FCM permission request failed: $e');
+      }
+      try {
+        await _requestLocalNotificationPermissions();
+      } catch (e) {
+        debugPrint('NotificationService.initialize: local permission request failed: $e');
+      }
+      await _initializeLocalNotifications();
     }
-    try {
-      await _requestLocalNotificationPermissions();
-    } catch (e) {
-      debugPrint('NotificationService.initialize: local permission request failed: $e');
-    }
-    await _initializeLocalNotifications();
+
+    // FCM listeners work on BOTH native and web. On web, onMessage fires when
+    // the PWA tab is focused and the SW receives a push. onMessageOpenedApp
+    // + getInitialMessage fire when the user taps a notification shown by
+    // the SW (background) while the app is closed or backgrounded.
     FirebaseMessaging.onMessage.listen(
       _showLocalNotification,
       onError: (e) => debugPrint('NotificationService: onMessage stream error: $e'),
@@ -216,18 +227,127 @@ class NotificationService {
     };
   }
 
+  /// Public VAPID key for Firebase Web Push (RFC 8292). This is safe to
+  /// hardcode in the client bundle — the whole point of an application-server
+  /// key pair is that the public half is shipped to the browser. Rotating
+  /// it requires updating Firebase Console → Cloud Messaging → Web Push
+  /// certificates AND redeploying with the new value.
+  ///
+  /// PROD project: pushka-app-ioel. DEV project has a separate certificate
+  /// that we haven't generated yet — kept null until we do (dev flavor
+  /// gracefully skips web push registration if the key is missing).
+  static const String _vapidKeyProd =
+      'BIOHaG2kFiKvJwZIefzg4u1ldSRzsmbVoBY31_01VshteSE4kXiqRzqp6V8Xcf_sMIX9EgL9rLLpF6BpQY7lHfE';
+  static const String? _vapidKeyDev = null;
+
+  /// Hive flag: user explicitly opted into web push via the Settings toggle.
+  /// Used to gate the cold-start silent refresh so we never prompt for
+  /// permission unbidden (browsers reject that anyway without a gesture).
+  static const _kWebPushOptedIn = 'web_push_opted_in';
+
+  bool get _webPushOptedIn {
+    if (!kIsWeb) return false;
+    try {
+      return _metaBox?.get(_kWebPushOptedIn, defaultValue: false) == true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<void> _setWebPushOptedIn(bool value) async {
+    if (!kIsWeb) return;
+    final box = await _openMetaBox();
+    if (box == null) return;
+    await box.put(_kWebPushOptedIn, value);
+  }
+
+  /// Returns the vapidKey for the currently-configured Firebase project, or
+  /// null if we don't have one yet (e.g. dev flavor). Callers must handle
+  /// null by skipping web push registration.
+  String? _resolveVapidKey() {
+    final projectId = FirebaseFirestore.instance.app.options.projectId;
+    if (projectId == 'pushka-app-ioel') return _vapidKeyProd;
+    return _vapidKeyDev;
+  }
+
   Future<void> syncFcmToken(String uid) async {
-    // FCM en web requiere vapidKey (getToken(vapidKey: ...)) que todavía
-    // no está configurado. Cuando implementemos Web Push proper, este
-    // método debería recibir el vapidKey. Por ahora, skip en web.
-    if (kIsWeb) return;
+    if (kIsWeb) {
+      // Only silent-refresh if the user previously opted in — never prompt
+      // for permission here (cold-start gesture-less call would fail on
+      // Safari and denials waste the browser's one-shot budget).
+      if (!_webPushOptedIn) return;
+      final vapidKey = _resolveVapidKey();
+      if (vapidKey == null) return;
+      try {
+        final token = await _messaging.getToken(vapidKey: vapidKey);
+        if (token == null) return;
+        await _saveToken(uid, token);
+      } catch (e) {
+        // Do NOT delete the backend token on failure — iOS Safari PWA
+        // sometimes returns permission-blocked as a false negative after a
+        // reload; wiping the token would break a working subscription.
+        debugPrint('NotificationService.syncFcmToken web silent-refresh failed: $e');
+      }
+      return;
+    }
     final token = await _messaging.getToken();
     if (token == null) return;
     await _saveToken(uid, token);
   }
 
+  /// Explicit opt-in flow for web push. MUST be called from a user gesture
+  /// (button tap in Settings). Requests browser permission, obtains an FCM
+  /// token, persists it to Firestore, and stores the opt-in flag so future
+  /// cold-starts silent-refresh transparently.
+  ///
+  /// Returns true if the user granted permission and a token was saved.
+  Future<bool> enableWebPush(String uid) async {
+    if (!kIsWeb) return false;
+    final vapidKey = _resolveVapidKey();
+    if (vapidKey == null) return false;
+    try {
+      // Ask FCM to request browser permission — it wraps
+      // Notification.requestPermission() and returns the granted status.
+      final settings = await _messaging.requestPermission(
+        alert: true,
+        badge: true,
+        sound: true,
+      );
+      if (settings.authorizationStatus != AuthorizationStatus.authorized &&
+          settings.authorizationStatus != AuthorizationStatus.provisional) {
+        return false;
+      }
+      final token = await _messaging.getToken(vapidKey: vapidKey);
+      if (token == null) return false;
+      await _saveToken(uid, token);
+      await _setWebPushOptedIn(true);
+      // Also start the refresh listener so token rotations are captured.
+      listenForTokenRefresh(uid);
+      return true;
+    } catch (e) {
+      debugPrint('NotificationService.enableWebPush failed: $e');
+      return false;
+    }
+  }
+
+  /// Disable web push: delete the backend token, deleteToken() so FCM rotates,
+  /// clear the opt-in flag. Called from the Settings toggle when the user
+  /// opts out (or from signOut, transparently).
+  Future<void> disableWebPush(String uid) async {
+    if (!kIsWeb) return;
+    await _setWebPushOptedIn(false);
+    await revokeFcmTokenForUser(uid);
+  }
+
+  /// Whether the user has explicitly opted into web push on this browser.
+  bool webPushIsEnabled() => _webPushOptedIn;
+
   void listenForTokenRefresh(String uid) {
-    if (kIsWeb) return;
+    // Works cross-platform. On web the onTokenRefresh stream fires whenever
+    // the SW is reinstalled, the vapidKey rotates, or the user clears site
+    // data. If the user hasn't opted into web push, keep the listener
+    // dormant — the guard mirrors syncFcmToken's cold-start behavior.
+    if (kIsWeb && !_webPushOptedIn) return;
     if (_currentUid == uid && _tokenRefreshSub != null) return;
     _currentUid = uid;
     _tokenRefreshSub?.cancel();
@@ -265,7 +385,18 @@ class NotificationService {
   Future<void> revokeFcmTokenForUser(String uid) async {
     String? token;
     try {
-      token = await _messaging.getToken();
+      // getToken on web REQUIRES vapidKey; native accepts no args. If we're
+      // on web and don't have a key (dev flavor), skip token lookup — the
+      // most recent listenForTokenRefresh handler already saved it, and
+      // getToken here would only fail loudly.
+      if (kIsWeb) {
+        final vapidKey = _resolveVapidKey();
+        if (vapidKey != null) {
+          token = await _messaging.getToken(vapidKey: vapidKey);
+        }
+      } else {
+        token = await _messaging.getToken();
+      }
     } catch (e) {
       debugPrint('NotificationService.revokeFcmTokenForUser: getToken failed: $e');
     }
@@ -433,6 +564,14 @@ class NotificationService {
     final notification = message.notification;
     if (notification == null) return;
 
+    // On web, foreground push messages arrive here but we can't call
+    // flutter_local_notifications (mobile-only). The browser also
+    // intentionally does NOT auto-show a system notification while the tab
+    // is focused (avoids duplicates with the SW-side background handler).
+    // Skip silently — a future enhancement can surface an in-app snackbar
+    // via a global ScaffoldMessengerKey.
+    if (kIsWeb) return;
+
     const androidDetails = AndroidNotificationDetails(
       'pushka_notifications',
       'Pushka Notifications',
@@ -478,11 +617,20 @@ class NotificationService {
         .collection('fcmTokens')
         .doc(token);
 
-    final platform = Platform.isAndroid
-        ? 'android'
-        : Platform.isIOS
-            ? 'ios'
-            : Platform.operatingSystem;
+    // MUST branch kIsWeb BEFORE any Platform.* access — dart:io Platform
+    // throws UnsupportedError on web at first symbol touch. The Firestore
+    // rules (validTokenDoc in firestore.rules) accept 'web' as a valid
+    // platform value alongside 'android'/'ios'.
+    final String platform;
+    if (kIsWeb) {
+      platform = 'web';
+    } else {
+      platform = Platform.isAndroid
+          ? 'android'
+          : Platform.isIOS
+              ? 'ios'
+              : Platform.operatingSystem;
+    }
     await tokensRef.set({
       'token': token,
       'platform': platform,

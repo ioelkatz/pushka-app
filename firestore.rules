@@ -466,7 +466,8 @@ service cloud.firestore {
           request.resource.data.token == tokenId &&
           request.resource.data.platform is string &&
           (request.resource.data.platform == 'android' ||
-              request.resource.data.platform == 'ios');
+              request.resource.data.platform == 'ios' ||
+              request.resource.data.platform == 'web');
     }
 
     // Tenants — branding and config for each organization.

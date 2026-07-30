@@ -1250,6 +1250,37 @@ class S {
     'התחברות עם Apple לא זמינה בדפדפן. השתמש ב-Google או באימייל.',
   );
 
+  String get pushNotifications => _t(
+    'Notificaciones push',
+    'Push notifications',
+    'Notifications push',
+    'התראות פוש',
+  );
+  String get pushNotificationsSubtitle => _t(
+    'Recibí avisos cuando tenés recordatorios, pagos o novedades.',
+    'Get notified about reminders, payments and updates.',
+    'Reçois des notifications pour les rappels, paiements et nouveautés.',
+    'קבל התראות על תזכורות, תשלומים ועדכונים.',
+  );
+  String get pushPermissionDenied => _t(
+    'El navegador bloqueó las notificaciones. Habilitalas desde la configuración del sitio.',
+    'The browser blocked notifications. Enable them in the site settings.',
+    'Le navigateur a bloqué les notifications. Active-les dans les paramètres du site.',
+    'הדפדפן חסם התראות. הפעל אותן בהגדרות האתר.',
+  );
+  String get pushRequiresInstalledPwa => _t(
+    'Para recibir notificaciones en iPhone, primero agregá la app a la pantalla de inicio (Compartir → Agregar a pantalla de inicio) y abrila desde el ícono.',
+    'To receive notifications on iPhone, first add the app to your home screen (Share → Add to Home Screen) and open it from the icon.',
+    'Pour recevoir des notifications sur iPhone, ajoute d’abord l’app à ton écran d’accueil (Partager → Sur l’écran d’accueil) et ouvre-la depuis l’icône.',
+    'כדי לקבל התראות באייפון, קודם הוסף את האפליקציה למסך הבית (שיתוף ← הוסף למסך הבית) ופתח אותה מהסמל.',
+  );
+  String get pushEnabled => _t(
+    'Notificaciones activadas',
+    'Notifications enabled',
+    'Notifications activées',
+    'ההתראות הופעלו',
+  );
+
   // ---------------------------------------------------------------------------
   // DONATION SUBSCRIPTIONS
   // ---------------------------------------------------------------------------
