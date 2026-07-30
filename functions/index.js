@@ -1,8 +1,9 @@
 ﻿const admin = require("firebase-admin");
 const { onCall, onRequest, HttpsError } = require("firebase-functions/v2/https");
-const { onDocumentCreated, onDocumentUpdated } = require("firebase-functions/v2/firestore");
+const { onDocumentCreated, onDocumentUpdated, onDocumentWritten } = require("firebase-functions/v2/firestore");
 const { onSchedule } = require("firebase-functions/v2/scheduler");
 const { defineSecret } = require("firebase-functions/params");
+const { DateTime } = require("luxon");
 
 const stripeSecret = defineSecret("STRIPE_SECRET_KEY");
 const stripeWebhookSecret = defineSecret("STRIPE_WEBHOOK_SECRET");
@@ -10993,5 +10994,405 @@ exports.onUserDocCreated = onDocumentCreated(
     console.info("onUserDocCreated: pending invitation applied", {
       uid, email: _redactEmail(email), role, tenantId,
     });
+  },
+);
+
+// ============================================================================
+// SERVER-SIDE REMINDERS (Stage 3)
+// ============================================================================
+// Replaces the mobile-only flutter_local_notifications scheduling with a
+// Cloud Scheduler → Cloud Function → FCM push pipeline. Works for BOTH
+// native (Android/iOS) and PWA (web/Safari) users — reminders fire even
+// when the app is closed, no local OS scheduling needed.
+//
+// FLOW:
+//   1. User creates/edits a reminder → client writes to Firestore.
+//   2. onReminderWrite (below) computes nextTriggerAt from the client fields
+//      + the user's timezone, writes it back to the same doc.
+//   3. onUserTimezoneChanged (below) recomputes nextTriggerAt for all
+//      recurring (non-one-shot) reminders when the user's tz changes.
+//   4. processDueReminders (below) runs every minute via Cloud Scheduler,
+//      collectionGroup queries for isEnabled + nextTriggerAt <= now,
+//      transactionally advances nextTriggerAt BEFORE sending (at-most-once),
+//      then sendToUser().
+//   5. backfillRemindersNextTriggerAt (super_admin onCall) populates
+//      nextTriggerAt on existing reminders after this feature deploys.
+//
+// KEY INVARIANTS:
+//   - Client toMap() never emits nextTriggerAt/lastTriggeredAt/timezone —
+//     firestore.rules reject writes that include them.
+//   - onReminderWrite is idempotent: uses onlyClientFieldsChanged() to
+//     avoid re-triggering on server-side writes (loop guard).
+//   - processDueReminders uses a transaction to compareAndSwap
+//     nextTriggerAt BEFORE the FCM send. If the send fails, the reminder
+//     still advances (at-most-once) — losing a push is preferable to
+//     double-notifying the user (per adversarial review R-1).
+//   - one-shot reminders (oneShotDate != null): fire once, then
+//     nextTriggerAt=null + isEnabled=false. Frozen against tz changes.
+
+/**
+ * Fields written by the CLIENT (via Reminder.toMap()). Any change in these
+ * between doc versions should recompute nextTriggerAt. Fields NOT here are
+ * server-owned (nextTriggerAt/lastTriggeredAt/timezone) and their diff must
+ * NOT trigger a recompute (loop guard — see onReminderWrite).
+ */
+const REMINDER_CLIENT_FIELDS = [
+  "timeHour", "timeMinute", "days", "isHoliday",
+  "secondTimeHour", "secondTimeMinute", "secondDays", "secondIsHoliday",
+  "isEnabled", "oneShotDate",
+];
+
+function _reminderClientFieldsChanged(before, after) {
+  if (!before && after) return true; // create
+  if (before && !after) return false; // delete (no recompute needed)
+  for (const key of REMINDER_CLIENT_FIELDS) {
+    const b = before[key];
+    const a = after[key];
+    // Firestore Timestamps compare by reference — normalize to millis.
+    const bn = (b && typeof b.toMillis === "function") ? b.toMillis() : b;
+    const an = (a && typeof a.toMillis === "function") ? a.toMillis() : a;
+    if (JSON.stringify(bn) !== JSON.stringify(an)) return true;
+  }
+  return false;
+}
+
+/**
+ * Given a reminder doc + the user's IANA timezone, compute the next UTC
+ * instant at which the reminder should fire. Returns null if the reminder
+ * is disabled or has no configured slots.
+ *
+ * Semantics:
+ * - If `oneShotDate` is set (chooseDate): return that date at (timeHour,
+ *   timeMinute) in the given timezone, converted to UTC. If already past,
+ *   return null (one-shot expired — cleanup in processDueReminders).
+ * - Otherwise (recurring): find the earliest next occurrence of any
+ *   configured (weekday, hour, minute) slot in the timezone. Combines
+ *   days×time and secondDays×secondTime into a single MIN — one nextTriggerAt
+ *   field for the entire reminder (per adversarial review R-3 — linearize).
+ */
+function computeNextTrigger(reminder, timezone) {
+  if (!reminder || reminder.isEnabled === false) return null;
+  const tz = timezone || "UTC";
+
+  const now = DateTime.now().setZone(tz);
+  const hour = Number.isFinite(reminder.timeHour) ? reminder.timeHour : 12;
+  const minute = Number.isFinite(reminder.timeMinute) ? reminder.timeMinute : 0;
+
+  // One-shot: absolute date at the reminder's time in user's timezone.
+  const oneShot = reminder.oneShotDate;
+  if (oneShot) {
+    const asDate = (typeof oneShot.toDate === "function") ? oneShot.toDate() : new Date(oneShot);
+    const dt = DateTime.fromJSDate(asDate, { zone: tz })
+        .set({ hour, minute, second: 0, millisecond: 0 });
+    if (dt <= now) return null;
+    return dt.toUTC().toJSDate();
+  }
+
+  // Recurring: enumerate all configured slots and pick the earliest future one.
+  const days = Array.isArray(reminder.days) ? reminder.days.map(Number).filter((d) => d >= 1 && d <= 7) : [];
+  const secondDays = Array.isArray(reminder.secondDays) ? reminder.secondDays.map(Number).filter((d) => d >= 1 && d <= 7) : [];
+  const secondHour = Number.isFinite(reminder.secondTimeHour) ? reminder.secondTimeHour : null;
+  const secondMinute = Number.isFinite(reminder.secondTimeMinute) ? reminder.secondTimeMinute : null;
+  const hasSecond = secondHour !== null && secondMinute !== null;
+
+  const candidates = [];
+  const pushSlot = (weekdays, h, m) => {
+    for (const w of weekdays) {
+      // Luxon weekday: 1 = Monday .. 7 = Sunday — matches Dart's DateTime.monday etc.
+      let cand = now.set({ weekday: w, hour: h, minute: m, second: 0, millisecond: 0 });
+      // If that weekday+time is earlier today (or already past today), roll to next week.
+      if (cand <= now) cand = cand.plus({ weeks: 1 });
+      candidates.push(cand);
+    }
+  };
+  pushSlot(days, hour, minute);
+  if (hasSecond) pushSlot(secondDays, secondHour, secondMinute);
+
+  if (candidates.length === 0) return null;
+  const winner = candidates.reduce((a, b) => (a < b ? a : b));
+  return winner.toUTC().toJSDate();
+}
+
+/** Read the user's IANA timezone from users/{uid}. Fallback to UTC. */
+async function _getUserTimezone(uid) {
+  try {
+    const snap = await db.collection("users").doc(uid).get();
+    const tz = snap.exists ? snap.get("timezone") : null;
+    return (typeof tz === "string" && tz.length > 0 && tz.length <= 60) ? tz : "UTC";
+  } catch (_) {
+    return "UTC";
+  }
+}
+
+/**
+ * onReminderWrite — computes nextTriggerAt whenever a reminder's CLIENT
+ * fields change. Loop-guarded: no-op if the change was purely server-side
+ * (e.g., processDueReminders advancing nextTriggerAt+lastTriggeredAt).
+ */
+exports.onReminderWrite = onDocumentWritten(
+  {
+    document: "users/{uid}/reminders/{reminderId}",
+    region: "us-central1",
+  },
+  async (event) => {
+    const before = event.data?.before?.data();
+    const after = event.data?.after?.data();
+
+    // Delete: no compute needed. The doc is gone.
+    if (!after) return;
+
+    // Loop-guard: if only server-owned fields changed, don't recompute.
+    if (before && !_reminderClientFieldsChanged(before, after)) return;
+
+    const { uid, reminderId } = event.params;
+    const timezone = await _getUserTimezone(uid);
+    const nextTriggerAt = computeNextTrigger(after, timezone);
+
+    const patch = {
+      timezone,
+      nextTriggerAt: nextTriggerAt ? admin.firestore.Timestamp.fromDate(nextTriggerAt) : null,
+    };
+    // Skip write if the computed values match what's already there — avoids
+    // an infinite loop if _reminderClientFieldsChanged has a bug.
+    const currentTz = after.timezone;
+    const currentNext = after.nextTriggerAt;
+    const nextMs = nextTriggerAt ? nextTriggerAt.getTime() : null;
+    const currentMs = (currentNext && typeof currentNext.toMillis === "function")
+        ? currentNext.toMillis() : null;
+    if (currentTz === timezone && currentMs === nextMs) return;
+
+    await event.data.after.ref.set(patch, { merge: true });
+    console.info("onReminderWrite: computed nextTriggerAt", {
+      uid, reminderId, timezone, nextTriggerAt: nextTriggerAt?.toISOString() || null,
+    });
+  },
+);
+
+/**
+ * onUserTimezoneChanged — recompute nextTriggerAt for all recurring
+ * reminders when the user's timezone changes. One-shot reminders are
+ * FROZEN (adversarial R-6): the oneShotDate is a commitment to an absolute
+ * moment ("my grandfather's yahrzeit is Tuesday 9am"), it shouldn't shift.
+ */
+exports.onUserTimezoneChanged = onDocumentUpdated(
+  {
+    document: "users/{uid}",
+    region: "us-central1",
+  },
+  async (event) => {
+    const before = event.data?.before?.data();
+    const after = event.data?.after?.data();
+    if (!before || !after) return;
+    if (before.timezone === after.timezone) return;
+    const newTz = after.timezone;
+    if (typeof newTz !== "string" || newTz.length === 0) return;
+
+    const { uid } = event.params;
+    const remindersRef = db.collection("users").doc(uid).collection("reminders");
+    const snap = await remindersRef.get();
+    if (snap.empty) return;
+
+    const batch = db.batch();
+    let recomputed = 0;
+    for (const doc of snap.docs) {
+      const data = doc.data();
+      // Skip one-shot: absolute date, tz-frozen (see R-6).
+      if (data.oneShotDate) continue;
+      const nextTriggerAt = computeNextTrigger(data, newTz);
+      batch.set(doc.ref, {
+        timezone: newTz,
+        nextTriggerAt: nextTriggerAt ? admin.firestore.Timestamp.fromDate(nextTriggerAt) : null,
+      }, { merge: true });
+      recomputed += 1;
+    }
+    if (recomputed > 0) await batch.commit();
+    console.info("onUserTimezoneChanged: recomputed reminders", { uid, newTz, recomputed });
+  },
+);
+
+/**
+ * processDueReminders — Cloud Scheduler tick every 1 minute. Queries the
+ * collectionGroup 'reminders' for isEnabled + nextTriggerAt <= now, fires
+ * FCM push (via sendToUser, which already handles per-platform payload),
+ * and advances nextTriggerAt to the next occurrence.
+ *
+ * At-MOST-once semantics: the transaction advances nextTriggerAt BEFORE
+ * the send. If the send fails, that firing is lost — but the reminder
+ * NEVER fires twice for the same slot. Per adversarial R-1: losing an
+ * occasional weekly reminder is less bad than duplicate notifications.
+ */
+exports.processDueReminders = onSchedule(
+  {
+    schedule: "every 1 minutes",
+    timeZone: "UTC",
+    region: "us-central1",
+    retryCount: 0, // no retry — the next tick catches misses
+    memory: "256MiB",
+  },
+  async () => {
+    const now = admin.firestore.Timestamp.now();
+    const snap = await db.collectionGroup("reminders")
+        .where("isEnabled", "==", true)
+        .where("nextTriggerAt", "<=", now)
+        .limit(500) // one tick's budget; misses get picked up the next minute
+        .get();
+
+    if (snap.empty) return;
+
+    // Group docs by parent uid so we do ONE getUserTokens per uid (cheap Firestore read).
+    const byUid = new Map();
+    for (const doc of snap.docs) {
+      // doc.ref.path: users/{uid}/reminders/{id}
+      const parts = doc.ref.path.split("/");
+      const uid = parts[1];
+      if (!byUid.has(uid)) byUid.set(uid, []);
+      byUid.get(uid).push(doc);
+    }
+
+    let fired = 0;
+    let skipped = 0;
+    const tasks = [];
+
+    for (const [uid, docs] of byUid.entries()) {
+      for (const doc of docs) {
+        const data = doc.data();
+        const tz = data.timezone || "UTC";
+        // AT-MOST-ONCE: advance nextTriggerAt in a transaction FIRST.
+        // If another tick already advanced it, our compareAndSwap fails
+        // → we skip (no duplicate). If our advance succeeds but the send
+        // below throws, we lose that firing — acceptable per R-1.
+        const isOneShot = !!data.oneShotDate;
+        let advanced = false;
+        try {
+          await db.runTransaction(async (tx) => {
+            const fresh = await tx.get(doc.ref);
+            if (!fresh.exists) return;
+            const freshData = fresh.data();
+            if (!freshData.isEnabled) return;
+            const freshNext = freshData.nextTriggerAt;
+            // Somebody else already advanced past our target — skip.
+            if (!freshNext || freshNext.toMillis() > now.toMillis()) return;
+
+            const newNext = isOneShot ? null : computeNextTrigger(freshData, tz);
+            const patch = {
+              lastTriggeredAt: now,
+              nextTriggerAt: newNext ? admin.firestore.Timestamp.fromDate(newNext) : null,
+            };
+            // One-shot: also disable so it doesn't show as "enabled" in the
+            // UI post-fire (and skips future queries for good).
+            if (isOneShot) patch.isEnabled = false;
+            tx.set(doc.ref, patch, { merge: true });
+            advanced = true;
+          });
+        } catch (e) {
+          console.warn("processDueReminders: tx failed", { path: doc.ref.path, error: e?.message });
+          skipped += 1;
+          continue;
+        }
+        if (!advanced) {
+          skipped += 1;
+          continue;
+        }
+
+        // Now fire the push (best-effort; if it fails we don't retry).
+        const title = String(data.title || "Pushka").slice(0, 100);
+        // Body defaults to a friendly reminder tag — client can override with
+        // a nicer localized template later (using `type`+`data.title` to render).
+        const body = "🕎"; // TODO(i18n): pull from user language pref
+        tasks.push(
+          sendToUser(uid, {
+            notification: { title, body },
+            data: {
+              type: "reminder",
+              reminderId: doc.id,
+              click_action: "/reminders",
+            },
+          }).catch((err) => {
+            console.warn("processDueReminders: send failed", { uid, reminderId: doc.id, error: err?.message });
+          }),
+        );
+        fired += 1;
+      }
+    }
+
+    // Fire sends in parallel (bounded implicitly by Node's HTTP pool).
+    await Promise.all(tasks);
+    console.info("processDueReminders: tick complete", { fired, skipped });
+  },
+);
+
+/**
+ * backfillRemindersNextTriggerAt — one-shot super_admin migration to
+ * populate nextTriggerAt on reminders created BEFORE this feature deployed.
+ * Idempotent; safe to re-run. Returns a summary; if timeoutHint is true
+ * the caller should invoke again to continue (limit prevents 9min timeout).
+ */
+exports.backfillRemindersNextTriggerAt = onCall(
+  { region: "us-central1", enforceAppCheck: false },
+  async (request) => {
+    if (!request.auth?.uid) throw new HttpsError("unauthenticated", "sign in required");
+    const callerSnap = await db.collection("users").doc(request.auth.uid).get();
+    const role = callerSnap.get("role");
+    if (role !== "super_admin") {
+      throw new HttpsError("permission-denied", "super_admin only");
+    }
+
+    const startAfterId = request.data?.startAfter || null;
+    const pageSize = Math.min(Math.max(Number(request.data?.pageSize) || 400, 50), 500);
+
+    let query = db.collectionGroup("reminders").orderBy(admin.firestore.FieldPath.documentId()).limit(pageSize);
+    if (startAfterId) query = query.startAfter(startAfterId);
+    const snap = await query.get();
+
+    if (snap.empty) {
+      return { scanned: 0, updated: 0, skipped: 0, done: true };
+    }
+
+    // Group by uid to dedupe user timezone lookups.
+    const uidToDocs = new Map();
+    for (const doc of snap.docs) {
+      const parts = doc.ref.path.split("/");
+      const uid = parts[1];
+      if (!uidToDocs.has(uid)) uidToDocs.set(uid, []);
+      uidToDocs.get(uid).push(doc);
+    }
+    const uids = [...uidToDocs.keys()];
+    const userRefs = uids.map((uid) => db.collection("users").doc(uid));
+    const userSnaps = userRefs.length ? await db.getAll(...userRefs) : [];
+    const uidToTz = new Map();
+    userSnaps.forEach((s, i) => {
+      const tz = s.get("timezone");
+      uidToTz.set(uids[i], (typeof tz === "string" && tz.length > 0) ? tz : "UTC");
+    });
+
+    let updated = 0;
+    let skipped = 0;
+    const batch = db.batch();
+    for (const [uid, docs] of uidToDocs.entries()) {
+      const tz = uidToTz.get(uid) || "UTC";
+      for (const doc of docs) {
+        const data = doc.data();
+        // Skip if already populated — idempotency.
+        if (data.nextTriggerAt || data.timezone) { skipped += 1; continue; }
+        const nextTriggerAt = computeNextTrigger(data, tz);
+        batch.set(doc.ref, {
+          timezone: tz,
+          nextTriggerAt: nextTriggerAt ? admin.firestore.Timestamp.fromDate(nextTriggerAt) : null,
+        }, { merge: true });
+        updated += 1;
+      }
+    }
+    if (updated > 0) await batch.commit();
+
+    const lastDoc = snap.docs[snap.docs.length - 1];
+    const nextStartAfter = lastDoc ? lastDoc.id : null;
+    const done = snap.size < pageSize;
+    return {
+      scanned: snap.size,
+      updated,
+      skipped,
+      done,
+      nextStartAfter: done ? null : nextStartAfter,
+    };
   },
 );

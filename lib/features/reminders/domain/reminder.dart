@@ -15,6 +15,10 @@ class Reminder {
     required this.secondTime,
     required this.secondDays,
     required this.secondIsHoliday,
+    this.nextTriggerAt,
+    this.lastTriggeredAt,
+    this.timezone,
+    this.oneShotDate,
   });
 
   final String id;
@@ -28,6 +32,22 @@ class Reminder {
   final List<int> secondDays;
   final bool secondIsHoliday;
 
+  // SERVER-OWNED FIELDS: populated by the onReminderWrite Cloud Function
+  // and the processDueReminders scheduler. NEVER emitted from toMap() —
+  // firestore.rules reject client writes that mutate them. Kept in the
+  // model as read-only so a settings/debug screen could surface them.
+  final DateTime? nextTriggerAt;
+  final DateTime? lastTriggeredAt;
+  final String? timezone;
+
+  // ONE-SHOT (chooseDate) — nullable Firestore Timestamp for reminders that
+  // fire once on a specific date. Set by the reminders screen when the user
+  // picks a date; consumed by the CF to compute nextTriggerAt as the
+  // absolute (timezone-frozen) UTC instant. Previously lived in Hive local
+  // storage only (see NotificationService.setOneShotDate) — mirrored to
+  // Firestore now so server-side scheduling can honor it.
+  final DateTime? oneShotDate;
+
   Reminder copyWith({
     String? id,
     String? title,
@@ -39,6 +59,10 @@ class Reminder {
     TimeOfDay? secondTime,
     List<int>? secondDays,
     bool? secondIsHoliday,
+    DateTime? nextTriggerAt,
+    DateTime? lastTriggeredAt,
+    String? timezone,
+    DateTime? oneShotDate,
   }) {
     return Reminder(
       id: id ?? this.id,
@@ -51,9 +75,19 @@ class Reminder {
       secondTime: secondTime ?? this.secondTime,
       secondDays: secondDays ?? this.secondDays,
       secondIsHoliday: secondIsHoliday ?? this.secondIsHoliday,
+      nextTriggerAt: nextTriggerAt ?? this.nextTriggerAt,
+      lastTriggeredAt: lastTriggeredAt ?? this.lastTriggeredAt,
+      timezone: timezone ?? this.timezone,
+      oneShotDate: oneShotDate ?? this.oneShotDate,
     );
   }
 
+  /// Whitelist: only CLIENT-EDITABLE fields go here. `nextTriggerAt`,
+  /// `lastTriggeredAt`, and `timezone` are server-owned and their inclusion
+  /// in a client write is rejected by Firestore rules (see the
+  /// hasNoServerOnlyReminderFieldsWritten helper in firestore.rules).
+  /// `oneShotDate` IS client-writable (the user picks the date) but the
+  /// server computes `nextTriggerAt` from it.
   Map<String, dynamic> toMap() {
     return {
       'title': title,
@@ -67,6 +101,7 @@ class Reminder {
       'secondTimeMinute': secondTime?.minute, // null clears stale value on merge
       'secondDays': secondDays,
       'secondIsHoliday': secondIsHoliday,
+      'oneShotDate': oneShotDate, // Firestore auto-converts DateTime → Timestamp
     };
   }
 
@@ -89,7 +124,26 @@ class Reminder {
           : null,
       secondDays: List<int>.from(map['secondDays'] as List? ?? const <int>[]),
       secondIsHoliday: map['secondIsHoliday'] as bool? ?? false,
+      // Server-owned reads (Firestore Timestamp → DateTime via .toDate()).
+      // We accept both a Timestamp and a raw int millis for backwards-compat
+      // with any older client versions that might have shipped either.
+      nextTriggerAt: _readDateTime(map['nextTriggerAt']),
+      lastTriggeredAt: _readDateTime(map['lastTriggeredAt']),
+      timezone: map['timezone'] as String?,
+      oneShotDate: _readDateTime(map['oneShotDate']),
     );
+  }
+
+  static DateTime? _readDateTime(dynamic value) {
+    if (value == null) return null;
+    // Firestore Timestamp — use dynamic dispatch to avoid an import here.
+    try {
+      final asDate = (value as dynamic).toDate();
+      if (asDate is DateTime) return asDate;
+    } catch (_) {}
+    if (value is int) return DateTime.fromMillisecondsSinceEpoch(value);
+    if (value is DateTime) return value;
+    return null;
   }
 
   /// Spanish-only subtitle used for push notification bodies.

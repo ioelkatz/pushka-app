@@ -243,7 +243,8 @@ service cloud.firestore {
             'isBlocked',
             'tenantId',
             'tenantIds',
-            '_lastPmDedupePassAt'
+            '_lastPmDedupePassAt',
+            'timezone'
           ]) &&
           request.resource.data.uid is string &&
           request.resource.data.uid == uid &&
@@ -303,6 +304,14 @@ service cloud.firestore {
                   (request.resource.data.autoEmptyNextRunAt > request.time ||
                       (resource != null &&
                           resource.data.get('autoEmptyNextRunAt', null) == request.resource.data.autoEmptyNextRunAt)))) &&
+          // timezone: IANA name (e.g. 'America/Mexico_City'). Used by the
+          // server-side reminders scheduler to compute nextTriggerAt in the
+          // user's local time. IANA names are max ~40 chars — cap at 60 as
+          // generous slack. Empty string rejected (would confuse the CF).
+          (!('timezone' in request.resource.data) ||
+              (request.resource.data.timezone is string &&
+                  request.resource.data.timezone.size() > 0 &&
+                  request.resource.data.timezone.size() <= 60)) &&
           (!('email' in request.resource.data) ||
               (request.resource.data.email is string &&
                   request.resource.data.email.size() <= 254)) &&
@@ -414,6 +423,7 @@ service cloud.firestore {
             'secondTimeMinute',
             'secondDays',
             'secondIsHoliday',
+            'oneShotDate',
             'createdAt'
           ]) &&
           request.resource.data.title is string &&
@@ -449,7 +459,28 @@ service cloud.firestore {
               request.resource.data.secondTimeMinute >= 0 &&
               request.resource.data.secondTimeMinute <= 59
             )
-          );
+          ) &&
+          // oneShotDate: nullable Timestamp for chooseDate one-shot reminders.
+          // Server-side scheduling computes `nextTriggerAt` from it. Client
+          // sets it when the user picks a date; may be omitted for recurring.
+          (!('oneShotDate' in request.resource.data) ||
+              request.resource.data.oneShotDate == null ||
+              request.resource.data.oneShotDate is timestamp);
+    }
+
+    // Server-owned reminder fields — populated by onReminderWrite +
+    // processDueReminders. Clients MUST NOT include them in writes: if
+    // toMap() ever accidentally leaks a stale server value, the whole
+    // update gets rejected (fail-loud rather than silently overwrite
+    // scheduler state with the client's cached snapshot).
+    //
+    // The allowlist above (validReminderDoc.hasOnly) already excludes them,
+    // so this check is redundant defense-in-depth — but keeping it explicit
+    // documents intent for future rule reviewers.
+    function hasNoServerOnlyReminderFieldsWritten() {
+      return !('nextTriggerAt' in request.resource.data) &&
+          !('lastTriggeredAt' in request.resource.data) &&
+          !('timezone' in request.resource.data);
     }
 
     function validTokenDoc(tokenId) {
@@ -605,7 +636,13 @@ service cloud.firestore {
 
       match /reminders/{reminderId} {
         allow read: if isOwner(uid);
-        allow create, update: if isOwner(uid) && validReminderDoc();
+        // Belt + suspenders: validReminderDoc().hasOnly() already excludes
+        // server-owned fields (nextTriggerAt/lastTriggeredAt/timezone). The
+        // extra hasNoServerOnlyReminderFieldsWritten() check makes intent
+        // explicit and catches any future rule regression.
+        allow create, update: if isOwner(uid) &&
+            validReminderDoc() &&
+            hasNoServerOnlyReminderFieldsWritten();
         allow delete: if isOwner(uid);
       }
 
