@@ -28,7 +28,7 @@
       "redirects": [
         {
           "source": "/join/**",
-          "destination": "https://pushka-pwa.web.app/get",
+          "destination": "/get",
           "type": 302
         }
       ]
@@ -47,7 +47,7 @@
           ]
         },
         {
-          "source": "/index.html",
+          "source": "**/*.html",
           "headers": [
             { "key": "Cache-Control", "value": "no-cache, no-store, must-revalidate" },
             { "key": "X-Content-Type-Options", "value": "nosniff" },

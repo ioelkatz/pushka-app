@@ -127,6 +127,26 @@
   
   
   
+  <!--
+    Mark this browser+origin as "PWA has been opened" whenever this page
+    loads in standalone display-mode (i.e. from the home-screen icon on
+    Android/iOS or a desktop shortcut). Read from pushkapp.cc/get to
+    flip the CTA from "Instalar" to "Abrir la app". Same origin = shared
+    localStorage on Chrome/Edge/Firefox; iOS Safari PWAs are storage-
+    isolated so this write is only visible to other iOS PWA launches
+    (still useful when Chrome-family users revisit /get).
+  -->
+  <script>
+    try {
+      var _isPwaStandalone =
+        (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches)
+        || window.navigator.standalone === true;
+      if (_isPwaStandalone && window.localStorage) {
+        window.localStorage.setItem('pushka_pwa_seen', String(Date.now()));
+      }
+    } catch (e) { /* private mode / storage disabled — safe no-op */ }
+  </script>
+
   <script src="flutter_bootstrap.js" async=""></script>
 
   <!--

@@ -601,8 +601,11 @@
       // Success: fires after user actually installs the app (Chrome + Edge).
       // We route through finishInstallFlow() so the installing-modal gets
       // its guaranteed minimum display time before switching to success.
+      // Also PERSIST the seen-flag so a returning visitor to this landing
+      // sees "Abrir la app" instead of "Instalar" on their next visit.
       window.addEventListener('appinstalled', function () {
         deferredInstallPrompt = null;
+        markSeenFlag();
         if (installInProgress) {
           finishInstallFlow();
         } else {
@@ -620,9 +623,84 @@
         (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) ||
         window.navigator.standalone === true;
 
+      // ==================== INSTALLED-DETECTION (layered) ====================
+      // Fast path only covers "this page loaded INSIDE the PWA". When the
+      // user opens the landing in a normal browser tab AFTER installing,
+      // isStandalone is false and beforeinstallprompt never fires — so we
+      // need extra signals. Order (any positive wins):
+      //   L1: display-mode standalone (already computed above as isStandalone)
+      //   L2: navigator.getInstalledRelatedApps() — Chrome/Edge/Samsung/Android
+      //       Requires manifest.related_applications self-reference (added).
+      //   L3: localStorage flag `pushka_pwa_seen` (Date.now()) — same-origin
+      //       write from web/index.html on any standalone launch. 30-day TTL
+      //       so it self-expires if the user uninstalls the PWA.
+      // The Chrome/Edge appinstalled event on this page ALSO persists the
+      // flag, so returning visitors keep seeing "Abrir la app".
+      let alreadyDetectedInstalled = false;
+      const PWA_SEEN_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+
+      function readSeenFlagFresh() {
+        try {
+          const raw = window.localStorage && window.localStorage.getItem('pushka_pwa_seen');
+          const ts = raw ? parseInt(raw, 10) : 0;
+          return ts > 0 && (Date.now() - ts) < PWA_SEEN_TTL_MS;
+        } catch (e) {
+          return false;
+        }
+      }
+
+      function markSeenFlag() {
+        try {
+          if (window.localStorage) {
+            window.localStorage.setItem('pushka_pwa_seen', String(Date.now()));
+          }
+        } catch (e) { /* private mode — safe no-op */ }
+      }
+
+      async function detectPwaInstalledAsync() {
+        // L2: getInstalledRelatedApps with 1.5s race so a hanging API
+        // (rare, but observed on some Samsung Internet versions) can't
+        // block the UI decision indefinitely.
+        if ('getInstalledRelatedApps' in navigator) {
+          try {
+            const apps = await Promise.race([
+              navigator.getInstalledRelatedApps(),
+              new Promise(function (_, reject) {
+                setTimeout(function () { reject(new Error('timeout')); }, 1500);
+              }),
+            ]);
+            if (Array.isArray(apps) && apps.some(function (a) { return a.platform === 'webapp'; })) {
+              return true;
+            }
+          } catch (e) { /* not supported / timed out — fall through */ }
+        }
+        // L3: localStorage flag — same-origin write from PWA cold-start.
+        return readSeenFlagFresh();
+      }
+
+      function flipToOpenApp() {
+        if (alreadyDetectedInstalled) return;
+        alreadyDetectedInstalled = true;
+        btnIOS.textContent = 'Abrir la app';
+        btnAndroid.textContent = 'Abrir la app';
+        // Hide the visual install instructions that no longer apply.
+        const iosInstr = document.getElementById('ios-instructions');
+        const andrInstr = document.getElementById('android-instructions');
+        const hint = document.getElementById('platform-hint');
+        if (iosInstr) iosInstr.style.display = 'none';
+        if (andrInstr) andrInstr.style.display = 'none';
+        if (hint) hint.textContent = 'Ya tenés la app instalada';
+      }
+
       // ==================== BUTTON HANDLERS ====================
       function handleAndroidInstall(e) {
         e.preventDefault();
+        // If prior detection flagged us as installed, tapping the button
+        // just opens the PWA (no re-install prompt attempt).
+        if (alreadyDetectedInstalled) {
+          window.location.href = '/';
+          return;
+        }
         if (deferredInstallPrompt) {
           // Chrome install dialog available — fire it inline. This is the
           // "one tap" install the user asked for.
@@ -651,12 +729,20 @@
 
       function handleIOSInstall(e) {
         e.preventDefault();
+        if (alreadyDetectedInstalled) {
+          window.location.href = '/';
+          return;
+        }
         // iOS Safari has no programmatic install API — show visual guide.
         openModal('ios-install-modal');
       }
 
       // If we're already installed, both buttons just open the app.
       if (isStandalone) {
+        // Landing served INSIDE the installed PWA — persist seen-flag so
+        // subsequent visits from browser tabs also flip to "Abrir la app".
+        markSeenFlag();
+        alreadyDetectedInstalled = true;
         btnIOS.textContent = 'Abrir la app';
         btnAndroid.textContent = 'Abrir la app';
         btnIOS.addEventListener('click', function (e) {
@@ -697,11 +783,26 @@
         btnIOS.style.opacity = '0.6';
         btnAndroid.style.opacity = '0.6';
       } else {
-        // Normal browser (not in-app, not yet installed) — wire the smart
-        // install handlers. Android: fire beforeinstallprompt if available,
-        // else show fallback modal. iOS: show visual Share→Add guide.
+        // Normal browser (not in-app, not yet installed AT PAGE LOAD) —
+        // wire the smart install handlers. Android: fire beforeinstallprompt
+        // if available, else show fallback modal. iOS: show visual Share→Add.
         btnAndroid.addEventListener('click', handleAndroidInstall);
         btnIOS.addEventListener('click', handleIOSInstall);
+
+        // Sync-fast optimistic check: if we already have a fresh seen-flag
+        // in localStorage (PWA opened here at least once in the last 30d),
+        // flip UI immediately — avoids any flash of "Instalar" for returning
+        // installed users. The async check below refines this further.
+        if (readSeenFlagFresh()) {
+          flipToOpenApp();
+        }
+
+        // Async layered detection: runs after paint to avoid blocking TTI.
+        // If any signal confirms the PWA is installed, flip the buttons to
+        // "Abrir la app". Idempotent (flipToOpenApp is guarded).
+        detectPwaInstalledAsync().then(function (installed) {
+          if (installed) flipToOpenApp();
+        }).catch(function () { /* detection failed — leave install UI */ });
 
         // Register the Flutter service worker on this landing page too, so
         // Chrome accumulates installability signals from the first visit.
