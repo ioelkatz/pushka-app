@@ -3,7 +3,6 @@ import 'dart:math' as math;
 import 'dart:ui' as ui;
 
 import 'package:audioplayers/audioplayers.dart';
-import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:go_router/go_router.dart';
@@ -131,11 +130,11 @@ class _SplashScreenState extends State<SplashScreen>
     setState(() => _showBill = true);
     _billCtrl.forward();
     Future.delayed(700.ms, () {
-      // Skip audio on web/PWA: audioplayers requires a prior user gesture
-      // to unlock playback, and splash runs on cold-start (no gesture). The
-      // .catchError swallows the NotAllowedError but the AudioPlayer state
-      // can still leak listeners — cleaner to short-circuit.
-      if (mounted && !kIsWeb) {
+      // On web/PWA Chrome usually allows this via Media Engagement Index
+      // (installed PWAs + prior visits score high enough that cold-start
+      // autoplay is permitted). If MEI is too low (fresh install, private
+      // tab), the .catchError swallows the NotAllowedError silently.
+      if (mounted) {
         unawaited(
           _billAudio.play(AssetSource('sounds/bill_flutter.wav')).catchError((_) {}),
         );
@@ -147,11 +146,9 @@ class _SplashScreenState extends State<SplashScreen>
     if (!mounted) return;
     setState(() => _showShooter = true);
     _shootCtrl.forward();
-    if (!kIsWeb) {
-      unawaited(
-        _shootAudio.play(AssetSource('sounds/shooting_star.mp3')).catchError((_) {}),
-      );
-    }
+    unawaited(
+      _shootAudio.play(AssetSource('sounds/shooting_star.mp3')).catchError((_) {}),
+    );
 
     // 7.3 s — golden flood
     await Future.delayed(1000.ms);

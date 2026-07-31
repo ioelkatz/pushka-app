@@ -1251,10 +1251,10 @@ class S {
   );
 
   String get pushNotifications => _t(
-    'Notificaciones push',
-    'Push notifications',
-    'Notifications push',
-    'התראות פוש',
+    'Notificaciones',
+    'Notifications',
+    'Notifications',
+    'התראות',
   );
   String get pushNotificationsSubtitle => _t(
     'Recibí avisos cuando tenés recordatorios, pagos o novedades.',

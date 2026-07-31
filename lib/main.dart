@@ -2,11 +2,13 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_stripe/flutter_stripe.dart';
 import 'package:flutter_web_plugins/url_strategy.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_crashlytics/firebase_crashlytics.dart';
 
+import 'config/stripe_config.dart';
 import 'firebase_options.dart';
 import 'app/app.dart';
 import 'app/app_initializer.dart';
@@ -20,6 +22,21 @@ Future<void> main() async {
   // Required for App Links / Universal Links to match the go_router path. On
   // non-web platforms this call is a no-op (safe to call unconditionally).
   usePathUrlStrategy();
+
+  // Stripe publishableKey — set SYNCHRONOUSLY before runApp so the web
+  // PaymentElement mount never races the async `_initStripe()` chain.
+  // Previously this lived inside `_performDeferredInit` which awaited
+  // `applySettings()` in parallel with the first frame; on fast cold-start
+  // a user could reach the pushka screen and tap Donar before the key was
+  // set → PaymentElement mounted with null key → button stayed disabled
+  // forever (MF5 in the Stage 4-6 adversarial review). The applySettings()
+  // call is native-only and still runs deferred inside _initStripe.
+  if (StripeConfig.publishableKey.isNotEmpty) {
+    Stripe.publishableKey = StripeConfig.publishableKey;
+    if (StripeConfig.merchantIdentifier.isNotEmpty) {
+      Stripe.merchantIdentifier = StripeConfig.merchantIdentifier;
+    }
+  }
 
   // Hide the Android system navigation bar entirely (back/home/recents
   // strip at the bottom). User can still reveal it temporarily by

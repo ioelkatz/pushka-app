@@ -11,6 +11,7 @@ import '../../../core/pushka_style_provider.dart';
 import '../../../core/l10n/s.dart';
 import '../../../core/network_status_provider.dart';
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
@@ -374,8 +375,16 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
 
   Future<void> _donateNow() async {
     if (_isProcessing) return;
-    if (!await _ensureOnlineForPayment()) return;
-    if (!mounted) return;
+    // Set _isProcessing IMMEDIATELY to block re-entrant triggers (banner tap,
+    // deep link, notification tap) while the amount sheet is still open. The
+    // previous code set the flag AFTER the sheet closed (line 574) leaving a
+    // multi-second window where a second _donateNow could open a parallel
+    // sheet → 2 createPaymentIntent calls → 2 charges (MF2 adversarial).
+    // The old _isProcessing=true on line 574 is now redundant (removed).
+    setState(() => _isProcessing = true);
+    try {
+      if (!await _ensureOnlineForPayment()) return;
+      if (!mounted) return;
     final tr = S.of(context);
     // Prefer the tenant's custom donationReasons; fall back to the locale's
     // default list only when the tenant hasn't configured one. Pre-fix this
@@ -571,7 +580,8 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
     final donationReason = (result['reason'] as String?)?.trim();
     final isMonthly = result['monthly'] == true;
 
-    setState(() => _isProcessing = true);
+    // Note: _isProcessing was already set at the top of _donateNow (MF2
+    // fix — blocks re-entry BEFORE the amount sheet opens). No re-set here.
     try {
       if (_biometricEnabled()) {
         final authenticated = await BiometricService.instance.authenticate(
@@ -650,7 +660,11 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
           if (mounted) _donateNow();
         });
       }
+    }
     } finally {
+      // Outer try opened at top of _donateNow (MF2). Resets _isProcessing
+      // even if the amount sheet was dismissed early, biometric failed, or
+      // an unexpected exception escaped the inner try/catch above.
       if (mounted) setState(() => _isProcessing = false);
     }
   }
@@ -698,8 +712,16 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
       await AnalyticsService.instance.logDonation(donationAmount, currency);
       // Transaction is written server-side by the Stripe webhook (payment_intent.succeeded).
       final remaining = (pushkaAmount - donationAmount).clamp(0.0, double.infinity);
-      // Persist FIRST then update local — same race fix as the other paths.
-      await _persistPushkaAmount(overrideAmount: remaining);
+      // MF4: on web, DON'T write pushkaAmount from the client — the webhook
+      // is the single writer via processed_events + Firestore transaction.
+      // Double-writing here can clobber a webhook that already ran (e.g. a
+      // fast 3DS-less card whose success arrived before this line). The
+      // tenantState listener reconciles the UI within seconds. On native
+      // the client is still the primary writer for the donation path
+      // (webhook writes only for pushka_empty), so keep the sync there.
+      if (!kIsWeb) {
+        await _persistPushkaAmount(overrideAmount: remaining);
+      }
       if (!mounted) return;
       setState(() => pushkaAmount = remaining);
 

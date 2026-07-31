@@ -380,34 +380,33 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           ),
           const SizedBox(height: 18),
 
-          // SOUND (unified control — a single "Sonido" toggle now gates BOTH
-          // audio + haptic vibration. Ioel simplified the UX: users were
-          // confused by two separate toggles that felt like the same thing.
-          // vibrationEnabled is mirrored server-side inside
-          // FeedbackService.updatePreferences so nothing else changes.)
-          //
-          // Hidden in PWA — FeedbackService.init() is a no-op on web
-          // (audioplayers requires user gesture; haptic APIs missing on
-          // iOS Safari). Showing the toggle without effect is confusing UX.
-          if (!kIsWeb) ...[
-            _buildToggleRow(
-              tr.sound,
-              soundEnabled,
-              onChanged: (value) {
-                setState(() {
-                  soundEnabled = value;
-                  vibrationEnabled = value;
-                });
-                _updateSettingsSilent(
-                  user,
-                  soundEnabled: value,
-                  vibrationEnabled: value,
-                );
-              },
-            ),
-            const SizedBox(height: 18),
+          // SOUND: gates audio + haptic. FeedbackService.init() now works
+          // on web too (audioplayers_web); the first play() after cold-start
+          // fails silently by browser autoplay policy, but any user-gesture-
+          // triggered play (donate, coin drop) succeeds. Haptic APIs are
+          // native-only — noop on web (transparent to the user).
+          _buildToggleRow(
+            tr.sound,
+            soundEnabled,
+            onChanged: (value) {
+              setState(() {
+                soundEnabled = value;
+                vibrationEnabled = value;
+              });
+              _updateSettingsSilent(
+                user,
+                soundEnabled: value,
+                vibrationEnabled: value,
+              );
+            },
+          ),
+          const SizedBox(height: 18),
 
-            // AMBIENT MUSIC — same web guard.
+          // AMBIENT MUSIC: still hidden on web — the loop pulls from
+          // Firebase Storage via URL and needs CORS + HTMLAudioElement
+          // playback that's unreliable without a persistent user gesture.
+          // Native-only for now.
+          if (!kIsWeb) ...[
             _buildToggleRow(
               tr.ambientMusic,
               ambientEnabled,

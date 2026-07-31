@@ -37,20 +37,33 @@ Future<String?> showWebDonationSheet({
   /// so the donor sees clearly this is a recurring commitment (Stage 6).
   String? recurringInterval,
 }) async {
+  // MF1 fix: block dismiss while confirmPayment is in flight. Otherwise the
+  // user could swipe/back away, the JS confirmPayment promise still resolves,
+  // the webhook charges the card, but the client throws 'canceled' →
+  // double-charge risk (adversarial CB-8). A ValueNotifier lets the sheet's
+  // _handleConfirm flip the modal from dismissible to sticky in real time.
+  final submitting = ValueNotifier<bool>(false);
   return showModalBottomSheet<String?>(
     context: context,
     isScrollControlled: true,
     isDismissible: true,
     enableDrag: true,
     backgroundColor: Colors.transparent,
-    builder: (ctx) => _WebDonationSheet(
-      clientSecret: clientSecret,
-      customerSessionClientSecret: customerSessionClientSecret,
-      amountCents: amountCents,
-      currency: currency,
-      merchantDisplayName: merchantDisplayName,
-      returnUrl: returnUrl,
-      recurringInterval: recurringInterval,
+    builder: (ctx) => ValueListenableBuilder<bool>(
+      valueListenable: submitting,
+      builder: (_, isSubmitting, _) => PopScope(
+        canPop: !isSubmitting, // blocks Android back button during confirm
+        child: _WebDonationSheet(
+          clientSecret: clientSecret,
+          customerSessionClientSecret: customerSessionClientSecret,
+          amountCents: amountCents,
+          currency: currency,
+          merchantDisplayName: merchantDisplayName,
+          returnUrl: returnUrl,
+          recurringInterval: recurringInterval,
+          onSubmittingChanged: (v) => submitting.value = v,
+        ),
+      ),
     ),
   );
 }
@@ -68,17 +81,26 @@ Future<String?> showWebCardSetupSheet({
   required String merchantDisplayName,
   required String returnUrl,
 }) async {
+  // Same MF1 pattern as showWebDonationSheet: block dismiss during confirm.
+  final submitting = ValueNotifier<bool>(false);
   return showModalBottomSheet<String?>(
     context: context,
     isScrollControlled: true,
     isDismissible: true,
     enableDrag: true,
     backgroundColor: Colors.transparent,
-    builder: (ctx) => _WebCardSetupSheet(
-      clientSecret: clientSecret,
-      customerSessionClientSecret: customerSessionClientSecret,
-      merchantDisplayName: merchantDisplayName,
-      returnUrl: returnUrl,
+    builder: (ctx) => ValueListenableBuilder<bool>(
+      valueListenable: submitting,
+      builder: (_, isSubmitting, _) => PopScope(
+        canPop: !isSubmitting,
+        child: _WebCardSetupSheet(
+          clientSecret: clientSecret,
+          customerSessionClientSecret: customerSessionClientSecret,
+          merchantDisplayName: merchantDisplayName,
+          returnUrl: returnUrl,
+          onSubmittingChanged: (v) => submitting.value = v,
+        ),
+      ),
     ),
   );
 }
@@ -92,6 +114,7 @@ class _WebDonationSheet extends StatefulWidget {
     required this.merchantDisplayName,
     required this.returnUrl,
     this.recurringInterval,
+    this.onSubmittingChanged,
   });
 
   final String clientSecret;
@@ -101,6 +124,9 @@ class _WebDonationSheet extends StatefulWidget {
   final String merchantDisplayName;
   final String returnUrl;
   final String? recurringInterval; // 'month' | 'year' | null (one-off)
+  /// Notifies the outer sheet host whenever the confirmPayment call is in
+  /// flight so it can flip the modal from dismissible to sticky (MF1).
+  final ValueChanged<bool>? onSubmittingChanged;
 
   @override
   State<_WebDonationSheet> createState() => _WebDonationSheetState();
@@ -110,6 +136,27 @@ class _WebDonationSheetState extends State<_WebDonationSheet> {
   bool _submitting = false;
   bool _elementReady = false;
   String? _errorText;
+  Timer? _readyTimeout;
+
+  @override
+  void initState() {
+    super.initState();
+    // MF5: if Stripe.js is blocked (Brave shields, adblock, corporate proxy)
+    // or the publishableKey wasn't set in time, PaymentElement never fires
+    // onCardChanged and the button stays disabled forever. Escape hatch:
+    // 6s timeout pops the sheet with a sentinel so pay() can fall back to
+    // the Checkout redirect flow.
+    _readyTimeout = Timer(const Duration(seconds: 6), () {
+      if (!mounted || _elementReady) return;
+      Navigator.of(context).pop('__element_failed__');
+    });
+  }
+
+  @override
+  void dispose() {
+    _readyTimeout?.cancel();
+    super.dispose();
+  }
 
   Future<void> _handleConfirm() async {
     if (_submitting) return;
@@ -117,6 +164,9 @@ class _WebDonationSheetState extends State<_WebDonationSheet> {
       _submitting = true;
       _errorText = null;
     });
+    // Flip the outer sheet host to sticky so the user can't dismiss while
+    // confirmPayment is in flight — MF1 fix (would-be double-charge).
+    widget.onSubmittingChanged?.call(true);
 
     try {
       // `redirect: 'if_required'` keeps most flows inline. If the issuer
@@ -140,6 +190,7 @@ class _WebDonationSheetState extends State<_WebDonationSheet> {
         _submitting = false;
         _errorText = msg;
       });
+      widget.onSubmittingChanged?.call(false);
     }
   }
 
@@ -230,6 +281,7 @@ class _WebDonationSheetState extends State<_WebDonationSheet> {
                   customerSessionClientSecret: widget.customerSessionClientSecret,
                   onCardChanged: (event) {
                     if (mounted && !_elementReady) {
+                      _readyTimeout?.cancel();
                       setState(() => _elementReady = true);
                     }
                   },
@@ -308,12 +360,14 @@ class _WebCardSetupSheet extends StatefulWidget {
     required this.customerSessionClientSecret,
     required this.merchantDisplayName,
     required this.returnUrl,
+    this.onSubmittingChanged,
   });
 
   final String clientSecret;
   final String? customerSessionClientSecret;
   final String merchantDisplayName;
   final String returnUrl;
+  final ValueChanged<bool>? onSubmittingChanged;
 
   @override
   State<_WebCardSetupSheet> createState() => _WebCardSetupSheetState();
@@ -330,6 +384,7 @@ class _WebCardSetupSheetState extends State<_WebCardSetupSheet> {
       _submitting = true;
       _errorText = null;
     });
+    widget.onSubmittingChanged?.call(true); // MF1: block dismiss during confirm
     try {
       // confirmSetupElement returns void — on resolve without throw, the
       // SetupIntent is confirmed and the PM is attached to the customer.
@@ -353,6 +408,7 @@ class _WebCardSetupSheetState extends State<_WebCardSetupSheet> {
         _submitting = false;
         _errorText = s.length > 200 ? '${s.substring(0, 200)}…' : s;
       });
+      widget.onSubmittingChanged?.call(false);
     }
   }
 

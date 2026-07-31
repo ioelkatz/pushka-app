@@ -151,12 +151,18 @@ class StripeService {
             pushkaAmountAfter: pushkaAmountAfter,
             tenantId: tenantId,
           );
-        } on StripeServiceException {
-          rethrow; // canceled / user-friendly errors — surface as-is
+        } on StripeServiceException catch (e) {
+          // MF5: 'stripe_js_blocked' is a special code from _payWithElementsInline
+          // when the sheet's 6s timeout fires because PaymentElement never
+          // reached ready — fall through to the Checkout redirect so the
+          // donor is not stranded. All other StripeServiceExceptions
+          // (canceled, no-client-secret, etc.) bubble as-is.
+          if (e.code != 'stripe_js_blocked') rethrow;
+          debugPrint('StripeService.pay: stripe_js_blocked → Checkout redirect fallback');
         } catch (e, st) {
-          // Unexpected Elements failure (Stripe.js blocked, PaymentElement
-          // mount race, etc). Fall back to the legacy Checkout redirect so
-          // the donor is not stranded. Log to Crashlytics for triage.
+          // Unexpected Elements failure not covered by a friendly code
+          // (PaymentElement mount exception, JS interop crash). Fall back
+          // to the legacy Checkout redirect + log to Crashlytics.
           debugPrint('StripeService.pay: Elements inline failed, falling back to redirect: $e');
           _recordPaymentError('pay/elements_fallback', e, st,
               cid: 'fallback', purpose: purpose,
@@ -692,28 +698,59 @@ class StripeService {
     final callable = FirebaseFunctions.instance.httpsCallable(
       'createPaymentIntent',
     );
+    Future<HttpsCallableResult> callOnce() => callable.call({
+          'amount': amountCents,
+          'currency': currency.toLowerCase(),
+          if (customerEmail != null) 'customerEmail': customerEmail,
+          'purpose': purpose,
+          'correlationId': cid,
+          if (donorMessage != null && donorMessage.isNotEmpty)
+            'donorMessage': donorMessage,
+          if (donationReason != null && donationReason.isNotEmpty)
+            'donationReason': donationReason,
+          if (purpose == 'pushka_empty')
+            'pushkaAmountAfter': pushkaAmountAfter ?? 0,
+        });
+
     HttpsCallableResult result;
     try {
-      result = await callable.call({
-        'amount': amountCents,
-        'currency': currency.toLowerCase(),
-        if (customerEmail != null) 'customerEmail': customerEmail,
-        'purpose': purpose,
-        'correlationId': cid,
-        if (donorMessage != null && donorMessage.isNotEmpty)
-          'donorMessage': donorMessage,
-        if (donationReason != null && donationReason.isNotEmpty)
-          'donationReason': donationReason,
-        if (purpose == 'pushka_empty')
-          'pushkaAmountAfter': pushkaAmountAfter ?? 0,
-      });
+      result = await callOnce();
       NetworkStatusReporter.recordSuccess();
     } on FirebaseFunctionsException catch (e, st) {
       NetworkStatusReporter.recordMaybeNetworkFailure(e);
-      _recordPaymentError('pay/createPaymentIntent(web)', e, st,
-          cid: cid, purpose: purpose,
-          amountCents: amountCents, currency: currency);
-      rethrow;
+      // MF6: mirror the native pay() retry logic. A stale manual-empty
+      // lock (prior cancelled attempt within 10-min TTL) fires 'aborted';
+      // release the server-side lock, retry once. Without this, the web
+      // branch was falling back to the Checkout redirect for the most
+      // common recoverable failure — an obvious regression vs native.
+      if (e.code == 'aborted' && purpose == 'pushka_empty') {
+        try {
+          await _releaseManualPushkaEmptyLock(tenantId: tenantId);
+          result = await callOnce();
+          NetworkStatusReporter.recordSuccess();
+        } on FirebaseFunctionsException catch (e2, st2) {
+          _recordPaymentError('pay/createPaymentIntent(web)_retry', e2, st2,
+              cid: cid, purpose: purpose,
+              amountCents: amountCents, currency: currency);
+          // If retry also fails with 'aborted', another writer holds the
+          // lock (concurrent auto-empty cron, another tab). Surface a
+          // specific code — pay() catch will NOT fall back to Checkout
+          // (this isn't a Stripe.js issue).
+          if (e2.code == 'aborted') {
+            throw const StripeServiceException('pushka_locked');
+          }
+          rethrow;
+        } catch (e2, st2) {
+          _recordPaymentError('pay/createPaymentIntent(web)_retry_unknown', e2, st2,
+              cid: cid, purpose: purpose);
+          throw const StripeServiceException('network-error');
+        }
+      } else {
+        _recordPaymentError('pay/createPaymentIntent(web)', e, st,
+            cid: cid, purpose: purpose,
+            amountCents: amountCents, currency: currency);
+        rethrow;
+      }
     } catch (e, st) {
       _recordPaymentError('pay/createPaymentIntent(web)_unknown', e, st,
           cid: cid, purpose: purpose,
@@ -754,6 +791,16 @@ class StripeService {
       returnUrl: returnUrl,
     );
 
+    // MF5: Elements failed to mount (Stripe.js blocked / publishableKey
+    // race). The sheet's 6s timeout pops this sentinel so pay() can catch
+    // it and fall back to the Checkout redirect flow. Distinct from
+    // 'canceled' (which is a real user dismissal, no fallback).
+    if (piId == '__element_failed__') {
+      if (purpose == 'pushka_empty') {
+        await _releaseManualPushkaEmptyLock(tenantId: tenantId);
+      }
+      throw const StripeServiceException('stripe_js_blocked');
+    }
     if (piId == null || piId.isEmpty) {
       // User dismissed the sheet without paying. Mirror native's
       // Canceled → StripeServiceException('canceled') so callers use the
