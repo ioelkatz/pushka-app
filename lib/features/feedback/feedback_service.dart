@@ -168,8 +168,19 @@ class FeedbackService {
     try {
       await _billPlayer.stop();
       await _billPlayer.setVolume(0.8);
-      await _billPlayer.play(AssetSource('sounds/bill_flutter.wav'),
-          position: const Duration(milliseconds: 300));
+      // On web/PWA, the `position: 300ms` seek breaks audioplayers_web:
+      // stop() releases the HTMLAudioElement (default ReleaseMode.release),
+      // then setSource early-returns because _currentUrl matches, then the
+      // seek runs on a null player and start() re-creates the element with
+      // currentTime=0.3 while readyState < HAVE_METADATA → Chrome silently
+      // rejects the play() promise and the bill is muted. Accept 300 ms of
+      // pre-roll on web; native still trims the intro as before.
+      if (kIsWeb) {
+        await _billPlayer.play(AssetSource('sounds/bill_flutter.wav'));
+      } else {
+        await _billPlayer.play(AssetSource('sounds/bill_flutter.wav'),
+            position: const Duration(milliseconds: 300));
+      }
       // Fade out over the last 600 ms to match the bill's opacity fade
       unawaited(Future.delayed(const Duration(milliseconds: 2900), () async {
         for (final step in [0.65, 0.45, 0.28, 0.14, 0.04]) {
