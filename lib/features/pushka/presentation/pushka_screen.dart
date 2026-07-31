@@ -2009,7 +2009,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
       return 'Número de tarjeta incorrecto.';
     }
     if (lower.contains('authentication_required') || lower.contains('authentication required')) {
-      return 'La tarjeta requiere autenticación adicional. Intentá de nuevo.';
+      return 'La tarjeta requiere autenticación adicional. Intenta de nuevo.';
     }
     if (lower.contains('do_not_honor') || lower.contains('generic_decline')) {
       return 'La tarjeta fue rechazada por el banco. Probá con otra.';
@@ -2018,7 +2018,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
       return 'La tarjeta fue rechazada por el banco. Probá con otra.';
     }
     if (lower.contains('processing_error')) {
-      return 'Error procesando la tarjeta. Intentá de nuevo en unos minutos.';
+      return 'Error procesando la tarjeta. Intenta de nuevo en unos minutos.';
     }
     if (lower.contains('card_declined') || lower.contains('card declined')) {
       return 'La tarjeta fue rechazada. Probá con otra tarjeta.';

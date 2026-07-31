@@ -207,7 +207,7 @@ class AuthController {
         await _auth.signInWithRedirect(provider);
         throw FirebaseAuthException(
           code: 'redirect-did-not-fire',
-          message: 'No pudimos abrir Google. Reintentá.',
+          message: 'No pudimos abrir Google. Intenta de nuevo.',
         );
       }
     } else {
@@ -376,7 +376,7 @@ class AuthController {
         message:
             'Apple no devolvió identityToken. Suele indicar Sign in with Apple '
             'no habilitado en el bundle id, consentimiento del proveedor revocado, '
-            'o un error transitorio del AppleID service. Reintentá desde Ajustes '
+            'o un error transitorio del AppleID service. Intenta de nuevo desde Ajustes '
             '> Apple ID > Sign in with Apple.',
       );
       _recordNonFatal(err, StackTrace.current, op: 'signInWithApple.nullIdentityToken');

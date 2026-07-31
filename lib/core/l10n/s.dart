@@ -83,7 +83,7 @@ class S {
   /// is available — that card auto-pins to the auto-empty after deletion,
   /// so the donor knows exactly which card future ticks will charge.
   String deleteCardLinkedAutoEmptySwitchBody(String brandLastFour) => _t(
-    'El vaciado automático va a pasar a usar tu $brandLastFour a partir del próximo cobro. ¿Querés continuar?',
+    'El vaciado automático va a pasar a usar tu $brandLastFour a partir del próximo cobro. ¿Quieres continuar?',
     'Auto-empty will switch to your $brandLastFour from the next charge. Continue?',
     'Le vidage automatique passera à votre $brandLastFour à partir du prochain prélèvement. Continuer ?',
     'הריקון האוטומטי יעבור להשתמש ב-$brandLastFour שלך מהחיוב הבא. להמשיך?',
@@ -93,7 +93,7 @@ class S {
   /// since there's nothing left to charge from. The donor must reconfigure
   /// after adding a new card.
   String get deleteCardLinkedAutoEmptyDisableBody => _t(
-    'El vaciado automático se va a desactivar. ¿Querés continuar?',
+    'El vaciado automático se va a desactivar. ¿Quieres continuar?',
     'Auto-empty will be disabled. Continue?',
     'Le vidage automatique sera désactivé. Continuer ?',
     'הריקון האוטומטי יושבת. להמשיך?',
@@ -107,7 +107,7 @@ class S {
   );
 
   String get defaultCardSubtitle => _t(
-    'Tarjeta predeterminada · tocá para administrar',
+    'Tarjeta predeterminada · toca para administrar',
     'Default card · tap to manage',
     'Carte par défaut · appuyez pour gérer',
     'כרטיס ברירת מחדל · הקש לניהול',
@@ -131,7 +131,7 @@ class S {
     'הפעלת ריקון אוטומטי',
   );
   String get walletAutoEmptyInactiveSubtitle => _t(
-    'Programá vaciados recurrentes con una tarjeta guardada.',
+    'Programa vaciados recurrentes con una tarjeta guardada.',
     'Schedule recurring empties with a saved card.',
     'Planifiez des vidages récurrents avec une carte enregistrée.',
     'תזמן ריקון חוזר עם כרטיס שמור.',
@@ -283,7 +283,7 @@ class S {
     'לא ניתן היה לעבד את התשלום',
   );
   String donationFailedBody(String reason) => _t(
-    'Detalle: $reason\n\nPodés intentar con otra tarjeta o contactar al rab para ayuda.',
+    'Detalle: $reason\n\nPuedes intentar con otra tarjeta o contactar al rab para ayuda.',
     'Details: $reason\n\nYou can try with another card or contact the rabbi for help.',
     "Détails : $reason\n\nVous pouvez essayer avec une autre carte ou contacter le rabbin pour de l'aide.",
     'פרטים: $reason\n\nניתן לנסות בכרטיס אחר או ליצור קשר עם הרב לעזרה.',
@@ -311,7 +311,7 @@ class S {
   String get cannotExceedBalance => _t('No puede ser mayor al saldo de tu Pushka', 'Cannot exceed your Pushka balance', 'Ne peut pas dépasser le solde de votre Pushka', 'לא יכול לעלות על יתרת הפושקה שלך');
   String get tzedakahSettings => _t('Configuración de Tzedaká', 'Tzedakah Settings', 'Configuration de Tsédaka', 'הגדרות צדקה');
   String get donationReasonTitle => _t('Designación', 'Designation', 'Désignation', 'ייעוד');
-  String get donationReasonSubtitle => _t('Opcional — elegí a qué destino va tu donación.', 'Optional — choose where your donation goes.', 'Optionnel — choisissez la destination de votre don.', 'אופציונלי — בחרו לאן הולכת התרומה.');
+  String get donationReasonSubtitle => _t('Opcional — elige a qué destino va tu donación.', 'Optional — choose where your donation goes.', 'Optionnel — choisissez la destination de votre don.', 'אופציונלי — בחרו לאן הולכת התרומה.');
   String get donationReasonNone => _t('Sin designación', 'No designation', 'Sans désignation', 'ללא ייעוד');
   String get donationReasonWhereNeeded => _t('Donde se necesite más', 'Where most needed', 'Là où c\'est le plus nécessaire', 'במקום שהכי נחוץ');
   String get donationReasonFamilies => _t('Familias necesitadas', 'Families in need', 'Familles dans le besoin', 'משפחות נזקקות');
@@ -337,7 +337,7 @@ class S {
   String get customGoal => _t('Meta personalizada', 'Custom goal', 'Objectif personnalisé', 'יעד מותאם אישית');
   String get customGoalHint => _t('Ej: 4500', 'E.g.: 4500', 'Ex : 4500', 'לדוגמה: 4500');
   String get offlineMessage => _t('Sin conexión — algunos datos pueden estar desactualizados', 'Offline — some data may be out of date', 'Hors ligne — certaines données peuvent être obsolètes', 'לא מקוון — חלק מהנתונים עשויים להיות לא מעודכנים');
-  String get offlineDonationBlocked => _t('Necesitás conexión a internet para procesar el pago. Verificá tu WiFi o datos.', 'You need an internet connection to process the payment. Check your WiFi or mobile data.', 'Vous avez besoin d\'une connexion internet pour traiter le paiement. Vérifiez votre WiFi ou vos données mobiles.', 'נדרש חיבור לאינטרנט לעיבוד התשלום. בדוק את ה-WiFi או הנתונים שלך.');
+  String get offlineDonationBlocked => _t('Necesitas conexión a internet para procesar el pago. Verifica tu WiFi o datos.', 'You need an internet connection to process the payment. Check your WiFi or mobile data.', 'Vous avez besoin d\'une connexion internet pour traiter le paiement. Vérifiez votre WiFi ou vos données mobiles.', 'נדרש חיבור לאינטרנט לעיבוד התשלום. בדוק את ה-WiFi או הנתונים שלך.');
   String get offlineDialogTitle => _t('Sin conexión', 'Offline', 'Hors ligne', 'לא מקוון');
   String get commonUnderstood => _t('Entendido', 'Got it', 'Compris', 'הבנתי');
   String get offlineSaved => _t(
@@ -505,7 +505,7 @@ class S {
     'מצורף ייצוא הנתונים שלי מפושקה.',
   );
   String get exportFailed => _t(
-    'No se pudo generar la exportación. Intentá de nuevo.',
+    'No se pudo generar la exportación. Intenta de nuevo.',
     'Could not generate export. Please try again.',
     "Impossible de générer l'export. Veuillez réessayer.",
     'לא ניתן ליצור ייצוא. נסה שוב.',
@@ -684,7 +684,7 @@ class S {
       );
   String get loadMore => _t('Cargar más', 'Load more', 'Charger plus', 'טען עוד');
   String get deviceClockSkewError => _t(
-        'La hora de tu dispositivo parece incorrecta. Ajustá la fecha y hora y volvé a intentar.',
+        'La hora de tu dispositivo parece incorrecta. Ajusta la fecha y hora e intenta de nuevo.',
         "Your device's date/time looks wrong. Fix it and try again.",
         "L'heure de votre appareil semble incorrecte. Corrigez-la et réessayez.",
         'תאריך/שעה של המכשיר שגויים. תקן ונסה שוב.',
@@ -871,7 +871,7 @@ class S {
   String get termsOfService => _t('Términos de Servicio', 'Terms of Service', "Conditions d'utilisation", 'תנאי שימוש');
   String get legalTitle => _t('Privacidad y Términos', 'Privacy & Terms', 'Confidentialité et Conditions', 'פרטיות ותנאים');
   String get legalContactFooter => _t(
-        'Para cualquier pregunta sobre estos documentos, escribinos a support@pushkaapp.com',
+        'Para cualquier pregunta sobre estos documentos, escríbenos a support@pushkaapp.com',
         'For any question about these documents, write to support@pushkaapp.com',
         'Pour toute question concernant ces documents, écrivez-nous à support@pushkaapp.com',
         'לשאלות בנוגע למסמכים אלה: support@pushkaapp.com',
@@ -1231,13 +1231,13 @@ class S {
   String get loadingCards => _t('Cargando tarjetas...', 'Loading cards...', 'Chargement des cartes...', 'טוען כרטיסים...');
   String get errorLoadingCards => _t('Error al cargar las tarjetas', 'Error loading cards', 'Erreur lors du chargement des cartes', 'שגיאה בטעינת כרטיסים');
   String get webAddCardNotAvailable => _t(
-    'Para agregar una tarjeta desde el navegador, hacé una donación normal — se guarda automáticamente en tu cuenta.',
+    'Para agregar una tarjeta desde el navegador, haz una donación normal — se guarda automáticamente en tu cuenta.',
     'To add a card from the browser, make a normal donation — it will be saved to your account automatically.',
     'Pour ajouter une carte depuis le navigateur, faites un don normal — elle sera enregistrée automatiquement dans votre compte.',
     'כדי להוסיף כרטיס מהדפדפן, בצע תרומה רגילה — הכרטיס יישמר אוטומטית בחשבונך.',
   );
   String get recurringNotSupportedOnWeb => _t(
-    'Las donaciones mensuales por ahora solo funcionan desde la app instalada en Android. Descargala o hacé una donación única desde el navegador.',
+    'Las donaciones mensuales por ahora solo funcionan desde la app instalada en Android. Descárgala o haz una donación única desde el navegador.',
     'Monthly donations currently work only from the installed Android app. Install it, or make a one-time donation from the browser.',
     "Les dons mensuels ne fonctionnent actuellement que depuis l'application Android installée. Installez-la, ou faites un don unique depuis le navigateur.",
     'תרומות חודשיות פועלות כרגע רק מהאפליקציה המותקנת ב-Android. התקן אותה, או בצע תרומה חד-פעמית מהדפדפן.',
@@ -1257,7 +1257,7 @@ class S {
     'התראות',
   );
   String get pushNotificationsSubtitle => _t(
-    'Recibí avisos cuando tenés recordatorios, pagos o novedades.',
+    'Recibe avisos cuando tienes recordatorios, pagos o novedades.',
     'Get notified about reminders, payments and updates.',
     'Reçois des notifications pour les rappels, paiements et nouveautés.',
     'קבל התראות על תזכורות, תשלומים ועדכונים.',
@@ -1269,7 +1269,7 @@ class S {
     'הדפדפן חסם התראות. הפעל אותן בהגדרות האתר.',
   );
   String get pushRequiresInstalledPwa => _t(
-    'Para recibir notificaciones en iPhone, primero agregá la app a la pantalla de inicio (Compartir → Agregar a pantalla de inicio) y abrila desde el ícono.',
+    'Para recibir notificaciones en iPhone, primero agrega la app a la pantalla de inicio (Compartir → Agregar a pantalla de inicio) y ábrela desde el ícono.',
     'To receive notifications on iPhone, first add the app to your home screen (Share → Add to Home Screen) and open it from the icon.',
     'Pour recevoir des notifications sur iPhone, ajoute d’abord l’app à ton écran d’accueil (Partager → Sur l’écran d’accueil) et ouvre-la depuis l’icône.',
     'כדי לקבל התראות באייפון, קודם הוסף את האפליקציה למסך הבית (שיתוף ← הוסף למסך הבית) ופתח אותה מהסמל.',
@@ -1292,7 +1292,7 @@ class S {
     'התרומות הקבועות שלי',
   );
   String get noActiveSubscriptions => _t(
-    'No tenés donaciones recurrentes activas.',
+    'No tienes donaciones recurrentes activas.',
     "You don't have any active recurring donations.",
     "Vous n'avez aucun don récurrent actif.",
     'אין לך תרומות קבועות פעילות.',
@@ -1310,7 +1310,7 @@ class S {
     'ביטול תרומה',
   );
   String get cancelSubscriptionConfirmBody => _t(
-    'Podés volver cuando quieras, muchas gracias por aportar.',
+    'Puedes volver cuando quieras, muchas gracias por aportar.',
     'You can come back whenever you want, thank you for contributing.',
     "Vous pouvez revenir quand vous voulez, merci pour votre contribution.",
     'תוכל לחזור מתי שתרצה, תודה רבה על תרומתך.',
@@ -1322,7 +1322,7 @@ class S {
     'התרומה בוטלה',
   );
   String get subscriptionCancelFailed => _t(
-    'No se pudo cancelar. Intentá de nuevo.',
+    'No se pudo cancelar. Intenta de nuevo.',
     "Couldn't cancel. Please try again.",
     "Annulation impossible. Veuillez réessayer.",
     'לא ניתן לבטל. נסה שוב.',
@@ -1345,7 +1345,7 @@ class S {
   // ---------------------------------------------------------------------------
 
   String get tenantJoinFailed => _t(
-    'No se pudo unirte a la organización. Intentá de nuevo.',
+    'No se pudo unirte a la organización. Intenta de nuevo.',
     "Couldn't join the organization. Please try again.",
     "Impossible de rejoindre l'organisation. Veuillez réessayer.",
     'לא הצלחנו להצטרף לארגון. נסה שוב.',
@@ -1370,7 +1370,7 @@ class S {
   );
   String get tenantCodeJoinButton => _t('Unirse', 'Join', 'Rejoindre', 'הצטרף');
   String get tenantCodeLostCode => _t(
-    '¿Perdiste el código? Contactá a tu rab',
+    '¿Perdiste el código? Contacta a tu rab',
     'Lost the code? Contact your rabbi',
     'Code perdu ? Contactez votre rabbin',
     'אבד לך הקוד? צור קשר עם הרב שלך',
@@ -1389,13 +1389,13 @@ class S {
     'לא ניתן לפתוח את הדוא"ל. כתוב אל ioelkatz@gmail.com.',
   );
   String get tenantCodeErrorGeneric => _t(
-    'Error al unirse. Intentá de nuevo.',
+    'Error al unirse. Intenta de nuevo.',
     'Error joining. Please try again.',
     'Erreur lors de l\'adhésion. Veuillez réessayer.',
     'שגיאה בהצטרפות. נסה שוב.',
   );
   String get tenantCodeErrorNotFound => _t(
-    'Código no encontrado. Verificá que sea correcto.',
+    'Código no encontrado. Verifica que sea correcto.',
     'Code not found. Please check it.',
     'Code introuvable. Veuillez vérifier.',
     'הקוד לא נמצא. אנא בדוק שהוא נכון.',
@@ -1419,7 +1419,7 @@ class S {
     'יותר מדי ניסיונות. המתן מספר דקות.',
   );
   String get tenantCodeErrorSessionExpired => _t(
-    'Tu sesión expiró. Cerrá sesión y volvé a entrar.',
+    'Tu sesión expiró. Cierra sesión y vuelve a entrar.',
     'Your session expired. Sign out and back in.',
     'Votre session a expiré. Déconnectez-vous et reconnectez-vous.',
     'הפגישה שלך פגה. התנתק והתחבר מחדש.',
@@ -1447,7 +1447,7 @@ class S {
     'הקוד "$slug" אינו משויך לארגון.',
   );
   String get tenantSlugVerifyError => _t(
-    'No se pudo verificar el código. Intentá de nuevo.',
+    'No se pudo verificar el código. Intenta de nuevo.',
     'Could not verify the code. Please try again.',
     "Impossible de vérifier le code. Veuillez réessayer.",
     'לא ניתן לאמת את הקוד. נסה שוב.',
@@ -1473,7 +1473,7 @@ class S {
   );
 
   String get tenantSuspendedBody => _t(
-    'El servicio de tu organización está temporalmente suspendido. Contactá al administrador de tu organización para más información.',
+    'El servicio de tu organización está temporalmente suspendido. Contacta al administrador de tu organización para más información.',
     "Your organization's service is temporarily suspended. Please contact your organization administrator for more information.",
     "Le service de votre organisation est temporairement suspendu. Veuillez contacter l'administrateur de votre organisation pour plus d'informations.",
     'שירות הארגון שלך מושעה זמנית. צור קשר עם מנהל הארגון לפרטים נוספים.',
