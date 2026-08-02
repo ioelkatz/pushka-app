@@ -1689,48 +1689,25 @@ exports.createDonationSubscription = onCall(
     const tenantId = userData.tenantId ?? null;
 
     // Refuse recurring donations for tenants without Connect setup.
-    // Mirrors createPaymentIntent guards (see functions/index.js:716-770).
-    // Without these checks a monthly recurring charge would silently route
-    // to the platform Stripe account every month instead of the tenant —
-    // far worse than a single one-shot misroute because it compounds.
     if (!tenantId) {
       throw new HttpsError(
         "failed-precondition",
         "Tu cuenta no está asociada a ninguna organización.",
       );
     }
-    let tenantConnectAccountId = null;
-    let tenantCommissionRate = 0;
-    const tenantSnap = await db.collection("tenants").doc(tenantId).get();
-    if (!tenantSnap.exists) {
+    const ctx = await _resolveConnectCustomerContext(request.auth.uid);
+    if (!ctx) {
       throw new HttpsError(
         "failed-precondition",
-        "Tu organización no está lista para recibir donaciones recurrentes.",
+        "Tu organización no tiene pagos configurados. Avisale al administrador.",
       );
     }
-    {
-      const td = tenantSnap.data();
-      if (td.status === "suspended") {
-        throw new HttpsError("permission-denied", "El servicio de tu organización está suspendido.");
-      }
-      const cs = td.stripeConnectStatus;
-      const cid = td.stripeConnectAccountId;
-      if (cs === "active" && cid) {
-        tenantConnectAccountId = cid;
-        tenantCommissionRate = safeTenantCommissionRate(td.commissionRate, tenantId);
-      } else if (cid && cs !== "active") {
-        throw new HttpsError(
-          "failed-precondition",
-          "Tu organización está temporalmente sin conexión con el procesador de pagos.",
-        );
-      } else if (!cid) {
-        throw new HttpsError(
-          "failed-precondition",
-          "Esta organización todavía no completó la configuración de pagos. " +
-          "Avisale al administrador para que active Stripe Connect.",
-        );
-      }
-    }
+    const { tenantConnectAccountId, stripeReqOpts, tenantStateRef } = ctx;
+    // safeTenantCommissionRate from the tenant doc — ctx.userData is the
+    // caller's user doc, but commissionRate lives on the tenant doc.
+    const tenantDataForCommission = await db.collection("tenants").doc(tenantId).get();
+    const tenantCommissionRate = safeTenantCommissionRate(
+      tenantDataForCommission.data()?.commissionRate, tenantId);
 
     const amount = Number(request.data?.amount || 0);
     const currency = validateCurrency(request.data?.currency || "usd");
@@ -1768,28 +1745,30 @@ exports.createDonationSubscription = onCall(
       ? String(request.auth.token.email).slice(0, 254)
       : null;
 
-    let customerId = String(userData.stripeCustomerId || "").trim() || null;
+    let customerId = ctx.customerId;
     if (!customerId) {
-      const userRef = db.collection("users").doc(request.auth.uid);
       try {
         const customer = await stripe.customers.create(
           {
             email: customerEmail || undefined,
-            metadata: { uid: request.auth.uid },
+            metadata: { uid: request.auth.uid, tenantId },
           },
-          { idempotencyKey: `customer_create_${request.auth.uid}` },
+          {
+            idempotencyKey: `customer_create_${request.auth.uid}_${tenantId}`,
+            stripeAccount: tenantConnectAccountId,
+          },
         );
         customerId = customer.id;
-        await userRef.set(
+        await tenantStateRef.set(
           {
-            stripeCustomerId: customerId,
+            stripeConnectCustomerId: customerId,
             updatedAt: admin.firestore.FieldValue.serverTimestamp(),
           },
           { merge: true },
         );
       } catch (stripeErr) {
-        console.error("createDonationSubscription: customer create failed", {
-          uid: request.auth.uid,
+        console.error("createDonationSubscription: connect customer create failed", {
+          uid: request.auth.uid, tenantId,
           err: stripeErr.message,
         });
         throw new HttpsError("internal", "No se pudo crear el cliente.");
@@ -1808,28 +1787,24 @@ exports.createDonationSubscription = onCall(
       ? donationReasonRaw.replace(/[\x00-\x1F\x7F-\x9F]/g, " ").trim().slice(0, 80)
       : null;
 
-    // Stripe subscription items.price_data accepts a `product` ID (not the
-    // top-level `product_data` shortcut). Get-or-create a single shared
-    // "Pushka recurring donation" product and cache its ID in Firestore so
-    // we don't create a new one on every call.
+    // Direct Charges: products live PER connected account (Stripe scopes
+    // products by account like customers). Cache the product ID per-account
+    // in _tenantStripe/{acctId}.recurringProductId so we don't re-create on
+    // every call AND so tenants don't share product IDs (which would fail
+    // because product X on account A does not exist on account B).
     let recurringProductId = null;
-    const cfgRef = db.collection("_appConfig").doc("stripe");
+    const acctCfgRef = db.collection("_tenantStripe").doc(tenantConnectAccountId);
     try {
-      const cfgSnap = await cfgRef.get();
-      if (cfgSnap.exists) {
-        recurringProductId = cfgSnap.data()?.recurringProductId ?? null;
+      const acctCfgSnap = await acctCfgRef.get();
+      if (acctCfgSnap.exists) {
+        recurringProductId = acctCfgSnap.data()?.recurringProductId ?? null;
       }
     } catch (cfgErr) {
-      console.error("createDonationSubscription: cfg read failed", {
+      console.error("createDonationSubscription: acct cfg read failed", {
         err: cfgErr.message,
-        stack: cfgErr.stack,
       });
       throw new HttpsError("internal", `cfg-read: ${cfgErr.message}`);
     }
-    console.info("createDonationSubscription: cfg lookup", {
-      uid: request.auth.uid,
-      recurringProductId,
-    });
     if (!recurringProductId) {
       try {
         const product = await stripe.products.create(
@@ -1837,14 +1812,18 @@ exports.createDonationSubscription = onCall(
             name: "Pushka — Donación recurrente",
             metadata: { source: "pushka_recurring" },
           },
-          { idempotencyKey: "pushka_recurring_product_v1" },
+          {
+            idempotencyKey: `pushka_recurring_product_${tenantConnectAccountId}`,
+            stripeAccount: tenantConnectAccountId,
+          },
         );
         recurringProductId = product.id;
-        console.info("createDonationSubscription: product created", {
+        console.info("createDonationSubscription: connect product created", {
           productId: recurringProductId,
+          connectAccountId: tenantConnectAccountId,
         });
         try {
-          await cfgRef.set(
+          await acctCfgRef.set(
             {
               recurringProductId,
               updatedAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -1852,16 +1831,14 @@ exports.createDonationSubscription = onCall(
             { merge: true },
           );
         } catch (writeErr) {
-          console.error("createDonationSubscription: cfg write failed", {
+          console.error("createDonationSubscription: acct cfg write failed (non-fatal)", {
             err: writeErr.message,
-            stack: writeErr.stack,
           });
-          // Non-fatal: we already have the product ID, just won't cache it.
         }
       } catch (prodErr) {
-        console.error("createDonationSubscription: product create failed", {
+        console.error("createDonationSubscription: connect product create failed", {
           err: prodErr.message,
-          stack: prodErr.stack,
+          connectAccountId: tenantConnectAccountId,
         });
         throw new HttpsError("internal", `product-create: ${prodErr.message}`);
       }
@@ -1906,19 +1883,15 @@ exports.createDonationSubscription = onCall(
       },
     };
 
-    if (tenantConnectAccountId) {
-      // Subscriptions accept `application_fee_percent` (Stripe computes the
-      // fee from each invoice's subtotal). Clamp to [0, 99] — a misconfigured
-      // 100%+ rate would have Stripe reject every invoice forever.
+    // Direct Charges: the subscription is created ON the connected account
+    // (via Stripe-Account header). No transfer_data / on_behalf_of needed —
+    // the sub lives natively in the tenant's account. application_fee_percent
+    // still applies for optional platform commission (0 today = no-op).
+    if (tenantCommissionRate > 0) {
       subParams.application_fee_percent = Math.min(
         99,
         Math.max(0, tenantCommissionRate * 100),
       );
-      subParams.transfer_data = { destination: tenantConnectAccountId };
-      // on_behalf_of shifts Stripe processing fees + FX conversion onto
-      // the connected account (Rab) for every recurring invoice. Same
-      // rationale as the one-shot createPaymentIntent flow.
-      subParams.on_behalf_of = tenantConnectAccountId;
     }
 
     // Pre-cleanup: clean up ABANDONED prior attempts so a stuck `incomplete`
@@ -1942,26 +1915,18 @@ exports.createDonationSubscription = onCall(
         customer: customerId,
         status: "all",
         limit: 100,
-      });
+      }, stripeReqOpts);
       for (const oldSub of existing.data) {
         if (oldSub.metadata?.purpose !== "donation_recurring") continue;
         const status = oldSub.status;
-        // Active subs: leave alone. The donor explicitly chose to add another
-        // recurring donation (e.g. to a different tenant, or a top-up to the
-        // same one) — that's their right. The "Mis donaciones recurrentes"
-        // screen lets them cancel any unwanted ones.
         if (status !== "incomplete" && status !== "incomplete_expired") {
           continue;
         }
-        // Abandoned attempts: the donor opened PaymentSheet once and dismissed
-        // it without confirming. Safe to cancel — frees the slot so retries
-        // (potentially in a different currency) don't trip "cannot combine
-        // currencies".
         try {
-          await stripe.subscriptions.cancel(oldSub.id, {
-            invoice_now: false,
-            prorate: false,
-          });
+          // Stripe SDK cancel signature: (id, params?, options?). Pass {}
+          // for params so stripeReqOpts lands in the options slot as a
+          // header rather than being body-encoded.
+          await stripe.subscriptions.cancel(oldSub.id, {}, stripeReqOpts);
           console.info("createDonationSubscription: cancelled abandoned incomplete sub", {
             uid: request.auth.uid,
             subId: oldSub.id,
@@ -1984,16 +1949,16 @@ exports.createDonationSubscription = onCall(
       // an empty subs list — there was nothing to cancel anyway (the old
       // customer is gone from Stripe's perspective).
       if (_isStripeResourceMissing(cleanupErr)) {
-        console.warn("createDonationSubscription: stale customerId in list — clearing", {
-          uid: request.auth.uid, staleCustomerId: customerId,
+        console.warn("createDonationSubscription: stale connect customerId in list — clearing", {
+          uid: request.auth.uid, tenantId, staleCustomerId: customerId,
           errorMessage: cleanupErr?.message,
         });
         try {
-          await db.collection("users").doc(request.auth.uid).set({
-            stripeCustomerId: admin.firestore.FieldValue.delete(),
-            stripeDefaultPaymentMethodId: admin.firestore.FieldValue.delete(),
-            stripeDefaultPaymentMethodLast4: admin.firestore.FieldValue.delete(),
-            stripeDefaultPaymentMethodBrand: admin.firestore.FieldValue.delete(),
+          await tenantStateRef.set({
+            stripeConnectCustomerId: admin.firestore.FieldValue.delete(),
+            stripeConnectDefaultPaymentMethodId: admin.firestore.FieldValue.delete(),
+            stripeConnectDefaultPaymentMethodLast4: admin.firestore.FieldValue.delete(),
+            stripeConnectDefaultPaymentMethodBrand: admin.firestore.FieldValue.delete(),
             updatedAt: admin.firestore.FieldValue.serverTimestamp(),
           }, { merge: true });
         } catch (_) { /* best-effort */ }
@@ -2020,55 +1985,55 @@ exports.createDonationSubscription = onCall(
     // already point at a sub our pre-cleanup pass cancelled (which would
     // surface as "PaymentSheet cannot set up a PaymentIntent in status
     // 'canceled'" client-side).
-    const subIdempotencyKey = `sub_${request.auth.uid}_${correlationId}`;
+    const subIdempotencyKey = `sub_${request.auth.uid}_${tenantId}_${correlationId}`;
     let subscription;
-    // Stale-customer self-heal: mirrors createSetupIntent (lines ~2131-2183).
-    // If the cached customerId points at a customer Stripe no longer knows
-    // about (hard-deleted / mode mismatch), subscriptions.create throws
-    // resource_missing and — without this retry — every recurring donation
-    // attempt bricks with an opaque INTERNAL error. Clear the stale IDs,
-    // mint a fresh customer, re-pin subParams.customer, and retry ONCE.
     let subRetryCount = 0;
-    const userRefForSelfHeal = db.collection("users").doc(request.auth.uid);
     while (true) {
       const attemptKey = subRetryCount === 0
         ? subIdempotencyKey
-        : `sub_create_${request.auth.uid}_r${subRetryCount}`;
+        : `sub_create_${request.auth.uid}_${tenantId}_r${subRetryCount}`;
       try {
-        subscription = await stripe.subscriptions.create(subParams, { idempotencyKey: attemptKey });
+        subscription = await stripe.subscriptions.create(subParams, {
+          idempotencyKey: attemptKey,
+          stripeAccount: tenantConnectAccountId,
+        });
         console.info("createDonationSubscription: sub created", {
           subId: subscription.id,
           status: subscription.status,
           retry: subRetryCount,
+          connectAccountId: tenantConnectAccountId,
         });
         break;
       } catch (stripeErr) {
         if (subRetryCount === 0 && _isStripeResourceMissing(stripeErr)) {
-          console.warn("createDonationSubscription: stale customerId — clearing and retrying once", {
-            uid: request.auth.uid, staleCustomerId: customerId,
+          console.warn("createDonationSubscription: stale connect customerId — clearing and retrying once", {
+            uid: request.auth.uid, tenantId, staleCustomerId: customerId,
             errorMessage: stripeErr?.message,
           });
-          await userRefForSelfHeal.set({
-            stripeCustomerId: admin.firestore.FieldValue.delete(),
-            stripeDefaultPaymentMethodId: admin.firestore.FieldValue.delete(),
-            stripeDefaultPaymentMethodLast4: admin.firestore.FieldValue.delete(),
-            stripeDefaultPaymentMethodBrand: admin.firestore.FieldValue.delete(),
+          await tenantStateRef.set({
+            stripeConnectCustomerId: admin.firestore.FieldValue.delete(),
+            stripeConnectDefaultPaymentMethodId: admin.firestore.FieldValue.delete(),
+            stripeConnectDefaultPaymentMethodLast4: admin.firestore.FieldValue.delete(),
+            stripeConnectDefaultPaymentMethodBrand: admin.firestore.FieldValue.delete(),
             updatedAt: admin.firestore.FieldValue.serverTimestamp(),
           }, { merge: true }).catch(() => {});
           try {
             const freshCustomer = await stripe.customers.create({
               email: customerEmail || undefined,
-              metadata: { uid: request.auth.uid },
-            }, { idempotencyKey: `customer_create_${request.auth.uid}_r1` });
+              metadata: { uid: request.auth.uid, tenantId },
+            }, {
+              idempotencyKey: `customer_create_${request.auth.uid}_${tenantId}_sub_r1`,
+              stripeAccount: tenantConnectAccountId,
+            });
             customerId = freshCustomer.id;
             subParams.customer = customerId;
-            await userRefForSelfHeal.set({
-              stripeCustomerId: customerId,
+            await tenantStateRef.set({
+              stripeConnectCustomerId: customerId,
               updatedAt: admin.firestore.FieldValue.serverTimestamp(),
             }, { merge: true });
           } catch (createErr) {
-            console.error("createDonationSubscription: recreate customer failed", {
-              uid: request.auth.uid, errorMessage: createErr?.message,
+            console.error("createDonationSubscription: recreate connect customer failed", {
+              uid: request.auth.uid, tenantId, errorMessage: createErr?.message,
             });
             throw new HttpsError("internal", "No se pudo preparar tu suscripción. Intentá de nuevo.");
           }
@@ -2137,7 +2102,7 @@ exports.createDonationSubscription = onCall(
               },
             },
           },
-        })
+        }, stripeReqOpts)
         .then((cs) => {
           customerSessionClientSecret = cs.client_secret;
         })
@@ -2148,7 +2113,10 @@ exports.createDonationSubscription = onCall(
           });
         }),
       stripe.ephemeralKeys
-        .create({ customer: customerId }, { apiVersion: "2024-06-20" })
+        .create({ customer: customerId }, {
+          apiVersion: "2024-06-20",
+          stripeAccount: tenantConnectAccountId,
+        })
         .then((ek) => {
           ephemeralKeySecret = ek.secret;
         })
@@ -2166,6 +2134,8 @@ exports.createDonationSubscription = onCall(
       customerId,
       ephemeralKeySecret,
       customerSessionClientSecret,
+      // Client needs this to set Stripe.stripeAccountId before initPaymentSheet.
+      connectAccountId: tenantConnectAccountId,
     };
   },
 );
@@ -2185,16 +2155,17 @@ exports.listDonationSubscriptions = onCall(
       throw new HttpsError("failed-precondition", "Stripe no configurado.");
     }
 
-    const userSnap = await db.collection("users").doc(request.auth.uid).get();
-    const customerId = String(userSnap.data()?.stripeCustomerId || "").trim();
-    if (!customerId) return { subscriptions: [] };
+    // Direct Charges: subscriptions live per-connected-account.
+    const ctx = await _resolveConnectCustomerContext(request.auth.uid);
+    if (!ctx || !ctx.customerId) return { subscriptions: [] };
+    const { customerId, stripeReqOpts } = ctx;
 
     const stripe = require("stripe")(stripeSecret.value(), { timeout: 15000 });
     const subs = await stripe.subscriptions.list({
       customer: customerId,
       status: "all",
       limit: 100,
-    });
+    }, stripeReqOpts);
 
     const ACTIVE_STATUSES = new Set(["active", "trialing", "past_due"]);
 
@@ -2262,16 +2233,22 @@ exports.cancelDonationSubscription = onCall(
       throw new HttpsError("invalid-argument", "ID de suscripción inválido.");
     }
 
+    // Direct Charges: sub lives per-connected-account. Resolve context.
+    const ctx = await _resolveConnectCustomerContext(request.auth.uid);
+    if (!ctx) {
+      throw new HttpsError("failed-precondition", "Tu organización no tiene pagos configurados.");
+    }
+    const { stripeReqOpts } = ctx;
+
     const stripe = require("stripe")(stripeSecret.value(), { timeout: 15000 });
     let sub;
     try {
-      sub = await stripe.subscriptions.retrieve(subId);
+      sub = await stripe.subscriptions.retrieve(subId, stripeReqOpts);
     } catch (e) {
       throw new HttpsError("not-found", "Suscripción no encontrada.");
     }
 
-    // Ownership + scope guard: only the owner can cancel, and only
-    // donation_recurring subs (never tenant SaaS subs) via this endpoint.
+    // Ownership + scope guard.
     if (sub.metadata?.uid !== request.auth.uid) {
       throw new HttpsError("permission-denied", "No tenés permiso para cancelar esta suscripción.");
     }
@@ -2284,11 +2261,12 @@ exports.cancelDonationSubscription = onCall(
     }
 
     try {
-      await stripe.subscriptions.cancel(subId, { invoice_now: false, prorate: false });
+      // SDK cancel signature: (id, params?, options?). Empty {} for params
+      // so stripeReqOpts lands as options (header) not body.
+      await stripe.subscriptions.cancel(subId, {}, stripeReqOpts);
     } catch (e) {
       console.error("cancelDonationSubscription: stripe cancel failed", {
-        uid: request.auth.uid,
-        subId,
+        uid: request.auth.uid, subId,
         err: e.message,
       });
       throw new HttpsError("internal", "No se pudo cancelar la suscripción.");
