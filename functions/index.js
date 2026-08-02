@@ -567,7 +567,11 @@ async function finalizeWebhookEvent(eventRef, patch) {
   );
 }
 
-async function resolveUidFromCharge(charge, stripe) {
+async function resolveUidFromCharge(charge, stripe, reqOpts = {}) {
+  // Direct Charges: sub-object retrieves must include {stripeAccount} when
+  // the source charge came from a connected account. Callers in the webhook
+  // pass reqOpts = { stripeAccount: event.account }; other callers can pass
+  // {} for platform-only lookups.
   const chargeUid = charge?.metadata?.uid;
   if (chargeUid) return chargeUid;
 
@@ -576,28 +580,23 @@ async function resolveUidFromCharge(charge, stripe) {
     charge?.payment_intent?.id;
   if (paymentIntentId) {
     try {
-      const paymentIntent = await stripe.paymentIntents.retrieve(paymentIntentId);
+      const paymentIntent = await stripe.paymentIntents.retrieve(paymentIntentId, reqOpts);
       const piUid = paymentIntent?.metadata?.uid;
       if (piUid) return piUid;
     } catch (_) { /* fall through to invoice/subscription lookup */ }
   }
 
-  // Subscription-generated charges: PI metadata is empty (Stripe generates
-  // the PI from the invoice). Walk charge → invoice → subscription and use
-  // the subscription's metadata.uid instead. This matters for
-  // recurring-donation refunds/disputes — without it, resolveUidFromCharge
-  // silently returns null and the negating tx is never written.
   const invoiceId = typeof charge?.invoice === "string"
     ? charge.invoice
     : charge?.invoice?.id;
   if (invoiceId) {
     try {
-      const invoice = await stripe.invoices.retrieve(invoiceId);
+      const invoice = await stripe.invoices.retrieve(invoiceId, reqOpts);
       const subId = typeof invoice?.subscription === "string"
         ? invoice.subscription
         : invoice?.subscription?.id;
       if (subId) {
-        const sub = await stripe.subscriptions.retrieve(subId);
+        const sub = await stripe.subscriptions.retrieve(subId, reqOpts);
         if (sub?.metadata?.uid) return sub.metadata.uid;
       }
     } catch (_) { /* ignore */ }
@@ -2965,6 +2964,15 @@ exports.stripeWebhook = onRequest(
     return;
   }
 
+  // Direct Charges: events from a connected account carry event.account set
+  // to that account id. When present, every stripe.<resource>.retrieve in
+  // this handler MUST include {stripeAccount: event.account} because the
+  // sub-object (charge, PI, invoice, etc.) lives in the connected account
+  // namespace, not the platform. Without this, retrieves return
+  // resource_missing and downstream fields (payment_method wallet type,
+  // application_fee amount, etc.) silently default to fallback values.
+  const acctReqOpts = event.account ? { stripeAccount: event.account } : {};
+
   try {
     if (event.type === "payment_intent.succeeded") {
       const intent = event.data.object;
@@ -3000,7 +3008,7 @@ exports.stripeWebhook = onRequest(
         try {
           if (intent.latest_charge && typeof intent.latest_charge === "string") {
             const stripeClient = require("stripe")(stripeSecret.value());
-            const charge = await stripeClient.charges.retrieve(intent.latest_charge);
+            const charge = await stripeClient.charges.retrieve(intent.latest_charge, acctReqOpts);
             const pmDetails = charge?.payment_method_details || {};
             const pmType = pmDetails.type || (intent.payment_method_types?.[0]) || "card";
             const wallet = pmDetails.card?.wallet?.type || null;
@@ -3221,7 +3229,7 @@ exports.stripeWebhook = onRequest(
       });
     } else if (event.type === "charge.refunded") {
       const charge = event.data.object;
-      const uid = await resolveUidFromCharge(charge, stripe);
+      const uid = await resolveUidFromCharge(charge, stripe, acctReqOpts);
       const refundedAmount = (charge.amount_refunded || 0) / currencyUnitDivisor(charge.currency || "usd");
       const currency = String(charge.currency || "usd").toUpperCase();
       const paymentIntentId = typeof charge.payment_intent === "string" ?
@@ -3373,9 +3381,9 @@ exports.stripeWebhook = onRequest(
       const chargeId = typeof dispute.charge === "string" ? dispute.charge : dispute.charge?.id;
       let charge = null;
       if (chargeId) {
-        try { charge = await stripe.charges.retrieve(chargeId); } catch (_) { /* ignore */ }
+        try { charge = await stripe.charges.retrieve(chargeId, acctReqOpts); } catch (_) { /* ignore */ }
       }
-      const uid = charge ? await resolveUidFromCharge(charge, stripe) : null;
+      const uid = charge ? await resolveUidFromCharge(charge, stripe, acctReqOpts) : null;
       const disputedAmount = (dispute.amount || 0) / currencyUnitDivisor(dispute.currency || charge?.currency || "usd");
       const currency = String(dispute.currency || charge?.currency || "usd").toUpperCase();
       const paymentIntentId = charge && typeof charge.payment_intent === "string"
@@ -3513,9 +3521,9 @@ exports.stripeWebhook = onRequest(
       const chargeId = typeof dispute.charge === "string" ? dispute.charge : dispute.charge?.id;
       let charge = null;
       if (chargeId) {
-        try { charge = await stripe.charges.retrieve(chargeId); } catch (_) { /* ignore */ }
+        try { charge = await stripe.charges.retrieve(chargeId, acctReqOpts); } catch (_) { /* ignore */ }
       }
-      const uid = charge ? await resolveUidFromCharge(charge, stripe) : null;
+      const uid = charge ? await resolveUidFromCharge(charge, stripe, acctReqOpts) : null;
 
       if (uid) {
         await writeUserPaymentEvent(uid, event.id, {
@@ -3601,9 +3609,9 @@ exports.stripeWebhook = onRequest(
       const chargeId = typeof dispute.charge === "string" ? dispute.charge : dispute.charge?.id;
       let charge = null;
       if (chargeId) {
-        try { charge = await stripe.charges.retrieve(chargeId); } catch (_) { /* ignore */ }
+        try { charge = await stripe.charges.retrieve(chargeId, acctReqOpts); } catch (_) { /* ignore */ }
       }
-      const uid = charge ? await resolveUidFromCharge(charge, stripe) : null;
+      const uid = charge ? await resolveUidFromCharge(charge, stripe, acctReqOpts) : null;
       const isWithdrawn = event.type === "charge.dispute.funds_withdrawn";
 
       if (uid) {
@@ -4742,8 +4750,16 @@ async function _runPushkaAutoEmptyTick() {
           // below still applies and will skip if BELOW Stripe's actual
           // floor — e.g. $0.50 USD).
 
-          const customerId = String(userData.stripeCustomerId || "").trim();
-          const pmId = String(state.autoEmptyPaymentMethodId || userData.stripeDefaultPaymentMethodId || "").trim();
+          // Direct Charges: customers live per-connected-account. Read
+          // stripeConnectCustomerId + stripeConnectDefaultPaymentMethodId
+          // from tenantState (the per-tenant scope) instead of the flat
+          // user doc fields (which were the platform customer, deprecated).
+          const customerId = String(state.stripeConnectCustomerId || "").trim();
+          const pmId = String(
+            state.autoEmptyPaymentMethodId ||
+            state.stripeConnectDefaultPaymentMethodId ||
+            "",
+          ).trim();
           if (!customerId || !pmId) {
             console.warn("processPushkaAutoEmpty: no_saved_card", { uid, tenantId });
             advanceNormalOnly();
@@ -4916,31 +4932,24 @@ async function _runPushkaAutoEmptyTick() {
             ...(plan.donationReason ? { donationReason: plan.donationReason } : {}),
           },
         };
-        if (plan.tenantConnectAccountId) {
-          // Clamp app-fee defensively so a misconfigured commissionRate
-          // cannot produce application_fee_amount >= amount (Stripe rejects).
-          //
-          // BUG-013 regression fix: DO NOT floor at 1 cent — commissionRate=0
-          // tenants (e.g. non-profit special deals) must get the full donation
-          // routed to their Connect account, no platform fee at all. When rate
-          // is zero, skip the application_fee_amount field entirely so Stripe
-          // performs a pure destination transfer.
-          piParams.transfer_data = { destination: plan.tenantConnectAccountId };
-          // on_behalf_of shifts Stripe processing fees + FX onto the connected
-          // account. See createPaymentIntent for full rationale.
-          piParams.on_behalf_of = plan.tenantConnectAccountId;
-          if (plan.tenantCommissionRate > 0) {
-            const rawFee = Math.floor(amountCents * plan.tenantCommissionRate);
-            const safeFee = Math.min(rawFee, amountCents - 1);
-            if (safeFee > 0) {
-              piParams.application_fee_amount = safeFee;
-            }
+        // Direct Charges: PI is created ON the connected account (via
+        // Stripe-Account header below). No transfer_data / on_behalf_of —
+        // those are for destination charges. application_fee_amount still
+        // works if commissionRate > 0 (skims platform commission).
+        if (plan.tenantConnectAccountId && plan.tenantCommissionRate > 0) {
+          const rawFee = Math.floor(amountCents * plan.tenantCommissionRate);
+          const safeFee = Math.min(rawFee, amountCents - 1);
+          if (safeFee > 0) {
+            piParams.application_fee_amount = safeFee;
           }
         }
 
         let paymentIntent;
         try {
-          paymentIntent = await stripe.paymentIntents.create(piParams, { idempotencyKey });
+          paymentIntent = await stripe.paymentIntents.create(piParams, {
+            idempotencyKey,
+            stripeAccount: plan.tenantConnectAccountId,
+          });
         } catch (stripeErr) {
           console.error("processPushkaAutoEmpty: stripe_charge_failed", {
             uid,
@@ -10300,45 +10309,40 @@ exports.createCheckoutSession = onCall(
     const customerEmail = request.auth.token?.email
       ? String(request.auth.token.email).slice(0, 254)
       : null;
+    const stripeReqOpts = { stripeAccount: tenantConnectAccountId };
 
-    // Get-or-create Stripe customer (mismo patrón que createPaymentIntent
-    // pero simplificado — sin transacción de sentinel porque Checkout
-    // Session no requiere el customerId de antemano; podemos incluso pasar
-    // customer_email y Stripe maneja el guest checkout).
-    let customerId = String(userData.stripeCustomerId || "").trim() || null;
+    // Direct Charges: customer lives per connected account. Get-or-create
+    // on the tenantState scope, calling Stripe with the connected header.
+    const tenantStateRef = db.collection("users").doc(request.auth.uid)
+      .collection("tenantState").doc(tenantId);
+    const tenantStateSnap = await tenantStateRef.get();
+    let customerId = String(tenantStateSnap.data()?.stripeConnectCustomerId || "").trim() || null;
     if (!customerId && customerEmail) {
       try {
-        // Metadata key MUST be `uid` — the webhook reads intent.metadata.uid
-        // to attribute the payment. Historic bug: this used `firebaseUid`
-        // which produced silent orphans (charge succeeds, no history row).
-        // Idempotency key mirrors createSetupIntent/createPaymentIntent: if
-        // two Checkout attempts race for the same uid, Stripe dedupes to a
-        // single customer instead of leaving two duplicate customers behind.
         const customer = await stripe.customers.create({
           email: customerEmail,
-          metadata: { uid: request.auth.uid },
-        }, { idempotencyKey: `customer_create_${request.auth.uid}` });
+          metadata: { uid: request.auth.uid, tenantId },
+        }, {
+          idempotencyKey: `customer_create_${request.auth.uid}_${tenantId}`,
+          stripeAccount: tenantConnectAccountId,
+        });
         customerId = customer.id;
-        await db.collection("users").doc(request.auth.uid).set({
-          stripeCustomerId: customerId,
+        await tenantStateRef.set({
+          stripeConnectCustomerId: customerId,
           updatedAt: admin.firestore.FieldValue.serverTimestamp(),
         }, { merge: true });
       } catch (err) {
-        console.warn("createCheckoutSession: customer.create failed", {
-          uid: request.auth.uid, cid: correlationId, errorMessage: err?.message,
+        console.warn("createCheckoutSession: connect customer.create failed", {
+          uid: request.auth.uid, tenantId, cid: correlationId, errorMessage: err?.message,
         });
-        // No es fatal — Checkout puede funcionar con customer_email en vez.
       }
     }
 
-    // Application fee (Connect destination_charges) — mismo clamp defensivo.
+    // Direct Charges: no transfer_data / on_behalf_of. Charge is on the
+    // connected account (via Stripe-Account header on sessions.create).
+    // application_fee_amount still valid — skims platform commission.
     const rawFee = Math.floor(amount * tenantCommissionRate);
     const paymentIntentData = {
-      transfer_data: { destination: tenantConnectAccountId },
-      // on_behalf_of: Stripe processing fees + FX se le cobran al connected
-      // account (Rab) en vez de a la platform (Ioel). Sin esto la plataforma
-      // absorbe ~2.9%+$0.30 por pago. Ver createPaymentIntent para full detalle.
-      on_behalf_of: tenantConnectAccountId,
       metadata: {
         uid: request.auth.uid,
         tenantId,
@@ -10389,18 +10393,14 @@ exports.createCheckoutSession = onCall(
         success_url: successUrl,
         cancel_url: cancelUrl,
         ...(customerId ? { customer: customerId } : { customer_email: customerEmail || undefined }),
-        // Metadata a nivel de session también (además del payment_intent) para
-        // que el webhook `checkout.session.completed` pueda leer sin re-fetch.
         metadata: {
           uid: request.auth.uid,
           tenantId,
           purpose,
           correlationId,
         },
-        // Locale del checkout — best-effort desde el header Accept-Language.
-        // Stripe cae a inglés si el valor es unknown.
         locale: "es",
-      }, { idempotencyKey });
+      }, { idempotencyKey, stripeAccount: tenantConnectAccountId });
 
       console.info("createCheckoutSession: created", {
         uid: request.auth.uid, tenantId, cid: correlationId,
