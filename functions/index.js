@@ -164,6 +164,49 @@ function validateCurrency(currency) {
  * donor's money to the platform — clamping at the read site is a
  * second line of defense behind the write-time validation in createTenant.
  */
+/**
+ * Direct Charges helper: resolve the connect-account customer context for a
+ * given uid. Reads users/{uid}.tenantId, then tenants/{tid}.stripeConnectAccountId,
+ * then users/{uid}/tenantState/{tid}.stripeConnectCustomerId.
+ *
+ * Returns { tenantId, tenantConnectAccountId, stripeReqOpts, tenantStateRef,
+ * customerId } or null when the user has no active tenant / connect setup.
+ *
+ * customerId may be null even when the rest is set — caller should decide
+ * whether to create-or-fail. All Stripe API calls MUST spread stripeReqOpts
+ * as the options arg so the request targets the connected account instead of
+ * the platform. Missing this is the #1 direct-charges bug — Stripe returns
+ * "no such customer" because customers live per-account, not on the platform.
+ */
+async function _resolveConnectCustomerContext(uid) {
+  const userSnap = await db.collection("users").doc(uid).get();
+  const userData = userSnap.exists ? (userSnap.data() ?? {}) : {};
+  const tenantId = userData.tenantId ?? null;
+  if (!tenantId) return null;
+
+  const tenantSnap = await db.collection("tenants").doc(tenantId).get();
+  const tenantData = tenantSnap.exists ? (tenantSnap.data() ?? {}) : {};
+  const tenantConnectAccountId = tenantData.stripeConnectAccountId || null;
+  if (!tenantConnectAccountId || tenantData.stripeConnectStatus !== "active") {
+    return null;
+  }
+
+  const tenantStateRef = db.collection("users").doc(uid)
+    .collection("tenantState").doc(tenantId);
+  const tenantStateSnap = await tenantStateRef.get();
+  const customerId = tenantStateSnap.data()?.stripeConnectCustomerId || null;
+
+  return {
+    tenantId,
+    tenantConnectAccountId,
+    stripeReqOpts: { stripeAccount: tenantConnectAccountId },
+    tenantStateRef,
+    tenantStateSnap,
+    customerId,
+    userData,
+  };
+}
+
 function safeTenantCommissionRate(rawRate, tenantIdForLog) {
   // Accepts 0–30% (matches the admin web validator in TenantDetailPage).
   // Pre-fix the backend only accepted up to 10% and silently clamped to 3%
@@ -2431,48 +2474,56 @@ exports.listSavedCards = onCall(
     await enforceRateLimit(request.auth.uid, "listSavedCards", 100, 3600);
 
     const uid = request.auth.uid;
+    // Direct Charges: customers live per connected account, not on the platform.
+    // Resolve tenantId → tenantConnectAccountId → customer from tenantState.
     const userSnap = await db.collection("users").doc(uid).get();
     const userData = userSnap.data() ?? {};
-    const customerId = userData.stripeCustomerId || null;
+    const tenantId = userData.tenantId ?? null;
+    if (!tenantId) {
+      return { cards: [], defaultPaymentMethodId: null };
+    }
+    const tenantSnap = await db.collection("tenants").doc(tenantId).get();
+    const tenantData = tenantSnap.exists ? (tenantSnap.data() ?? {}) : {};
+    const tenantConnectAccountId = tenantData.stripeConnectAccountId || null;
+    if (!tenantConnectAccountId || tenantData.stripeConnectStatus !== "active") {
+      return { cards: [], defaultPaymentMethodId: null };
+    }
+    const stripeReqOpts = { stripeAccount: tenantConnectAccountId };
+    const tenantStateRef = db.collection("users").doc(uid)
+      .collection("tenantState").doc(tenantId);
+    const tenantStateSnap = await tenantStateRef.get();
+    const customerId = tenantStateSnap.data()?.stripeConnectCustomerId || null;
 
     if (!customerId) {
       return { cards: [], defaultPaymentMethodId: null };
     }
 
     const stripe = require("stripe")(stripeSecret.value());
-    // customers.retrieve and paymentMethods.list are independent — running
-    // them in parallel halves this prep step (~150-300ms saved on the
-    // critical path of opening Saved Cards).
-    //
-    // Hard-404 protection: a stale customerId (mode mismatch after a Stripe
-    // restore, or the customer was hard-deleted in Stripe Dashboard) throws
-    // resource_missing here. Without a catch, Firebase surfaces it as
-    // INTERNAL and the Saved Cards screen is bricked for that user forever
-    // — no self-heal path. Mirror the customer.deleted branch below: clear
-    // the stale IDs on users/{uid} and return an empty list. Next call to
-    // createSetupIntent will mint a fresh customer.
+    // Hard-404 protection: a stale customerId (mode mismatch or hard-deleted
+    // customer) throws resource_missing here. Clear on tenantState and return
+    // empty list — next createSetupIntent mints a fresh connected customer.
     let customer;
     let pmList;
     try {
       [customer, pmList] = await Promise.all([
-        stripe.customers.retrieve(customerId),
+        stripe.customers.retrieve(customerId, stripeReqOpts),
         stripe.paymentMethods.list({
           customer: customerId,
           type: "card",
           limit: 100,
-        }),
+        }, stripeReqOpts),
       ]);
     } catch (stripeErr) {
       if (_isStripeResourceMissing(stripeErr)) {
-        console.warn("listSavedCards: stale customerId (resource_missing) — clearing", {
-          uid, customerId, errorMessage: stripeErr?.message,
+        console.warn("listSavedCards: stale connect customerId (resource_missing) — clearing", {
+          uid, tenantId, customerId, errorMessage: stripeErr?.message,
         });
-        await db.collection("users").doc(uid).set({
-          stripeCustomerId: admin.firestore.FieldValue.delete(),
-          stripeCustomerIdPending: admin.firestore.FieldValue.delete(),
-          stripeDefaultPaymentMethodId: admin.firestore.FieldValue.delete(),
-          stripeDefaultPaymentMethodLast4: admin.firestore.FieldValue.delete(),
-          stripeDefaultPaymentMethodBrand: admin.firestore.FieldValue.delete(),
+        await tenantStateRef.set({
+          stripeConnectCustomerId: admin.firestore.FieldValue.delete(),
+          stripeConnectCustomerIdPending: admin.firestore.FieldValue.delete(),
+          stripeConnectDefaultPaymentMethodId: admin.firestore.FieldValue.delete(),
+          stripeConnectDefaultPaymentMethodLast4: admin.firestore.FieldValue.delete(),
+          stripeConnectDefaultPaymentMethodBrand: admin.firestore.FieldValue.delete(),
           updatedAt: admin.firestore.FieldValue.serverTimestamp(),
         }, { merge: true }).catch(() => {});
         return { cards: [], defaultPaymentMethodId: null };
@@ -2482,10 +2533,10 @@ exports.listSavedCards = onCall(
 
     // Customer was deleted directly in Stripe — clear the stale ID and return empty.
     if (customer.deleted) {
-      await db.collection("users").doc(uid).set(
-        { stripeCustomerId: null, stripeCustomerIdPending: null },
-        { merge: true },
-      ).catch(() => {});
+      await tenantStateRef.set({
+        stripeConnectCustomerId: admin.firestore.FieldValue.delete(),
+        stripeConnectCustomerIdPending: admin.firestore.FieldValue.delete(),
+      }, { merge: true }).catch(() => {});
       return { cards: [], defaultPaymentMethodId: null };
     }
 
@@ -2535,7 +2586,7 @@ exports.listSavedCards = onCall(
     // If a recent pass already cleaned up Stripe-side dupes, skip the
     // detach calls (in-memory dedupe still runs above for safety against
     // races, but it's a no-op when state is clean).
-    const lastDedupeAt = userData._lastPmDedupePassAt?.toMillis?.() ?? 0;
+    const lastDedupeAt = tenantStateSnap.data()?._lastPmDedupePassAt?.toMillis?.() ?? 0;
     const dedupeStale = (Date.now() - lastDedupeAt) > (2 * 60 * 60 * 1000);
     // Subscription-pinning guard: if a "loser" PM is currently the
     // default_payment_method of an active subscription, detaching it silently
@@ -2548,7 +2599,7 @@ exports.listSavedCards = onCall(
       try {
         const subsList = await stripe.subscriptions.list({
           customer: customerId, status: "all", limit: 100,
-        });
+        }, stripeReqOpts);
         const ACTIVE_SUB_STATUSES = new Set(["active", "trialing", "past_due", "unpaid"]);
         for (const s of subsList.data || []) {
           if (!ACTIVE_SUB_STATUSES.has(s.status)) continue;
@@ -2575,29 +2626,25 @@ exports.listSavedCards = onCall(
     }
     if (safeDetachQueue.length > 0 && dedupeStale) {
       console.info("listSavedCards: deduping fingerprint dupes", {
-        uid, customerId,
+        uid, tenantId, customerId,
         kept: keep.length,
         detaching: safeDetachQueue.length,
         skippedForPin,
       });
       await Promise.all(safeDetachQueue.map((pm) =>
-        stripe.paymentMethods.detach(pm.id).catch((detachErr) => {
+        stripe.paymentMethods.detach(pm.id, stripeReqOpts).catch((detachErr) => {
           console.warn("listSavedCards: detach failed", {
-            uid, customerId,
+            uid, tenantId, customerId,
             paymentMethodId: pm.id,
             errorMessage: detachErr?.message,
           });
         }),
       ));
-      // Stamp the success — fire-and-forget so it doesn't block the
-      // response. Mirrors the pattern used in createPaymentIntent.
-      db.collection("users").doc(uid).set({
+      tenantStateRef.set({
         _lastPmDedupePassAt: admin.firestore.FieldValue.serverTimestamp(),
       }, { merge: true }).catch(() => {});
     } else if (dedupeStale) {
-      // No dupes found AND cache is stale → stamp anyway so the next call
-      // skips the in-memory grouping cost too. (No detach needed.)
-      db.collection("users").doc(uid).set({
+      tenantStateRef.set({
         _lastPmDedupePassAt: admin.firestore.FieldValue.serverTimestamp(),
       }, { merge: true }).catch(() => {});
     }
@@ -2642,19 +2689,20 @@ exports.setPaymentMethodNickname = onCall(
     let nickname = String(request.data?.nickname || "").trim();
     if (nickname.length > 60) nickname = nickname.substring(0, 60);
 
-    // Verify the PM belongs to the caller's customer before mutating.
-    const userSnap = await db.collection("users").doc(request.auth.uid).get();
-    const customerId = userSnap.data()?.stripeCustomerId || null;
-    if (!customerId) throw new HttpsError("not-found", "Stripe customer no encontrado.");
+    // Direct Charges: verify PM belongs to caller's connect-account customer.
+    const ctx = await _resolveConnectCustomerContext(request.auth.uid);
+    if (!ctx || !ctx.customerId) {
+      throw new HttpsError("not-found", "Stripe customer no encontrado.");
+    }
     const stripe = require("stripe")(stripeSecret.value());
-    const pm = await stripe.paymentMethods.retrieve(pmId);
-    if (pm.customer !== customerId) {
+    const pm = await stripe.paymentMethods.retrieve(pmId, ctx.stripeReqOpts);
+    if (pm.customer !== ctx.customerId) {
       throw new HttpsError("permission-denied", "Esa tarjeta no es tuya.");
     }
 
     await stripe.paymentMethods.update(pmId, {
       metadata: { nickname: nickname || "" },
-    });
+    }, ctx.stripeReqOpts);
     return { success: true, nickname: nickname || null };
   },
 );
@@ -2682,23 +2730,19 @@ exports.deletePaymentMethod = onCall(
     }
 
     const stripe = require("stripe")(stripeSecret.value());
-    const userRef = db.collection("users").doc(uid);
-    const userSnap = await userRef.get();
-    const customerId = userSnap.data()?.stripeCustomerId || null;
-
-    if (!customerId) {
+    const ctx = await _resolveConnectCustomerContext(uid);
+    if (!ctx || !ctx.customerId) {
       throw new HttpsError("not-found", "No hay cliente Stripe para este usuario.");
     }
+    const { customerId, stripeReqOpts, tenantStateRef, tenantId } = ctx;
 
-    // Fetch the PM to verify ownership AND the customer to check default
-    // status in parallel — they're independent and saves ~100-200ms vs the
-    // prior sequential pattern.
+    // Fetch PM + customer in parallel on the connected account.
     let pm;
     let stripeCustomer;
     try {
       [pm, stripeCustomer] = await Promise.all([
-        stripe.paymentMethods.retrieve(pmId),
-        stripe.customers.retrieve(customerId),
+        stripe.paymentMethods.retrieve(pmId, stripeReqOpts),
+        stripe.customers.retrieve(customerId, stripeReqOpts),
       ]);
     } catch (stripeErr) {
       if (_isStripeResourceMissing(stripeErr)) {
@@ -2725,8 +2769,8 @@ exports.deletePaymentMethod = onCall(
     // first from the "Mis donaciones" screen.
     try {
       const [survivorsList, activeSubsList] = await Promise.all([
-        stripe.paymentMethods.list({ customer: customerId, type: "card", limit: 100 }),
-        stripe.subscriptions.list({ customer: customerId, status: "all", limit: 100 }),
+        stripe.paymentMethods.list({ customer: customerId, type: "card", limit: 100 }, stripeReqOpts),
+        stripe.subscriptions.list({ customer: customerId, status: "all", limit: 100 }, stripeReqOpts),
       ]);
       const survivorCount = (survivorsList.data || []).filter((p) => p.id !== pmId).length;
       if (survivorCount === 0) {
@@ -2757,54 +2801,41 @@ exports.deletePaymentMethod = onCall(
       });
     }
 
-    // Detach — a concurrent request may have beaten us; that's fine.
+    // Detach on the connected account.
     try {
-      await stripe.paymentMethods.detach(pmId);
+      await stripe.paymentMethods.detach(pmId, stripeReqOpts);
     } catch (stripeErr) {
       if (!_isStripeResourceMissing(stripeErr)) {
         throw new HttpsError("internal", "Error al eliminar el método de pago.");
       }
-      // Race: already detached between retrieve and detach — success.
     }
 
-    // If deleted PM was the Stripe customer's invoice default, AUTO-PROMOTE
-    // a surviving PM to the new default in the same call. Without this the
-    // client had to wait for: detach (~500ms) → reload (~500-1500ms) →
-    // setDefault (~500ms), totalling 1.5-2.5s of perceived lag before the
-    // Settings preview switched to the remaining card. Doing it server-side
-    // collapses to a single round-trip and the user_doc stream pushes the
-    // new default fields to all listeners in one shot.
+    // Auto-promote if deleted PM was the default.
     const wasStripeDefault =
       stripeCustomer.invoice_settings?.default_payment_method === pmId;
     const wasFirestoreDefault =
-      (userSnap.data()?.stripeDefaultPaymentMethodId || null) === pmId;
+      (ctx.tenantStateSnap.data()?.stripeConnectDefaultPaymentMethodId || null) === pmId;
 
-    let newDefault = null; // {id, brand, last4} or null when no replacement
+    let newDefault = null;
     if (wasStripeDefault || wasFirestoreDefault) {
-      // Only fetch the surviving list if we actually need to promote — most
-      // deletions are non-default cards, no need to spend a Stripe round-trip.
       const survivors = await stripe.paymentMethods.list({
         customer: customerId, type: "card", limit: 100,
-      });
-      // Newest survivor by creation time; null if customer has no cards left.
+      }, stripeReqOpts);
       const next = survivors.data
         .slice()
         .sort((a, b) => (b.created || 0) - (a.created || 0))[0] || null;
 
-      // Run Stripe + Firestore promotion writes in parallel — they're
-      // independent, each ~300-600ms; serial execution adds an avoidable
-      // round trip to the delete-default-card flow.
       const promotions = [];
       if (wasStripeDefault) {
         promotions.push(stripe.customers.update(customerId, {
           invoice_settings: { default_payment_method: next?.id || null },
-        }));
+        }, stripeReqOpts));
       }
       if (wasFirestoreDefault) {
-        promotions.push(userRef.set({
-          stripeDefaultPaymentMethodId: next?.id || null,
-          stripeDefaultPaymentMethodLast4: next?.card?.last4 || null,
-          stripeDefaultPaymentMethodBrand: next?.card?.brand || null,
+        promotions.push(tenantStateRef.set({
+          stripeConnectDefaultPaymentMethodId: next?.id || null,
+          stripeConnectDefaultPaymentMethodLast4: next?.card?.last4 || null,
+          stripeConnectDefaultPaymentMethodBrand: next?.card?.brand || null,
           updatedAt: admin.firestore.FieldValue.serverTimestamp(),
         }, { merge: true }));
       }
@@ -2818,10 +2849,8 @@ exports.deletePaymentMethod = onCall(
       }
     }
 
-    // Card removed → invalidate dedupe cache so the next payment re-runs
-    // the pass (otherwise the cron would still see the freshly-detached PM
-    // until the 6h TTL elapses).
-    userRef.set({
+    // Invalidate dedupe cache on tenantState so next payment re-runs the pass.
+    tenantStateRef.set({
       _lastPmDedupePassAt: admin.firestore.FieldValue.delete(),
     }, { merge: true }).catch(() => {});
 
@@ -2876,33 +2905,26 @@ exports.setDefaultPaymentMethod = onCall(
     }
 
     const stripe = require("stripe")(stripeSecret.value());
-    const userRef = db.collection("users").doc(uid);
-    const userSnap = await userRef.get();
-    const customerId = userSnap.data()?.stripeCustomerId || null;
-
-    if (!customerId) {
+    const ctx = await _resolveConnectCustomerContext(uid);
+    if (!ctx || !ctx.customerId) {
       throw new HttpsError("not-found", "No hay cliente Stripe para este usuario.");
     }
+    const { customerId, stripeReqOpts, tenantStateRef } = ctx;
 
-    const pm = await stripe.paymentMethods.retrieve(pmId);
+    const pm = await stripe.paymentMethods.retrieve(pmId, stripeReqOpts);
     if (pm.customer !== customerId) {
       throw new HttpsError("permission-denied", "Este método de pago no pertenece a tu cuenta.");
     }
 
-    // Stripe customer update + Firestore cache write are independent and
-    // each ~300-600ms; running them in parallel saves a full round trip
-    // off the critical path. The dedupe cache is cleared because the
-    // dedupe pass picks a "winner" per fingerprint group based on which
-    // card is the default — switching defaults can change the winner, so
-    // the next createPaymentIntent re-runs the pass.
+    // Stripe customer update + Firestore cache write in parallel on connected.
     await Promise.all([
       stripe.customers.update(customerId, {
         invoice_settings: { default_payment_method: pmId },
-      }),
-      userRef.set({
-        stripeDefaultPaymentMethodId: pmId,
-        stripeDefaultPaymentMethodLast4: pm.card?.last4 || null,
-        stripeDefaultPaymentMethodBrand: pm.card?.brand || null,
+      }, stripeReqOpts),
+      tenantStateRef.set({
+        stripeConnectDefaultPaymentMethodId: pmId,
+        stripeConnectDefaultPaymentMethodLast4: pm.card?.last4 || null,
+        stripeConnectDefaultPaymentMethodBrand: pm.card?.brand || null,
         _lastPmDedupePassAt: admin.firestore.FieldValue.delete(),
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       }, { merge: true }),
