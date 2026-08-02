@@ -24,7 +24,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_stripe_web/flutter_stripe_web.dart';
 
 import '../../core/l10n/s.dart';
-import '../../config/stripe_config.dart';
+import 'stripe_web_bootstrap.dart';
 
 Future<String?> showWebDonationSheet({
   required BuildContext context,
@@ -37,19 +37,18 @@ Future<String?> showWebDonationSheet({
   /// If non-null, renders a "monthly" / "yearly" badge next to the amount
   /// so the donor sees clearly this is a recurring commitment (Stage 6).
   String? recurringInterval,
-  /// DIRECT CHARGES: connected account this PI + customer live on. Re-init
-  /// Stripe.js with `stripeAccount` so Elements targets the right account
-  /// when confirmPaymentElement runs. Without this, Stripe.js queries the
-  /// platform account for the PI and 404s.
+  /// DIRECT CHARGES: connected account this PI + customer live on. In
+  /// steady state WebStripe is already re-initialised for this account by
+  /// the app-level bootstrap (see stripe_web_bootstrap_web.dart). We still
+  /// call the idempotent bootstrap here as a safety net for the first-pay-
+  /// after-login race where the tenantConfigProvider listener may not have
+  /// fired before the user tapped Donar. When the accountId matches what
+  /// was already set the call is a cheap no-op; when it differs BEFORE any
+  /// PaymentElement has ever mounted (still true here — the modal is not
+  /// on screen yet), the re-init lands safely.
   String? stripeAccount,
 }) async {
-  if (stripeAccount != null && stripeAccount.isNotEmpty &&
-      StripeConfig.publishableKey.isNotEmpty) {
-    await WebStripe.instance.initialise(
-      publishableKey: StripeConfig.publishableKey,
-      stripeAccountId: stripeAccount,
-    );
-  }
+  await initWebStripeForTenant(stripeAccount);
   if (!context.mounted) return null;
   // MF1 fix: block dismiss while confirmPayment is in flight. Otherwise the
   // user could swipe/back away, the JS confirmPayment promise still resolves,
