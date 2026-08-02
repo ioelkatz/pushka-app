@@ -1246,7 +1246,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         ),
         child: Row(
           children: [
-            Text(selectedFlag, style: const TextStyle(fontSize: 22)),
+            Text(_flagForCurrency(currency), style: const TextStyle(fontSize: 22)),
             const SizedBox(width: 12),
             Expanded(
               child: Text(
@@ -2177,14 +2177,20 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               const SizedBox(height: 14),
               Row(
                 children: [
-                  Text(selectedFlag, style: const TextStyle(fontSize: 26)),
+                  // "From" — derive flag from currency at render time so it
+                  // can never drift from selectedCurrency (previous bug: the
+                  // state var selectedFlag could stay 🇺🇸 while
+                  // selectedCurrency was 'EUR', producing a mismatched
+                  // display and a confirm dialog showing the same flag on
+                  // both sides after switching from EUR → USD).
+                  Text(_flagForCurrency(selectedCurrency), style: const TextStyle(fontSize: 26)),
                   const SizedBox(width: 6),
                   Text(selectedCurrency, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
                   Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 10),
                     child: Icon(Icons.arrow_forward_rounded, size: 18, color: cs.onSurfaceVariant),
                   ),
-                  Text(selected['flag']!, style: const TextStyle(fontSize: 26)),
+                  Text(_flagForCurrency(selected['currency']!), style: const TextStyle(fontSize: 26)),
                   const SizedBox(width: 6),
                   Text(selected['currency']!, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
                 ],
