@@ -262,7 +262,26 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
   }
   
   Future<void> emptyPushka() async {
-    if (pushkaAmount <= 0 || _isProcessing) return;
+    if (_isProcessing) return;
+    // Warm empty-state hint instead of silent no-op: previously tapping
+    // "Vaciar Pushka" with amount=0 did nothing (early return), which looked
+    // broken. Show a friendly snackbar so the donor knows to add coins first.
+    if (pushkaAmount <= 0) {
+      if (!mounted) return;
+      final tr = S.of(context);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Row(children: [
+            const Icon(Icons.savings_outlined, color: Colors.white, size: 20),
+            const SizedBox(width: 10),
+            Expanded(child: Text(tr.pushkaEmptyHint)),
+          ]),
+          behavior: SnackBarBehavior.floating,
+          duration: const Duration(seconds: 3),
+        ),
+      );
+      return;
+    }
     // Offline gate: payments require a live CF call. Bail with a friendly
     // dialog instead of firing a callable that will fail with a scary
     // network error. Firestore-cached data (pushka amount, history) keeps

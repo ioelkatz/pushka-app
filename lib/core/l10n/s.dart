@@ -218,6 +218,7 @@ class S {
   String get biometricReasonEmpty => _t('Confirma tu identidad para vaciar la Pushka', 'Confirm your identity to empty the Pushka', 'Confirmez votre identité pour vider la Pushka', 'אמת את זהותך כדי לרוקן את הפושקה');
   String get authRequired => _t('Autenticación requerida para vaciar la Pushka', 'Authentication required to empty the Pushka', 'Authentification requise pour vider la Pushka', 'נדרש אימות לריקון הפושקה');
   String get pushkaEmptied => _t('Pushka vaciada. El pago fue procesado.', 'Pushka emptied. Payment was processed.', 'Pushka vidée. Le paiement a été traité.', 'הפושקה רוקנה. התשלום עובד.');
+  String get pushkaEmptyHint => _t('Tu pushka está vacía. Agrega algo primero 🕯️', 'Your pushka is empty. Add something first 🕯️', 'Ta pushka est vide. Ajoute quelque chose d\'abord 🕯️', 'הפושקה שלך ריקה. הוסף משהו קודם 🕯️');
   String get couldNotEmpty => _t('No se pudo vaciar la Pushka', 'Could not empty the Pushka', 'Impossible de vider la Pushka', 'לא ניתן לרוקן את הפושקה');
   String get biometricReasonDonate => _t('Confirma tu identidad para procesar la donación', 'Confirm your identity to process the donation', 'Confirmez votre identité pour traiter le don', 'אמת את זהותך לעיבוד התרומה');
   String get authRequiredDonate => _t('Autenticación requerida para donar', 'Authentication required to donate', 'Authentification requise pour faire un don', 'נדרש אימות לתרומה');
