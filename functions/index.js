@@ -1091,20 +1091,19 @@ exports.createPaymentIntent = onCall(
   // Double-tap protection lives in the client (`_processing` guard).
   const idempotencyKey = `pi_${request.auth.uid}_${correlationId}`;
 
-  // Build Stripe Connect params — only when the tenant has an active Connect account.
-  // Clamp app fee defensively: a misconfigured commissionRate >= 1 would cause
-  // Stripe to reject with `application_fee_amount must be less than amount`,
-  // surfacing as a generic donor-facing "could not process" error. The clamp
-  // keeps payments flowing even with bad config (tenant just earns more, app
-  // earns less) while logging the anomaly for ops to investigate.
+  // DIRECT CHARGES MODEL: the PaymentIntent is created directly on the
+  // connected account (via Stripe-Account header). Consequences:
+  // - Stripe receipts/refund emails/dispute notices use the CONNECTED
+  //   account's branding, NOT the platform's (fixes "Receipt from AI systems |
+  //   ioel katz" issue).
+  // - Merchant of record IS the connected account (Rab / Jym Inc.), not Ioel.
+  // - No transfer_data / on_behalf_of needed — those are for destination charges.
+  // - application_fee_amount is still valid; skimming a commission for the
+  //   platform. Left in for future multi-tenant scenarios; today (0%) it's a
+  //   no-op.
   const connectParams = {};
   if (tenantConnectAccountId) {
     const rawFee = Math.floor(amount * tenantCommissionRate);
-    // BUG-013 fix: commissionRate === 0 should mean ZERO platform fee, not
-    // 1 cent (the old `Math.max(1, ...)` floor charged 1 cent even for
-    // explicit free-mode tenants). When rawFee is 0 we still set
-    // transfer_data so the donor's full amount lands in the tenant's Connect
-    // account — just without an application_fee_amount param.
     if (rawFee > 0) {
       const safeFee = Math.min(rawFee, amount - 1);
       if (safeFee !== rawFee) {
@@ -1114,39 +1113,37 @@ exports.createPaymentIntent = onCall(
       }
       connectParams.application_fee_amount = safeFee;
     }
-    connectParams.transfer_data = { destination: tenantConnectAccountId };
-    // on_behalf_of shifts Stripe processing fees + FX conversion off the
-    // platform onto the connected account (industry standard for non-profits).
-    // Without this, the platform absorbs ~2.9%+$0.30 per charge and any
-    // cross-currency conversion — on a €1 test that ate €0.30 from platform
-    // balance. With on_behalf_of, settlement happens in the connected
-    // account's default currency/country and the tenant sees the fee as a
-    // normal operating cost. Requires the connected account to be fully
-    // onboarded (charges_enabled + payouts_enabled) — already true for
-    // chabadmexico. Safe because destination === on_behalf_of; a mismatch
-    // would create an accounting anomaly.
-    connectParams.on_behalf_of = tenantConnectAccountId;
   }
 
   const stripe = require("stripe")(stripeSecret.value(), { timeout: 15000 });
+  // stripeReqOpts — spread into EVERY Stripe API call in this function so the
+  // request executes on the connected account. Missing this on any call causes
+  // "customer not found" errors because customers live per-account in Connect.
+  const stripeReqOpts = { stripeAccount: tenantConnectAccountId };
 
-  // Resolve (or create) the user's Stripe customer so the PaymentSheet
-  // can show their saved cards. Same get-or-create pattern as
-  // createSetupIntent: a Firestore sentinel inside a transaction
-  // prevents two concurrent calls from each spawning a separate Stripe
-  // customer for the same uid.
-  let customerId = String(userData.stripeCustomerId || "").trim() || null;
+  // Resolve (or create) the donor's Stripe customer inside the CONNECTED
+  // account (Rab / Jym Inc.). With Direct Charges, customers are scoped
+  // per-account — each connected account has its own customer namespace.
+  // We store the connect-account customer under users/{uid}/tenantState/{tenantId}
+  // instead of the flat users/{uid}.stripeCustomerId (which was the
+  // platform customer, now deprecated).
+  //
+  // Same sentinel-in-transaction pattern as before to prevent two concurrent
+  // calls from spawning duplicate customers.
+  const tenantStateRef = db.collection("users").doc(request.auth.uid)
+    .collection("tenantState").doc(tenantId);
+  const tenantStateSnap = await tenantStateRef.get();
+  let customerId = String(tenantStateSnap.data()?.stripeConnectCustomerId || "").trim() || null;
   if (!customerId) {
-    const userRef = db.collection("users").doc(request.auth.uid);
     await db.runTransaction(async (tx) => {
-      const fresh = await tx.get(userRef);
-      const freshId = String(fresh.data()?.stripeCustomerId || "").trim();
+      const fresh = await tx.get(tenantStateRef);
+      const freshId = String(fresh.data()?.stripeConnectCustomerId || "").trim();
       if (freshId) {
         customerId = freshId;
         return;
       }
-      tx.set(userRef, {
-        stripeCustomerIdPending: true,
+      tx.set(tenantStateRef, {
+        stripeConnectCustomerIdPending: true,
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       }, { merge: true });
     });
@@ -1154,17 +1151,20 @@ exports.createPaymentIntent = onCall(
       try {
         const customer = await stripe.customers.create({
           email: customerEmail || undefined,
-          metadata: { uid: request.auth.uid },
-        }, { idempotencyKey: `customer_create_${request.auth.uid}` });
+          metadata: { uid: request.auth.uid, tenantId },
+        }, {
+          idempotencyKey: `customer_create_${request.auth.uid}_${tenantId}`,
+          stripeAccount: tenantConnectAccountId,
+        });
         customerId = customer.id;
-        await userRef.set({
-          stripeCustomerId: customerId,
-          stripeCustomerIdPending: admin.firestore.FieldValue.delete(),
+        await tenantStateRef.set({
+          stripeConnectCustomerId: customerId,
+          stripeConnectCustomerIdPending: admin.firestore.FieldValue.delete(),
           updatedAt: admin.firestore.FieldValue.serverTimestamp(),
         }, { merge: true });
       } catch (stripeErr) {
-        await userRef.set({
-          stripeCustomerIdPending: admin.firestore.FieldValue.delete(),
+        await tenantStateRef.set({
+          stripeConnectCustomerIdPending: admin.firestore.FieldValue.delete(),
         }, { merge: true }).catch(() => {});
         throw stripeErr;
       }
@@ -1174,20 +1174,18 @@ exports.createPaymentIntent = onCall(
   // Skip the dedupe pass if it ran recently. The pass touches Stripe twice
   // (customers.retrieve + paymentMethods.list) plus N more updates/detaches —
   // ~400-800ms on the critical path. State only changes when a card is
-  // added or removed, so we cache `_lastPmDedupePassAt` on the user doc and
-  // skip if < 2h old (was 6h — too long for power users adding multiple
-  // cards in a session). Card add/remove flows clear the cache so the
-  // next payment re-runs the pass.
-  const lastDedupeAt = userData._lastPmDedupePassAt?.toMillis?.() ?? 0;
+  // added or removed, so we cache `_lastPmDedupePassAt` on the tenantState
+  // doc (per-tenant now that customers are per-tenant) and skip if < 2h old.
+  const lastDedupeAt = tenantStateSnap.data()?._lastPmDedupePassAt?.toMillis?.() ?? 0;
   const dedupeStale = (Date.now() - lastDedupeAt) > (2 * 60 * 60 * 1000);
   if (dedupeStale) try {
     const [customer, pmList] = await Promise.all([
-      stripe.customers.retrieve(customerId),
+      stripe.customers.retrieve(customerId, stripeReqOpts),
       stripe.paymentMethods.list({
         customer: customerId,
         type: "card",
         limit: 100,
-      }),
+      }, stripeReqOpts),
     ]);
     const defaultPmId = customer && !customer.deleted
       ? customer.invoice_settings?.default_payment_method || null
@@ -1225,7 +1223,7 @@ exports.createPaymentIntent = onCall(
         count: needsRedisplayFix.length,
       });
       await Promise.all(needsRedisplayFix.map((pm) =>
-        stripe.paymentMethods.update(pm.id, { allow_redisplay: "always" })
+        stripe.paymentMethods.update(pm.id, { allow_redisplay: "always" }, stripeReqOpts)
           .catch((updateErr) => {
             console.warn("createPaymentIntent: allow_redisplay update failed", {
               uid: request.auth.uid,
@@ -1259,16 +1257,15 @@ exports.createPaymentIntent = onCall(
         detachCount: detachIds.length,
       });
       await Promise.all(detachIds.map((pmId) =>
-        stripe.paymentMethods.detach(pmId).catch((err) => {
+        stripe.paymentMethods.detach(pmId, stripeReqOpts).catch((err) => {
           console.warn("createPaymentIntent: detach failed", {
             uid: request.auth.uid, customerId, paymentMethodId: pmId, errorMessage: err?.message,
           });
         }),
       ));
     }
-    // Stamp the success — fire-and-forget so it doesn't block the
-    // critical path. Next call within 6h skips the whole dedupe pass.
-    db.collection("users").doc(request.auth.uid).set({
+    // Stamp the success on tenantState (per-tenant now) — fire-and-forget.
+    tenantStateRef.set({
       _lastPmDedupePassAt: admin.firestore.FieldValue.serverTimestamp(),
     }, { merge: true }).catch((stampErr) => {
       console.warn("createPaymentIntent: dedupe stamp failed", {
@@ -1278,36 +1275,36 @@ exports.createPaymentIntent = onCall(
   } catch (dedupeErr) {
     // Stale-customer self-heal during dedupe: if the cached customerId
     // points at a customer Stripe no longer knows (hard-deleted / mode
-    // mismatch), clear the stale IDs, mint a fresh customer, and continue
-    // with the new customerId. Without this the downstream paymentIntents
-    // .create call would also fail with resource_missing and — until its
-    // own retry — the whole donation attempt bricks.
+    // mismatch), clear the stale IDs, mint a fresh customer on the
+    // connected account, and continue with the new customerId.
     if (_isStripeResourceMissing(dedupeErr)) {
-      console.warn("createPaymentIntent: stale customerId in dedupe — clearing and regenerating", {
+      console.warn("createPaymentIntent: stale connect customerId in dedupe — clearing and regenerating", {
         uid: request.auth.uid, staleCustomerId: customerId,
         errorMessage: dedupeErr?.message,
       });
-      const selfHealRef = db.collection("users").doc(request.auth.uid);
-      await selfHealRef.set({
-        stripeCustomerId: admin.firestore.FieldValue.delete(),
-        stripeCustomerIdPending: admin.firestore.FieldValue.delete(),
-        stripeDefaultPaymentMethodId: admin.firestore.FieldValue.delete(),
-        stripeDefaultPaymentMethodLast4: admin.firestore.FieldValue.delete(),
-        stripeDefaultPaymentMethodBrand: admin.firestore.FieldValue.delete(),
+      await tenantStateRef.set({
+        stripeConnectCustomerId: admin.firestore.FieldValue.delete(),
+        stripeConnectCustomerIdPending: admin.firestore.FieldValue.delete(),
+        stripeConnectDefaultPaymentMethodId: admin.firestore.FieldValue.delete(),
+        stripeConnectDefaultPaymentMethodLast4: admin.firestore.FieldValue.delete(),
+        stripeConnectDefaultPaymentMethodBrand: admin.firestore.FieldValue.delete(),
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       }, { merge: true }).catch(() => {});
       try {
         const freshCustomer = await stripe.customers.create({
           email: customerEmail || undefined,
-          metadata: { uid: request.auth.uid },
-        }, { idempotencyKey: `customer_create_${request.auth.uid}_r1` });
+          metadata: { uid: request.auth.uid, tenantId },
+        }, {
+          idempotencyKey: `customer_create_${request.auth.uid}_${tenantId}_r1`,
+          stripeAccount: tenantConnectAccountId,
+        });
         customerId = freshCustomer.id;
-        await selfHealRef.set({
-          stripeCustomerId: customerId,
+        await tenantStateRef.set({
+          stripeConnectCustomerId: customerId,
           updatedAt: admin.firestore.FieldValue.serverTimestamp(),
         }, { merge: true });
       } catch (createErr) {
-        console.error("createPaymentIntent: recreate customer failed after dedupe stale", {
+        console.error("createPaymentIntent: recreate connect customer failed after dedupe stale", {
           uid: request.auth.uid, errorMessage: createErr?.message,
         });
         throw new HttpsError("internal", "No se pudo preparar el pago. Intentá de nuevo.");
@@ -1411,55 +1408,52 @@ exports.createPaymentIntent = onCall(
     },
   };
 
-  // Fire both Stripe API calls concurrently. allSettled (not all) so a
-  // CustomerSession failure doesn't tank the PaymentIntent — we fall back
-  // to ephemeralKey in that branch.
+  // Fire both Stripe API calls concurrently on the CONNECTED account.
   let [piResult, sessionResult] = await Promise.allSettled([
-    stripe.paymentIntents.create(piParams, { idempotencyKey }),
-    stripe.customerSessions.create(customerSessionParams),
+    stripe.paymentIntents.create(piParams, { idempotencyKey, stripeAccount: tenantConnectAccountId }),
+    stripe.customerSessions.create(customerSessionParams, stripeReqOpts),
   ]);
 
-  // Stale-customer self-heal for paymentIntents.create: if the customerId
-  // in piParams points at a customer Stripe no longer knows about
-  // (hard-deleted / mode mismatch), clear the stale IDs, mint a fresh
-  // customer, re-pin piParams.customer, and retry ONCE. Also re-run the
-  // customer session create with the fresh customer id so PaymentSheet
-  // gets a working session. Retry is capped at 1 to avoid infinite loops.
+  // Stale-customer self-heal for paymentIntents.create on the connected
+  // account: if customerId is stale, clear from tenantState, mint fresh
+  // customer on connected, and retry once.
   if (piResult.status === "rejected" && _isStripeResourceMissing(piResult.reason)) {
-    console.warn("createPaymentIntent: stale customerId — clearing and retrying once", {
+    console.warn("createPaymentIntent: stale connect customerId — clearing and retrying once", {
       uid: request.auth.uid, staleCustomerId: customerId,
       errorMessage: piResult.reason?.message,
     });
-    const selfHealRef = db.collection("users").doc(request.auth.uid);
-    await selfHealRef.set({
-      stripeCustomerId: admin.firestore.FieldValue.delete(),
-      stripeCustomerIdPending: admin.firestore.FieldValue.delete(),
-      stripeDefaultPaymentMethodId: admin.firestore.FieldValue.delete(),
-      stripeDefaultPaymentMethodLast4: admin.firestore.FieldValue.delete(),
-      stripeDefaultPaymentMethodBrand: admin.firestore.FieldValue.delete(),
+    await tenantStateRef.set({
+      stripeConnectCustomerId: admin.firestore.FieldValue.delete(),
+      stripeConnectCustomerIdPending: admin.firestore.FieldValue.delete(),
+      stripeConnectDefaultPaymentMethodId: admin.firestore.FieldValue.delete(),
+      stripeConnectDefaultPaymentMethodLast4: admin.firestore.FieldValue.delete(),
+      stripeConnectDefaultPaymentMethodBrand: admin.firestore.FieldValue.delete(),
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     }, { merge: true }).catch(() => {});
     try {
       const freshCustomer = await stripe.customers.create({
         email: customerEmail || undefined,
-        metadata: { uid: request.auth.uid },
-      }, { idempotencyKey: `customer_create_${request.auth.uid}_r1` });
+        metadata: { uid: request.auth.uid, tenantId },
+      }, {
+        idempotencyKey: `customer_create_${request.auth.uid}_${tenantId}_pi_r1`,
+        stripeAccount: tenantConnectAccountId,
+      });
       customerId = freshCustomer.id;
       piParams.customer = customerId;
       customerSessionParams.customer = customerId;
-      await selfHealRef.set({
-        stripeCustomerId: customerId,
+      await tenantStateRef.set({
+        stripeConnectCustomerId: customerId,
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       }, { merge: true });
     } catch (createErr) {
-      console.error("createPaymentIntent: recreate customer failed", {
+      console.error("createPaymentIntent: recreate connect customer failed", {
         uid: request.auth.uid, errorMessage: createErr?.message,
       });
       throw new HttpsError("internal", "No se pudo preparar el pago. Intentá de nuevo.");
     }
     [piResult, sessionResult] = await Promise.allSettled([
-      stripe.paymentIntents.create(piParams, { idempotencyKey: `${idempotencyKey}_r1` }),
-      stripe.customerSessions.create(customerSessionParams),
+      stripe.paymentIntents.create(piParams, { idempotencyKey: `${idempotencyKey}_r1`, stripeAccount: tenantConnectAccountId }),
+      stripe.customerSessions.create(customerSessionParams, stripeReqOpts),
     ]);
   }
 
@@ -1524,7 +1518,7 @@ exports.createPaymentIntent = onCall(
     try {
       const ephemeralKey = await stripe.ephemeralKeys.create(
         { customer: customerId },
-        { apiVersion: "2024-06-20" },
+        { apiVersion: "2024-06-20", stripeAccount: tenantConnectAccountId },
       );
       ephemeralKeySecret = ephemeralKey.secret;
     } catch (ekErr) {
@@ -1541,6 +1535,11 @@ exports.createPaymentIntent = onCall(
     customerId,
     customerSessionClientSecret,
     ephemeralKeySecret,
+    // Connect account the client SDK must be initialized on. The Flutter
+    // client sets Stripe.stripeAccountId = connectAccountId BEFORE calling
+    // PaymentSheet — without it the sheet requests the customer on the
+    // platform (where it doesn't exist) and errors.
+    connectAccountId: tenantConnectAccountId,
   };
 });
 
@@ -2284,38 +2283,45 @@ exports.createSetupIntent = onCall(
     const stripe = require("stripe")(stripeSecret.value());
     const userRef = db.collection("users").doc(uid);
 
-    // Invalidate the dedupe cache eagerly: the user is about to add a card,
-    // so the next createPaymentIntent must re-run the inventory pass to
-    // catch a freshly-attached duplicate before PaymentSheet sees it.
-    userRef.set({
+    // Resolve tenant + connect account. Direct charges MUST have a tenant
+    // context because customers live per-connected-account.
+    const userSnap = await userRef.get();
+    const userData = userSnap.exists ? (userSnap.data() ?? {}) : {};
+    const tenantId = userData.tenantId ?? null;
+    if (!tenantId) {
+      throw new HttpsError("failed-precondition", "Para guardar una tarjeta necesitás unirte a una organización primero.");
+    }
+    const tenantSnap = await db.collection("tenants").doc(tenantId).get();
+    const tenantData = tenantSnap.exists ? (tenantSnap.data() ?? {}) : {};
+    const tenantConnectAccountId = tenantData.stripeConnectAccountId || null;
+    if (!tenantConnectAccountId || tenantData.stripeConnectStatus !== "active") {
+      throw new HttpsError("failed-precondition", "La organización no tiene pagos configurados.");
+    }
+    const stripeReqOpts = { stripeAccount: tenantConnectAccountId };
+
+    const tenantStateRef = userRef.collection("tenantState").doc(tenantId);
+    // Invalidate the dedupe cache on the tenantState (per-tenant now).
+    tenantStateRef.set({
       _lastPmDedupePassAt: admin.firestore.FieldValue.delete(),
     }, { merge: true }).catch(() => {});
 
-    // Fast path for the 99% case: the user already has a Stripe customer
-    // attached. A simple read avoids the heavier Firestore transaction
-    // (~50-150ms saved). The transaction below still runs for new users
-    // where the race against a concurrent call matters.
+    // Fast path: connect customer already resolved for this (uid, tenant).
     let customerId = null;
-    let customerEmail = null;
-    const fastSnap = await userRef.get();
-    if (fastSnap.exists) {
-      const fastData = fastSnap.data() || {};
-      customerEmail = fastData.email || request.auth.token?.email || null;
-      customerId = fastData.stripeCustomerId || null;
+    const customerEmail = request.auth.token?.email || userData.email || null;
+    const fastStateSnap = await tenantStateRef.get();
+    if (fastStateSnap.exists) {
+      customerId = fastStateSnap.data()?.stripeConnectCustomerId || null;
     }
 
     if (!customerId) {
-      // Slow path — transactional get-or-mark-pending. Two concurrent
-      // calls landing here would otherwise both create separate Stripe
-      // customers for the same uid; the txn + sentinel makes one wait.
+      // Slow path — transactional sentinel prevents duplicate customers on
+      // concurrent calls.
       await db.runTransaction(async (tx) => {
-        const userSnap = await tx.get(userRef);
-        const userData = userSnap.data() || {};
-        customerEmail = userData.email || request.auth.token?.email || null;
-        customerId = userData.stripeCustomerId || null;
+        const stateSnap = await tx.get(tenantStateRef);
+        customerId = stateSnap.data()?.stripeConnectCustomerId || null;
         if (!customerId) {
-          tx.set(userRef, {
-            stripeCustomerIdPending: true,
+          tx.set(tenantStateRef, {
+            stripeConnectCustomerIdPending: true,
             updatedAt: admin.firestore.FieldValue.serverTimestamp(),
           }, { merge: true });
         }
@@ -2323,82 +2329,74 @@ exports.createSetupIntent = onCall(
     }
 
     if (!customerId) {
-      // Use a Stripe idempotency key keyed to the UID so concurrent calls produce
-      // exactly one customer regardless of how many reach this point.
       try {
         const customer = await stripe.customers.create({
           email: customerEmail || undefined,
-          metadata: { uid },
-        }, { idempotencyKey: `customer_create_${uid}` });
+          metadata: { uid, tenantId },
+        }, {
+          idempotencyKey: `customer_create_${uid}_${tenantId}`,
+          stripeAccount: tenantConnectAccountId,
+        });
         customerId = customer.id;
-        await userRef.set({
-          stripeCustomerId: customerId,
-          stripeCustomerIdPending: admin.firestore.FieldValue.delete(),
+        await tenantStateRef.set({
+          stripeConnectCustomerId: customerId,
+          stripeConnectCustomerIdPending: admin.firestore.FieldValue.delete(),
           updatedAt: admin.firestore.FieldValue.serverTimestamp(),
         }, { merge: true });
       } catch (stripeErr) {
-        // Clear the pending sentinel so the next attempt is not blocked.
-        await userRef.set({
-          stripeCustomerIdPending: admin.firestore.FieldValue.delete(),
+        await tenantStateRef.set({
+          stripeConnectCustomerIdPending: admin.firestore.FieldValue.delete(),
         }, { merge: true }).catch(() => {});
         throw stripeErr;
       }
     }
 
-    // Idempotency key scoped to the donor's correlationId. Retries of the
-    // same attempt reuse the key (Stripe dedupes), but a fresh attempt
-    // (after a cancel/error) gets a fresh key — avoids the
-    // "SetupIntent in status canceled" failure on retry.
-    //
-    // Stale-customer self-heal: if the cached customerId points at a
-    // customer Stripe no longer knows about (hard-deleted / mode mismatch),
-    // setupIntents.create throws resource_missing and — without this
-    // catch — the user is bricked (every Add-Card tap surfaces INTERNAL).
-    // Clear the stale IDs, mint a fresh customer, and retry ONCE.
+    // SetupIntent with stale-customer self-heal (mirror pattern of
+    // createPaymentIntent).
     let setupIntent;
     let retryCount = 0;
     while (true) {
       const siIdempotencyKey = retryCount === 0
-        ? `si_${uid}_${correlationId}`
-        : `si_${uid}_${correlationId}_r${retryCount}`;
+        ? `si_${uid}_${tenantId}_${correlationId}`
+        : `si_${uid}_${tenantId}_${correlationId}_r${retryCount}`;
       try {
         setupIntent = await stripe.setupIntents.create({
           customer: customerId,
           payment_method_types: ["card"],
           usage: "off_session",
-          metadata: { uid },
-        }, { idempotencyKey: siIdempotencyKey });
+          metadata: { uid, tenantId },
+        }, { idempotencyKey: siIdempotencyKey, stripeAccount: tenantConnectAccountId });
         break;
       } catch (siErr) {
         if (retryCount === 0 && _isStripeResourceMissing(siErr)) {
-          console.warn("createSetupIntent: stale customerId — clearing and retrying once", {
-            uid, staleCustomerId: customerId, errorMessage: siErr?.message,
+          console.warn("createSetupIntent: stale connect customerId — clearing and retrying once", {
+            uid, tenantId, staleCustomerId: customerId, errorMessage: siErr?.message,
           });
-          await userRef.set({
-            stripeCustomerId: admin.firestore.FieldValue.delete(),
-            stripeCustomerIdPending: admin.firestore.FieldValue.delete(),
-            stripeDefaultPaymentMethodId: admin.firestore.FieldValue.delete(),
-            stripeDefaultPaymentMethodLast4: admin.firestore.FieldValue.delete(),
-            stripeDefaultPaymentMethodBrand: admin.firestore.FieldValue.delete(),
+          await tenantStateRef.set({
+            stripeConnectCustomerId: admin.firestore.FieldValue.delete(),
+            stripeConnectCustomerIdPending: admin.firestore.FieldValue.delete(),
+            stripeConnectDefaultPaymentMethodId: admin.firestore.FieldValue.delete(),
+            stripeConnectDefaultPaymentMethodLast4: admin.firestore.FieldValue.delete(),
+            stripeConnectDefaultPaymentMethodBrand: admin.firestore.FieldValue.delete(),
             updatedAt: admin.firestore.FieldValue.serverTimestamp(),
           }, { merge: true }).catch(() => {});
-          // Mint a fresh customer (mirror the customer-create branch above).
-          // Use a fresh idempotency key so we don't collide with the doomed
-          // one that pointed at the deleted customer.
           try {
             const freshCustomer = await stripe.customers.create({
               email: customerEmail || undefined,
-              metadata: { uid },
-            }, { idempotencyKey: `customer_create_${uid}_r${Date.now()}` });
+              metadata: { uid, tenantId },
+            }, {
+              idempotencyKey: `customer_create_${uid}_${tenantId}_r${Date.now()}`,
+              stripeAccount: tenantConnectAccountId,
+            });
             customerId = freshCustomer.id;
-            await userRef.set({
-              stripeCustomerId: customerId,
-              stripeCustomerIdPending: admin.firestore.FieldValue.delete(),
+            await tenantStateRef.set({
+              stripeConnectCustomerId: customerId,
+              stripeConnectCustomerIdPending: admin.firestore.FieldValue.delete(),
               updatedAt: admin.firestore.FieldValue.serverTimestamp(),
             }, { merge: true });
           } catch (createErr) {
-            console.error("createSetupIntent: recreate customer failed", {
-              uid, errorMessage: createErr?.message,
+            console.error("createSetupIntent: recreate connect customer failed", {
+              uid, tenantId, errorMessage: createErr?.message,
             });
             throw new HttpsError("internal", "No se pudo preparar tu método de pago. Intentá de nuevo.");
           }
@@ -2409,7 +2407,10 @@ exports.createSetupIntent = onCall(
       }
     }
 
-    return { clientSecret: setupIntent.client_secret };
+    return {
+      clientSecret: setupIntent.client_secret,
+      connectAccountId: tenantConnectAccountId,
+    };
   }
 );
 
