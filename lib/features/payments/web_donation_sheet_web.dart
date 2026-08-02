@@ -24,6 +24,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_stripe_web/flutter_stripe_web.dart';
 
 import '../../core/l10n/s.dart';
+import '../../config/stripe_config.dart';
 
 Future<String?> showWebDonationSheet({
   required BuildContext context,
@@ -36,7 +37,20 @@ Future<String?> showWebDonationSheet({
   /// If non-null, renders a "monthly" / "yearly" badge next to the amount
   /// so the donor sees clearly this is a recurring commitment (Stage 6).
   String? recurringInterval,
+  /// DIRECT CHARGES: connected account this PI + customer live on. Re-init
+  /// Stripe.js with `stripeAccount` so Elements targets the right account
+  /// when confirmPaymentElement runs. Without this, Stripe.js queries the
+  /// platform account for the PI and 404s.
+  String? stripeAccount,
 }) async {
+  if (stripeAccount != null && stripeAccount.isNotEmpty &&
+      StripeConfig.publishableKey.isNotEmpty) {
+    await WebStripe.instance.initialise(
+      publishableKey: StripeConfig.publishableKey,
+      stripeAccountId: stripeAccount,
+    );
+  }
+  if (!context.mounted) return null;
   // MF1 fix: block dismiss while confirmPayment is in flight. Otherwise the
   // user could swipe/back away, the JS confirmPayment promise still resolves,
   // the webhook charges the card, but the client throws 'canceled' →

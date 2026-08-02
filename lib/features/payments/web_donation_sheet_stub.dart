@@ -14,6 +14,7 @@ Future<String?> showWebDonationSheet({
   required String merchantDisplayName,
   required String returnUrl,
   String? recurringInterval, // 'month', 'year', or null for one-off
+  String? stripeAccount,
 }) {
   throw UnsupportedError(
     'showWebDonationSheet only available on web builds',

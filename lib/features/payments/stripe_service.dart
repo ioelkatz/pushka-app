@@ -263,6 +263,14 @@ class StripeService {
     final customerSessionClientSecret =
         result.data['customerSessionClientSecret'] as String?;
     final ephemeralKeySecret = result.data['ephemeralKeySecret'] as String?;
+    // DIRECT CHARGES: the connected account this PI + customer live on.
+    // Must be set on the Stripe SDK BEFORE initPaymentSheet — otherwise the
+    // sheet requests the customer/PI on the platform (where they don't exist)
+    // and errors with "resource_missing".
+    final connectAccountId = result.data['connectAccountId'] as String?;
+    if (connectAccountId != null && connectAccountId.isNotEmpty) {
+      Stripe.stripeAccountId = connectAccountId;
+    }
 
     // flutter_stripe v12 requires that if customerId is set, at least one auth
     // mechanism (customerSessionClientSecret OR customerEphemeralKeySecret)
@@ -765,6 +773,12 @@ class StripeService {
     }
     final customerSessionClientSecret =
         data['customerSessionClientSecret'] as String?;
+    // DIRECT CHARGES: the connected account this PI + customer live on.
+    // Threaded into showWebDonationSheet → the sheet configures Stripe.js
+    // with `stripeAccount` before mounting Elements so confirmPaymentElement
+    // targets the correct account. Without this Stripe.js queries the platform
+    // for the PI/customer and 404s.
+    final connectAccountId = data['connectAccountId'] as String?;
 
     // Return URL for the RARE case where the issuer forces a full-page
     // 3DS redirect (some LATAM banks). Anchored to the current origin so
@@ -789,6 +803,7 @@ class StripeService {
       currency: currency,
       merchantDisplayName: merchantDisplayName,
       returnUrl: returnUrl,
+      stripeAccount: connectAccountId,
     );
 
     // MF5: Elements failed to mount (Stripe.js blocked / publishableKey
