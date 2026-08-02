@@ -1115,6 +1115,17 @@ exports.createPaymentIntent = onCall(
       connectParams.application_fee_amount = safeFee;
     }
     connectParams.transfer_data = { destination: tenantConnectAccountId };
+    // on_behalf_of shifts Stripe processing fees + FX conversion off the
+    // platform onto the connected account (industry standard for non-profits).
+    // Without this, the platform absorbs ~2.9%+$0.30 per charge and any
+    // cross-currency conversion — on a €1 test that ate €0.30 from platform
+    // balance. With on_behalf_of, settlement happens in the connected
+    // account's default currency/country and the tenant sees the fee as a
+    // normal operating cost. Requires the connected account to be fully
+    // onboarded (charges_enabled + payouts_enabled) — already true for
+    // chabadmexico. Safe because destination === on_behalf_of; a mismatch
+    // would create an accounting anomaly.
+    connectParams.on_behalf_of = tenantConnectAccountId;
   }
 
   const stripe = require("stripe")(stripeSecret.value(), { timeout: 15000 });
@@ -1862,6 +1873,10 @@ exports.createDonationSubscription = onCall(
         Math.max(0, tenantCommissionRate * 100),
       );
       subParams.transfer_data = { destination: tenantConnectAccountId };
+      // on_behalf_of shifts Stripe processing fees + FX conversion onto
+      // the connected account (Rab) for every recurring invoice. Same
+      // rationale as the one-shot createPaymentIntent flow.
+      subParams.on_behalf_of = tenantConnectAccountId;
     }
 
     // Pre-cleanup: clean up ABANDONED prior attempts so a stuck `incomplete`
@@ -4910,6 +4925,9 @@ async function _runPushkaAutoEmptyTick() {
           // is zero, skip the application_fee_amount field entirely so Stripe
           // performs a pure destination transfer.
           piParams.transfer_data = { destination: plan.tenantConnectAccountId };
+          // on_behalf_of shifts Stripe processing fees + FX onto the connected
+          // account. See createPaymentIntent for full rationale.
+          piParams.on_behalf_of = plan.tenantConnectAccountId;
           if (plan.tenantCommissionRate > 0) {
             const rawFee = Math.floor(amountCents * plan.tenantCommissionRate);
             const safeFee = Math.min(rawFee, amountCents - 1);
@@ -10316,6 +10334,10 @@ exports.createCheckoutSession = onCall(
     const rawFee = Math.floor(amount * tenantCommissionRate);
     const paymentIntentData = {
       transfer_data: { destination: tenantConnectAccountId },
+      // on_behalf_of: Stripe processing fees + FX se le cobran al connected
+      // account (Rab) en vez de a la platform (Ioel). Sin esto la plataforma
+      // absorbe ~2.9%+$0.30 por pago. Ver createPaymentIntent para full detalle.
+      on_behalf_of: tenantConnectAccountId,
       metadata: {
         uid: request.auth.uid,
         tenantId,
