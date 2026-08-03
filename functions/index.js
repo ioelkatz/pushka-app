@@ -378,6 +378,19 @@ async function getUserLanguage(uid) {
 // notification block because their OS displays it while the app is closed
 // via the SDK's built-in handler (avoids requiring Flutter background isolate).
 async function getUserTokens(uid) {
+  // Blocked users (setUserBlocked CF writes users/{uid}.isBlocked) should NOT
+  // receive any pushes — otherwise reminders, weekly summaries, and payment
+  // notifications keep reaching them and expose data they shouldn't see.
+  // Check BEFORE the fcmTokens read so we short-circuit early. Non-fatal: if
+  // the check itself fails, fall through and let the send happen (better
+  // than silently dropping notifications on a transient Firestore blip).
+  try {
+    const userSnap = await db.collection("users").doc(uid).get();
+    if (userSnap.exists && userSnap.data()?.isBlocked === true) {
+      return [];
+    }
+  } catch (_) { /* fall through */ }
+
   const snap = await db
     .collection("users")
     .doc(uid)
@@ -11886,9 +11899,22 @@ exports.processDueReminders = onSchedule(
 
         // Now fire the push (best-effort; if it fails we don't retry).
         const title = String(data.title || "Pushka").slice(0, 100);
-        // Body defaults to a friendly reminder tag — client can override with
-        // a nicer localized template later (using `type`+`data.title` to render).
-        const body = "🕎"; // TODO(i18n): pull from user language pref
+        // Body: localized default in the user's language. Falls back to
+        // Spanish if the profile has no language set. Previously the body
+        // was just "🕎" which read as a bug to users receiving the push.
+        let userLang = "es";
+        try {
+          const userSnap = await db.collection("users").doc(uid).get();
+          const raw = String(userSnap.data()?.language || "").trim().toLowerCase();
+          if (["es", "en", "fr", "he"].includes(raw)) userLang = raw;
+        } catch (_) { /* stay with default */ }
+        const bodyByLang = {
+          es: "Es momento de dar tzedaka 🕎",
+          en: "It's time to give tzedaka 🕎",
+          fr: "Il est temps de donner tzedaka 🕎",
+          he: "🕎 הגיע הזמן לתת צדקה",
+        };
+        const body = bodyByLang[userLang];
         tasks.push(
           sendToUser(uid, {
             notification: { title, body },

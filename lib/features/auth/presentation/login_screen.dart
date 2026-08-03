@@ -298,17 +298,17 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     required String source,
   }) async {
     if (!mounted) return;
+    final tr = S.of(context);
     await showDialog<void>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('Login con Google — Error'),
+        title: Text(tr.authErrorTitle),
         content: SingleChildScrollView(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             mainAxisSize: MainAxisSize.min,
             children: [
-              const Text('No pudimos iniciar sesión. Detalle técnico:',
-                  style: TextStyle(fontSize: 13)),
+              Text(tr.authErrorIntro, style: const TextStyle(fontSize: 13)),
               const SizedBox(height: 8),
               SelectableText('Source: $source',
                   style: const TextStyle(fontFamily: 'monospace', fontSize: 11)),
@@ -319,9 +319,9 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
               SelectableText(message,
                   style: const TextStyle(fontFamily: 'monospace', fontSize: 11)),
               const SizedBox(height: 12),
-              const Text(
-                'Copiá este detalle y mandalo por WhatsApp para diagnosticar.',
-                style: TextStyle(fontSize: 12, color: Colors.grey),
+              Text(
+                tr.authErrorCopyHint,
+                style: const TextStyle(fontSize: 12, color: Colors.grey),
               ),
             ],
           ),
@@ -329,7 +329,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
         actions: [
           TextButton(
             onPressed: () => Navigator.of(ctx).pop(),
-            child: const Text('Cerrar'),
+            child: Text(tr.close),
           ),
         ],
       ),

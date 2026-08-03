@@ -240,6 +240,19 @@ class S {
     'Vous pouvez augmenter le montant ou changer la devise dans les Paramètres.',
     'תוכל להגדיל את הסכום או לשנות את המטבע בהגדרות.',
   );
+  String get authErrorTitle => _t('Error al iniciar sesión', 'Sign-in error', 'Erreur de connexion', 'שגיאה בהתחברות');
+  String get authErrorIntro => _t(
+    'No pudimos iniciar sesión. Detalle técnico:',
+    "We couldn't sign you in. Technical detail:",
+    'Impossible de vous connecter. Détail technique :',
+    'לא הצלחנו לחבר אותך. פרטים טכניים:',
+  );
+  String get authErrorCopyHint => _t(
+    'Copiá este detalle y mandalo por WhatsApp para diagnosticar.',
+    'Copy this detail and send it by WhatsApp for troubleshooting.',
+    'Copiez ce détail et envoyez-le par WhatsApp pour le diagnostic.',
+    'העתק פרטים אלה ושלח בוואטסאפ לאבחון.',
+  );
   String get maxAmountTitle => _t('Monto máximo', 'Maximum amount', 'Montant maximum', 'סכום מקסימלי');
   String maxAmountBody(String code, String symbol, String max) => _t(
     'El monto máximo por donación en $code es de $symbol$max. Para donaciones más grandes, usá varias transacciones o contactanos.',
