@@ -166,10 +166,16 @@ class HiveCache {
   }
 
   // ---------------------------------------------------------------------------
-  // Saved cards (per-uid) — short-lived cache so reopening Métodos de pago
-  // doesn't pay the full Stripe round trip every time. The CF call still
-  // happens in the background to refresh the list; the cache just lets
-  // the UI render immediately on the second+ visit within the TTL window.
+  // Saved cards — SCOPED (uid, tenantId) so a user who joins a new tenant
+  // does NOT briefly see the previous tenant's cards. Direct Charges puts
+  // customers per-connected-account, so the card list is inherently scoped
+  // to the tenant. BUG #13 fix.
+  //
+  // BUG #5/#6 mitigation: even without explicit clearSavedCards() on tenant
+  // switch (tenant_code_screen / join_via_link_screen forgot to call it),
+  // scoping the key by tenantId means the previous tenant's cache can't leak.
+  // Legacy uid-only keys are still cleared on write/read fallback so old
+  // Hive entries don't zombie-persist.
   // ---------------------------------------------------------------------------
 
   static const _keySavedCards = 'saved_cards';
@@ -177,14 +183,16 @@ class HiveCache {
   static const _keySavedCardsDefault = 'saved_cards_default';
   static const Duration savedCardsTtl = Duration(minutes: 10);
 
+  static String _scKey(String uid, String? tenantId, String suffix) =>
+      '${uid}_${tenantId ?? "_notenant"}_$suffix';
+
   Future<void> saveSavedCards({
     required String uid,
+    String? tenantId,
     required List<Map<String, dynamic>> cards,
     required String? defaultPmId,
   }) async {
     if (!_initialized) return;
-    // Hive stores raw maps; strip non-primitive values to avoid type errors
-    // on read-back.
     final clean = cards
         .map((c) => <String, dynamic>{
               for (final e in c.entries)
@@ -195,19 +203,19 @@ class HiveCache {
                   e.key: e.value,
             })
         .toList();
-    await _box!.put('${uid}_$_keySavedCards', clean);
-    await _box!.put('${uid}_$_keySavedCardsAt', DateTime.now().millisecondsSinceEpoch);
-    await _box!.put('${uid}_$_keySavedCardsDefault', defaultPmId);
+    await _box!.put(_scKey(uid, tenantId, _keySavedCards), clean);
+    await _box!.put(_scKey(uid, tenantId, _keySavedCardsAt),
+        DateTime.now().millisecondsSinceEpoch);
+    await _box!.put(_scKey(uid, tenantId, _keySavedCardsDefault), defaultPmId);
   }
 
-  /// Returns (cards, defaultPmId, fresh) or null if no cache.
-  /// `fresh` is true when the cache was written within [savedCardsTtl].
+  /// Returns (cards, defaultPmId, fresh) or null if no cache for (uid, tenantId).
   ({List<Map<String, dynamic>> cards, String? defaultPmId, bool fresh})?
-      loadSavedCards(String uid) {
+      loadSavedCards(String uid, {String? tenantId}) {
     if (!_initialized) return null;
-    final raw = _box!.get('${uid}_$_keySavedCards');
-    final atMs = _box!.get('${uid}_$_keySavedCardsAt');
-    final defaultPmId = _box!.get('${uid}_$_keySavedCardsDefault');
+    final raw = _box!.get(_scKey(uid, tenantId, _keySavedCards));
+    final atMs = _box!.get(_scKey(uid, tenantId, _keySavedCardsAt));
+    final defaultPmId = _box!.get(_scKey(uid, tenantId, _keySavedCardsDefault));
     if (raw is! List || atMs is! int) return null;
     final cards = raw
         .whereType<Map>()
@@ -224,10 +232,39 @@ class HiveCache {
     );
   }
 
-  Future<void> clearSavedCards(String uid) async {
+  /// Clears saved cards cache. If `tenantId` is null, clears ALL tenants for
+  /// this uid (used on logout / delete account). If specified, clears only
+  /// that (uid, tenantId) scope (used on tenant switch, though scoping keys
+  /// makes leaking impossible anyway — see class comment).
+  Future<void> clearSavedCards(String uid, {String? tenantId}) async {
     if (!_initialized) return;
-    await _box!.delete('${uid}_$_keySavedCards');
-    await _box!.delete('${uid}_$_keySavedCardsAt');
-    await _box!.delete('${uid}_$_keySavedCardsDefault');
+    if (tenantId != null) {
+      await _box!.delete(_scKey(uid, tenantId, _keySavedCards));
+      await _box!.delete(_scKey(uid, tenantId, _keySavedCardsAt));
+      await _box!.delete(_scKey(uid, tenantId, _keySavedCardsDefault));
+      return;
+    }
+    // Nuke every (uid, *) entry — also cleans up any legacy uid-only keys
+    // from before this scoping change.
+    final prefix = '${uid}_';
+    final legacyPrefixes = <String>{
+      '${uid}_$_keySavedCards',
+      '${uid}_$_keySavedCardsAt',
+      '${uid}_$_keySavedCardsDefault',
+    };
+    final toDelete = <dynamic>[];
+    for (final k in _box!.keys) {
+      if (k is! String) continue;
+      if (legacyPrefixes.contains(k)) { toDelete.add(k); continue; }
+      if (k.startsWith(prefix) &&
+          (k.endsWith('_$_keySavedCards') ||
+           k.endsWith('_$_keySavedCardsAt') ||
+           k.endsWith('_$_keySavedCardsDefault'))) {
+        toDelete.add(k);
+      }
+    }
+    for (final k in toDelete) {
+      await _box!.delete(k);
+    }
   }
 }

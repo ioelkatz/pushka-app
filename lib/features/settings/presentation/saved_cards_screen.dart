@@ -39,7 +39,11 @@ class _SavedCardsScreenState extends ConsumerState<SavedCardsScreen> {
     // open or when the cache is stale we fall back to the spinner +
     // network round trip.
     final uid = ref.read(currentUserProvider)?.uid;
-    final cached = uid == null ? null : HiveCache.instance.loadSavedCards(uid);
+    // Direct Charges: cards live per-tenant on the connected account. Scope
+    // the Hive cache by (uid, tenantId) so switching tenants can't flash the
+    // previous tenant's cards (BUG #5/#6/#13).
+    final tenantId = ref.read(userProfileProvider).valueOrNull?['tenantId'] as String?;
+    final cached = uid == null ? null : HiveCache.instance.loadSavedCards(uid, tenantId: tenantId);
     if (cached != null) {
       _cards = cached.cards;
       _defaultPaymentMethodId = cached.defaultPmId;
@@ -97,9 +101,11 @@ class _SavedCardsScreenState extends ConsumerState<SavedCardsScreen> {
 
         // Persist to Hive so the next open paints instantly.
         final uid = ref.read(currentUserProvider)?.uid;
+        final tid = ref.read(userProfileProvider).valueOrNull?['tenantId'] as String?;
         if (uid != null) {
           await HiveCache.instance.saveSavedCards(
             uid: uid,
+            tenantId: tid,
             cards: cards,
             defaultPmId: defaultId,
           );
@@ -198,9 +204,11 @@ class _SavedCardsScreenState extends ConsumerState<SavedCardsScreen> {
             // Mirror the new default into the Hive cache so the next
             // open of this screen paints with the correct indicator.
             final uid = ref.read(currentUserProvider)?.uid;
+            final tid = ref.read(userProfileProvider).valueOrNull?['tenantId'] as String?;
             if (uid != null) {
               await HiveCache.instance.saveSavedCards(
                 uid: uid,
+                tenantId: tid,
                 cards: _cards,
                 defaultPmId: newPmId,
               );
@@ -265,9 +273,11 @@ class _SavedCardsScreenState extends ConsumerState<SavedCardsScreen> {
       // Persist the new default to the local cache so the next open
       // paints with the right indicator instead of the previous default.
       final uid = ref.read(currentUserProvider)?.uid;
+      final tid = ref.read(userProfileProvider).valueOrNull?['tenantId'] as String?;
       if (uid != null) {
         await HiveCache.instance.saveSavedCards(
           uid: uid,
+          tenantId: tid,
           cards: _cards,
           defaultPmId: pmId,
         );

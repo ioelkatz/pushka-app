@@ -6,7 +6,7 @@ import '../../../core/l10n/s.dart';
 import '../../settings/presentation/auto_empty_action_row.dart';
 import '../../settings/presentation/auto_empty_screen.dart';
 import '../../settings/presentation/card_brand_box.dart';
-import '../../users/presentation/user_profile_provider.dart';
+import '../../tenant/data/tenant_repository.dart';
 
 /// Top-level Wallet screen — surfaces card / payment-method management
 /// using the same widgets as Settings so the two screens read as one
@@ -17,7 +17,13 @@ class WalletScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final tr = S.of(context);
-    final profile = ref.watch(userProfileProvider).valueOrNull;
+    // Direct Charges: default PM lives per-tenant. Read from tenantState
+    // (stripeConnectDefault*), NOT the deprecated user-doc fields
+    // (stripeDefault* — those were the platform customer default, no
+    // longer written to since the Direct Charges migration).
+    final tenantState = ref.watch(tenantStateProvider).valueOrNull;
+    final brand = tenantState?['stripeConnectDefaultPaymentMethodBrand'] as String?;
+    final last4 = tenantState?['stripeConnectDefaultPaymentMethodLast4'] as String?;
 
     return ListView(
       padding: const EdgeInsets.fromLTRB(20, 24, 20, 32),
@@ -25,7 +31,8 @@ class WalletScreen extends ConsumerWidget {
         _SectionLabel(tr.savedCards.toUpperCase()),
         const SizedBox(height: 6),
         _SavedCardPreview(
-          profile: profile,
+          brand: brand,
+          last4: last4,
           tr: tr,
           onTap: () => context.go('/wallet/saved-cards'),
         ),
@@ -109,22 +116,22 @@ class _SectionLabel extends StatelessWidget {
 /// asterisks. Falls back to "no tienes ninguna tarjeta" when empty.
 class _SavedCardPreview extends StatelessWidget {
   const _SavedCardPreview({
-    required this.profile,
+    required this.brand,
+    required this.last4,
     required this.tr,
     required this.onTap,
   });
 
-  final Map<String, dynamic>? profile;
+  final String? brand;
+  final String? last4;
   final S tr;
   final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
-    final brand = profile?['stripeDefaultPaymentMethodBrand'] as String?;
-    final last4 = profile?['stripeDefaultPaymentMethodLast4'] as String?;
     final hasCard =
-        brand != null && brand.isNotEmpty && last4 != null && last4.isNotEmpty;
+        brand != null && brand!.isNotEmpty && last4 != null && last4!.isNotEmpty;
 
     return InkWell(
       onTap: onTap,
@@ -139,7 +146,7 @@ class _SavedCardPreview extends StatelessWidget {
         child: Row(
           children: [
             if (hasCard)
-              cardBrandBox(brand)
+              cardBrandBox(brand!)
             else
               Container(
                 width: 40,
@@ -163,7 +170,7 @@ class _SavedCardPreview extends StatelessWidget {
                           color: cs.onSurface,
                         ),
                         children: [
-                          TextSpan(text: '${cardBrandLabel(brand)} '),
+                          TextSpan(text: '${cardBrandLabel(brand!)} '),
                           // 4 bullets (U+2022) for the card mask — already
                           // vertically centered in the system font, so the
                           // prior WidgetSpan + Transform.translate hack

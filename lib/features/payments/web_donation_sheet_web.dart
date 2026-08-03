@@ -24,6 +24,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_stripe_web/flutter_stripe_web.dart';
 
 import '../../core/l10n/s.dart';
+import 'stripe_web_bootstrap.dart';
 
 Future<String?> showWebDonationSheet({
   required BuildContext context,
@@ -36,7 +37,19 @@ Future<String?> showWebDonationSheet({
   /// If non-null, renders a "monthly" / "yearly" badge next to the amount
   /// so the donor sees clearly this is a recurring commitment (Stage 6).
   String? recurringInterval,
+  /// DIRECT CHARGES: connected account this PI + customer live on. In
+  /// steady state WebStripe is already re-initialised for this account by
+  /// the app-level bootstrap (see stripe_web_bootstrap_web.dart). We still
+  /// call the idempotent bootstrap here as a safety net for the first-pay-
+  /// after-login race where the tenantConfigProvider listener may not have
+  /// fired before the user tapped Donar. When the accountId matches what
+  /// was already set the call is a cheap no-op; when it differs BEFORE any
+  /// PaymentElement has ever mounted (still true here — the modal is not
+  /// on screen yet), the re-init lands safely.
+  String? stripeAccount,
 }) async {
+  await initWebStripeForTenant(stripeAccount);
+  if (!context.mounted) return null;
   // MF1 fix: block dismiss while confirmPayment is in flight. Otherwise the
   // user could swipe/back away, the JS confirmPayment promise still resolves,
   // the webhook charges the card, but the client throws 'canceled' →
@@ -80,7 +93,12 @@ Future<String?> showWebCardSetupSheet({
   required String? customerSessionClientSecret,
   required String merchantDisplayName,
   required String returnUrl,
+  /// DIRECT CHARGES: connected account this SetupIntent lives on. Same
+  /// bootstrap as showWebDonationSheet — idempotent when already inited.
+  String? stripeAccount,
 }) async {
+  await initWebStripeForTenant(stripeAccount);
+  if (!context.mounted) return null;
   // Same MF1 pattern as showWebDonationSheet: block dismiss during confirm.
   final submitting = ValueNotifier<bool>(false);
   return showModalBottomSheet<String?>(

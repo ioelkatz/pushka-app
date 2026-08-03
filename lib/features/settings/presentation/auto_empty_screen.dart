@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 
 import '../../../app/theme/app_tokens.dart';
+import '../../../core/hive_cache.dart';
 import 'card_brand_box.dart';
 
 import '../../../core/keyboard_safe_sheet.dart';
@@ -100,13 +101,24 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
     final profile = ref.watch(userProfileProvider).valueOrNull;
     final tenantState = ref.watch(tenantStateProvider).valueOrNull;
 
-    // Without a saved card the cron's `processPushkaAutoEmpty` hits the
-    // no_saved_card branch and silently advances the schedule each cycle —
-    // the user thinks they're set up but no money ever moves. Surface the
-    // requirement BEFORE save: inline banner + hard block in the save path.
-    final hasSavedCard = ((profile?['stripeDefaultPaymentMethodId'] as String?) ?? '')
+    // Direct Charges: default PM lives per-tenant now.
+    // BUG #12 fix: also accept ANY saved card as valid — a user can have
+    // cards in the connected account but no default yet cached in
+    // tenantState (setDefault CF hasn't run since the card was added).
+    // Previously blocked those users from saving an auto-empty schedule
+    // even though the schedule can pin any pmId (state.autoEmptyPaymentMethodId).
+    // Read via HiveCache — same source the SavedCards screen uses — so
+    // there's no extra CF roundtrip on this screen.
+    final hasDefault = ((tenantState?['stripeConnectDefaultPaymentMethodId'] as String?) ?? '')
         .trim()
         .isNotEmpty;
+    final uid = user?.uid;
+    final tid = tenantState?['tenantId'] as String?;
+    final cachedCards = (uid != null)
+        ? HiveCache.instance.loadSavedCards(uid, tenantId: tid)
+        : null;
+    final hasAnyCard = (cachedCards?.cards.isNotEmpty ?? false);
+    final hasSavedCard = hasDefault || hasAnyCard;
     final needsCardWarning = _frequency != 'manual' && !hasSavedCard;
 
     if (!_loaded && tenantState != null) {

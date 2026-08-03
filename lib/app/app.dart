@@ -13,6 +13,7 @@ import '../features/tenant/presentation/tenant_theme_provider.dart';
 import '../features/tenant/data/tenant_repository.dart';
 import '../features/auth/providers/auth_controller.dart';
 import '../features/auth/providers/auth_state_provider.dart';
+import '../features/payments/stripe_web_bootstrap.dart';
 import '../features/users/data/user_repository.dart';
 import 'router.dart';
 
@@ -173,6 +174,35 @@ class _PushkaAppState extends ConsumerState<PushkaApp> with WidgetsBindingObserv
       if (prevHadTenant && next.hasValue && next.valueOrNull == null) {
         invalidateTenantCache();
         router.go('/tenant-setup');
+      }
+
+      // DIRECT CHARGES web bootstrap: re-init WebStripe with the tenant's
+      // stripeConnectAccountId BEFORE the user reaches any payment sheet.
+      // Doing this early (right after tenant is known) avoids the
+      // flutter_stripe_web 7.6.0 gotcha where re-initialising after
+      // PaymentElement is mounted leaves the widget bound to the stale
+      // Stripe.js instance → sheet hangs at "No se pudo iniciar el pago".
+      // See stripe_web_bootstrap_web.dart for the coalescing + idempotency
+      // logic. No-op on native.
+      final tenant = next.valueOrNull;
+      if (tenant != null) {
+        // Read stripeConnectAccountId directly from tenants/{id} — the
+        // Firestore rule `isTenantMember() && callerTenantId() == tenantId`
+        // already permits members to read their own tenant doc. Adding the
+        // field to TenantConfig would require a CF response change + cache
+        // schema bump; the direct read is cheaper and self-contained.
+        Future(() async {
+          try {
+            final snap = await FirebaseFirestore.instance
+                .collection('tenants')
+                .doc(tenant.tenantId)
+                .get();
+            final acct = snap.data()?['stripeConnectAccountId'] as String?;
+            await initWebStripeForTenant(acct);
+          } catch (e) {
+            debugPrint('initWebStripeForTenant: bootstrap fetch failed (non-fatal): $e');
+          }
+        });
       }
     });
 

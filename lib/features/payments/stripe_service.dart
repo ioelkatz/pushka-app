@@ -10,7 +10,29 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../config/stripe_config.dart';
 import '../../core/network_status_provider.dart';
 import '../../firebase_options.dart';
+import 'express_checkout_sheet.dart';
 import 'web_donation_sheet.dart';
+
+/// Cached default PM to pre-select in PaymentSheet. Callers (donation flows)
+/// pass this from `tenantState.stripeConnectDefaultPaymentMethodBrand/Last4/Id`.
+/// When present + non-web + non-recurring, the pay() flow shows an express
+/// checkout sheet ("Pagar con Visa •••• 2025 [Confirmar] [Cambiar tarjeta]")
+/// before falling back to PaymentSheet. This is the workaround for
+/// flutter_stripe v12's known limitation: PaymentSheet mobile orders PMs by
+/// MRU (most-recently-used) instead of customer.invoice_settings
+/// .default_payment_method, so a user with 2+ saved cards never sees their
+/// chosen default first without this custom flow.
+class DefaultCardInfo {
+  const DefaultCardInfo({
+    required this.id,
+    required this.brand,
+    required this.last4,
+  });
+
+  final String id;
+  final String brand;
+  final String last4;
+}
 
 /// 16-char hex correlation ID — generated client-side at the start of a
 /// payment flow and threaded through createPaymentIntent → Stripe metadata
@@ -71,16 +93,18 @@ class StripeService {
 
   // Wallet config builders (Apple Pay + Google Pay).
   //
-  // merchantCountryCode is the country of the PLATFORM Stripe account that
-  // creates the PaymentIntent (we use Stripe Connect destination_charge —
-  // the platform is the merchant of record for the wallet handshake, not the
-  // tenant). Hardcoded to 'US' since this app's platform Stripe account is
-  // US-incorporated; revisit if the platform ever moves jurisdictions.
+  // merchantCountryCode is the country of the CONNECTED account (Direct Charges
+  // model — the charge is created ON the connected account via Stripe-Account
+  // header). Both the platform (Ioel, DE→US registered) and the current
+  // tenant Jym Inc. (Chabad on Campus Mexico, US non-profit) live in US, so
+  // 'US' is correct for both. If a future tenant is in a non-US country,
+  // this needs to become dynamic — read from tenantState.tenantCountry or
+  // similar. For now, hardcoded is safe.
   //
-  // Apple Pay: needs the merchantIdentifier configured in iOS via
-  // Stripe.merchantIdentifier (see main.dart) AND the Apple Pay capability
-  // enabled in the iOS project. Without those, Stripe silently does not
-  // surface the Apple Pay button — passing this config is harmless.
+  // Apple Pay merchant ID (Stripe.merchantIdentifier from dart-define) is
+  // ALWAYS the platform's, not the connected's — per Stripe docs, that's
+  // the correct config for Connect Direct Charges. The charge routes to
+  // the connected account regardless.
   //
   // Google Pay: testEnv must be true on dev builds to hit Google's test PSP
   // sandbox; false on production. Stripe rejects mixing prod testEnv with
@@ -131,6 +155,12 @@ class StripeService {
     /// If null on web, we fall back to the legacy Stripe Checkout redirect
     /// flow — same UX as before Stage 4. On native this is ignored.
     BuildContext? sheetContext,
+    /// Native-only: default PM info from tenantState. When present, we show
+    /// an express-checkout confirmation sheet BEFORE opening the picker so
+    /// the user's chosen default is pre-selected (flutter_stripe v12
+    /// PaymentSheet orders by MRU, not by invoice_settings.default_payment_method).
+    /// User can tap "Cambiar tarjeta" to open the full PaymentSheet picker.
+    DefaultCardInfo? defaultCard,
   }) async {
     // Web (PWA): use Stripe Elements inline in a bottom sheet — user stays
     // inside the PWA (no full-page redirect to hosted Checkout). Falls back
@@ -263,6 +293,79 @@ class StripeService {
     final customerSessionClientSecret =
         result.data['customerSessionClientSecret'] as String?;
     final ephemeralKeySecret = result.data['ephemeralKeySecret'] as String?;
+    // DIRECT CHARGES: the connected account this PI + customer live on.
+    // Must be set on the Stripe SDK BEFORE initPaymentSheet — otherwise the
+    // sheet requests the customer/PI on the platform (where they don't exist)
+    // and errors with "resource_missing".
+    final connectAccountId = result.data['connectAccountId'] as String?;
+    if (connectAccountId != null && connectAccountId.isNotEmpty) {
+      Stripe.stripeAccountId = connectAccountId;
+    }
+
+    // EXPRESS CHECKOUT (native only): if the caller passed a default card
+    // and we have a sheet context, show a confirmation sheet BEFORE opening
+    // the PaymentSheet picker. Confirm → charge with the default card via
+    // confirmPayment directly (bypasses picker). Change card → fall through
+    // to PaymentSheet as before. Solves the flutter_stripe v12 limitation
+    // where PaymentSheet mobile orders PMs by MRU, not by
+    // customer.invoice_settings.default_payment_method.
+    if (!kIsWeb && defaultCard != null && sheetContext != null && sheetContext.mounted) {
+      final expressChoice = await showExpressCheckoutSheet(
+        context: sheetContext,
+        cardBrand: defaultCard.brand,
+        cardLast4: defaultCard.last4,
+        amountCents: amountCents,
+        currency: currency,
+      );
+      if (expressChoice == true) {
+        // User confirmed with default card — charge directly.
+        try {
+          await Stripe.instance.confirmPayment(
+            paymentIntentClientSecret: clientSecret,
+            data: PaymentMethodParams.cardFromMethodId(
+              paymentMethodData: PaymentMethodDataCardFromMethod(
+                paymentMethodId: defaultCard.id,
+              ),
+            ),
+          );
+          debugPrint('StripeService.pay: express checkout confirmed in ${sw.elapsedMilliseconds}ms');
+          return _extractIdFromSecret(clientSecret, 'pi_');
+        } on StripeException catch (e, st) {
+          // Same pattern as PaymentSheet catch: release pushka-empty lock,
+          // translate cancelled/declined to StripeServiceException. If it's
+          // a decline/expired card, fall through to open the picker so the
+          // user can choose another card without starting over.
+          if (purpose == 'pushka_empty') {
+            await _releaseManualPushkaEmptyLock(tenantId: tenantId);
+          }
+          final code = e.error.code;
+          if (code == FailureCode.Canceled) {
+            throw const StripeServiceException('canceled');
+          }
+          // Auto-fallback: card decline / expired / etc → open the picker so
+          // the user can pick a different card without re-tapping "Donar".
+          debugPrint('StripeService.pay: express failed (${code.name}), falling back to PaymentSheet');
+          _recordPaymentError('pay/express_fallback', e, st,
+              cid: cid, purpose: purpose, amountCents: amountCents,
+              currency: currency, extraCode: code.name);
+          // Fall through to initPaymentSheet + presentPaymentSheet below.
+        } catch (e, st) {
+          if (purpose == 'pushka_empty') {
+            await _releaseManualPushkaEmptyLock(tenantId: tenantId);
+          }
+          _recordPaymentError('pay/express_unknown_fallback', e, st,
+              cid: cid, purpose: purpose, amountCents: amountCents, currency: currency);
+          debugPrint('StripeService.pay: express unknown error, falling back to PaymentSheet: $e');
+        }
+      } else if (expressChoice == null) {
+        // User dismissed the sheet without choosing.
+        if (purpose == 'pushka_empty') {
+          await _releaseManualPushkaEmptyLock(tenantId: tenantId);
+        }
+        throw const StripeServiceException('canceled');
+      }
+      // expressChoice == false → "Cambiar tarjeta" → fall through to picker.
+    }
 
     // flutter_stripe v12 requires that if customerId is set, at least one auth
     // mechanism (customerSessionClientSecret OR customerEphemeralKeySecret)
@@ -400,6 +503,15 @@ class StripeService {
     final ephemeralKeySecret = result.data['ephemeralKeySecret'] as String?;
     final customerSessionClientSecret = result.data['customerSessionClientSecret'] as String?;
     final subscriptionId = result.data['subscriptionId'] as String?;
+    // DIRECT CHARGES: subscription + invoice + PI + customer live on the
+    // connected account. Set Stripe.stripeAccountId BEFORE any client-side
+    // Stripe call (initPaymentSheet on native, showWebDonationSheet on web)
+    // so the PI is looked up on the correct account. Same fix as pay() and
+    // setupCard().
+    final connectAccountId = result.data['connectAccountId'] as String?;
+    if (connectAccountId != null && connectAccountId.isNotEmpty) {
+      Stripe.stripeAccountId = connectAccountId;
+    }
     if (clientSecret == null || clientSecret.isEmpty) {
       throw const StripeServiceException('no-client-secret');
     }
@@ -428,6 +540,7 @@ class StripeService {
         merchantDisplayName: merchantDisplayName,
         returnUrl: returnUrl,
         recurringInterval: interval,
+        stripeAccount: connectAccountId,
       );
       if (piId == null || piId.isEmpty) {
         // User cancelled. Note: the subscription doc on Stripe is left in
@@ -550,6 +663,7 @@ class StripeService {
         customerSessionClientSecret: customerSessionClientSecret,
         merchantDisplayName: merchantDisplayName,
         returnUrl: returnUrl,
+        stripeAccount: result.data['connectAccountId'] as String?,
       );
       if (outcome == null) {
         throw const StripeServiceException('canceled');
@@ -560,6 +674,14 @@ class StripeService {
     final clientSecret = result.data['clientSecret'] as String?;
     if (clientSecret == null || clientSecret.isEmpty) {
       throw const StripeServiceException('no-client-secret');
+    }
+    // DIRECT CHARGES: SetupIntent lives on the connected account. Set
+    // Stripe.stripeAccountId BEFORE initPaymentSheet — same fix as pay().
+    // Without this, PaymentSheet queries the SetupIntent on the platform
+    // (where it does not exist) and errors with resource_missing.
+    final connectAccountId = result.data['connectAccountId'] as String?;
+    if (connectAccountId != null && connectAccountId.isNotEmpty) {
+      Stripe.stripeAccountId = connectAccountId;
     }
 
     await Stripe.instance.initPaymentSheet(
@@ -765,6 +887,12 @@ class StripeService {
     }
     final customerSessionClientSecret =
         data['customerSessionClientSecret'] as String?;
+    // DIRECT CHARGES: the connected account this PI + customer live on.
+    // Threaded into showWebDonationSheet → the sheet configures Stripe.js
+    // with `stripeAccount` before mounting Elements so confirmPaymentElement
+    // targets the correct account. Without this Stripe.js queries the platform
+    // for the PI/customer and 404s.
+    final connectAccountId = data['connectAccountId'] as String?;
 
     // Return URL for the RARE case where the issuer forces a full-page
     // 3DS redirect (some LATAM banks). Anchored to the current origin so
@@ -789,6 +917,7 @@ class StripeService {
       currency: currency,
       merchantDisplayName: merchantDisplayName,
       returnUrl: returnUrl,
+      stripeAccount: connectAccountId,
     );
 
     // MF5: Elements failed to mount (Stripe.js blocked / publishableKey
