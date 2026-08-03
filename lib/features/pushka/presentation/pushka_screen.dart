@@ -326,10 +326,16 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
       final currency = _currencyCodeFromProfile();
       final amountCents = amountToStripeUnits(amountToEmpty, currency);
       final minCents = _minAmountCentsForCurrency(currency);
+      final maxCents = _maxAmountCentsForCurrency(currency);
 
       if (amountCents < minCents) {
         if (!mounted) return;
         _showMinAmountDialog(currency, minCents, amountToEmpty);
+        return;
+      }
+      if (amountCents > maxCents) {
+        if (!mounted) return;
+        _showMaxAmountDialog(currency, maxCents, amountToEmpty);
         return;
       }
 
@@ -638,9 +644,15 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
       final currency = _currencyCodeFromProfile();
       final amountCents = amountToStripeUnits(donationAmount, currency);
       final minCents = _minAmountCentsForCurrency(currency);
+      final maxCents = _maxAmountCentsForCurrency(currency);
       if (amountCents < minCents) {
         if (!mounted) return;
         _showMinAmountDialog(currency, minCents, donationAmount);
+        return;
+      }
+      if (amountCents > maxCents) {
+        if (!mounted) return;
+        _showMaxAmountDialog(currency, maxCents, donationAmount);
         return;
       }
 
@@ -721,9 +733,15 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
       final currency = _currencyCodeFromProfile();
       final amountCents = amountToStripeUnits(donationAmount, currency);
       final minCents = _minAmountCentsForCurrency(currency);
+      final maxCents = _maxAmountCentsForCurrency(currency);
       if (amountCents < minCents) {
         if (!mounted) return;
         _showMinAmountDialog(currency, minCents, donationAmount);
+        return;
+      }
+      if (amountCents > maxCents) {
+        if (!mounted) return;
+        _showMaxAmountDialog(currency, maxCents, donationAmount);
         return;
       }
       // Si el caller ya nos pasó una razón (flujo de festividad → "Pesaj",
@@ -1952,6 +1970,63 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
     );
   }
 
+  // Round-4 audit HIGH residual: symmetric max-amount dialog. Fires client-
+  // side before hitting the CF so donors see an actionable message
+  // ("máximo por transacción: $X") instead of a generic backend rejection.
+  void _showMaxAmountDialog(String currency, int maxCents, double attempted) {
+    final tr = S.of(context);
+    final symbol = _currencySymbol(currency);
+    final maxAmount = _formatAmountFromCents(maxCents, currency: currency);
+    final code = currency.toUpperCase();
+
+    showDialog(
+      context: context,
+      builder: (ctx) => Dialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        insetPadding: const EdgeInsets.symmetric(horizontal: 28),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(24, 24, 24, 20),
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            Container(
+              width: 56, height: 56,
+              decoration: BoxDecoration(
+                color: const Color(0xFFFFF3E0),
+                borderRadius: BorderRadius.circular(16),
+              ),
+              child: const Icon(Icons.info_outline_rounded, color: Color(0xFFFF9500), size: 30),
+            ),
+            const SizedBox(height: 16),
+            Text(
+              tr.maxAmountTitle,
+              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
+            ),
+            const SizedBox(height: 10),
+            Text(
+              tr.maxAmountBody(code, symbol, maxAmount),
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 14, color: Theme.of(context).colorScheme.onSurface, height: 1.4),
+            ),
+            const SizedBox(height: 20),
+            SizedBox(
+              width: double.infinity,
+              height: 46,
+              child: ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppTokens.primaryBlue,
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  elevation: 0,
+                ),
+                onPressed: () => Navigator.pop(ctx),
+                child: Text(tr.understood, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
+              ),
+            ),
+          ]),
+        ),
+      ),
+    );
+  }
+
   String _donationErrorMessage(Object error, S tr) {
     if (error is FirebaseFunctionsException) {
       // For codes where the backend intentionally forwards a user-facing
@@ -2427,6 +2502,26 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
     }
   }
 
+  // Round-4 audit HIGH residual: client-side max amount validation so the
+  // user sees an actionable error BEFORE hitting the CF (which rejects
+  // with a generic "amount exceeds cap" HttpsError). Values MUST stay
+  // aligned with functions/index.js:CURRENCY_MAX_AMOUNTS.
+  int _maxAmountCentsForCurrency(String currency) {
+    switch (currency.toLowerCase()) {
+      case 'usd': return 100000;      // $1000
+      case 'eur': return 100000;      // €1000
+      case 'gbp': return 80000;       // £800
+      case 'cad': return 130000;      // C$1300
+      case 'ils': return 350000;      // ₪3500
+      case 'mxn': return 2000000;     // MX$20000
+      case 'brl': return 500000;      // R$5000
+      case 'ars': return 100000000;   // AR$1M
+      case 'clp': return 900000;      // CLP $900k (zero-decimal)
+      case 'cop': return 400000000;   // COP $4M
+      default:    return 100000;      // safe default matching USD
+    }
+  }
+
   String _formatAmountFromCents(int cents, {String? currency}) {
     final code = currency ?? _currencyCodeFromProfile();
     final value = stripeUnitsToAmount(cents, code);
@@ -2476,14 +2571,10 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
     }
   }
 
-  String _shortSymbol(String code) {
-    const symbols = {
-      'usd': '\$', 'eur': '€', 'gbp': '£', 'cad': 'C\$',
-      'mxn': '\$', 'ars': '\$', 'brl': 'R\$', 'ils': '₪',
-      'clp': '\$', 'cop': '\$',
-    };
-    return symbols[code.toLowerCase()] ?? '\$';
-  }
+  // Kept as a thin wrapper for source-compat with existing prefixText calls.
+  // Uses the central shortCurrencySymbol() from format_utils (which returns
+  // MX$ / AR$ / CL$ / CO$ instead of ambiguous $ for LatAm currencies).
+  String _shortSymbol(String code) => shortCurrencySymbol(code);
 
   String _formatPresetValue(double amount) {
     if (amount == amount.roundToDouble()) return amount.toInt().toString();

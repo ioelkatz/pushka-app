@@ -240,6 +240,13 @@ class S {
     'Vous pouvez augmenter le montant ou changer la devise dans les Paramètres.',
     'תוכל להגדיל את הסכום או לשנות את המטבע בהגדרות.',
   );
+  String get maxAmountTitle => _t('Monto máximo', 'Maximum amount', 'Montant maximum', 'סכום מקסימלי');
+  String maxAmountBody(String code, String symbol, String max) => _t(
+    'El monto máximo por donación en $code es de $symbol$max. Para donaciones más grandes, usá varias transacciones o contactanos.',
+    'The maximum single-donation amount in $code is $symbol$max. For larger donations, use multiple transactions or contact us.',
+    'Le montant maximum par don en $code est de $symbol$max. Pour des dons plus importants, utilisez plusieurs transactions ou contactez-nous.',
+    'הסכום המקסימלי לתרומה יחידה ב-$code הוא $symbol$max. לתרומות גדולות יותר, השתמש במספר טרנזקציות או צור קשר.',
+  );
   String get errorSessionInvalid => _t(
     'Tu sesión no es válida. Cierra sesión e inicia de nuevo.',
     'Your session is invalid. Log out and sign in again.',

@@ -304,7 +304,9 @@
       "Read(//c/dev/pushka_admin/src/**)",
       "Bash(grep -n \"totalRevLastMonth\\\\|revenueLastMonth\\\\|totalRevLastYear\" C:/dev/pushka_admin/src/pages/DashboardPage.tsx)",
       "Bash(grep -oE '\"severity\":\"[A-Z]+\",\"summary\":\"[^\"]{1,120}\"' \"C:/Users/Ioel/AppData/Local/Temp/claude/c--dev-pushka-app/a6d5952f-d419-4aa3-a22b-1a314a72ddc8/tasks/wd266xsmm.output\")",
-      "Bash(python3 -)"
+      "Bash(python3 -)",
+      "Bash(taskkill //F //IM dart.exe)",
+      "Bash(node C:/Users/Ioel/AppData/Local/Temp/claude/c--dev-pushka-app/a6d5952f-d419-4aa3-a22b-1a314a72ddc8/scratchpad/audit_t.js)"
     ],
     "additionalDirectories": [
       "C:\\Users\\Ioel\\Downloads",
