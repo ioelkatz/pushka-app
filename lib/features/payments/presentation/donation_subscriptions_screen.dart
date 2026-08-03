@@ -7,6 +7,7 @@ import 'package:intl/intl.dart' hide TextDirection;
 
 import '../../../app/theme/app_tokens.dart';
 import '../../../core/format_utils.dart';
+import '../../../core/hive_cache.dart';
 import '../../../core/keyboard_safe_sheet.dart';
 import '../../../core/l10n/s.dart';
 import '../../auth/biometric_service.dart';
@@ -34,14 +35,29 @@ class _DonationSubscriptionsScreenState
   @override
   void initState() {
     super.initState();
-    _load();
+    // Hive cache: paint the last-known subs immediately so the screen
+    // opens with content instead of a spinner. The CF refresh happens
+    // silently in the background and swaps in fresh data when it lands.
+    // TTL is informational — even a "stale" cache is a better first
+    // frame than an empty spinner. If the user creates/cancels a sub
+    // we invalidate immediately by rewriting the cache with the fresh
+    // list after the CF call.
+    final uid = ref.read(currentUserProvider)?.uid;
+    final cached = uid == null ? null : HiveCache.instance.loadSubscriptions(uid);
+    if (cached != null) {
+      _subs = cached.subs;
+      _loading = false;
+    }
+    _load(silent: cached != null);
   }
 
-  Future<void> _load() async {
-    setState(() {
-      _loading = true;
-      _error = null;
-    });
+  Future<void> _load({bool silent = false}) async {
+    if (!silent) {
+      setState(() {
+        _loading = true;
+        _error = null;
+      });
+    }
     final callable =
         FirebaseFunctions.instance.httpsCallable('listDonationSubscriptions');
     Object? lastError;
@@ -51,10 +67,17 @@ class _DonationSubscriptionsScreenState
         if (!mounted) return;
         final data = result.data as Map<dynamic, dynamic>;
         final raw = data['subscriptions'] as List<dynamic>? ?? [];
+        final subs = raw.map((s) => Map<String, dynamic>.from(s as Map)).toList();
         setState(() {
-          _subs = raw.map((s) => Map<String, dynamic>.from(s as Map)).toList();
+          _subs = subs;
           _loading = false;
+          _error = null;
         });
+        // Persist to Hive so the next open of this screen paints instantly.
+        final uid = ref.read(currentUserProvider)?.uid;
+        if (uid != null) {
+          await HiveCache.instance.saveSubscriptions(uid: uid, subs: subs);
+        }
         return;
       } catch (e) {
         lastError = e;
@@ -64,6 +87,10 @@ class _DonationSubscriptionsScreenState
       }
     }
     if (!mounted) return;
+    // Silent refresh failures keep whatever's already on screen — same UX
+    // pattern as saved_cards_screen: better to leave the cached list up
+    // than wipe it because a background retry hiccuped.
+    if (silent) return;
     setState(() {
       _subs = [];
       _error = lastError?.toString();
@@ -142,7 +169,10 @@ class _DonationSubscriptionsScreenState
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(tr.subscriptionCanceled)),
       );
-      await _load();
+      // Silent refresh — the current list already shows the correct state
+      // optimistically (cancel: sub removed / create: waiting for stream)
+      // so there's no reason to flash a full-page spinner.
+      await _load(silent: true);
     } catch (_) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -510,7 +540,10 @@ class _DonationSubscriptionsScreenState
           content: Text(tr.donationProcessed(formatCurrencyAmount(donationAmount, currency))),
         ),
       );
-      await _load();
+      // Silent refresh — the current list already shows the correct state
+      // optimistically (cancel: sub removed / create: waiting for stream)
+      // so there's no reason to flash a full-page spinner.
+      await _load(silent: true);
     } on FirebaseFunctionsException catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(

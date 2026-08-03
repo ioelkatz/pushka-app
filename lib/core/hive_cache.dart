@@ -232,6 +232,66 @@ class HiveCache {
     );
   }
 
+  // ---------------------------------------------------------------------------
+  // Donation subscriptions cache — keyed by uid alone (subs list is
+  // multi-tenant: listDonationSubscriptions returns subs from every tenant
+  // the user belongs to, so scoping by tenantId would fragment the cache).
+  // 5 min TTL: subs change less often than cards but the user's own
+  // create/cancel actions invalidate immediately by calling saveSubscriptions
+  // right after the CF response. Stale cache is fine — painted instantly
+  // + refresh silent.
+  // ---------------------------------------------------------------------------
+
+  static const _keySubs = 'donation_subs';
+  static const _keySubsAt = 'donation_subs_at';
+  static const Duration subsTtl = Duration(minutes: 5);
+
+  Future<void> saveSubscriptions({
+    required String uid,
+    required List<Map<String, dynamic>> subs,
+  }) async {
+    if (!_initialized) return;
+    final clean = subs
+        .map((s) => <String, dynamic>{
+              for (final e in s.entries)
+                if (e.value == null ||
+                    e.value is num ||
+                    e.value is String ||
+                    e.value is bool)
+                  e.key: e.value,
+            })
+        .toList();
+    await _box!.put('${uid}_$_keySubs', clean);
+    await _box!.put('${uid}_$_keySubsAt', DateTime.now().millisecondsSinceEpoch);
+  }
+
+  /// Returns (subs, fresh) or null if no cache for this uid.
+  ({List<Map<String, dynamic>> subs, bool fresh})?
+      loadSubscriptions(String uid) {
+    if (!_initialized) return null;
+    final raw = _box!.get('${uid}_$_keySubs');
+    final atMs = _box!.get('${uid}_$_keySubsAt');
+    if (raw is! List || atMs is! int) return null;
+    final subs = raw
+        .whereType<Map>()
+        .map((m) => <String, dynamic>{
+              for (final e in m.entries)
+                if (e.key is String) e.key as String: e.value,
+            })
+        .toList();
+    final ageMs = DateTime.now().millisecondsSinceEpoch - atMs;
+    return (
+      subs: subs,
+      fresh: ageMs < subsTtl.inMilliseconds,
+    );
+  }
+
+  Future<void> clearSubscriptions(String uid) async {
+    if (!_initialized) return;
+    await _box!.delete('${uid}_$_keySubs');
+    await _box!.delete('${uid}_$_keySubsAt');
+  }
+
   /// Clears saved cards cache. If `tenantId` is null, clears ALL tenants for
   /// this uid (used on logout / delete account). If specified, clears only
   /// that (uid, tenantId) scope (used on tenant switch, though scoping keys

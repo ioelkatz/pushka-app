@@ -57,9 +57,11 @@ class _SavedCardsScreenState extends ConsumerState<SavedCardsScreen> {
     // promotes the first card to default and back-fills those fields.
     _loadCards(
       autoSetDefault: true,
-      // Skip the spinner when we already painted from cache; the refresh
-      // happens silently and updates the UI when it lands.
-      silent: cached?.fresh == true,
+      // Skip the spinner whenever we have ANY cache (fresh or stale). A
+      // stale cache is still a better first frame than a blank spinner,
+      // and the CF revalidates in the background. Only cold-first-open
+      // (no cache) shows the spinner.
+      silent: cached != null,
     );
   }
 
