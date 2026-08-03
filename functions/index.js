@@ -2776,6 +2776,29 @@ exports.listSavedCards = onCall(
       nickname: pm.metadata?.nickname || null,
     }));
 
+    // Round-3 audit fix: self-heal the tenantState mirror against Stripe
+    // truth. If setDefaultPaymentMethod's Firestore write ever fell out of
+    // sync with Stripe (network hiccup, deleted-in-dashboard, etc), this
+    // pass corrects it — Stripe is authoritative for
+    // invoice_settings.default_payment_method. Best-effort: never fails the
+    // list call on a Firestore hiccup.
+    try {
+      const mirrorPmId = tenantStateSnap.data()?.stripeConnectDefaultPaymentMethodId || null;
+      if (mirrorPmId !== defaultPmId) {
+        const defaultPm = defaultPmId ? keep.find((pm) => pm.id === defaultPmId) : null;
+        await tenantStateRef.set({
+          stripeConnectDefaultPaymentMethodId: defaultPmId || admin.firestore.FieldValue.delete(),
+          stripeConnectDefaultPaymentMethodLast4: defaultPm?.card?.last4 || admin.firestore.FieldValue.delete(),
+          stripeConnectDefaultPaymentMethodBrand: defaultPm?.card?.brand || admin.firestore.FieldValue.delete(),
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        }, { merge: true });
+      }
+    } catch (mirrorErr) {
+      console.warn("listSavedCards: mirror self-heal failed (non-fatal)", {
+        uid, tenantId, error: String(mirrorErr?.message || mirrorErr),
+      });
+    }
+
     return { cards, defaultPaymentMethodId: defaultPmId };
   }
 );
@@ -3030,19 +3053,30 @@ exports.setDefaultPaymentMethod = onCall(
       throw new HttpsError("permission-denied", "Este método de pago no pertenece a tu cuenta.");
     }
 
-    // Stripe customer update + Firestore cache write in parallel on connected.
-    await Promise.all([
-      stripe.customers.update(customerId, {
-        invoice_settings: { default_payment_method: pmId },
-      }, stripeReqOpts),
-      tenantStateRef.set({
+    // Round-3 audit fix: Stripe first, then Firestore mirror. The old
+    // Promise.all could commit the Firestore cache pointing at a pmId
+    // Stripe never accepted (rate limit, Radar block, api_connection_error)
+    // — leaving the UI showing the wrong card as default while any flow
+    // that reuses invoice_settings.default_payment_method would still
+    // charge the OLD card. Stripe is the truth; the mirror is a cache.
+    await stripe.customers.update(customerId, {
+      invoice_settings: { default_payment_method: pmId },
+    }, stripeReqOpts);
+    try {
+      await tenantStateRef.set({
         stripeConnectDefaultPaymentMethodId: pmId,
         stripeConnectDefaultPaymentMethodLast4: pm.card?.last4 || null,
         stripeConnectDefaultPaymentMethodBrand: pm.card?.brand || null,
         _lastPmDedupePassAt: admin.firestore.FieldValue.delete(),
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-      }, { merge: true }),
-    ]);
+      }, { merge: true });
+    } catch (mirrorErr) {
+      // Stripe already accepted the change — self-heals on next
+      // listSavedCards call (which re-derives the mirror from Stripe truth).
+      console.warn("setDefaultPaymentMethod: mirror write failed (non-fatal)", {
+        uid, pmId, error: String(mirrorErr?.message || mirrorErr),
+      });
+    }
 
     return { success: true };
   }
