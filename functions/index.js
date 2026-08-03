@@ -3865,11 +3865,30 @@ exports.stripeWebhook = onRequest(
       });
     } else if (event.type === "customer.subscription.deleted" ||
                event.type === "customer.subscription.updated") {
+      const sub = event.data.object;
+      // CRITICAL GUARD: donation_recurring subs (donor's monthly gifts) ALSO
+      // carry metadata.tenantId (for attribution to the org). Without this
+      // filter, cancelling a donation_recurring sub would set the tenant to
+      // "suspended" and lock the entire org out of the app. This bug hit
+      // prod 2026-08-03 after Ioel cancelled his $1/mo test sub — the
+      // chabadmexico tenant was flagged suspended and every user saw
+      // "Servicio no disponible". Cross-check: donation_recurring subs are
+      // created with purpose='donation_recurring' in createDonationSubscription
+      // (functions/index.js:~1895). SaaS-billing subs (tenant pays platform)
+      // have a different metadata shape (purpose absent or set to a saas
+      // sentinel), so this check safely divides the two flows.
+      if (sub.metadata?.purpose === "donation_recurring") {
+        await finalizeWebhookEvent(eventRef, {
+          status: "processed",
+          subscriptionId: sub.id,
+          outcome: "donation_recurring_status_change_ignored",
+        });
+        return;
+      }
       // Tenant Stripe Billing subscription state change. Mirror the status
       // onto tenants/{tid} so the suspension/grace-period logic
       // (router redirects, processPushkaAutoEmpty gate) reacts within seconds
       // instead of waiting for the next 60s tenant-config poll.
-      const sub = event.data.object;
       const tenantId = sub.metadata?.tenantId ?? null;
       const status = sub.status; // active|past_due|canceled|unpaid|trialing|...
 
