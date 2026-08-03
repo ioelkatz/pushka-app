@@ -1,9 +1,10 @@
+import 'dart:async';
 import 'dart:math';
 
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_crashlytics/firebase_crashlytics.dart';
 import 'package:flutter/foundation.dart';
-import 'package:flutter/widgets.dart' show BuildContext;
+import 'package:flutter/material.dart';
 import 'package:flutter_stripe/flutter_stripe.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -355,7 +356,28 @@ class StripeService {
         currency: currency,
       );
       if (expressChoice == true) {
-        // User confirmed with default card — charge directly.
+        // Round-2 audit residual: show a modal-barrier progress indicator so
+        // the user doesn't see the fully-enabled pushka screen while a
+        // multi-second network call (potentially 3DS challenge) is in
+        // flight. Dismissed in the finally block regardless of outcome.
+        // Uses the root navigator so it survives the express sheet dismiss.
+        bool progressShown = false;
+        void closeProgress() {
+          if (!progressShown) return;
+          progressShown = false;
+          if (sheetContext.mounted) {
+            Navigator.of(sheetContext, rootNavigator: true).pop();
+          }
+        }
+        if (sheetContext.mounted) {
+          progressShown = true;
+          unawaited(showDialog<void>(
+            context: sheetContext,
+            barrierDismissible: false,
+            useRootNavigator: true,
+            builder: (_) => const _ExpressProgressDialog(),
+          ));
+        }
         try {
           await Stripe.instance.confirmPayment(
             paymentIntentClientSecret: clientSecret,
@@ -366,17 +388,22 @@ class StripeService {
             ),
           );
           debugPrint('StripeService.pay: express checkout confirmed in ${sw.elapsedMilliseconds}ms');
+          closeProgress();
           return _extractIdFromSecret(clientSecret, 'pi_');
         } on StripeException catch (e, st) {
-          // Same pattern as PaymentSheet catch: release pushka-empty lock,
-          // translate cancelled/declined to StripeServiceException. If it's
-          // a decline/expired card, fall through to open the picker so the
-          // user can choose another card without starting over.
-          if (purpose == 'pushka_empty') {
-            await _releaseManualPushkaEmptyLock(tenantId: tenantId);
-          }
+          // Round-2 audit residual: DO NOT release the pushka_empty lock on
+          // decline — the flow falls through to PaymentSheet to give the user
+          // a second chance with a different card. Releasing here would open
+          // a ~10s window in which the scheduled auto-empty tick could
+          // acquire a new lock and start a competing charge. The PaymentSheet
+          // catch below owns the terminal lock release.
+          closeProgress();
           final code = e.error.code;
           if (code == FailureCode.Canceled) {
+            // User-initiated cancel is terminal — release the lock now.
+            if (purpose == 'pushka_empty') {
+              await _releaseManualPushkaEmptyLock(tenantId: tenantId);
+            }
             throw const StripeServiceException('canceled');
           }
           // Auto-fallback: card decline / expired / etc → open the picker so
@@ -394,6 +421,11 @@ class StripeService {
           }
           // Fall through to initPaymentSheet + presentPaymentSheet below.
         } catch (e, st) {
+          closeProgress();
+          // Non-Stripe error inside confirmPayment (e.g. a plugin channel
+          // crash) — this IS terminal for the express path; the picker isn't
+          // going to fare better. Release the lock now and let the picker
+          // still try — its own catch will re-release if needed (idempotent).
           if (purpose == 'pushka_empty') {
             await _releaseManualPushkaEmptyLock(tenantId: tenantId);
           }
@@ -984,5 +1016,38 @@ class StripeService {
       throw const StripeServiceException('canceled');
     }
     return piId;
+  }
+}
+
+// Round-2 audit residual: modal-barrier progress overlay shown while the
+// express confirmPayment call is in flight. Prevents the user from tapping
+// Donar again on the (fully-enabled) pushka screen during the network
+// round-trip / 3DS challenge. Non-interactive.
+class _ExpressProgressDialog extends StatelessWidget {
+  const _ExpressProgressDialog();
+
+  @override
+  Widget build(BuildContext context) {
+    return PopScope(
+      canPop: false,
+      child: Dialog(
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        child: Center(
+          child: Container(
+            padding: const EdgeInsets.all(24),
+            decoration: BoxDecoration(
+              color: Theme.of(context).colorScheme.surface,
+              borderRadius: BorderRadius.circular(16),
+            ),
+            child: const SizedBox(
+              width: 48,
+              height: 48,
+              child: CircularProgressIndicator(strokeWidth: 3),
+            ),
+          ),
+        ),
+      ),
+    );
   }
 }

@@ -6711,7 +6711,12 @@ exports.setUserBlocked = onCall(
 // (uid + deletedAt + reason) for the statutory period without the PII.
 // ---------------------------------------------------------------------------
 exports.deleteAccount = onCall(
-  { secrets: [stripeSecret], enforceAppCheck: false },
+  // Round-2 audit residual: default 60s can time out for users belonging to
+  // many tenants (per-tenant Stripe cleanup runs sequentially: list subs,
+  // cancel each, then delete connect customer). 300s covers ~30 tenants
+  // comfortably with headroom for API retries. Memory bump lets the parallel
+  // Firestore reads (transactions, tenantState) fit without swapping.
+  { secrets: [stripeSecret], enforceAppCheck: false, timeoutSeconds: 300, memory: "512MiB" },
   async (request) => {
     const uid = request.auth?.uid;
     if (!uid) throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
