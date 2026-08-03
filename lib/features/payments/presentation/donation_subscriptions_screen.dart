@@ -74,11 +74,36 @@ class _DonationSubscriptionsScreenState
   Future<void> _confirmAndCancel(Map<String, dynamic> sub) async {
     if (_processingId) return;
     final tr = S.of(context);
+    // Round-4 audit MEDIUM fix: dialog was fully generic — user had no
+    // idea which sub they were canceling. Now shows tenant + amount +
+    // currency + interval so a user with multiple subs (multi-tenant or
+    // multiple recurring donations) can cancel with confidence.
+    final subCurrency = (sub['currency'] as String? ?? 'usd');
+    final amountUnits = (sub['amount'] as num?)?.toInt() ?? 0;
+    final subInterval = sub['interval'] as String? ?? 'month';
+    final subTenantAppName = (sub['tenantAppName'] as String?)?.trim();
+    final subTenantName = (sub['tenantName'] as String?)?.trim();
+    final subTenantLabel = (subTenantAppName != null && subTenantAppName.isNotEmpty)
+        ? subTenantAppName
+        : (subTenantName != null && subTenantName.isNotEmpty ? subTenantName : '');
+    final amountLabel = formatStripeUnits(amountUnits, subCurrency);
+    final intervalLabel = subInterval == 'week' ? tr.weekly : tr.monthly;
+    final details = subTenantLabel.isNotEmpty
+        ? '$subTenantLabel — $amountLabel · $intervalLabel'
+        : '$amountLabel · $intervalLabel';
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
         title: Text(tr.cancelSubscriptionConfirmTitle),
-        content: Text(tr.cancelSubscriptionConfirmBody),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(details, style: const TextStyle(fontWeight: FontWeight.w600)),
+            const SizedBox(height: 8),
+            Text(tr.cancelSubscriptionConfirmBody),
+          ],
+        ),
         actions: [
           // Explicit back-out. Without this the dialog had only "Confirm" so
           // users who tapped Cancel-subscription by mistake had to hit the
@@ -231,6 +256,37 @@ class _DonationSubscriptionsScreenState
     final symbol = currencySymbol(currency);
     final tenantConfig = ref.read(tenantConfigProvider).valueOrNull;
     final merchantDisplayName = tenantConfig?.appName ?? 'Pushka';
+    final activeTenantId = profile?['tenantId'] as String?;
+
+    // Round-4 audit MEDIUM fix: warn if the user already has an active
+    // sub in this tenant — otherwise they'd end up double-billed and
+    // wondering why. They can still proceed if intentional.
+    final existingSubHere = activeTenantId == null
+        ? null
+        : _subs.cast<Map<String, dynamic>?>().firstWhere(
+              (s) => s?['tenantId'] == activeTenantId,
+              orElse: () => null,
+            );
+    if (existingSubHere != null && mounted) {
+      final proceed = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: Text(tr.recurringAlreadyActiveTitle),
+          content: Text(tr.recurringAlreadyActiveBody),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: Text(tr.cancel),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: Text(tr.continueLabel),
+            ),
+          ],
+        ),
+      );
+      if (proceed != true || !mounted) return;
+    }
     // Tenant-configured donation destinations (e.g. "Familias necesitadas",
     // "Estudio de Torá"). Falls back to the in-app default Chabad list when
     // the tenant hasn't customized any. Empty list => skip the picker.

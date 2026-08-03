@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 
 import '../../../app/theme/app_tokens.dart';
+import '../../../core/format_utils.dart' show shortCurrencySymbol;
 import '../../../core/hive_cache.dart';
 import 'card_brand_box.dart';
 
@@ -363,7 +364,7 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
                       // Show the user's currency symbol, not a hardcoded '$'.
                       // Reads currencyCode from the user profile and maps to a
                       // short glyph via _shortCurrencySymbol.
-                      prefixText: '${_shortCurrencySymbol((profile?['currencyCode'] as String?) ?? 'USD')} ',
+                      prefixText: '${shortCurrencySymbol((profile?['currencyCode'] as String?) ?? 'USD')} ',
                       prefixStyle: TextStyle(
                         fontSize: 16,
                         color: Theme.of(context).colorScheme.onSurfaceVariant,
@@ -1114,18 +1115,7 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
     }
   }
 
-  /// Short currency glyph for the amount input prefix. Mirrors the mapping in
-  /// pushka_screen.dart::_shortSymbol — kept in sync so the auto-empty amount
-  /// field shows the same "$"/"₪"/"€"/"R$" the rest of the app uses.
-  String _shortCurrencySymbol(String code) {
-    const symbols = {
-      'usd': '\$', 'eur': '€', 'gbp': '£', 'cad': 'C\$', 'aud': '\$',
-      'mxn': '\$', 'ars': '\$', 'brl': 'R\$', 'ils': '₪',
-      'clp': '\$', 'cop': '\$', 'uyu': '\$', 'pen': 'S/',
-      'bob': 'Bs', 'gtq': 'Q', 'dop': 'RD\$',
-    };
-    return symbols[code.toLowerCase()] ?? '\$';
-  }
+  // Removed — using `shortCurrencySymbol()` from format_utils.dart directly.
 
   String _weekdayLabel(int weekday) {
     final tr = S.of(context);

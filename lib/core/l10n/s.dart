@@ -566,6 +566,42 @@ class S {
     'Le solde actuel de votre Pushka sera réinitialisé à \$0 lors du changement de devise.',
     'יתרת הפושקה הנוכחית שלך תאופס ל-\$0 בעת שינוי המטבע.',
   );
+  String get currencyChangeSideEffectsTitle => _t(
+    'También se restablecerá:',
+    'The following will also reset:',
+    'Ce qui suit sera également réinitialisé:',
+    'הפריטים הבאים גם יאופסו:',
+  );
+  String get currencyChangePushkaReset => _t(
+    'El saldo actual de tu Pushka',
+    'Your current Pushka balance',
+    'Le solde actuel de votre Pushka',
+    'יתרת הפושקה הנוכחית שלך',
+  );
+  String get currencyChangePresetsReset => _t(
+    'Los montos rápidos personalizados (se cargan los predeterminados de la nueva moneda)',
+    'Your custom quick amounts (defaults for the new currency will be loaded)',
+    'Vos montants rapides personnalisés (les valeurs par défaut de la nouvelle devise seront chargées)',
+    'הסכומים המהירים המותאמים שלך (יטענו ברירת המחדל של המטבע החדש)',
+  );
+  String get currencyChangeAutoEmptyReset => _t(
+    'El vaciado automático (deberás configurarlo nuevamente en la nueva moneda)',
+    'The auto-empty schedule (you\'ll need to reconfigure it in the new currency)',
+    'La vidange automatique (vous devrez la reconfigurer dans la nouvelle devise)',
+    'הריקון האוטומטי (יהיה עליך להגדיר אותו מחדש במטבע החדש)',
+  );
+  String get recurringAlreadyActiveTitle => _t(
+    'Ya tenés una donación mensual activa',
+    'You already have an active monthly donation',
+    'Vous avez déjà un don mensuel actif',
+    'יש לך כבר תרומה חודשית פעילה',
+  );
+  String get recurringAlreadyActiveBody => _t(
+    'Si continuás, se creará una segunda suscripción y se cobrará adicionalmente a la existente. Podés cancelar la anterior desde esta misma pantalla.',
+    'If you continue, a second subscription will be created and charged in addition to the existing one. You can cancel the current one from this screen.',
+    'Si vous continuez, un deuxième abonnement sera créé et facturé en plus de l\'existant. Vous pouvez annuler celui en cours depuis cet écran.',
+    'אם תמשיך, ייווצר מנוי שני ותחוייב בנוסף למנוי הקיים. באפשרותך לבטל את הקיים ממסך זה.',
+  );
   String get noBiometric => _t(
     'Tu dispositivo no soporta autenticación biométrica',
     'Your device does not support biometric authentication',

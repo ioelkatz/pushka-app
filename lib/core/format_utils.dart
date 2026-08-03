@@ -120,6 +120,38 @@ String currencySymbol(String currency) {
   return _currencySymbols[currency.toLowerCase()] ?? '${currency.toUpperCase()} ';
 }
 
+/// Short (usually 1-3 char) currency prefix for text fields where only
+/// the symbol goes before the amount — e.g. TextField prefixText. Uses
+/// disambiguating prefixes for the ambiguous `$` glyph (MX$, AR$, R$,
+/// CL$, CO$, CA$, US$) so a MXN user never mistakes their amount for USD.
+/// Single source of truth used by pushka_screen, settings_screen and
+/// auto_empty_screen (previously each had its own 4-6 line copy that
+/// drifted).
+String shortCurrencySymbol(String code) {
+  switch (code.toUpperCase()) {
+    case 'USD': return 'US\$';
+    case 'CAD': return 'CA\$';
+    case 'AUD': return 'AU\$';
+    case 'MXN': return 'MX\$';
+    case 'ARS': return 'AR\$';
+    case 'CLP': return 'CL\$';
+    case 'COP': return 'CO\$';
+    case 'UYU': return 'U\$';
+    case 'BRL': return 'R\$';
+    case 'EUR': return '€';
+    case 'GBP': return '£';
+    case 'ILS': return '₪';
+    case 'JPY': return '¥';
+    case 'CNY': return '¥';
+    case 'KRW': return '₩';
+    case 'INR': return '₹';
+    case 'RUB': return '₽';
+    case 'TRY': return '₺';
+    case 'CHF': return 'CHF';
+    default:    return '${code.toUpperCase()}\$';
+  }
+}
+
 String _renderAmount(double amount, String lowerCode, String upperCode) {
   final symbol = _currencySymbols[lowerCode];
   String body;

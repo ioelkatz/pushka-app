@@ -17,6 +17,7 @@ import '../../notifications/web_platform_stub.dart'
 import '../../users/data/user_repository.dart';
 import '../../users/presentation/user_profile_provider.dart';
 import '../../tenant/data/tenant_repository.dart';
+import '../../../core/format_utils.dart' show shortCurrencySymbol;
 import '../../../core/l10n/locale_provider.dart';
 import '../../../core/widgets/option_picker_sheet.dart';
 import 'package:go_router/go_router.dart';
@@ -87,14 +88,10 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   final FocusNode _pushkaGoalFocus = FocusNode();
   bool _pushkaGoalCtrlInited = false;
 
-  String _shortCurrencySymbol(String code) {
-    const symbols = {
-      'usd': '\$', 'eur': '€', 'gbp': '£', 'cad': 'C\$',
-      'mxn': '\$', 'ars': '\$', 'brl': 'R\$', 'ils': '₪',
-      'clp': '\$', 'cop': '\$',
-    };
-    return symbols[code.toLowerCase()] ?? '\$';
-  }
+  // Removed local map: use `shortCurrencySymbol()` from format_utils.
+  // Old map ambiguously rendered MXN/ARS/CLP/COP as `$` (indistinguishable
+  // from USD in a user's currency picker); the central one uses MX$/AR$/
+  // CL$/CO$ so no user confuses their local currency with dollars.
 
   @override
   void initState() {
@@ -280,7 +277,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 color: cs.onSurface,
               ),
               decoration: InputDecoration(
-                prefixText: '${_shortCurrencySymbol(selectedCurrency)} ',
+                prefixText: '${shortCurrencySymbol(selectedCurrency)} ',
                 prefixStyle: TextStyle(
                   fontSize: 16,
                   color: cs.onSurfaceVariant,
@@ -1104,7 +1101,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     }
     // Use local copy while editing so we can show pending changes instantly
     final presets = _localPresets ?? remotePresets;
-    final sym = _shortCurrencySymbol(selectedCurrency);
+    final sym = shortCurrencySymbol(selectedCurrency);
     final cs = Theme.of(context).colorScheme;
 
     // Sync controllers from the source-of-truth presets list, but only
@@ -2200,6 +2197,37 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               Text(
                 tr.currencyChangeConfirmBody,
                 style: TextStyle(fontSize: 14, color: cs.onSurfaceVariant, height: 1.4),
+              ),
+              const SizedBox(height: 12),
+              // Round-4 audit MEDIUM fix: user was blindsided by preset +
+              // pushka + top-off getting reset. Now the dialog spells out
+              // exactly what changes so they can back out.
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: cs.surfaceContainerHighest,
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(children: [
+                      Icon(Icons.info_outline, size: 16, color: cs.onSurfaceVariant),
+                      const SizedBox(width: 6),
+                      Text(
+                        tr.currencyChangeSideEffectsTitle,
+                        style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: cs.onSurfaceVariant),
+                      ),
+                    ]),
+                    const SizedBox(height: 6),
+                    Text(
+                      '• ${tr.currencyChangePushkaReset}\n'
+                      '• ${tr.currencyChangePresetsReset}\n'
+                      '• ${tr.currencyChangeAutoEmptyReset}',
+                      style: TextStyle(fontSize: 12, color: cs.onSurfaceVariant, height: 1.5),
+                    ),
+                  ],
+                ),
               ),
             ],
           ),
