@@ -7500,10 +7500,18 @@ exports.changeUserCurrency = onCall(
       // charges the user in the wrong currency. Other tenants the user
       // belongs to are left alone — the user will hit their own currency
       // mismatch guard next time they switch to those.
+      //
+      // Also mirrors pushkaGoal + presetAmounts to tenantState because that
+      // is where pushka_screen actually reads presets/goal from (root user
+      // doc holds the same fields but is NOT what the donate UI consumes).
+      // Without this the picker keeps showing the old currency's presets
+      // even though the setting was changed.
       if (activeTenantId) {
         const tenantStateRef = userRef.collection("tenantState").doc(activeTenantId);
         tx.set(tenantStateRef, {
           pushkaAmount: 0,
+          pushkaGoal: newGoal,
+          presetAmounts: newPresets,
           autoEmptyTopOffAmount: 0,
           autoEmptyTopOffEnabled: false,
           // Explicit marker so processPushkaAutoEmpty can distinguish

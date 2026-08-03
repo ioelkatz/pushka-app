@@ -2198,37 +2198,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 tr.currencyChangeConfirmBody,
                 style: TextStyle(fontSize: 14, color: cs.onSurfaceVariant, height: 1.4),
               ),
-              const SizedBox(height: 12),
-              // Round-4 audit MEDIUM fix: user was blindsided by preset +
-              // pushka + top-off getting reset. Now the dialog spells out
-              // exactly what changes so they can back out.
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: cs.surfaceContainerHighest,
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(children: [
-                      Icon(Icons.info_outline, size: 16, color: cs.onSurfaceVariant),
-                      const SizedBox(width: 6),
-                      Text(
-                        tr.currencyChangeSideEffectsTitle,
-                        style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: cs.onSurfaceVariant),
-                      ),
-                    ]),
-                    const SizedBox(height: 6),
-                    Text(
-                      '• ${tr.currencyChangePushkaReset}\n'
-                      '• ${tr.currencyChangePresetsReset}\n'
-                      '• ${tr.currencyChangeAutoEmptyReset}',
-                      style: TextStyle(fontSize: 12, color: cs.onSurfaceVariant, height: 1.5),
-                    ),
-                  ],
-                ),
-              ),
             ],
           ),
           actions: [
