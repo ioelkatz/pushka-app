@@ -384,7 +384,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(
           remaining > 0
-              ? tr.paymentProcessedRemaining(formatMoney(remaining))
+              ? tr.paymentProcessedRemaining(formatCurrencyAmount(remaining, _currencyCodeFromProfile()))
               : tr.pushkaEmptied,
         )),
       );
@@ -677,7 +677,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
       FeedbackService.instance.playSuccess();
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(S.of(context).donationProcessed(formatMoney(donationAmount)))),
+          SnackBar(content: Text(S.of(context).donationProcessed(formatCurrencyAmount(donationAmount, _currencyCodeFromProfile())))),
         );
       }
     } catch (error, st) {
@@ -769,7 +769,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
         SnackBar(
           content: Text(
             remaining > 0
-                ? tr.paymentProcessedRemaining(formatMoney(remaining))
+                ? tr.paymentProcessedRemaining(formatCurrencyAmount(remaining, _currencyCodeFromProfile()))
                 : tr.paymentProcessedHistory,
           ),
         ),
@@ -2256,7 +2256,9 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
               child: Row(children: [
                 Expanded(
                   child: Text(
-                    formatMoney(currentAmount),
+                    // Symbol matches the active currency — `formatMoney` alone
+                    // renders `$` unconditionally which lied about EUR/JPY/ILS.
+                    formatMoney(currentAmount, symbol: currencySymbol(_currencyCodeFromProfile())),
                     style: TextStyle(
                       fontSize: 18,
                       fontWeight: FontWeight.w600,
@@ -2409,7 +2411,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
       case 'brl':
         return 100; // 1.00 BRL (~$0.20 USD)
       case 'clp':
-        return 50000; // 500 CLP (~$0.55 USD, zero-decimal)
+        return 500; // 500 CLP (~$0.55 USD, zero-decimal — value == amount).
       case 'cop':
         return 200000; // 2000 COP (~$0.50 USD)
       case 'ils':

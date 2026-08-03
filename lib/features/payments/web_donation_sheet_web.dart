@@ -23,6 +23,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_stripe_web/flutter_stripe_web.dart';
 
+import '../../core/format_utils.dart';
 import '../../core/l10n/s.dart';
 import 'stripe_web_bootstrap.dart';
 
@@ -220,9 +221,10 @@ class _WebDonationSheetState extends State<_WebDonationSheet> {
   }
 
   String _formattedAmount() {
-    final cur = widget.currency.toUpperCase();
-    final major = widget.amountCents / 100.0;
-    return '\$${major.toStringAsFixed(2)} $cur';
+    // Uses the shared formatter so zero-decimal (JPY/CLP/KRW…) and
+    // three-decimal (BHD/JOD/KWD…) currencies render right, and the symbol
+    // matches the currency (no more hardcoded `$` on EUR / JPY / ILS charges).
+    return formatStripeUnits(widget.amountCents, widget.currency);
   }
 
   @override

@@ -138,14 +138,8 @@ class _DonationSubscriptionsScreenState
     return (profile?['biometricAuthenticationEnabled'] as bool?) ?? false;
   }
 
-  String _currencySymbol(String code) {
-    const symbols = {
-      'usd': 'US\$', 'eur': '€', 'gbp': '£', 'cad': 'CA\$',
-      'mxn': 'MX\$', 'ars': 'ARS\$', 'brl': 'R\$', 'ils': '₪',
-      'clp': 'CL\$', 'cop': 'CO\$',
-    };
-    return symbols[code.toLowerCase()] ?? '\$';
-  }
+  // Removed — use `currencySymbol(code)` from format_utils.dart (single source
+  // of truth, covers all Stripe-supported currencies incl. JPY/KRW/CHF/BHD).
 
   String _formatDate(int millis) {
     final d = DateTime.fromMillisecondsSinceEpoch(millis);
@@ -234,7 +228,7 @@ class _DonationSubscriptionsScreenState
         ((profile?['currencyCode'] as String?)?.trim().isNotEmpty ?? false)
             ? (profile!['currencyCode'] as String)
             : 'usd';
-    final symbol = _currencySymbol(currency);
+    final symbol = currencySymbol(currency);
     final tenantConfig = ref.read(tenantConfigProvider).valueOrNull;
     final merchantDisplayName = tenantConfig?.appName ?? 'Pushka';
     // Tenant-configured donation destinations (e.g. "Familias necesitadas",
@@ -456,7 +450,8 @@ class _DonationSubscriptionsScreenState
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(tr.donationProcessed(formatMoney(donationAmount))),
+          // Round-4 audit fix: symbol matches the sub currency, not $ default.
+          content: Text(tr.donationProcessed(formatCurrencyAmount(donationAmount, currency))),
         ),
       );
       await _load();
@@ -573,8 +568,9 @@ class _DonationSubscriptionsScreenState
     final periodEnd = (sub['currentPeriodEnd'] as num?)?.toInt();
 
     final amount = stripeUnitsToAmount(amountUnits, currency);
-    final symbol = _currencySymbol(currency);
-    final amountStr = formatMoney(amount, symbol: symbol);
+    // Round-4 audit fix: use central formatter — was missing JPY/KRW/CHF/BHD
+    // and falling back to `$` for those. Now correct symbol + code appended.
+    final amountStr = formatCurrencyAmount(amount, currency);
     final intervalRaw = interval == 'week' ? tr.weekly : tr.monthly;
     final intervalLabel = intervalRaw.isEmpty
         ? intervalRaw

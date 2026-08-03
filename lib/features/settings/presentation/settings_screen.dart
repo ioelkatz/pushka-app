@@ -2098,11 +2098,13 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   }
 
   Future<void> _showCurrencyDialog() async {
-    // Flag-per-currency map. Country name intentionally dropped — the flag
-    // + 3-letter code (MXN 🇲🇽) reads unambiguously in every locale, and
-    // hardcoding Spanish country names ("México", "Estados Unidos") broke
-    // for EN/FR/HE users. Anything missing here falls back to the globe
-    // emoji; add new entries above as more currencies come online.
+    // Flag-per-currency map. MUST stay in sync with the server-side
+    // SUPPORTED_CURRENCIES set (functions/index.js:105 CURRENCY_MINIMUMS
+    // keys) — Round-4 audit fix: exposing UYU/PEN/BOB/GTQ/DOP/AUD here
+    // let users pick a currency the server rejected on every subsequent
+    // donation with a generic "Moneda no soportada" error. Add a currency
+    // here ONLY after adding it to CURRENCY_MINIMUMS + CURRENCY_MAX_AMOUNTS
+    // + defaultGoalForCurrency + buildCurrencySnapshot on the backend.
     const allCurrencies = <String, String>{
       'USD': '🇺🇸',
       'EUR': '🇪🇺',
@@ -2114,12 +2116,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       'COP': '🇨🇴',
       'GBP': '🇬🇧',
       'CAD': '🇨🇦',
-      'UYU': '🇺🇾',
-      'PEN': '🇵🇪',
-      'BOB': '🇧🇴',
-      'GTQ': '🇬🇹',
-      'DOP': '🇩🇴',
-      'AUD': '🇦🇺',
     };
 
     // Shortlist = USD + EUR + ILS (universally-relevant baseline) plus
@@ -2240,7 +2236,19 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
     final newCurrency = selected['currency']!;
     final newGoal = UserRepository.defaultGoalForCurrency(newCurrency);
-    final user = ref.read(currentUserProvider);
+    final newPresets = _presetsForCurrency(newCurrency);
+
+    // Round-4 audit CRITICAL fix: snapshot previous state BEFORE mutating
+    // so we can revert local UI if the atomic CF fails. The old flow
+    // fired three fire-and-forget writes that could partially fail and
+    // desync users/{uid}.currencyCode from tenantState top-off — cron
+    // then charged in the wrong currency.
+    final prevCountry = selectedCountry;
+    final prevCurrency = selectedCurrency;
+    final prevFlag = selectedFlag;
+    final prevGoal = pushkaGoal;
+    final prevPresets = _localPresets;
+
     setState(() {
       // selectedCountry kept as raw currency code for back-compat with the
       // persisted `currencyCountry` field; UI no longer surfaces it.
@@ -2248,36 +2256,39 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       selectedCurrency = newCurrency;
       selectedFlag = selected['flag'] ?? _flagForCurrency(newCurrency);
       pushkaGoal = newGoal;
-      _localPresets = _presetsForCurrency(newCurrency); // show immediately, no stream dependency
+      _localPresets = newPresets; // show immediately, no stream dependency
       // Force the preset controllers to re-sync from the new currency's
       // defaults on the next build (otherwise the prior controller texts
       // would stick with the old-currency preset values).
       _presetCtrlsInited = false;
     });
-    final uid = user?.uid;
-    final tenantId = ref.read(userProfileProvider).valueOrNull?['tenantId'] as String?;
-    if (uid != null && tenantId != null && tenantId.isNotEmpty) {
-      ref.read(userRepositoryProvider).updatePushkaAmount(uid: uid, tenantId: tenantId, amount: 0)
-          .catchError((Object e) => debugPrint('resetPushkaAmount error: $e'));
-      // Currency changed → any saved auto-empty top-off amount is now in
-      // the wrong currency (e.g. saved as 100 MXN, user switches to USD,
-      // cron would charge $100 instead of ~$5). Clear it so the user
-      // re-enters in the new currency before the next cron tick.
-      ref.read(userRepositoryProvider).updateTenantState(
-            uid: uid,
-            tenantId: tenantId,
-            autoEmptyTopOffAmount: 0,
-            autoEmptyTopOffEnabled: false,
-          ).catchError((Object e) => debugPrint('clearTopOff on currency change error: $e'));
+
+    try {
+      await FirebaseFunctions.instance
+          .httpsCallable('changeUserCurrency')
+          .call<Map<Object?, Object?>>({
+        'currencyCode': newCurrency,
+        'currencyCountry': newCurrency,
+        'pushkaGoal': newGoal,
+        'presetAmounts': newPresets,
+      });
+    } catch (e, st) {
+      debugPrint('changeUserCurrency failed: $e\n$st');
+      if (!mounted) return;
+      // Revert local UI so it stays in lockstep with server state.
+      setState(() {
+        selectedCountry = prevCountry;
+        selectedCurrency = prevCurrency;
+        selectedFlag = prevFlag;
+        pushkaGoal = prevGoal;
+        _localPresets = prevPresets;
+        _presetCtrlsInited = false;
+      });
+      final tr = S.of(context);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(tr.saveError)),
+      );
     }
-    final newPresets = _presetsForCurrency(newCurrency);
-    _updateSettings(
-      user,
-      currencyCountry: newCurrency,
-      currencyCode: newCurrency,
-      pushkaGoal: newGoal,
-      presetAmounts: newPresets,
-    ).catchError((Object e) => debugPrint('currency updateSettings error: $e'));
   }
 
 

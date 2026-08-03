@@ -289,7 +289,22 @@
       "Bash(firebase functions:list --project pushka-app-ioel)",
       "Bash(node --check index.js)",
       "Bash(node --test test/computeApplicationFeeAmount.test.js)",
-      "Bash(awk -F: '$2 >= 2950 && $2 <= 4300 {print}')"
+      "Bash(awk -F: '$2 >= 2950 && $2 <= 4300 {print}')",
+      "Bash(taskkill //IM dart.exe //F)",
+      "Bash(taskkill //IM flutter.exe //F)",
+      "Bash(ls c:/dev/ 2>/dev/null; echo \"---\"; find c:/dev/pushka_app -maxdepth 4 -type f -name \"*.html\" 2>/dev/null | head -20)",
+      "Bash(cat c:/dev/pushka_admin/src/lib/currency.ts 2>/dev/null | head -50)",
+      "Read(//c/dev/pushka_admin/src/lib/**)",
+      "Bash(grep -n \"revenueLastMonthLabel\\\\|revenueYearSub\" c:/dev/pushka_admin/src/lib/translations.ts | head -20)",
+      "Bash(ls C:/dev/pushka_app/pushka_admin/src/pages/ 2>/dev/null; ls C:/dev/pushka_admin/src/pages/ 2>/dev/null)",
+      "Bash(find C:/dev -name \"DashboardPage.tsx\" 2>/dev/null)",
+      "Bash(grep -n \"revenueLastMonthLabel\\\\|revenueYearSub\\\\|lastMonthSub\\\\|commissionEstimateLabel\" C:/dev/pushka_admin/src/i18n/translations.ts | head -40)",
+      "Read(//c/dev/pushka_admin/src/i18n/**)",
+      "Bash(grep -rn \"revenueLastMonthLabel\" C:/dev/pushka_admin/src/ 2>/dev/null | head -20)",
+      "Read(//c/dev/pushka_admin/src/**)",
+      "Bash(grep -n \"totalRevLastMonth\\\\|revenueLastMonth\\\\|totalRevLastYear\" C:/dev/pushka_admin/src/pages/DashboardPage.tsx)",
+      "Bash(grep -oE '\"severity\":\"[A-Z]+\",\"summary\":\"[^\"]{1,120}\"' \"C:/Users/Ioel/AppData/Local/Temp/claude/c--dev-pushka-app/a6d5952f-d419-4aa3-a22b-1a314a72ddc8/tasks/wd266xsmm.output\")",
+      "Bash(python3 -)"
     ],
     "additionalDirectories": [
       "C:\\Users\\Ioel\\Downloads",

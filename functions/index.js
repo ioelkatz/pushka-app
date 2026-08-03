@@ -123,6 +123,12 @@ const CURRENCY_MINIMUMS = {
 // tope realista de la moneda. Tenants con casos legítimos > $1000 USD
 // deberían usar el flujo de subscription mensual o contactarnos para
 // aumentar el cap.
+// NOTE on units: values are in Stripe's smallest unit for the currency.
+//   - 2-decimal currencies (usd/eur/mxn/brl/ils/…): value / 100 = major amount
+//   - zero-decimal currencies (clp/jpy/krw/…): value == major amount
+//   - three-decimal currencies (bhd/jod/…): value / 1000 = major amount
+// Round-4 audit fix: `clp: 90000000` was 100× the intended cap (~USD $100k
+// instead of ~USD $1k) because CLP is zero-decimal, not 2-decimal.
 const CURRENCY_MAX_AMOUNTS = {
   usd: 100000,     // $1000
   eur: 100000,     // €1000
@@ -132,8 +138,8 @@ const CURRENCY_MAX_AMOUNTS = {
   mxn: 2000000,    // MX$20000 (~USD $1000)
   brl: 500000,     // R$5000
   ars: 100000000,  // AR$1M (~USD $1000)
-  clp: 90000000,   // CLP$900000
-  cop: 4000000000, // COP $4M (~USD $1000)
+  clp: 900000,     // CLP $900000 (zero-decimal → value == amount, ~USD $1000)
+  cop: 400000000,  // COP $4M (~USD $1000) — 2-decimal, value/100 = COP major
 };
 
 const SUPPORTED_CURRENCIES = new Set(Object.keys(CURRENCY_MINIMUMS));
@@ -2248,70 +2254,97 @@ exports.listDonationSubscriptions = onCall(
     if (!request.auth?.uid) {
       throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
     }
-    await enforceRateLimit(request.auth.uid, "listDonationSubscriptions", 60, 3600);
+    const uid = request.auth.uid;
+    await enforceRateLimit(uid, "listDonationSubscriptions", 60, 3600);
     if (!stripeSecret.value()) {
       throw new HttpsError("failed-precondition", "Stripe no configurado.");
     }
 
-    // Direct Charges: subscriptions live per-connected-account.
-    const ctx = await _resolveConnectCustomerContext(request.auth.uid);
-    if (!ctx || !ctx.customerId) return { subscriptions: [] };
-    const { customerId, stripeReqOpts } = ctx;
+    // Round-4 audit HIGH fix: previously this CF only listed subs for the
+    // ACTIVE tenant's connect customer, so a user who joined a second
+    // tenant lost visibility of a recurring donation to the first one —
+    // Stripe kept charging monthly with no cancel button anywhere.
+    //
+    // Iterate over every tenantId the user belongs to, resolve the
+    // per-tenant connect customer, and merge all their subs into one list.
+    const userSnap = await db.collection("users").doc(uid).get();
+    const userData = userSnap.exists ? (userSnap.data() ?? {}) : {};
+    const tenantIds = Array.isArray(userData.tenantIds)
+      ? userData.tenantIds.filter((t) => typeof t === "string" && t.length > 0)
+      : (userData.tenantId ? [userData.tenantId] : []);
+    if (tenantIds.length === 0) return { subscriptions: [] };
 
     const stripe = require("stripe")(stripeSecret.value(), { timeout: 15000 });
-    const subs = await stripe.subscriptions.list({
-      customer: customerId,
-      status: "all",
-      limit: 100,
-    }, stripeReqOpts);
-
     const ACTIVE_STATUSES = new Set(["active", "trialing", "past_due"]);
 
-    // Filter first, then fetch all unique tenant IDs in parallel.
-    const activeSubs = subs.data.filter(
-      (s) => s.metadata?.purpose === "donation_recurring" && ACTIVE_STATUSES.has(s.status),
-    );
-    const uniqueTenantIds = [...new Set(activeSubs.map((s) => s.metadata?.tenantId).filter(Boolean))];
-    const tenantCache = new Map();
-    await Promise.all(
-      uniqueTenantIds.map((tid) =>
-        db
-          .collection("tenants")
-          .doc(tid)
-          .get()
-          .then((snap) => {
-            const td = snap.data() || {};
-            tenantCache.set(tid, { name: String(td.name || ""), appName: String(td.appName || "") });
-          })
-          .catch(() => tenantCache.set(tid, { name: "", appName: "" })),
-      ),
-    );
+    // Resolve per-tenant customerId + connect account for each tenant the
+    // user belongs to. Skip tenants without an active connect account
+    // (subs cannot exist there in Direct Charges model).
+    const perTenant = await Promise.all(tenantIds.map(async (tid) => {
+      try {
+        const tenantSnap = await db.collection("tenants").doc(tid).get();
+        const tenantData = tenantSnap.exists ? (tenantSnap.data() ?? {}) : {};
+        const connectAccountId = tenantData.stripeConnectAccountId;
+        if (!connectAccountId || tenantData.stripeConnectStatus !== "active") return null;
+        const stateSnap = await db.collection("users").doc(uid)
+          .collection("tenantState").doc(tid).get();
+        const customerId = String(stateSnap.data()?.stripeConnectCustomerId || "").trim();
+        if (!customerId) return null;
+        return {
+          tenantId: tid,
+          tenantName: String(tenantData.name || ""),
+          tenantAppName: String(tenantData.appName || ""),
+          customerId,
+          stripeReqOpts: { stripeAccount: connectAccountId },
+        };
+      } catch (err) {
+        console.warn("listDonationSubscriptions: tenant_ctx_failed", {
+          uid, tenantId: tid, error: String(err?.message || err),
+        });
+        return null;
+      }
+    }));
 
-    const out = activeSubs.map((s) => {
-      const item = s.items?.data?.[0];
-      const price = item?.price;
-      const tenantId = s.metadata?.tenantId || "";
-      const tc = tenantCache.get(tenantId) || { name: "", appName: "" };
-      // Stripe API 2025-04+ moved current_period_end from the subscription
-      // root onto each subscription item. Old field is still populated for
-      // backwards compat but WILL be removed. Read root first (works today
-      // on older API versions) and fall back to items[0] (works on new
-      // API); either path yields the same value for single-item subs.
-      const cpe = s.current_period_end ?? item?.current_period_end ?? null;
-      return {
-        id: s.id,
-        status: s.status,
-        currency: (price?.currency || s.currency || "").toLowerCase(),
-        amount: Number(price?.unit_amount || 0),
-        interval: price?.recurring?.interval || "month",
-        currentPeriodEnd: cpe ? cpe * 1000 : null,
-        tenantId,
-        tenantName: tc.name,
-        tenantAppName: tc.appName,
-        cancelAtPeriodEnd: !!s.cancel_at_period_end,
-      };
-    });
-    return { subscriptions: out };
+    const validCtxs = perTenant.filter(Boolean);
+    if (validCtxs.length === 0) return { subscriptions: [] };
+
+    // Fetch subs for each tenant in parallel. Failures per-tenant don't
+    // block the others — just skip that tenant with a warning.
+    const results = await Promise.all(validCtxs.map(async (ctx) => {
+      try {
+        const subs = await stripe.subscriptions.list({
+          customer: ctx.customerId,
+          status: "all",
+          limit: 100,
+        }, ctx.stripeReqOpts);
+        return subs.data
+          .filter((s) => s.metadata?.purpose === "donation_recurring" && ACTIVE_STATUSES.has(s.status))
+          .map((s) => {
+            const item = s.items?.data?.[0];
+            const price = item?.price;
+            const cpe = s.current_period_end ?? item?.current_period_end ?? null;
+            return {
+              id: s.id,
+              status: s.status,
+              currency: (price?.currency || s.currency || "").toLowerCase(),
+              amount: Number(price?.unit_amount || 0),
+              interval: price?.recurring?.interval || "month",
+              currentPeriodEnd: cpe ? cpe * 1000 : null,
+              tenantId: ctx.tenantId,
+              tenantName: ctx.tenantName,
+              tenantAppName: ctx.tenantAppName,
+              cancelAtPeriodEnd: !!s.cancel_at_period_end,
+            };
+          });
+      } catch (err) {
+        console.warn("listDonationSubscriptions: stripe_list_failed", {
+          uid, tenantId: ctx.tenantId, error: String(err?.message || err),
+        });
+        return [];
+      }
+    }));
+
+    return { subscriptions: results.flat() };
   },
 );
 
@@ -2324,25 +2357,53 @@ exports.cancelDonationSubscription = onCall(
     if (!stripeSecret.value()) {
       throw new HttpsError("failed-precondition", "Stripe no configurado.");
     }
-    await enforceRateLimit(request.auth.uid, "cancelDonationSubscription", 20, 3600);
+    const uid = request.auth.uid;
+    await enforceRateLimit(uid, "cancelDonationSubscription", 20, 3600);
 
     const subId = String(request.data?.subscriptionId || "").trim();
     if (!subId.startsWith("sub_")) {
       throw new HttpsError("invalid-argument", "ID de suscripción inválido.");
     }
 
-    // Direct Charges: sub lives per-connected-account. Resolve context.
-    const ctx = await _resolveConnectCustomerContext(request.auth.uid);
-    if (!ctx) {
-      throw new HttpsError("failed-precondition", "Tu organización no tiene pagos configurados.");
+    // Round-4 audit HIGH fix: previously we only searched the ACTIVE
+    // tenant's connect account. A user who joined a second tenant and
+    // wanted to cancel a lingering sub in the first tenant hit
+    // "Suscripción no encontrada" — dead-end. Now iterate every tenant
+    // the user belongs to and cancel wherever the sub is found.
+    const userSnap = await db.collection("users").doc(uid).get();
+    const userData = userSnap.exists ? (userSnap.data() ?? {}) : {};
+    const tenantIds = Array.isArray(userData.tenantIds)
+      ? userData.tenantIds.filter((t) => typeof t === "string" && t.length > 0)
+      : (userData.tenantId ? [userData.tenantId] : []);
+    if (tenantIds.length === 0) {
+      throw new HttpsError("failed-precondition", "No tenés organización activa.");
     }
-    const { stripeReqOpts } = ctx;
 
     const stripe = require("stripe")(stripeSecret.value(), { timeout: 15000 });
-    let sub;
-    try {
-      sub = await stripe.subscriptions.retrieve(subId, stripeReqOpts);
-    } catch (e) {
+    let sub = null;
+    let stripeReqOpts = null;
+    for (const tid of tenantIds) {
+      try {
+        const tenantSnap = await db.collection("tenants").doc(tid).get();
+        const tenantData = tenantSnap.exists ? (tenantSnap.data() ?? {}) : {};
+        const connectAccountId = tenantData.stripeConnectAccountId;
+        if (!connectAccountId || tenantData.stripeConnectStatus !== "active") continue;
+        const opts = { stripeAccount: connectAccountId };
+        try {
+          sub = await stripe.subscriptions.retrieve(subId, opts);
+          stripeReqOpts = opts;
+          break;
+        } catch (_) {
+          // Sub doesn't live in this tenant's Stripe account — try the next.
+          continue;
+        }
+      } catch (err) {
+        console.warn("cancelDonationSubscription: tenant_lookup_failed", {
+          uid, tenantId: tid, error: String(err?.message || err),
+        });
+      }
+    }
+    if (!sub || !stripeReqOpts) {
       throw new HttpsError("not-found", "Suscripción no encontrada.");
     }
 
@@ -5065,6 +5126,34 @@ async function _runPushkaAutoEmptyTick() {
             return;
           }
 
+          // Round-4 audit CRITICAL fix: currency-drift guard. If the top-off
+          // amount was persisted under a different currency than the user's
+          // current one, refuse to charge — otherwise we'd interpret "500"
+          // saved as ARS as USD 500 (~250× the intended donation). The
+          // `changeUserCurrency` CF resets top-off atomically, but a legacy
+          // record or a partial write from the old client-side flow can
+          // leave a mismatch.
+          const stampedTopOffCurrency = String(
+            state.autoEmptyTopOffCurrency || ""
+          ).toLowerCase().trim();
+          if (topOffEnabled && topOffAmount > 0 && stampedTopOffCurrency && stampedTopOffCurrency !== rawCurrency) {
+            console.warn("processPushkaAutoEmpty: skip_currency_drift", {
+              uid, tenantId, userCurrency: rawCurrency, topOffCurrency: stampedTopOffCurrency,
+            });
+            tx.set(stateRef, {
+              autoEmptyTopOffAmount: 0,
+              autoEmptyTopOffEnabled: false,
+              autoEmptyTopOffCurrency: admin.firestore.FieldValue.delete(),
+              autoEmptyNextRunAt: admin.firestore.Timestamp.fromDate(
+                new Date(Date.now() + AUTO_EMPTY_RETRY_AFTER_FAILURE_HOURS * 3600 * 1000),
+              ),
+              _lastAutoEmptySkipReason: "currency_drift",
+              _lastAutoEmptySkipAt: admin.firestore.FieldValue.serverTimestamp(),
+              updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            }, { merge: true });
+            return;
+          }
+
           // Stripe Connect routing — same logic as createPaymentIntent. If
           // the tenant has an active Connect account, donations MUST go to
           // it (otherwise the platform pockets it). If status is set but not
@@ -5469,17 +5558,33 @@ exports.processPushkaAutoEmpty = onSchedule(
  */
 function buildCurrencySnapshot(amount, currencyCode, rates) {
   const code = String(currencyCode || "USD").toUpperCase();
-  const rawRate = rates[code] ?? 1;
-  const rate = (rawRate > 0) ? rawRate : 1;  // guard: never divide by zero
+  const rawRate = rates[code];
+  // Round-4 audit HIGH fix: previous code silently defaulted unknown
+  // currencies to rate=1 (i.e. treated 1 CLP as 1 USD → 1000× revenue
+  // inflation on the tenant dashboard). Now we log LOUD when a rate is
+  // missing so ops sees it, and mark the snapshot as unreliable
+  // (`rateMissing: true`) so the aggregator (getSuperAdminDashboard)
+  // can decide whether to skip it. amountUSD/MXN still get computed with
+  // rate=1 as a best-effort fallback (rejecting the tx would lose donor
+  // context on webhook writes), but the flag lets downstream reconcile.
+  const rateMissing = !(rawRate > 0);
+  if (rateMissing && code !== "USD") {
+    console.warn("buildCurrencySnapshot: missing_rate_falling_back_to_1", {
+      currencyCode: code, amount, availableRateKeys: Object.keys(rates || {}).length,
+    });
+  }
+  const rate = rateMissing ? 1 : rawRate;
   const mxnRate = rates["MXN"] ?? 17.1;
   const amountUSD = code === "USD" ? amount : amount / rate;
   const amountMXN = amountUSD * mxnRate;
-  return {
+  const out = {
     amountUSD:         Math.round(amountUSD * 100) / 100,
     amountMXN:         Math.round(amountMXN * 100) / 100,
     exchangeRateToUSD: Math.round((1 / rate) * 1_000_000) / 1_000_000,
     exchangeRateToMXN: Math.round((mxnRate / rate) * 1_000_000) / 1_000_000,
   };
+  if (rateMissing && code !== "USD") out.rateMissing = true;
+  return out;
 }
 
 // ---------------------------------------------------------------------------
@@ -7329,6 +7434,92 @@ exports.joinTenant = onCall(
 // switchTenant — changes the caller's active tenant (tenantId field).
 // The target tenantId must already be in the caller's tenantIds array.
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// changeUserCurrency — atomic, cross-doc currency change.
+//
+// Bug fixed (Round 4 audit CRITICAL): the previous client-side flow fired
+// three independent, un-awaited Firestore writes (users.currencyCode +
+// tenantState.pushkaAmount=0 + tenantState.autoEmptyTopOff cleared). If any
+// one dropped (network, security-rule change, offline flush ordering), the
+// cron `processPushkaAutoEmpty` could see currencyCode='usd' with a stale
+// topOffAmount originally saved as ARS 500 and charge USD 500 (~250× the
+// intended donation).
+//
+// Fix: run all writes inside a single `runTransaction`. Either everything
+// commits or nothing does. The client only mirrors state after the CF
+// returns success; on failure it reverts local UI and shows an error.
+//
+// Also stamps `autoEmptyTopOffCurrency` on every top-off write (empty
+// string here since we're CLEARING it) so `processPushkaAutoEmpty`'s
+// guard has an unambiguous "no top-off configured" marker.
+// ---------------------------------------------------------------------------
+exports.changeUserCurrency = onCall(
+  { enforceAppCheck: false },
+  async (request) => {
+    if (!request.auth?.uid) throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
+    const uid = request.auth.uid;
+    await enforceRateLimit(uid, "changeUserCurrency", 20, 3600);
+
+    const newCurrency = validateCurrency(request.data?.currencyCode);
+    const newCurrencyCountry = String(request.data?.currencyCountry || newCurrency).toUpperCase();
+    const newGoalRaw = request.data?.pushkaGoal;
+    const newGoal = Number.isFinite(newGoalRaw) && newGoalRaw > 0 ? Number(newGoalRaw) : null;
+    const newPresetsRaw = Array.isArray(request.data?.presetAmounts) ? request.data.presetAmounts : null;
+    const newPresets = newPresetsRaw
+      ?.filter((v) => Number.isFinite(v) && v > 0)
+      ?.slice(0, 3)
+      ?.map((v) => Number(v));
+    if (!newPresets || newPresets.length !== 3) {
+      throw new HttpsError("invalid-argument", "presetAmounts debe ser un array de 3 números positivos.");
+    }
+
+    const userRef = db.collection("users").doc(uid);
+
+    const result = await db.runTransaction(async (tx) => {
+      const userSnap = await tx.get(userRef);
+      if (!userSnap.exists) throw new HttpsError("not-found", "Usuario no encontrado.");
+      const userData = userSnap.data() || {};
+      const activeTenantId = String(userData.tenantId || "").trim();
+
+      // Update user doc atomically with everything the client would have
+      // updated: currency, country, pushka goal, and preset amounts.
+      // All three fields belong to the SAME document — this write is
+      // trivially atomic; the value here is combining it with the
+      // tenantState reset below in the SAME transaction commit.
+      tx.set(userRef, {
+        currencyCode: newCurrency.toUpperCase(),
+        currencyCountry: newCurrencyCountry,
+        pushkaGoal: newGoal,
+        presetAmounts: newPresets,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      }, { merge: true });
+
+      // Reset tenant-scoped state for the ACTIVE tenant so the accumulated
+      // pushka amount + top-off configuration don't get reinterpreted in
+      // the new currency. This is the critical piece: without it, the cron
+      // charges the user in the wrong currency. Other tenants the user
+      // belongs to are left alone — the user will hit their own currency
+      // mismatch guard next time they switch to those.
+      if (activeTenantId) {
+        const tenantStateRef = userRef.collection("tenantState").doc(activeTenantId);
+        tx.set(tenantStateRef, {
+          pushkaAmount: 0,
+          autoEmptyTopOffAmount: 0,
+          autoEmptyTopOffEnabled: false,
+          // Explicit marker so processPushkaAutoEmpty can distinguish
+          // "no top-off configured" (blank) from "configured in currency X".
+          autoEmptyTopOffCurrency: admin.firestore.FieldValue.delete(),
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        }, { merge: true });
+      }
+
+      return { activeTenantId };
+    });
+
+    return { success: true, currencyCode: newCurrency.toUpperCase(), activeTenantId: result.activeTenantId };
+  }
+);
+
 exports.switchTenant = onCall(
   { enforceAppCheck: false },
   async (request) => {
@@ -7557,7 +7748,10 @@ exports.createTenant = onCall(
 
       // Localization
       defaultLanguage: String(defaultLanguage || "es"),
-      defaultCurrency: String(defaultCurrency || "USD").toUpperCase(),
+      // Round-4 audit fix: validate against SUPPORTED_CURRENCIES so a typo
+      // ('UYU', 'JPY', 'XYZ') doesn't silently break every subsequent
+      // createPaymentIntent/createDonationSubscription for the tenant.
+      defaultCurrency: validateCurrency(defaultCurrency || "USD").toUpperCase(),
       defaultCountry: String(defaultCountry || "").trim() || null,
 
       // Legal / Contact
@@ -8140,6 +8334,12 @@ exports.updateTenant = onCall(
         if (val !== null && (typeof val !== "number" || !Number.isFinite(val) || val < 0 || val > 100000)) {
           throw new HttpsError("invalid-argument", `${key} inválido.`);
         }
+      }
+      // Round-4 audit fix: validate defaultCurrency against SUPPORTED_CURRENCIES
+      // so a super_admin (or a tenant_admin via a bug) can't persist a value
+      // the payments backend will reject on every subsequent donation.
+      if (key === "defaultCurrency" && typeof val === "string" && val.length > 0) {
+        val = validateCurrency(val).toUpperCase();
       }
       patch[key] = val;
     }
@@ -8752,16 +8952,24 @@ exports.getSuperAdminDashboard = onCall(
       .limit(DASHBOARD_TENANT_CAP)
       .get();
 
-    // Helper: sum revenueStats monthly buckets for the last N months (current month = i=0).
-    // monthsBack=1 → current month only, monthsBack=3 → current + 2 back, etc.
-    function sumMonths(revenueStats, monthsBack) {
+    // Helper: sum revenueStats monthly buckets over a range of months.
+    // startOffset=0 → include current month, startOffset=1 → skip current
+    // and start at last month. count is the number of buckets to sum.
+    function sumMonthsRange(revenueStats, startOffset, count) {
       let total = 0;
-      for (let i = 0; i < monthsBack; i++) {
-        const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - i, 1));
+      for (let i = 0; i < count; i++) {
+        const monthOffset = startOffset + i;
+        const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - monthOffset, 1));
         const key = `${d.getUTCFullYear()}_${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
         total += (revenueStats[key]?.revenue || 0);
       }
       return total;
+    }
+    // Backward-compat wrapper — legacy callsites treated monthsBack=N as
+    // "current + prev N-1". Kept for the multi-month rollups; the current-
+    // vs-previous-month distinction is now explicit via sumMonthsRange.
+    function sumMonths(revenueStats, monthsBack) {
+      return sumMonthsRange(revenueStats, 0, monthsBack);
     }
 
     const tenantStats = await Promise.all(
@@ -8783,7 +8991,15 @@ exports.getSuperAdminDashboard = onCall(
           appName,
           totalUsers,
           activeThisMonth,
-          revenueLastMonth:          Math.round(sumMonths(revenueStats, 1)  * 100) / 100,
+          // Round-4 audit HIGH fix: `revenueLastMonth` used to be the
+          // CURRENT month (misleading label). Split into two fields:
+          //   - revenueThisMonth: current calendar month
+          //   - revenueLastMonth: the previous calendar month (real "last")
+          // Legacy consumers reading revenueLastMonth-as-current-month will
+          // see zero for orgs with no activity yet in the calendar month;
+          // update the admin panel to prefer revenueThisMonth.
+          revenueThisMonth:          Math.round(sumMonthsRange(revenueStats, 0, 1) * 100) / 100,
+          revenueLastMonth:          Math.round(sumMonthsRange(revenueStats, 1, 1) * 100) / 100,
           revenueLastThreeMonths:    Math.round(sumMonths(revenueStats, 3)  * 100) / 100,
           revenueLastSixMonths:      Math.round(sumMonths(revenueStats, 6)  * 100) / 100,
           revenueLastYear:           Math.round(sumMonths(revenueStats, 12) * 100) / 100,

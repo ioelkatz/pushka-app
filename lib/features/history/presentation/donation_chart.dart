@@ -118,7 +118,7 @@ class _DonationChartState extends State<DonationChart> {
                         if (group.x < 0 || group.x >= buckets.length) return null;
                         final b = buckets[group.x];
                         return BarTooltipItem(
-                          '${b.label}\n${formatMoney(b.total)} ${widget.activeCurrency.toUpperCase()}',
+                          '${b.label}\n${formatCurrencyAmount(b.total, widget.activeCurrency)}',
                           const TextStyle(
                             color: Colors.white,
                             fontSize: 12,

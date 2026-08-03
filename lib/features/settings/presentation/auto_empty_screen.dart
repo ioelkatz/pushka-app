@@ -917,6 +917,12 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
       }
     }
 
+    // Round-4 audit CRITICAL fix: stamp the currency the top-off was
+    // configured in so the server cron can detect drift after a currency
+    // change and refuse to charge in the wrong currency.
+    final activeCurrency =
+        (ref.read(userProfileProvider).valueOrNull?['currencyCode'] as String?) ??
+            'USD';
     await repo.updateTenantState(
       uid: uid,
       tenantId: tenantId,
@@ -926,6 +932,8 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
       autoEmptyTopOffEnabled: _frequency == 'manual' ? false : _topOffEnabled,
       autoEmptyTopOffAmount:
           _frequency == 'manual' ? null : (_topOffAmount ?? 0),
+      autoEmptyTopOffCurrency:
+          _frequency == 'manual' ? null : activeCurrency,
       autoEmptyNextRunAt: nextRunAt,
       autoEmptyClearNextRunAt: _frequency == 'manual',
       autoEmptyPaymentMethodId: _frequency != 'manual' ? _selectedCardId : null,

@@ -100,18 +100,36 @@ const Map<String, String> _currencySymbols = {
 String formatStripeUnits(int units, String currency) {
   final code = currency.toLowerCase();
   final amount = stripeUnitsToAmount(units, code);
-  final symbol = _currencySymbols[code];
-  final upper = currency.toUpperCase();
+  return _renderAmount(amount, code, currency.toUpperCase());
+}
 
+/// Same as [formatStripeUnits] but takes a MAJOR-unit double (e.g. 10.50).
+/// Use when the amount already lives in the currency's display units —
+/// snackbars, subscription tiles, chart tooltips, transaction detail
+/// modals. Never lie with `$` on an EUR/JPY/ILS charge again.
+String formatCurrencyAmount(double amount, String currency) {
+  final code = currency.toLowerCase();
+  return _renderAmount(amount, code, currency.toUpperCase());
+}
+
+/// Returns the display symbol for a currency (e.g. `$`, `€`, `MX$`) —
+/// use only when you already know the currency and the context is
+/// unambiguous. Prefer `formatCurrencyAmount` for anything with a number
+/// so the ISO code is always present.
+String currencySymbol(String currency) {
+  return _currencySymbols[currency.toLowerCase()] ?? '${currency.toUpperCase()} ';
+}
+
+String _renderAmount(double amount, String lowerCode, String upperCode) {
+  final symbol = _currencySymbols[lowerCode];
   String body;
-  if (_zeroDecimalCurrencies.contains(code)) {
+  if (_zeroDecimalCurrencies.contains(lowerCode)) {
     body = NumberFormat('#,##0').format(amount.round());
-  } else if (_threeDecimalCurrencies.contains(code)) {
+  } else if (_threeDecimalCurrencies.contains(lowerCode)) {
     body = NumberFormat('#,##0.000').format(amount);
   } else {
     body = formatAmount(amount);
   }
-
-  if (symbol != null) return '$symbol$body $upper';
-  return '$upper $body';
+  if (symbol != null) return '$symbol$body $upperCode';
+  return '$upperCode $body';
 }

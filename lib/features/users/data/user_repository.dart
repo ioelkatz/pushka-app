@@ -224,6 +224,11 @@ class UserRepository {
     int? autoEmptyDayOfMonth,
     bool? autoEmptyTopOffEnabled,
     double? autoEmptyTopOffAmount,
+    // Round-4 audit CRITICAL fix: stamp the currency the top-off was
+    // configured in so the server-side cron can refuse to charge if the
+    // user's active currency has since drifted. Falls back to the
+    // caller's active user currency when omitted (typical case).
+    String? autoEmptyTopOffCurrency,
     DateTime? autoEmptyNextRunAt,
     bool autoEmptyClearNextRunAt = false,
     String? autoEmptyPaymentMethodId,
@@ -248,6 +253,9 @@ class UserRepository {
     if (autoEmptyDayOfMonth != null) data['autoEmptyDayOfMonth'] = autoEmptyDayOfMonth;
     if (autoEmptyTopOffEnabled != null) data['autoEmptyTopOffEnabled'] = autoEmptyTopOffEnabled;
     if (autoEmptyTopOffAmount != null) data['autoEmptyTopOffAmount'] = autoEmptyTopOffAmount;
+    if (autoEmptyTopOffCurrency != null) {
+      data['autoEmptyTopOffCurrency'] = autoEmptyTopOffCurrency.toUpperCase();
+    }
     if (autoEmptyNextRunAt != null) {
       data['autoEmptyNextRunAt'] = Timestamp.fromDate(autoEmptyNextRunAt);
     }
