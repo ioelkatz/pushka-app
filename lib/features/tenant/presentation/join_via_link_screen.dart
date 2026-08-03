@@ -1,11 +1,13 @@
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:cloud_functions/cloud_functions.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../app/router.dart';
 import '../../../app/theme/app_tokens.dart';
+import '../../../core/hive_cache.dart';
 import '../../../core/l10n/s.dart';
 import '../data/tenant_repository.dart';
 import '../domain/tenant_config.dart';
@@ -57,6 +59,15 @@ class _JoinViaLinkScreenState extends ConsumerState<JoinViaLinkScreen> {
       try {
         await repo.switchTenant(config.tenantId);
       } catch (_) {}
+      // BUG #6 fix: clear saved-cards cache on tenant switch — same
+      // reasoning as tenant_code_screen.dart. Direct Charges customers
+      // live per-connected-account so cross-tenant leak would violate
+      // data scope. Belt + suspenders with HiveCache's (uid, tenantId)
+      // scoping (bug #13 fix).
+      final uid = FirebaseAuth.instance.currentUser?.uid;
+      if (uid != null) {
+        await HiveCache.instance.clearSavedCards(uid);
+      }
       ref.invalidate(tenantConfigProvider);
       ref.invalidate(tenantStateProvider);
       ref.invalidate(userTenantSummariesProvider);

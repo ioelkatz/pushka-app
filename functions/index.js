@@ -4755,9 +4755,14 @@ async function computeNextErevRoshChodesh(baseDate) {
 // --- Pushka Auto Empty (scheduled) ---
 // Reads from the `users/{uid}/tenantState/{tenantId}` subcollection so
 // schedule + balance are per-organisation (a user belonging to two chabads
-// gets two independent auto-empty cycles). Stripe credentials
-// (stripeCustomerId, stripeDefaultPaymentMethodId, currencyCode, isBlocked)
-// remain on the user doc. Requires a collection-group index on:
+// gets two independent auto-empty cycles).
+//
+// BUG #16 fix: post-Direct-Charges migration, Stripe credentials (customer
+// id + default PM) ALSO live on tenantState per-tenant, NOT on the flat
+// user doc. Reads: tenantState.stripeConnectCustomerId +
+// tenantState.stripeConnectDefaultPaymentMethodId (or autoEmptyPaymentMethodId
+// override). Only cross-tenant settings (currencyCode, isBlocked) remain on
+// users/{uid}. Requires a collection-group index on:
 //   tenantState fields: autoEmptyNextRunAt ASC
 
 // Stale in-flight lock TTL — if a previous run crashed between the eligibility
@@ -7034,11 +7039,18 @@ exports.exportUserData = onCall(
       subcollections,
       // Note for downstream consumer: saved cards live in Stripe (PaymentMethods
       // collection on the customer) — they are not duplicated to Firestore.
-      // The user's stripeCustomerId is included in `profile` if they want to
-      // request their data from Stripe directly.
+      // BUG #15 fix: post-Direct-Charges migration, cards live PER-TENANT on
+      // the connected account (not on the platform). The relevant identifiers
+      // are in each `tenantState.stripeConnectCustomerId` + the parent
+      // `tenants/{tid}.stripeConnectAccountId`. Point users at both.
       _meta: {
         format: "pushka-export-v1",
-        notes: "Saved cards / payment methods live in Stripe; not included here. Request via Stripe support using stripeCustomerId from `profile`.",
+        notes:
+          "Saved cards / payment methods live in Stripe on each tenant's " +
+          "connected account. To request card data from Stripe support, " +
+          "provide the tenantState.stripeConnectCustomerId (from `tenantStates`) " +
+          "and the corresponding tenants/{tenantId}.stripeConnectAccountId. " +
+          "Legacy platform customerId (users/{uid}.stripeCustomerId) is deprecated.",
       },
     };
   },

@@ -1014,6 +1014,19 @@ class _SavedCardsScreenState extends ConsumerState<SavedCardsScreen> {
     final tr = S.of(context);
     const actionColor = AppTokens.primaryBlue;
 
+    // BUG #20 fix: reactively pick up default PM changes from tenantState
+    // stream (e.g. another device set a new default, or setDefault CF
+    // completed after Hive cache was seeded). Falls back to the local
+    // `_defaultPaymentMethodId` field (seeded from CF/Hive) when the
+    // tenantState stream hasn't emitted yet.
+    final tenantStateStream = ref.watch(tenantStateProvider).valueOrNull;
+    final liveDefaultPmId =
+        (tenantStateStream?['stripeConnectDefaultPaymentMethodId'] as String?)?.trim();
+    final effectiveDefaultPmId =
+        (liveDefaultPmId != null && liveDefaultPmId.isNotEmpty)
+            ? liveDefaultPmId
+            : _defaultPaymentMethodId;
+
     return Scaffold(
       body: SafeArea(
         child: Column(
@@ -1097,7 +1110,11 @@ class _SavedCardsScreenState extends ConsumerState<SavedCardsScreen> {
                             final last4 = card['last4'] as String? ?? '••••';
                             final expMonth = (card['expMonth'] as num?)?.toInt() ?? 0;
                             final expYear = (card['expYear'] as num?)?.toInt() ?? 0;
-                            final isDefault = pmId == _defaultPaymentMethodId;
+                            // BUG #20 fix: use live default from
+                            // tenantStateProvider stream (falls back to
+                            // local state seeded from CF/Hive) so remote
+                            // changes reflect immediately.
+                            final isDefault = pmId == effectiveDefaultPmId;
                             final nickname = card['nickname'] as String?;
                             return _buildCardTile(
                               pmId: pmId,

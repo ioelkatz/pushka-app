@@ -8,6 +8,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../../../app/router.dart';
 import '../../../app/theme/app_tokens.dart';
+import '../../../core/hive_cache.dart';
 import '../../../core/l10n/s.dart';
 import '../data/tenant_repository.dart';
 // Join code: "770-JYM". 6 OTP boxes split [7][7][0]–[J][Y][M].
@@ -103,6 +104,16 @@ class _TenantCodeScreenState extends ConsumerState<TenantCodeScreen> {
       try {
         await repo.switchTenant(config.tenantId);
       } catch (_) {}
+      // BUG #5 fix: clear cached saved cards on tenant switch so the new
+      // tenant's Saved Cards screen doesn't paint the old tenant's cards
+      // from Hive before the CF refresh lands. Direct Charges puts customers
+      // per-connected-account — cross-tenant leak would be a data-scope
+      // violation. Belt + suspenders with the (uid, tenantId) scoping in
+      // HiveCache itself (bug #13 fix).
+      final uid = FirebaseAuth.instance.currentUser?.uid;
+      if (uid != null) {
+        await HiveCache.instance.clearSavedCards(uid);
+      }
       ref.invalidate(tenantConfigProvider);
       ref.invalidate(tenantStateProvider);
       ref.invalidate(userTenantSummariesProvider);

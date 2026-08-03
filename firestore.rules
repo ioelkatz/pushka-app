@@ -200,6 +200,16 @@ service cloud.firestore {
       // hasOnly includes Stripe fields and isBlocked so that on UPDATE, pre-existing
       // CF-written fields in the resulting document don't fail the check.
       // Writing/changing those fields is separately blocked by the specific guards below.
+      //
+      // BUG #17 note: `_lastPmDedupePassAt` and the flat `stripeCustomer*` /
+      // `stripeDefaultPayment*` fields below are DEPRECATED post-Direct-Charges
+      // migration — CFs write them nowhere anymore, they moved to
+      // users/{uid}/tenantState/{tid}.stripeConnect*. They stay in this
+      // whitelist ONLY to grandfather pre-migration users who still have
+      // those fields on their user doc: without them here, any client
+      // update to the doc (pushkaAmount, language, etc.) would fail
+      // hasOnly because the resulting doc still has the legacy field.
+      // A future migration CF can strip these + drop them from the whitelist.
       return request.resource.data.keys().hasOnly([
             'uid',
             'email',
