@@ -8,9 +8,10 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../../../app/router.dart';
 import '../../../app/theme/app_tokens.dart';
-import '../../../core/hive_cache.dart';
 import '../../../core/l10n/s.dart';
+import '../../users/presentation/user_profile_provider.dart';
 import '../data/tenant_repository.dart';
+import 'tenant_switch_reset.dart';
 // Join code: "770-JYM". 6 OTP boxes split [7][7][0]–[J][Y][M].
 // Dash is a fixed visual separator. One-tap flow: validate → auto-join.
 
@@ -97,6 +98,15 @@ class _TenantCodeScreenState extends ConsumerState<TenantCodeScreen> {
       _loading = true;
       _error = null;
     });
+    // Snapshot container + uid + outgoing tenantId BEFORE the first await
+    // so we don't cross a BuildContext over async gaps. ProviderContainer is
+    // owned by the root ProviderScope and survives even if this widget
+    // disposes mid-flow. outgoingTenantId may be null on first onboarding.
+    final container = ProviderScope.containerOf(context);
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    final outgoingTenantId = container
+        .read(userProfileProvider)
+        .valueOrNull?['tenantId'] as String?;
     try {
       final repo = ref.read(tenantRepositoryProvider);
       final config = await repo.validateSlug(_fullCode);
@@ -104,19 +114,14 @@ class _TenantCodeScreenState extends ConsumerState<TenantCodeScreen> {
       try {
         await repo.switchTenant(config.tenantId);
       } catch (_) {}
-      // BUG #5 fix: clear cached saved cards on tenant switch so the new
-      // tenant's Saved Cards screen doesn't paint the old tenant's cards
-      // from Hive before the CF refresh lands. Direct Charges puts customers
-      // per-connected-account — cross-tenant leak would be a data-scope
-      // violation. Belt + suspenders with the (uid, tenantId) scoping in
-      // HiveCache itself (bug #13 fix).
-      final uid = FirebaseAuth.instance.currentUser?.uid;
-      if (uid != null) {
-        await HiveCache.instance.clearSavedCards(uid);
-      }
-      ref.invalidate(tenantConfigProvider);
-      ref.invalidate(tenantStateProvider);
-      ref.invalidate(userTenantSummariesProvider);
+      // Round-2 audit fix: use the shared helper so this flow invalidates
+      // the same providers as account_switcher_sheet — otherwise the
+      // History tab briefly shows the old tenant's transactions.
+      await resetTenantScopedState(
+        container,
+        uid: uid,
+        outgoingTenantId: outgoingTenantId,
+      );
       invalidateTenantCache();
       if (mounted) {
         context.go('/');

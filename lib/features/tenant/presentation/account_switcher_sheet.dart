@@ -5,12 +5,11 @@ import 'package:go_router/go_router.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 
 import '../../../app/theme/app_tokens.dart';
-import '../../../core/hive_cache.dart';
 import '../../../core/l10n/s.dart';
-import '../../history/providers/transactions_provider.dart';
 import '../../users/presentation/user_profile_provider.dart';
 import '../data/tenant_repository.dart';
 import '../domain/tenant_summary.dart';
+import 'tenant_switch_reset.dart';
 
 // Public helper so the sheet can be opened from any screen (Settings,
 // future drawer entry, etc.). Previously this lived inside
@@ -101,32 +100,25 @@ class AccountSwitcherSheet extends ConsumerWidget {
     final uid = container.read(currentUserProvider)?.uid;
     Navigator.of(context).pop();
     try {
-      // Clear the local cache first so any provider re-read while the
-      // network call is in flight doesn't serve stale data from the old
-      // tenant.
-      if (uid != null) {
-        if (outgoingTenantId != null && outgoingTenantId.isNotEmpty) {
-          await HiveCache.instance.clearTenant(uid, outgoingTenantId);
-        }
-        await HiveCache.instance.clearSavedCards(uid);
-      }
+      // Reset Hive cache + tenant-scoped providers via the shared helper so
+      // this stays in lockstep with tenant_code_screen / join_via_link_screen.
+      // Runs BEFORE the CF so any provider re-read while the network call is
+      // in flight doesn't serve stale Hive data from the old tenant.
+      await resetTenantScopedState(
+        container,
+        uid: uid,
+        outgoingTenantId: outgoingTenantId,
+      );
       await container.read(tenantRepositoryProvider).switchTenant(tenantId);
-      container.invalidate(userProfileProvider);
-      container.invalidate(tenantConfigProvider);
-      container.invalidate(tenantStateProvider);
-      // History stream is keyed by the OLD tenantId — without invalidation
-      // the user briefly sees the previous tenant's transactions on the
-      // History tab while the userProfileProvider re-emit propagates.
-      // Reset the pagination cursor too so the new tenant starts fresh
-      // at one page (otherwise the bigger limit carries over and reads
-      // more than needed for an empty/small new tenant).
-      container.invalidate(historyLimitProvider);
-      container.invalidate(userTransactionsProvider);
-      // Membership list (org switcher itself) — refresh so any newly
-      // joined/removed memberships show without a manual restart.
-      container.invalidate(userTenantSummariesProvider);
-      // tenantThemeProvider auto-derives from tenantConfigProvider via
-      // ref.watch(...select(...)) — no explicit invalidation needed.
+      // Second pass invalidates providers so they resubscribe with the new
+      // tenantId that Firestore now reports. tenantThemeProvider auto-derives
+      // from tenantConfigProvider via ref.watch(...select(...)) — no explicit
+      // invalidation needed here.
+      await resetTenantScopedState(
+        container,
+        uid: uid,
+        outgoingTenantId: null,
+      );
     } catch (e) {
       debugPrint('switchTenant failed: $e');
       messenger.showSnackBar(SnackBar(content: Text('Error: $e')));

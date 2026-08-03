@@ -7,10 +7,11 @@ import 'package:go_router/go_router.dart';
 
 import '../../../app/router.dart';
 import '../../../app/theme/app_tokens.dart';
-import '../../../core/hive_cache.dart';
 import '../../../core/l10n/s.dart';
+import '../../users/presentation/user_profile_provider.dart';
 import '../data/tenant_repository.dart';
 import '../domain/tenant_config.dart';
+import 'tenant_switch_reset.dart';
 
 class JoinViaLinkScreen extends ConsumerStatefulWidget {
   const JoinViaLinkScreen({super.key, required this.slug});
@@ -52,6 +53,14 @@ class _JoinViaLinkScreenState extends ConsumerState<JoinViaLinkScreen> {
 
   Future<void> _join(TenantConfig config) async {
     final tr = S.of(context);
+    // Snapshot BEFORE the first await so we don't cross a BuildContext over
+    // an async gap. ProviderContainer is owned by the root ProviderScope and
+    // survives even if this widget disposes mid-flow.
+    final container = ProviderScope.containerOf(context);
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    final outgoingTenantId = container
+        .read(userProfileProvider)
+        .valueOrNull?['tenantId'] as String?;
     setState(() => _state = const _Joining());
     try {
       final repo = ref.read(tenantRepositoryProvider);
@@ -59,18 +68,14 @@ class _JoinViaLinkScreenState extends ConsumerState<JoinViaLinkScreen> {
       try {
         await repo.switchTenant(config.tenantId);
       } catch (_) {}
-      // BUG #6 fix: clear saved-cards cache on tenant switch — same
-      // reasoning as tenant_code_screen.dart. Direct Charges customers
-      // live per-connected-account so cross-tenant leak would violate
-      // data scope. Belt + suspenders with HiveCache's (uid, tenantId)
-      // scoping (bug #13 fix).
-      final uid = FirebaseAuth.instance.currentUser?.uid;
-      if (uid != null) {
-        await HiveCache.instance.clearSavedCards(uid);
-      }
-      ref.invalidate(tenantConfigProvider);
-      ref.invalidate(tenantStateProvider);
-      ref.invalidate(userTenantSummariesProvider);
+      // Round-2 audit fix: shared reset — invalidates userProfile / history /
+      // transactions providers too so the History tab doesn't briefly show
+      // the previous tenant's rows after the redirect to "/".
+      await resetTenantScopedState(
+        container,
+        uid: uid,
+        outgoingTenantId: outgoingTenantId,
+      );
       invalidateTenantCache();
       if (!mounted) return;
       context.go('/');

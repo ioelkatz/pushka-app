@@ -285,7 +285,11 @@
       "Bash(ls \"C:\\\\Users\\\\Ioel\\\\.claude\\\\projects\\\\c--dev-pushka-app\\\\a6d5952f-d419-4aa3-a22b-1a314a72ddc8\\\\subagents\\\\workflows\\\\wf_510dfa39-d61\" | grep -v agent- | head)",
       "Bash(grep -l \"totalBugsConfirmed\" \"C:\\\\Users\\\\Ioel\\\\.claude\\\\projects\\\\c--dev-pushka-app\\\\a6d5952f-d419-4aa3-a22b-1a314a72ddc8\\\\subagents\\\\workflows\\\\wf_510dfa39-d61\\\\\"* 2>&1 | head -3)",
       "Read(//c/Users/Ioel/.claude/projects/c--dev-pushka-app/a6d5952f-d419-4aa3-a22b-1a314a72ddc8/subagents/workflows/**)",
-      "Bash(grep totalBugsConfirmed \"C:\\\\Users\\\\Ioel\\\\.claude\\\\projects\\\\c--dev-pushka-app\\\\a6d5952f-d419-4aa3-a22b-1a314a72ddc8\\\\subagents\\\\workflows\\\\wf_510dfa39-d61/journal.jsonl\" | head -1 | wc -c)"
+      "Bash(grep totalBugsConfirmed \"C:\\\\Users\\\\Ioel\\\\.claude\\\\projects\\\\c--dev-pushka-app\\\\a6d5952f-d419-4aa3-a22b-1a314a72ddc8\\\\subagents\\\\workflows\\\\wf_510dfa39-d61/journal.jsonl\" | head -1 | wc -c)",
+      "Bash(firebase functions:list --project pushka-app-ioel)",
+      "Bash(node --check index.js)",
+      "Bash(node --test test/computeApplicationFeeAmount.test.js)",
+      "Bash(awk -F: '$2 >= 2950 && $2 <= 4300 {print}')"
     ],
     "additionalDirectories": [
       "C:\\Users\\Ioel\\Downloads",

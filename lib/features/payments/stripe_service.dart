@@ -81,6 +81,43 @@ void _recordPaymentError(
   }
 }
 
+// Round-2 audit fix: user-recoverable Stripe failures (insufficient funds,
+// card_declined, expired_card, cvc_check_failed, authentication_required, …)
+// arrive as StripeException.error.declineCode / .code strings when the SDK
+// has that detail. On the express-checkout fallback path the user gets a
+// clean second chance via the picker, so recording these as Crashlytics
+// non-fatals just drowns the signal from real infra failures. Anything with
+// a decline code — or a message hinting at one — is treated as recoverable.
+const _recoverableDeclineHints = [
+  'card_declined',
+  'insufficient_funds',
+  'expired_card',
+  'incorrect_cvc',
+  'cvc_check_failed',
+  'incorrect_number',
+  'incorrect_zip',
+  'authentication_required',
+  'do_not_honor',
+  'generic_decline',
+  'lost_card',
+  'stolen_card',
+  'card_not_supported',
+  'currency_not_supported',
+  'processing_error',
+];
+
+bool _isUserRecoverableStripeError(StripeException e) {
+  final declineCode = e.error.declineCode;
+  if (declineCode != null && declineCode.isNotEmpty) return true;
+  final rawCode = e.error.code.name.toLowerCase();
+  if (_recoverableDeclineHints.contains(rawCode)) return true;
+  final msg = (e.error.message ?? '').toLowerCase();
+  for (final hint in _recoverableDeclineHints) {
+    if (msg.contains(hint.replaceAll('_', ' ')) || msg.contains(hint)) return true;
+  }
+  return false;
+}
+
 class StripeServiceException implements Exception {
   final String code;
   const StripeServiceException(this.code);
@@ -314,7 +351,7 @@ class StripeService {
         context: sheetContext,
         cardBrand: defaultCard.brand,
         cardLast4: defaultCard.last4,
-        amountCents: amountCents,
+        amountStripeUnits: amountCents,
         currency: currency,
       );
       if (expressChoice == true) {
@@ -345,9 +382,16 @@ class StripeService {
           // Auto-fallback: card decline / expired / etc → open the picker so
           // the user can pick a different card without re-tapping "Donar".
           debugPrint('StripeService.pay: express failed (${code.name}), falling back to PaymentSheet');
-          _recordPaymentError('pay/express_fallback', e, st,
-              cid: cid, purpose: purpose, amountCents: amountCents,
-              currency: currency, extraCode: code.name);
+          // Round-2 audit fix: user-recoverable declines (insufficient_funds,
+          // card_declined, expired_card…) are business-as-usual on this
+          // fallback path — the picker gives the user a second chance and
+          // the flow self-heals. Reserving Crashlytics for genuine infra
+          // failures keeps the signal-to-noise ratio actionable post-launch.
+          if (!_isUserRecoverableStripeError(e)) {
+            _recordPaymentError('pay/express_fallback', e, st,
+                cid: cid, purpose: purpose, amountCents: amountCents,
+                currency: currency, extraCode: code.name);
+          }
           // Fall through to initPaymentSheet + presentPaymentSheet below.
         } catch (e, st) {
           if (purpose == 'pushka_empty') {
@@ -823,7 +867,7 @@ class StripeService {
     Future<HttpsCallableResult> callOnce() => callable.call({
           'amount': amountCents,
           'currency': currency.toLowerCase(),
-          if (customerEmail != null) 'customerEmail': customerEmail,
+          'customerEmail': ?customerEmail,
           'purpose': purpose,
           'correlationId': cid,
           if (donorMessage != null && donorMessage.isNotEmpty)

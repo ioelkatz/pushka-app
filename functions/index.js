@@ -467,40 +467,139 @@ async function sendToUser(uid, payload) {
 // the current invocation re-attempt processing.
 const WEBHOOK_PROCESSING_TTL_MS = 5 * 60 * 1000; // 5 minutes — well over function timeout
 
-// BUG #3/#7/#8/#9 fix: idempotent revenue mutation guard. Applies the given
-// delta to the tenant's revenue counters ONLY if this event has not already
-// applied one. Marks the event doc so a stuck-recovery re-run (Firestore
-// TTL sees status='processing' > 5min, or 'failed' retry) doesn't double
-// count. Symmetric — increments and decrements both go through this gate.
-// Returns true when the mutation was applied, false when skipped as dupe.
-async function applyRevenueDeltaOnce(eventRef, tenantId, amountUSD, direction /* 'increment' | 'decrement' */) {
-  if (!tenantId || !Number.isFinite(amountUSD) || amountUSD <= 0) return false;
-  let shouldApply = false;
-  try {
-    await db.runTransaction(async (tx) => {
-      const snap = await tx.get(eventRef);
-      if (snap.exists && snap.data()?.revenueApplied === true) {
-        shouldApply = false;
-        return;
-      }
-      // Mark BEFORE releasing the tx — if the tx commits but the mutation
-      // below dies (rare), the revenue counter is unchanged but the event
-      // is flagged as done. Ops-recoverable via manual increment; strictly
-      // better than double-counting on the second retry.
-      tx.set(eventRef, { revenueApplied: true, revenueAppliedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
-      shouldApply = true;
-    });
-  } catch (_) {
-    // If the guard tx fails, err on the side of NOT double-counting.
-    return false;
-  }
-  if (!shouldApply) return false;
-  if (direction === "increment") {
-    await incrementTenantRevenue(tenantId, amountUSD);
+// Direct Charges platform commission calculator. Single source of truth so
+// createPaymentIntent, createDonationSubscription, createCheckoutSession and
+// processPushkaAutoEmpty all clamp the same way. Returns:
+//   null            → do NOT set application_fee_amount (commissionRate=0 or
+//                      rounding produced 0 — the chabadmexico 0% path).
+//   { fee, ... }    → set application_fee_amount = fee.
+//
+// Enforcing this via a helper (not three inline copies) is what keeps the
+// Apple non-profit fee waiver contract: if any future change accidentally
+// starts skimming from Jym Inc., the unit tests around this function fail.
+function computeApplicationFeeAmount(amountMinor, commissionRate) {
+  if (!Number.isFinite(amountMinor) || amountMinor <= 0) return null;
+  if (!Number.isFinite(commissionRate) || commissionRate <= 0) return null;
+  const rawFee = Math.floor(amountMinor * commissionRate);
+  if (rawFee <= 0) return null;
+  const safeFee = Math.min(rawFee, amountMinor - 1);
+  return { fee: safeFee, rawFee, clamped: safeFee !== rawFee };
+}
+
+// Test hook — exposes internal helpers to the unit test suite without
+// forcing the whole module to load Firebase credentials. Kept private-ish
+// via a namespaced key so nothing outside `functions/test/**` uses it.
+module.exports.__testables = { computeApplicationFeeAmount };
+
+// Shared revenue mutator — runs inside a caller-provided transaction.
+// Reads the tenant doc, computes flat + nested deltas, and writes them
+// atomically alongside whatever else the caller commits in the same tx
+// (usually the eventRef guard flag). This is what makes the guard truly
+// atomic: no window where the flag is set but the counters aren't.
+//
+// stampDate controls which nested bucket receives the delta:
+//   - undefined (default) → stamp under the CURRENT month/year (fresh donation).
+//   - Date instance      → stamp under that date's month/year (dispute reinstate,
+//                          refund of a prior-month donation). Keeps the nested
+//                          allTime + suma-de-meses net-accurate.
+//
+// Flat top-level fields (monthRevenueUSD / yearRevenueUSD / allTimeRevenueUSD)
+// only change when the stamped bucket matches the tenant's current bucket key
+// — refunds/reinstates that fall outside the current month don't time-travel
+// the "this month" real-time KPI. allTimeRevenueUSD always shifts (clamped ≥ 0).
+function _applyRevenueMutationInTx(tx, tenantRef, tenantSnap, amountUSD, direction, stampDate) {
+  const now = new Date();
+  const nowMonthKey = `${now.getUTCFullYear()}_${String(now.getUTCMonth() + 1).padStart(2, "0")}`;
+  const nowYearKey  = `${now.getUTCFullYear()}`;
+  const stamp = stampDate instanceof Date ? stampDate : now;
+  const stampMonthKey = `${stamp.getUTCFullYear()}_${String(stamp.getUTCMonth() + 1).padStart(2, "0")}`;
+  const stampYearKey  = `${stamp.getUTCFullYear()}`;
+  const isFreshDonation = direction === "increment" && !stampDate;
+
+  const data = tenantSnap.exists ? tenantSnap.data() : {};
+  const prevMonthKey = data?.monthYearKey || null;
+  const prevYearKey  = data?.yearKey || null;
+  const prevMonth = Number(data?.monthRevenueUSD) || 0;
+  const prevYear  = Number(data?.yearRevenueUSD)  || 0;
+  const prevAll   = Number(data?.allTimeRevenueUSD) || 0;
+
+  const sign = direction === "decrement" ? -1 : 1;
+  const delta = sign * amountUSD;
+
+  let monthValue;
+  let yearValue;
+  if (isFreshDonation) {
+    monthValue = prevMonthKey === nowMonthKey ? prevMonth + amountUSD : amountUSD;
+    yearValue  = prevYearKey  === nowYearKey  ? prevYear  + amountUSD : amountUSD;
   } else {
-    await decrementTenantRevenue(tenantId, amountUSD);
+    // Only shift the flat bucket when the stamped delta belongs to the SAME
+    // bucket the tenant is currently accumulating into. This fixes the
+    // divergence where a Feb refund of a Jan donation used to decrement
+    // allTime but leave the flat monthRevenueUSD stale.
+    const monthMatches = prevMonthKey === stampMonthKey && prevMonthKey === nowMonthKey;
+    const yearMatches  = prevYearKey  === stampYearKey  && prevYearKey  === nowYearKey;
+    monthValue = monthMatches ? Math.max(0, prevMonth + delta) : prevMonth;
+    yearValue  = yearMatches  ? Math.max(0, prevYear  + delta) : prevYear;
   }
-  return true;
+  const allValue = Math.max(0, prevAll + delta);
+
+  const updates = {
+    // Nested map — stamped under stampMonthKey so historical buckets stay
+    // net-accurate. Fresh donations also bump the count.
+    [`revenueStats.${stampMonthKey}.revenue`]: admin.firestore.FieldValue.increment(delta),
+    "revenueStats.allTime.revenue":            admin.firestore.FieldValue.increment(delta),
+    monthRevenueUSD: monthValue,
+    yearRevenueUSD: yearValue,
+    allTimeRevenueUSD: allValue,
+  };
+  if (isFreshDonation) {
+    updates[`revenueStats.${stampMonthKey}.count`] = admin.firestore.FieldValue.increment(1);
+    updates["revenueStats.allTime.count"]          = admin.firestore.FieldValue.increment(1);
+    updates.monthYearKey = nowMonthKey;
+    updates.yearKey      = nowYearKey;
+    updates.lastDonationAt = admin.firestore.FieldValue.serverTimestamp();
+  } else {
+    if (!prevMonthKey) updates.monthYearKey = nowMonthKey;
+    if (!prevYearKey)  updates.yearKey      = nowYearKey;
+  }
+  tx.set(tenantRef, updates, { merge: true });
+}
+
+// BUG #3/#7/#8/#9 fix + Round-2 audit follow-ups: fully-atomic idempotent
+// revenue mutation. Reads the eventRef guard AND the tenant doc, applies
+// both the guard flag and the flat+nested counter deltas in a SINGLE
+// transaction. Two consequences vs the old two-phase design:
+//
+//   1. If the transaction fails (Firestore contention, network hiccup,
+//      instance crash), NEITHER the guard nor the counters change. The
+//      error propagates → the outer webhook catches → status='failed' →
+//      Stripe retries → next delivery gets a clean shot at both writes.
+//      No more silent under-application when the guard tx succeeds but
+//      the counter mutation dies afterward.
+//
+//   2. Stripe retries are correctly deduped: on the second delivery the
+//      tx reads revenueApplied=true and no-ops.
+//
+// Callers should NOT wrap this in a swallowing try/catch — that would
+// re-open the silent-loss hole. If a caller absolutely needs to survive
+// a Firestore failure (very rare), let the outer webhook handler retry.
+async function applyRevenueDeltaOnce(eventRef, tenantId, amountUSD, direction /* 'increment' | 'decrement' */, opts = {}) {
+  if (!tenantId || !Number.isFinite(amountUSD) || amountUSD <= 0) return false;
+  const stampDate = opts.originalDate instanceof Date ? opts.originalDate : null;
+  let applied = false;
+  await db.runTransaction(async (tx) => {
+    const tenantRef = db.collection("tenants").doc(tenantId);
+    const evSnap = await tx.get(eventRef);
+    if (evSnap.exists && evSnap.data()?.revenueApplied === true) return;
+    const tenantSnap = await tx.get(tenantRef);
+    _applyRevenueMutationInTx(tx, tenantRef, tenantSnap, amountUSD, direction, stampDate);
+    tx.set(eventRef, {
+      revenueApplied: true,
+      revenueAppliedAt: admin.firestore.FieldValue.serverTimestamp(),
+    }, { merge: true });
+    applied = true;
+  });
+  return applied;
 }
 
 async function reserveWebhookEvent(event) {
@@ -737,49 +836,17 @@ async function writeActivityLog({ type, tenantId, tenantName, severity, requires
   }
 }
 
-// Atomic counter increment on tenant doc — called after every confirmed donation.
+// Atomic counter increment on tenant doc — called for UNGUARDED contexts
+// (auto-empty pushka, one-off recovery). Webhook handlers should use
+// applyRevenueDeltaOnce instead so the guard flag + counters commit atomically.
 // Non-blocking: failures are logged but never propagate to the caller.
 async function incrementTenantRevenue(tenantId, amountUSD) {
   if (!tenantId || !Number.isFinite(amountUSD) || amountUSD <= 0) return;
-  const now = new Date();
-  const monthKey = `${now.getUTCFullYear()}_${String(now.getUTCMonth() + 1).padStart(2, "0")}`;
-  const yearKey  = `${now.getUTCFullYear()}`;
   try {
-    // Flat top-level fields (monthRevenueUSD / yearRevenueUSD / allTimeRevenueUSD /
-    // lastDonationAt) power the Rab dashboard KPI row via an onSnapshot subscription
-    // on tenants/{id}. When the month or year rolls over, the update path needs to
-    // RESET rather than increment — so we do a transaction that reads the current
-    // month/year keys and chooses set-vs-increment. The nested revenueStats.* map
-    // continues to be updated so historical queries (getSuperAdminDashboard,
-    // sumMonths, etc.) keep working unchanged.
     await db.runTransaction(async (tx) => {
       const ref = db.collection("tenants").doc(tenantId);
       const snap = await tx.get(ref);
-      const data = snap.exists ? snap.data() : {};
-      const prevMonthKey = data?.monthYearKey || null;
-      const prevYearKey  = data?.yearKey || null;
-      const prevMonth = Number(data?.monthRevenueUSD) || 0;
-      const prevYear  = Number(data?.yearRevenueUSD)  || 0;
-      const prevAll   = Number(data?.allTimeRevenueUSD) || 0;
-
-      const monthValue = prevMonthKey === monthKey ? prevMonth + amountUSD : amountUSD;
-      const yearValue  = prevYearKey  === yearKey  ? prevYear  + amountUSD : amountUSD;
-
-      const updates = {
-        // Nested map — preserved for backward compatibility with existing dashboards.
-        [`revenueStats.${monthKey}.revenue`]: admin.firestore.FieldValue.increment(amountUSD),
-        [`revenueStats.${monthKey}.count`]:   admin.firestore.FieldValue.increment(1),
-        "revenueStats.allTime.revenue":       admin.firestore.FieldValue.increment(amountUSD),
-        "revenueStats.allTime.count":         admin.firestore.FieldValue.increment(1),
-        // Flat fields — real-time onSnapshot friendly.
-        monthRevenueUSD: monthValue,
-        monthYearKey: monthKey,
-        yearRevenueUSD: yearValue,
-        yearKey,
-        allTimeRevenueUSD: prevAll + amountUSD,
-        lastDonationAt: admin.firestore.FieldValue.serverTimestamp(),
-      };
-      tx.set(ref, updates, { merge: true });
+      _applyRevenueMutationInTx(tx, ref, snap, amountUSD, "increment", null);
     });
   } catch (err) {
     console.warn("incrementTenantRevenue: failed (non-fatal)", { tenantId, amountUSD, error: String(err?.message || err) });
@@ -787,52 +854,23 @@ async function incrementTenantRevenue(tenantId, amountUSD) {
 }
 
 /**
- * BUG-024 fix: decrement tenant revenue on refund/chargeback so admin
- * dashboards reflect net donations. Does NOT decrement `count` — the
- * count is kept as "gross transactions" for trend analysis; the refund
- * itself counts as a separate negative tx in the user's history.
- * Stamped under the current month even when the original tx was older —
- * we don't time-travel revenue stats backward (Stripe's own reporting is
- * authoritative for historical reconstruction).
+ * Decrement tenant revenue on refund/chargeback so admin dashboards reflect
+ * net donations. Does NOT decrement `count` — the count is kept as "gross
+ * transactions" for trend analysis; the refund itself counts as a separate
+ * negative tx in the user's history.
+ *
+ * `originalDate` (optional): when provided, the nested map delta is stamped
+ * under the ORIGINAL month bucket instead of "now" — keeps allTime + suma-de-
+ * meses accurate when the refund crosses a month boundary. Flat top-level
+ * fields still only move for the current bucket (real-time KPI policy).
  */
-async function decrementTenantRevenue(tenantId, amountUSD) {
+async function decrementTenantRevenue(tenantId, amountUSD, originalDate = null) {
   if (!tenantId || !Number.isFinite(amountUSD) || amountUSD <= 0) return;
-  const now = new Date();
-  const monthKey = `${now.getUTCFullYear()}_${String(now.getUTCMonth() + 1).padStart(2, "0")}`;
-  const yearKey  = `${now.getUTCFullYear()}`;
   try {
-    // Symmetric to incrementTenantRevenue: reduce the flat top-level fields so
-    // the Rab dashboard reflects refunds/chargebacks in real time. When the
-    // month/year has rolled over since the last increment we don't touch the
-    // stale bucket — we simply zero/refresh the current bucket at the next
-    // positive donation. Never go negative on the flat fields.
     await db.runTransaction(async (tx) => {
       const ref = db.collection("tenants").doc(tenantId);
       const snap = await tx.get(ref);
-      const data = snap.exists ? snap.data() : {};
-      const prevMonthKey = data?.monthYearKey || null;
-      const prevYearKey  = data?.yearKey || null;
-      const prevMonth = Number(data?.monthRevenueUSD) || 0;
-      const prevYear  = Number(data?.yearRevenueUSD)  || 0;
-      const prevAll   = Number(data?.allTimeRevenueUSD) || 0;
-
-      const monthValue = prevMonthKey === monthKey ? Math.max(0, prevMonth - amountUSD) : prevMonth;
-      const yearValue  = prevYearKey  === yearKey  ? Math.max(0, prevYear  - amountUSD) : prevYear;
-      const allValue   = Math.max(0, prevAll - amountUSD);
-
-      const updates = {
-        // Nested map — preserved for backward compatibility.
-        [`revenueStats.${monthKey}.revenue`]: admin.firestore.FieldValue.increment(-amountUSD),
-        "revenueStats.allTime.revenue":       admin.firestore.FieldValue.increment(-amountUSD),
-        // Flat fields.
-        monthRevenueUSD: monthValue,
-        yearRevenueUSD: yearValue,
-        allTimeRevenueUSD: allValue,
-      };
-      // Keep the keys aligned so a later increment doesn't misidentify the bucket.
-      if (!prevMonthKey) updates.monthYearKey = monthKey;
-      if (!prevYearKey)  updates.yearKey = yearKey;
-      tx.set(ref, updates, { merge: true });
+      _applyRevenueMutationInTx(tx, ref, snap, amountUSD, "decrement", originalDate);
     });
   } catch (err) {
     console.warn("decrementTenantRevenue: failed (non-fatal)", { tenantId, amountUSD, error: String(err?.message || err) });
@@ -1181,15 +1219,15 @@ exports.createPaymentIntent = onCall(
   //   no-op.
   const connectParams = {};
   if (tenantConnectAccountId) {
-    const rawFee = Math.floor(amount * tenantCommissionRate);
-    if (rawFee > 0) {
-      const safeFee = Math.min(rawFee, amount - 1);
-      if (safeFee !== rawFee) {
+    const appFee = computeApplicationFeeAmount(amount, tenantCommissionRate);
+    if (appFee) {
+      if (appFee.clamped) {
         console.warn("createPaymentIntent: clamped_app_fee", {
-          uid: request.auth.uid, tenantId, amount, tenantCommissionRate, rawFee, safeFee,
+          uid: request.auth.uid, tenantId, amount, tenantCommissionRate,
+          rawFee: appFee.rawFee, safeFee: appFee.fee,
         });
       }
-      connectParams.application_fee_amount = safeFee;
+      connectParams.application_fee_amount = appFee.fee;
     }
   }
 
@@ -3578,14 +3616,28 @@ exports.stripeWebhook = onRequest(
           // BUG #3 fix: guarded via applyRevenueDeltaOnce (stuck-recovery
           // retry safety) — was decrementing every retry, silently draining
           // the tenant revenue counter to negative on repeated deliveries.
-          try {
-            if (refundTenantId && txSnap.amountUSD > 0) {
-              await applyRevenueDeltaOnce(eventRef, refundTenantId, txSnap.amountUSD, "decrement");
+          // Round 2 fix: no swallowing try/catch — if the tx fails, let it
+          // propagate to the outer webhook catch so the event finalizes as
+          // 'failed' and Stripe retries. Silently absorbing here would leave
+          // the counter permanently out of sync.
+          //
+          // Refund crosses months? Recover the original donation date so the
+          // nested bucket is decremented from the RIGHT month, not the refund
+          // month (bug #6). Best-effort — falls back to "now" if unavailable.
+          if (refundTenantId && txSnap.amountUSD > 0) {
+            let originalDate = null;
+            if (paymentIntentId) {
+              try {
+                const origSnap = await db.collection("users").doc(uid)
+                  .collection("transactions").doc(paymentIntentId).get();
+                const createdAt = origSnap.exists ? origSnap.data()?.createdAt : null;
+                if (createdAt && typeof createdAt.toDate === "function") {
+                  originalDate = createdAt.toDate();
+                }
+              } catch (_) { /* fall back to 'now' */ }
             }
-          } catch (revErr) {
-            console.warn("dispute.created: revenue decrement failed (non-fatal)", {
-              uid, chargeId, err: revErr?.message,
-            });
+            await applyRevenueDeltaOnce(eventRef, refundTenantId, txSnap.amountUSD, "decrement",
+              originalDate ? { originalDate } : undefined);
           }
         }
       }
@@ -3690,34 +3742,30 @@ exports.stripeWebhook = onRequest(
             const negUsd = Number(disputeTx?.amountUSD || 0);
             const reinstateUsd = Math.abs(negUsd);
             if (refundTenantId && reinstateUsd > 0) {
-              // BUG #9 fix: guard against stuck-recovery double-reinstate.
-              // The reinstate deletes the disputeTxRef AFTER incrementing —
-              // if the handler dies between the two, a Stripe retry (after
-              // 5min TTL expires) would re-enter this branch, see the tx
-              // still there, and reinstate AGAIN. Mark eventRef.revenueApplied
-              // atomically so only the first delivery mutates counters.
-              // Revenue-only (no count bump — dispute.created didn't dec it).
-              let allowReinstate = false;
-              try {
-                await db.runTransaction(async (tx) => {
-                  const evSnap = await tx.get(eventRef);
-                  if (evSnap.exists && evSnap.data()?.revenueApplied === true) return;
-                  tx.set(eventRef, { revenueApplied: true, revenueAppliedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
-                  allowReinstate = true;
-                });
-              } catch (_) { allowReinstate = false; }
-              if (allowReinstate) {
-                const nowD = new Date();
-                const monthKeyD = `${nowD.getUTCFullYear()}_${String(nowD.getUTCMonth() + 1).padStart(2, "0")}`;
-                await db.collection("tenants").doc(refundTenantId).set({
-                  revenueStats: {
-                    [monthKeyD]: { revenue: admin.firestore.FieldValue.increment(reinstateUsd) },
-                    allTime: { revenue: admin.firestore.FieldValue.increment(reinstateUsd) },
-                  },
-                }, { merge: true });
+              // BUG #9 + Round-2 bug #4 fix: applyRevenueDeltaOnce is now
+              // fully atomic AND covers the flat KPI fields (the old inline
+              // reinstate only touched the nested map, leaving the Rab's
+              // real-time monthRevenueUSD dashboard permanently under-reported
+              // after a won dispute). Stamp under the original donation month
+              // so allTime + suma-de-meses stays net-consistent.
+              let originalDate = null;
+              if (origPiId) {
+                try {
+                  const origSnap = await db.collection("users").doc(uid)
+                    .collection("transactions").doc(origPiId).get();
+                  const createdAt = origSnap.exists ? origSnap.data()?.createdAt : null;
+                  if (createdAt && typeof createdAt.toDate === "function") {
+                    originalDate = createdAt.toDate();
+                  }
+                } catch (_) { /* fall back to 'now' */ }
               }
+              await applyRevenueDeltaOnce(eventRef, refundTenantId, reinstateUsd, "increment",
+                originalDate ? { originalDate } : undefined);
             }
           } catch (reinstateErr) {
+            // Preserve legacy behavior for lookup/deletion failures — those
+            // shouldn't block Stripe from acking the event since we already
+            // reversed the tenant charge on the previous dispute.created.
             console.warn("dispute.closed(won): revenue reinstate failed (non-fatal)", {
               uid, disputeId: dispute.id, err: reinstateErr?.message,
             });
@@ -5132,12 +5180,9 @@ async function _runPushkaAutoEmptyTick() {
         // Stripe-Account header below). No transfer_data / on_behalf_of —
         // those are for destination charges. application_fee_amount still
         // works if commissionRate > 0 (skims platform commission).
-        if (plan.tenantConnectAccountId && plan.tenantCommissionRate > 0) {
-          const rawFee = Math.floor(amountCents * plan.tenantCommissionRate);
-          const safeFee = Math.min(rawFee, amountCents - 1);
-          if (safeFee > 0) {
-            piParams.application_fee_amount = safeFee;
-          }
+        if (plan.tenantConnectAccountId) {
+          const appFee = computeApplicationFeeAmount(amountCents, plan.tenantCommissionRate);
+          if (appFee) piParams.application_fee_amount = appFee.fee;
         }
 
         let paymentIntent;
@@ -10598,7 +10643,6 @@ exports.createCheckoutSession = onCall(
     // Direct Charges: no transfer_data / on_behalf_of. Charge is on the
     // connected account (via Stripe-Account header on sessions.create).
     // application_fee_amount still valid — skims platform commission.
-    const rawFee = Math.floor(amount * tenantCommissionRate);
     const paymentIntentData = {
       metadata: {
         uid: request.auth.uid,
@@ -10615,14 +10659,17 @@ exports.createCheckoutSession = onCall(
         ...(donorMessage ? { donorMessage } : {}),
       },
     };
-    if (rawFee > 0) {
-      const safeFee = Math.min(rawFee, amount - 1);
-      if (safeFee !== rawFee) {
-        console.warn("createCheckoutSession: clamped_app_fee", {
-          uid: request.auth.uid, tenantId, amount, tenantCommissionRate, rawFee, safeFee,
-        });
+    {
+      const appFee = computeApplicationFeeAmount(amount, tenantCommissionRate);
+      if (appFee) {
+        if (appFee.clamped) {
+          console.warn("createCheckoutSession: clamped_app_fee", {
+            uid: request.auth.uid, tenantId, amount, tenantCommissionRate,
+            rawFee: appFee.rawFee, safeFee: appFee.fee,
+          });
+        }
+        paymentIntentData.application_fee_amount = appFee.fee;
       }
-      paymentIntentData.application_fee_amount = safeFee;
     }
 
     const idempotencyKey = `cs_${request.auth.uid}_${correlationId}`;

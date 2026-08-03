@@ -16,6 +16,7 @@
 
 import 'package:flutter/material.dart';
 
+import '../../core/format_utils.dart';
 import '../../core/l10n/s.dart';
 import '../settings/presentation/card_brand_box.dart';
 
@@ -23,10 +24,13 @@ Future<bool?> showExpressCheckoutSheet({
   required BuildContext context,
   required String cardBrand,
   required String cardLast4,
-  required int amountCents,
+  // Stripe smallest-unit integer (whatever `amountToStripeUnits` produced for
+  // this currency). Rendering must go through `formatStripeUnits` so JPY / CLP
+  // / BHD render right and use the correct currency symbol.
+  required int amountStripeUnits,
   required String currency,
 }) async {
-  final formattedAmount = '\$${(amountCents / 100).toStringAsFixed(2)} ${currency.toUpperCase()}';
+  final formattedAmount = formatStripeUnits(amountStripeUnits, currency);
 
   return showModalBottomSheet<bool>(
     context: context,

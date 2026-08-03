@@ -59,3 +59,59 @@ int amountToStripeUnits(double amount, String currency) {
 double stripeUnitsToAmount(int units, String currency) {
   return units / currencyUnitMultiplier(currency);
 }
+
+// Currencies whose glyph is legibly different from the ISO code. Anything not
+// in this table falls back to "<CODE> <amount>" so we never lie with `$` on a
+// EUR / ILS / JPY charge (which express_checkout_sheet used to do).
+const Map<String, String> _currencySymbols = {
+  'usd': '\$',
+  'cad': '\$',
+  'aud': '\$',
+  'nzd': '\$',
+  'mxn': '\$',
+  'ars': '\$',
+  'clp': '\$',
+  'cop': '\$',
+  'uyu': '\$',
+  'brl': 'R\$',
+  'eur': '€',
+  'gbp': '£',
+  'jpy': '¥',
+  'cny': '¥',
+  'krw': '₩',
+  'ils': '₪',
+  'inr': '₹',
+  'rub': '₽',
+  'try': '₺',
+  'chf': 'CHF ',
+};
+
+/// Renders a Stripe smallest-unit integer for a given currency into a
+/// human-readable string, e.g. (10000, "clp") → "$10,000 CLP",
+/// (1500, "bhd") → "BHD 1.500", (1050, "usd") → "$10.50 USD".
+///
+/// Rules:
+///   - Zero-decimal currencies (CLP, JPY, KRW, …): integer, no decimals.
+///   - Three-decimal (BHD, JOD, KWD, …): always three decimals.
+///   - Everything else: two decimals, dropping ".00" when whole.
+///
+/// Prefer this over hand-rolled `'$' + (units/100)` — that formula
+/// misrepresents 21 of Stripe's supported currencies.
+String formatStripeUnits(int units, String currency) {
+  final code = currency.toLowerCase();
+  final amount = stripeUnitsToAmount(units, code);
+  final symbol = _currencySymbols[code];
+  final upper = currency.toUpperCase();
+
+  String body;
+  if (_zeroDecimalCurrencies.contains(code)) {
+    body = NumberFormat('#,##0').format(amount.round());
+  } else if (_threeDecimalCurrencies.contains(code)) {
+    body = NumberFormat('#,##0.000').format(amount);
+  } else {
+    body = formatAmount(amount);
+  }
+
+  if (symbol != null) return '$symbol$body $upper';
+  return '$upper $body';
+}
