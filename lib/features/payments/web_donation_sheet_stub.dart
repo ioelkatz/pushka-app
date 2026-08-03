@@ -28,6 +28,7 @@ Future<String?> showWebCardSetupSheet({
   required String? customerSessionClientSecret,
   required String merchantDisplayName,
   required String returnUrl,
+  String? stripeAccount,
 }) {
   throw UnsupportedError(
     'showWebCardSetupSheet only available on web builds',

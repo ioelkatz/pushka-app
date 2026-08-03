@@ -93,7 +93,12 @@ Future<String?> showWebCardSetupSheet({
   required String? customerSessionClientSecret,
   required String merchantDisplayName,
   required String returnUrl,
+  /// DIRECT CHARGES: connected account this SetupIntent lives on. Same
+  /// bootstrap as showWebDonationSheet — idempotent when already inited.
+  String? stripeAccount,
 }) async {
+  await initWebStripeForTenant(stripeAccount);
+  if (!context.mounted) return null;
   // Same MF1 pattern as showWebDonationSheet: block dismiss during confirm.
   final submitting = ValueNotifier<bool>(false);
   return showModalBottomSheet<String?>(

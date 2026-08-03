@@ -408,6 +408,15 @@ class StripeService {
     final ephemeralKeySecret = result.data['ephemeralKeySecret'] as String?;
     final customerSessionClientSecret = result.data['customerSessionClientSecret'] as String?;
     final subscriptionId = result.data['subscriptionId'] as String?;
+    // DIRECT CHARGES: subscription + invoice + PI + customer live on the
+    // connected account. Set Stripe.stripeAccountId BEFORE any client-side
+    // Stripe call (initPaymentSheet on native, showWebDonationSheet on web)
+    // so the PI is looked up on the correct account. Same fix as pay() and
+    // setupCard().
+    final connectAccountId = result.data['connectAccountId'] as String?;
+    if (connectAccountId != null && connectAccountId.isNotEmpty) {
+      Stripe.stripeAccountId = connectAccountId;
+    }
     if (clientSecret == null || clientSecret.isEmpty) {
       throw const StripeServiceException('no-client-secret');
     }
@@ -436,6 +445,7 @@ class StripeService {
         merchantDisplayName: merchantDisplayName,
         returnUrl: returnUrl,
         recurringInterval: interval,
+        stripeAccount: connectAccountId,
       );
       if (piId == null || piId.isEmpty) {
         // User cancelled. Note: the subscription doc on Stripe is left in
@@ -558,6 +568,7 @@ class StripeService {
         customerSessionClientSecret: customerSessionClientSecret,
         merchantDisplayName: merchantDisplayName,
         returnUrl: returnUrl,
+        stripeAccount: result.data['connectAccountId'] as String?,
       );
       if (outcome == null) {
         throw const StripeServiceException('canceled');
@@ -568,6 +579,14 @@ class StripeService {
     final clientSecret = result.data['clientSecret'] as String?;
     if (clientSecret == null || clientSecret.isEmpty) {
       throw const StripeServiceException('no-client-secret');
+    }
+    // DIRECT CHARGES: SetupIntent lives on the connected account. Set
+    // Stripe.stripeAccountId BEFORE initPaymentSheet — same fix as pay().
+    // Without this, PaymentSheet queries the SetupIntent on the platform
+    // (where it does not exist) and errors with resource_missing.
+    final connectAccountId = result.data['connectAccountId'] as String?;
+    if (connectAccountId != null && connectAccountId.isNotEmpty) {
+      Stripe.stripeAccountId = connectAccountId;
     }
 
     await Stripe.instance.initPaymentSheet(

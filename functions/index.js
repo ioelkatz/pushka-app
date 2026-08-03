@@ -2451,18 +2451,25 @@ exports.listSavedCards = onCall(
     await enforceRateLimit(request.auth.uid, "listSavedCards", 100, 3600);
 
     const uid = request.auth.uid;
+    console.info("listSavedCards: entry", { uid });
     // Direct Charges: customers live per connected account, not on the platform.
     // Resolve tenantId → tenantConnectAccountId → customer from tenantState.
     const userSnap = await db.collection("users").doc(uid).get();
     const userData = userSnap.data() ?? {};
     const tenantId = userData.tenantId ?? null;
     if (!tenantId) {
+      console.info("listSavedCards: no_tenant", { uid });
       return { cards: [], defaultPaymentMethodId: null };
     }
     const tenantSnap = await db.collection("tenants").doc(tenantId).get();
     const tenantData = tenantSnap.exists ? (tenantSnap.data() ?? {}) : {};
     const tenantConnectAccountId = tenantData.stripeConnectAccountId || null;
     if (!tenantConnectAccountId || tenantData.stripeConnectStatus !== "active") {
+      console.info("listSavedCards: no_connect_or_inactive", {
+        uid, tenantId,
+        hasAcct: !!tenantConnectAccountId,
+        status: tenantData.stripeConnectStatus,
+      });
       return { cards: [], defaultPaymentMethodId: null };
     }
     const stripeReqOpts = { stripeAccount: tenantConnectAccountId };
@@ -2470,15 +2477,18 @@ exports.listSavedCards = onCall(
       .collection("tenantState").doc(tenantId);
     const tenantStateSnap = await tenantStateRef.get();
     const customerId = tenantStateSnap.data()?.stripeConnectCustomerId || null;
+    console.info("listSavedCards: resolved_context", {
+      uid, tenantId, tenantConnectAccountId, customerId,
+      tenantStateExists: tenantStateSnap.exists,
+    });
 
     if (!customerId) {
+      console.info("listSavedCards: no_customer_in_tenantState", { uid, tenantId });
       return { cards: [], defaultPaymentMethodId: null };
     }
 
     const stripe = require("stripe")(stripeSecret.value());
-    // Hard-404 protection: a stale customerId (mode mismatch or hard-deleted
-    // customer) throws resource_missing here. Clear on tenantState and return
-    // empty list — next createSetupIntent mints a fresh connected customer.
+    console.info("listSavedCards: before_stripe_calls", { uid, customerId });
     let customer;
     let pmList;
     try {
@@ -2490,10 +2500,24 @@ exports.listSavedCards = onCall(
           limit: 100,
         }, stripeReqOpts),
       ]);
+      console.info("listSavedCards: stripe_calls_ok", {
+        uid, customerId,
+        customerFound: !customer.deleted,
+        pmCount: pmList.data.length,
+      });
     } catch (stripeErr) {
+      console.error("listSavedCards: stripe_call_failed", {
+        uid, tenantId, customerId,
+        stripeAccount: tenantConnectAccountId,
+        errorType: stripeErr?.type,
+        errorCode: stripeErr?.code,
+        errorMessage: stripeErr?.message,
+        statusCode: stripeErr?.statusCode,
+        rawError: String(stripeErr).slice(0, 500),
+      });
       if (_isStripeResourceMissing(stripeErr)) {
         console.warn("listSavedCards: stale connect customerId (resource_missing) — clearing", {
-          uid, tenantId, customerId, errorMessage: stripeErr?.message,
+          uid, tenantId, customerId,
         });
         await tenantStateRef.set({
           stripeConnectCustomerId: admin.firestore.FieldValue.delete(),
