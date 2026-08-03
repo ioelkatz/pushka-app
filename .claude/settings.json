@@ -259,7 +259,16 @@
       "Bash(firebase functions:log --only listSavedCards --project pushka-app-ioel --lines 40)",
       "Bash(firebase functions:log --only listSavedCards --project pushka-app-ioel --lines 15)",
       "Bash(firebase functions:log --only listSavedCards --project pushka-app-ioel --lines 20)",
-      "Bash(firebase functions:log --only createSetupIntent --project pushka-app-ioel --lines 20)"
+      "Bash(firebase functions:log --only createSetupIntent --project pushka-app-ioel --lines 20)",
+      "Bash(firebase functions:log --project pushka-app-ioel --lines 80)",
+      "Bash(firebase functions:log --only cancelDonationSubscription,stripeBillingWebhook,stripeWebhook --project pushka-app-ioel --lines 30)",
+      "Bash(firebase functions:log --only stripeWebhook --project pushka-app-ioel --lines 50)",
+      "Bash(firebase functions:secrets:access STRIPE_WEBHOOK_SECRET --project pushka-app-ioel)",
+      "Bash(firebase functions:log --only stripeWebhook --project pushka-app-ioel --lines 40)",
+      "Bash(firebase functions:secrets:access STRIPE_SECRET_KEY --project pushka-app-ioel)",
+      "Bash(git -C /c/dev/pushka_app log --oneline -20 stripe-direct-charges -- functions/index.js lib/features/payments/stripe_service.dart)",
+      "Bash(firebase functions:log --only stripeWebhook --project pushka-app-ioel --lines 200)",
+      "Bash(grep -n \"createPaymentIntent\\\\|payment_intent.succeeded\\\\|payment_intent\\\\\\\\.succeeded\" c:/dev/pushka_app/functions/index.js)"
     ],
     "additionalDirectories": [
       "C:\\Users\\Ioel\\Downloads",

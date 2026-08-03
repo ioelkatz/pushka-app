@@ -10,7 +10,29 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../config/stripe_config.dart';
 import '../../core/network_status_provider.dart';
 import '../../firebase_options.dart';
+import 'express_checkout_sheet.dart';
 import 'web_donation_sheet.dart';
+
+/// Cached default PM to pre-select in PaymentSheet. Callers (donation flows)
+/// pass this from `tenantState.stripeConnectDefaultPaymentMethodBrand/Last4/Id`.
+/// When present + non-web + non-recurring, the pay() flow shows an express
+/// checkout sheet ("Pagar con Visa •••• 2025 [Confirmar] [Cambiar tarjeta]")
+/// before falling back to PaymentSheet. This is the workaround for
+/// flutter_stripe v12's known limitation: PaymentSheet mobile orders PMs by
+/// MRU (most-recently-used) instead of customer.invoice_settings
+/// .default_payment_method, so a user with 2+ saved cards never sees their
+/// chosen default first without this custom flow.
+class DefaultCardInfo {
+  const DefaultCardInfo({
+    required this.id,
+    required this.brand,
+    required this.last4,
+  });
+
+  final String id;
+  final String brand;
+  final String last4;
+}
 
 /// 16-char hex correlation ID — generated client-side at the start of a
 /// payment flow and threaded through createPaymentIntent → Stripe metadata
@@ -131,6 +153,12 @@ class StripeService {
     /// If null on web, we fall back to the legacy Stripe Checkout redirect
     /// flow — same UX as before Stage 4. On native this is ignored.
     BuildContext? sheetContext,
+    /// Native-only: default PM info from tenantState. When present, we show
+    /// an express-checkout confirmation sheet BEFORE opening the picker so
+    /// the user's chosen default is pre-selected (flutter_stripe v12
+    /// PaymentSheet orders by MRU, not by invoice_settings.default_payment_method).
+    /// User can tap "Cambiar tarjeta" to open the full PaymentSheet picker.
+    DefaultCardInfo? defaultCard,
   }) async {
     // Web (PWA): use Stripe Elements inline in a bottom sheet — user stays
     // inside the PWA (no full-page redirect to hosted Checkout). Falls back
@@ -270,6 +298,71 @@ class StripeService {
     final connectAccountId = result.data['connectAccountId'] as String?;
     if (connectAccountId != null && connectAccountId.isNotEmpty) {
       Stripe.stripeAccountId = connectAccountId;
+    }
+
+    // EXPRESS CHECKOUT (native only): if the caller passed a default card
+    // and we have a sheet context, show a confirmation sheet BEFORE opening
+    // the PaymentSheet picker. Confirm → charge with the default card via
+    // confirmPayment directly (bypasses picker). Change card → fall through
+    // to PaymentSheet as before. Solves the flutter_stripe v12 limitation
+    // where PaymentSheet mobile orders PMs by MRU, not by
+    // customer.invoice_settings.default_payment_method.
+    if (!kIsWeb && defaultCard != null && sheetContext != null && sheetContext.mounted) {
+      final expressChoice = await showExpressCheckoutSheet(
+        context: sheetContext,
+        cardBrand: defaultCard.brand,
+        cardLast4: defaultCard.last4,
+        amountCents: amountCents,
+        currency: currency,
+      );
+      if (expressChoice == true) {
+        // User confirmed with default card — charge directly.
+        try {
+          await Stripe.instance.confirmPayment(
+            paymentIntentClientSecret: clientSecret,
+            data: PaymentMethodParams.cardFromMethodId(
+              paymentMethodData: PaymentMethodDataCardFromMethod(
+                paymentMethodId: defaultCard.id,
+              ),
+            ),
+          );
+          debugPrint('StripeService.pay: express checkout confirmed in ${sw.elapsedMilliseconds}ms');
+          return _extractIdFromSecret(clientSecret, 'pi_');
+        } on StripeException catch (e, st) {
+          // Same pattern as PaymentSheet catch: release pushka-empty lock,
+          // translate cancelled/declined to StripeServiceException. If it's
+          // a decline/expired card, fall through to open the picker so the
+          // user can choose another card without starting over.
+          if (purpose == 'pushka_empty') {
+            await _releaseManualPushkaEmptyLock(tenantId: tenantId);
+          }
+          final code = e.error.code;
+          if (code == FailureCode.Canceled) {
+            throw const StripeServiceException('canceled');
+          }
+          // Auto-fallback: card decline / expired / etc → open the picker so
+          // the user can pick a different card without re-tapping "Donar".
+          debugPrint('StripeService.pay: express failed (${code.name}), falling back to PaymentSheet');
+          _recordPaymentError('pay/express_fallback', e, st,
+              cid: cid, purpose: purpose, amountCents: amountCents,
+              currency: currency, extraCode: code.name);
+          // Fall through to initPaymentSheet + presentPaymentSheet below.
+        } catch (e, st) {
+          if (purpose == 'pushka_empty') {
+            await _releaseManualPushkaEmptyLock(tenantId: tenantId);
+          }
+          _recordPaymentError('pay/express_unknown_fallback', e, st,
+              cid: cid, purpose: purpose, amountCents: amountCents, currency: currency);
+          debugPrint('StripeService.pay: express unknown error, falling back to PaymentSheet: $e');
+        }
+      } else if (expressChoice == null) {
+        // User dismissed the sheet without choosing.
+        if (purpose == 'pushka_empty') {
+          await _releaseManualPushkaEmptyLock(tenantId: tenantId);
+        }
+        throw const StripeServiceException('canceled');
+      }
+      // expressChoice == false → "Cambiar tarjeta" → fall through to picker.
     }
 
     // flutter_stripe v12 requires that if customerId is set, at least one auth

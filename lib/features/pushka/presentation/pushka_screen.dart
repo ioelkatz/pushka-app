@@ -261,6 +261,23 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
     _updateStreak();
   }
   
+  /// Reads the tenant's default PM from tenantState (Direct Charges model)
+  /// and returns a DefaultCardInfo the StripeService can use to render the
+  /// express-checkout confirmation sheet BEFORE opening the full PaymentSheet
+  /// picker. Returns null when the user has no default cached — pay() then
+  /// falls through to the picker directly.
+  DefaultCardInfo? _readDefaultCard() {
+    final ts = ref.read(tenantStateProvider).valueOrNull;
+    if (ts == null) return null;
+    final id = ts['stripeConnectDefaultPaymentMethodId'] as String?;
+    final brand = ts['stripeConnectDefaultPaymentMethodBrand'] as String?;
+    final last4 = ts['stripeConnectDefaultPaymentMethodLast4'] as String?;
+    if (id == null || id.isEmpty || brand == null || brand.isEmpty || last4 == null || last4.isEmpty) {
+      return null;
+    }
+    return DefaultCardInfo(id: id, brand: brand, last4: last4);
+  }
+
   Future<void> emptyPushka() async {
     if (_isProcessing) return;
     // Warm empty-state hint instead of silent no-op: previously tapping
@@ -352,6 +369,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
         pushkaAmountAfter: remaining,
         tenantId: activeTenantId,
         sheetContext: context,
+        defaultCard: _readDefaultCard(),
       );
 
       await AnalyticsService.instance.logPushkaEmpty(amountToEmpty);
@@ -649,6 +667,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
           donorMessage: donationMessage.isEmpty ? null : donationMessage,
           donationReason: (donationReason == null || donationReason.isEmpty) ? null : donationReason,
           sheetContext: context,
+          defaultCard: _readDefaultCard(),
         );
       }
 
@@ -726,6 +745,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
         donorMessage: donorMessage,
         donationReason: finalReason,
         sheetContext: context,
+        defaultCard: _readDefaultCard(),
       );
 
       await AnalyticsService.instance.logDonation(donationAmount, currency);

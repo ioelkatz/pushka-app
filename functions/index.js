@@ -2965,7 +2965,25 @@ exports.stripeWebhook = onRequest(
       stripeWebhookSecret.value(),
     );
   } catch (err) {
-    console.error("stripeWebhook: Signature verification failed", err?.message || err);
+    // Signature failures during a fresh deploy are EXPECTED for up to 3
+    // days after a signing secret rotation: Stripe keeps retrying events
+    // that were queued with the old secret. Log at WARN (not ERROR) so
+    // alerts don't fire on transient rotation-window noise. If persistent
+    // failures still show up past that window, it's likely a real
+    // misconfiguration (webhook endpoint pointing here without our secret)
+    // and worth investigating manually via `firebase functions:log`.
+    //
+    // Also surface enough header context to correlate with the Stripe
+    // dashboard events → deliveries view: sig prefix + body size + IP,
+    // without leaking the raw signature (which is a HMAC and pointless
+    // in logs anyway).
+    const sigPreview = String(sig || "").split(",")[0] || "";
+    console.warn("stripeWebhook: Signature verification failed (likely secret-rotation retry noise)", {
+      error: err?.message || String(err),
+      sigTimestampChunk: sigPreview,
+      bodySize: req.rawBody?.length ?? 0,
+      remoteIp: req.headers["x-forwarded-for"] || req.ip,
+    });
     res.status(400).send(`Webhook Error: ${err.message}`);
     return;
   }
