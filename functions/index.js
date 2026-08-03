@@ -467,6 +467,42 @@ async function sendToUser(uid, payload) {
 // the current invocation re-attempt processing.
 const WEBHOOK_PROCESSING_TTL_MS = 5 * 60 * 1000; // 5 minutes — well over function timeout
 
+// BUG #3/#7/#8/#9 fix: idempotent revenue mutation guard. Applies the given
+// delta to the tenant's revenue counters ONLY if this event has not already
+// applied one. Marks the event doc so a stuck-recovery re-run (Firestore
+// TTL sees status='processing' > 5min, or 'failed' retry) doesn't double
+// count. Symmetric — increments and decrements both go through this gate.
+// Returns true when the mutation was applied, false when skipped as dupe.
+async function applyRevenueDeltaOnce(eventRef, tenantId, amountUSD, direction /* 'increment' | 'decrement' */) {
+  if (!tenantId || !Number.isFinite(amountUSD) || amountUSD <= 0) return false;
+  let shouldApply = false;
+  try {
+    await db.runTransaction(async (tx) => {
+      const snap = await tx.get(eventRef);
+      if (snap.exists && snap.data()?.revenueApplied === true) {
+        shouldApply = false;
+        return;
+      }
+      // Mark BEFORE releasing the tx — if the tx commits but the mutation
+      // below dies (rare), the revenue counter is unchanged but the event
+      // is flagged as done. Ops-recoverable via manual increment; strictly
+      // better than double-counting on the second retry.
+      tx.set(eventRef, { revenueApplied: true, revenueAppliedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
+      shouldApply = true;
+    });
+  } catch (_) {
+    // If the guard tx fails, err on the side of NOT double-counting.
+    return false;
+  }
+  if (!shouldApply) return false;
+  if (direction === "increment") {
+    await incrementTenantRevenue(tenantId, amountUSD);
+  } else {
+    await decrementTenantRevenue(tenantId, amountUSD);
+  }
+  return true;
+}
+
 async function reserveWebhookEvent(event) {
   // Validate event id shape before using it as a Firestore doc ID. Stripe
   // event IDs are always `evt_` + 24+ alphanumeric chars. Anything else is
@@ -1961,6 +1997,31 @@ exports.createDonationSubscription = onCall(
             updatedAt: admin.firestore.FieldValue.serverTimestamp(),
           }, { merge: true });
         } catch (_) { /* best-effort */ }
+        // BUG #19 fix: proactively mint a fresh customer HERE so the
+        // subscriptions.create call below succeeds on first attempt.
+        // Previously subParams.customer still held the doomed id, causing a
+        // guaranteed extra Stripe roundtrip through the stale-heal retry.
+        try {
+          const freshCustomer = await stripe.customers.create({
+            email: customerEmail || undefined,
+            metadata: { uid: request.auth.uid, tenantId },
+          }, {
+            idempotencyKey: `customer_create_${request.auth.uid}_${tenantId}_sub_precleanup`,
+            stripeAccount: tenantConnectAccountId,
+          });
+          customerId = freshCustomer.id;
+          subParams.customer = customerId;
+          await tenantStateRef.set({
+            stripeConnectCustomerId: customerId,
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          }, { merge: true });
+        } catch (recreateErr) {
+          // If we can't recreate here, let the sub-create's stale-heal try —
+          // guaranteed to fail with resource_missing which triggers its own retry.
+          console.warn("createDonationSubscription: pre-cleanup recreate failed, falling back to inline retry", {
+            uid: request.auth.uid, tenantId, err: recreateErr?.message,
+          });
+        }
       } else {
         console.warn("createDonationSubscription: cleanup pass failed", {
           uid: request.auth.uid,
@@ -2401,11 +2462,18 @@ exports.createSetupIntent = onCall(
             updatedAt: admin.firestore.FieldValue.serverTimestamp(),
           }, { merge: true }).catch(() => {});
           try {
+            // BUG #4 + #11 fix: unified stale-heal idempotency key across
+            // all callables. Previously used Date.now() which changes on
+            // every retry → Stripe treats each attempt as a new customer
+            // create. Also standardized suffix `_si_r1` (setup-intent retry)
+            // so parallel stale-heals from createPaymentIntent (_pi_r1),
+            // createDonationSubscription (_sub_r1), and createSetupIntent
+            // (_si_r1) don't collide on the same (uid, tenantId).
             const freshCustomer = await stripe.customers.create({
               email: customerEmail || undefined,
               metadata: { uid, tenantId },
             }, {
-              idempotencyKey: `customer_create_${uid}_${tenantId}_r${Date.now()}`,
+              idempotencyKey: `customer_create_${uid}_${tenantId}_si_r1`,
               stripeAccount: tenantConnectAccountId,
             });
             customerId = freshCustomer.id;
@@ -2533,10 +2601,17 @@ exports.listSavedCards = onCall(
     }
 
     // Customer was deleted directly in Stripe — clear the stale ID and return empty.
+    // BUG #18 fix: symmetric with the resource_missing branch above — also
+    // clear the cached default-PM fields, otherwise the wallet screen keeps
+    // showing "Visa •••• 4242" after the customer is gone.
     if (customer.deleted) {
       await tenantStateRef.set({
         stripeConnectCustomerId: admin.firestore.FieldValue.delete(),
         stripeConnectCustomerIdPending: admin.firestore.FieldValue.delete(),
+        stripeConnectDefaultPaymentMethodId: admin.firestore.FieldValue.delete(),
+        stripeConnectDefaultPaymentMethodLast4: admin.firestore.FieldValue.delete(),
+        stripeConnectDefaultPaymentMethodBrand: admin.firestore.FieldValue.delete(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       }, { merge: true }).catch(() => {});
       return { cards: [], defaultPaymentMethodId: null };
     }
@@ -3177,8 +3252,9 @@ exports.stripeWebhook = onRequest(
             createdAt: admin.firestore.FieldValue.serverTimestamp(),
           });
 
-        // Update pre-aggregated revenue counters on tenant doc (non-blocking)
-        if (txTenantId) await incrementTenantRevenue(txTenantId, txSnap.amountUSD);
+        // BUG #7 fix: guarded via applyRevenueDeltaOnce so a stuck-recovery
+        // retry (event doc TTL > 5min or 'failed' status) doesn't double-count.
+        if (txTenantId) await applyRevenueDeltaOnce(eventRef, txTenantId, txSnap.amountUSD, "increment");
 
         // For pushka_empty (manual flow) the webhook owns:
         //   1. resetting pushkaAmount to the value the client computed
@@ -3499,11 +3575,12 @@ exports.stripeWebhook = onRequest(
               createdAt: admin.firestore.FieldValue.serverTimestamp(),
             }, { merge: true });
 
-          // Decrement tenant revenue so admin dashboards reflect the loss
-          // (mirrors the refund handler). tenantId already resolved above.
+          // BUG #3 fix: guarded via applyRevenueDeltaOnce (stuck-recovery
+          // retry safety) — was decrementing every retry, silently draining
+          // the tenant revenue counter to negative on repeated deliveries.
           try {
             if (refundTenantId && txSnap.amountUSD > 0) {
-              await decrementTenantRevenue(refundTenantId, txSnap.amountUSD);
+              await applyRevenueDeltaOnce(eventRef, refundTenantId, txSnap.amountUSD, "decrement");
             }
           } catch (revErr) {
             console.warn("dispute.created: revenue decrement failed (non-fatal)", {
@@ -3613,16 +3690,32 @@ exports.stripeWebhook = onRequest(
             const negUsd = Number(disputeTx?.amountUSD || 0);
             const reinstateUsd = Math.abs(negUsd);
             if (refundTenantId && reinstateUsd > 0) {
-              // Revenue-only reinstate (do NOT bump count — dispute.created
-              // didn't decrement it, so incrementing would create drift).
-              const nowD = new Date();
-              const monthKeyD = `${nowD.getUTCFullYear()}_${String(nowD.getUTCMonth() + 1).padStart(2, "0")}`;
-              await db.collection("tenants").doc(refundTenantId).set({
-                revenueStats: {
-                  [monthKeyD]: { revenue: admin.firestore.FieldValue.increment(reinstateUsd) },
-                  allTime: { revenue: admin.firestore.FieldValue.increment(reinstateUsd) },
-                },
-              }, { merge: true });
+              // BUG #9 fix: guard against stuck-recovery double-reinstate.
+              // The reinstate deletes the disputeTxRef AFTER incrementing —
+              // if the handler dies between the two, a Stripe retry (after
+              // 5min TTL expires) would re-enter this branch, see the tx
+              // still there, and reinstate AGAIN. Mark eventRef.revenueApplied
+              // atomically so only the first delivery mutates counters.
+              // Revenue-only (no count bump — dispute.created didn't dec it).
+              let allowReinstate = false;
+              try {
+                await db.runTransaction(async (tx) => {
+                  const evSnap = await tx.get(eventRef);
+                  if (evSnap.exists && evSnap.data()?.revenueApplied === true) return;
+                  tx.set(eventRef, { revenueApplied: true, revenueAppliedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
+                  allowReinstate = true;
+                });
+              } catch (_) { allowReinstate = false; }
+              if (allowReinstate) {
+                const nowD = new Date();
+                const monthKeyD = `${nowD.getUTCFullYear()}_${String(nowD.getUTCMonth() + 1).padStart(2, "0")}`;
+                await db.collection("tenants").doc(refundTenantId).set({
+                  revenueStats: {
+                    [monthKeyD]: { revenue: admin.firestore.FieldValue.increment(reinstateUsd) },
+                    allTime: { revenue: admin.firestore.FieldValue.increment(reinstateUsd) },
+                  },
+                }, { merge: true });
+              }
             }
           } catch (reinstateErr) {
             console.warn("dispute.closed(won): revenue reinstate failed (non-fatal)", {
@@ -3820,24 +3913,55 @@ exports.stripeWebhook = onRequest(
         outcome: "account_deauthorized",
       });
     } else if (event.type === "application_fee.created") {
-      // Our commission was collected — log for tracking
+      // Our commission was collected — log for tracking.
+      // BUG #10 fix: fee.charge on application_fee events is a STRING (charge id),
+      // NOT an expanded object. `fee.charge?.metadata?.tenantId` was always null
+      // (undefined property access on a string). Retrieve the charge via the
+      // Stripe API when we need its metadata; skip if we can't get it.
       const fee = event.data.object;
-      const tenantId = fee.charge?.metadata?.tenantId ?? null;
+      const chargeId = typeof fee.charge === "string" ? fee.charge : fee.charge?.id ?? null;
+      let tenantId = null;
+      if (chargeId) {
+        try {
+          const stripeClient = require("stripe")(stripeSecret.value());
+          // Charge lives on the connected account for direct charges.
+          const chargeAcctOpts = event.account ? { stripeAccount: event.account } : {};
+          const chargeObj = await stripeClient.charges.retrieve(chargeId, chargeAcctOpts);
+          tenantId = chargeObj?.metadata?.tenantId ?? null;
+        } catch (chargeErr) {
+          console.warn("stripeWebhook: application_fee.created charge retrieve failed", {
+            feeId: fee.id, chargeId, err: chargeErr?.message,
+          });
+        }
+      }
       const amountUsd = (fee.amount || 0) / currencyUnitDivisor(fee.currency || "usd");
 
       await finalizeWebhookEvent(eventRef, {
         status: "processed",
         tenantId,
         amountUsd,
-        chargeId: fee.charge?.id ?? null,
+        chargeId,
         outcome: "commission_collected",
       });
     } else if (event.type === "application_fee.refunded") {
       // Commission refunded back to platform from connected account — happens
-      // automatically when the underlying charge is refunded. Logged so admin
-      // dashboards can reconcile platform revenue against gross donations.
+      // automatically when the underlying charge is refunded.
+      // BUG #10 fix: same string vs object issue as application_fee.created.
       const fee = event.data.object;
-      const tenantId = fee.charge?.metadata?.tenantId ?? null;
+      const chargeId = typeof fee.charge === "string" ? fee.charge : fee.charge?.id ?? null;
+      let tenantId = null;
+      if (chargeId) {
+        try {
+          const stripeClient = require("stripe")(stripeSecret.value());
+          const chargeAcctOpts = event.account ? { stripeAccount: event.account } : {};
+          const chargeObj = await stripeClient.charges.retrieve(chargeId, chargeAcctOpts);
+          tenantId = chargeObj?.metadata?.tenantId ?? null;
+        } catch (chargeErr) {
+          console.warn("stripeWebhook: application_fee.refunded charge retrieve failed", {
+            feeId: fee.id, chargeId, err: chargeErr?.message,
+          });
+        }
+      }
       const refundedAmount = (fee.amount_refunded || 0) /
         currencyUnitDivisor(fee.currency || "usd");
 
@@ -3845,7 +3969,7 @@ exports.stripeWebhook = onRequest(
         status: "processed",
         tenantId,
         amountUsd: refundedAmount,
-        chargeId: fee.charge?.id ?? null,
+        chargeId,
         applicationFeeId: fee.id,
         outcome: "commission_refunded",
       });
@@ -3901,6 +4025,11 @@ exports.stripeWebhook = onRequest(
           subscriptionId: sub.id,
           outcome: "donation_recurring_status_change_ignored",
         });
+        // BUG #2 fix: send HTTP 200 so Stripe stops retrying. Previously
+        // this branch fell through the outer function's `return` without
+        // sending a response → Stripe timed out → retry storm for every
+        // donation-recurring lifecycle event.
+        res.json({ received: true, outcome: "donation_recurring_ignored" });
         return;
       }
       // Tenant Stripe Billing subscription state change. Mirror the status
@@ -4054,7 +4183,8 @@ exports.stripeWebhook = onRequest(
                 : {}),
               createdAt: admin.firestore.FieldValue.serverTimestamp(),
             });
-          if (tenantId) await incrementTenantRevenue(tenantId, txSnap.amountUSD);
+          // BUG #8 fix: guarded via applyRevenueDeltaOnce (stuck-recovery dedup)
+          if (tenantId) await applyRevenueDeltaOnce(eventRef, tenantId, txSnap.amountUSD, "increment");
         } else {
           console.warn("stripeWebhook: invoice.payment_succeeded without uid in subscription metadata", {
             invoiceId: invoice.id, subId,
@@ -6566,55 +6696,109 @@ exports.deleteAccount = onCall(
       : (userData.tenantId ? [userData.tenantId] : []);
 
     // ---- 1. Stripe cleanup (best-effort; don't block deletion on it) ----
-    let stripeCleanup = { customerDeleted: false, subscriptionsCanceled: 0 };
-    if (stripeCustomerId && stripeSecret.value()) {
-      try {
-        const stripe = require("stripe")(stripeSecret.value());
-        // Cancel any billable subscription (broad status set — previous
-        // 'active' filter left trialing/past_due/unpaid/paused subs alive,
-        // meaning a deleted donor kept getting rebilled once trial ended).
-        // Skip terminal states (canceled/incomplete_expired) — Stripe would
-        // reject cancel() on them anyway.
-        const cancelableStatuses = ["active", "trialing", "past_due", "unpaid", "paused"];
-        const seenSubIds = new Set();
-        for (const status of cancelableStatuses) {
-          let subs;
+    // BUG #1 fix: Direct Charges migration moved customers per-tenant. The
+    // OLD flat `stripeCustomerId` is deprecated and NEVER populated for
+    // post-migration donors, so the previous cleanup was a no-op — recurring
+    // donation subscriptions kept billing the deleted donor forever, and
+    // saved cards + PII remained in each connected account (GDPR violation).
+    // Fix: iterate tenantState/{tid}, resolve connectAccountId from tenant
+    // doc, cancel subs + delete customer PER-account with {stripeAccount}.
+    // Legacy platform customer (if any) is still cleaned as a fallback.
+    let stripeCleanup = {
+      customerDeleted: false,
+      subscriptionsCanceled: 0,
+      connectAccountsCleaned: 0,
+      connectAccountsFailed: 0,
+    };
+    if (stripeSecret.value()) {
+      const stripe = require("stripe")(stripeSecret.value());
+
+      // (a) Per-tenant cleanup (Direct Charges path).
+      const cancelableStatuses = ["active", "trialing", "past_due", "unpaid", "paused"];
+      const tenantStateSnaps = await userRef.collection("tenantState").get().catch(() => null);
+      if (tenantStateSnaps) {
+        for (const stateDoc of tenantStateSnaps.docs) {
+          const tid = stateDoc.id;
+          const connectCustomerId = stateDoc.data()?.stripeConnectCustomerId || null;
+          if (!connectCustomerId) continue;
           try {
-            subs = await stripe.subscriptions.list({
-              customer: stripeCustomerId,
-              status,
-              limit: 100,
-            });
-          } catch (listErr) {
-            console.warn("deleteAccount: subscription list failed", {
-              uid, status, errorMessage: listErr?.message,
-            });
-            continue;
-          }
-          for (const sub of subs.data) {
-            if (seenSubIds.has(sub.id)) continue;
-            seenSubIds.add(sub.id);
-            try {
-              await stripe.subscriptions.cancel(sub.id);
-              stripeCleanup.subscriptionsCanceled += 1;
-            } catch (subErr) {
-              console.warn("deleteAccount: subscription cancel failed", {
-                uid, subscriptionId: sub.id, status, errorMessage: subErr?.message,
-              });
+            const tenantSnap = await db.collection("tenants").doc(tid).get();
+            const connectAcctId = tenantSnap.data()?.stripeConnectAccountId || null;
+            if (!connectAcctId) continue;
+            const acctOpts = { stripeAccount: connectAcctId };
+            const seenSubIds = new Set();
+            for (const status of cancelableStatuses) {
+              let subs;
+              try {
+                subs = await stripe.subscriptions.list({
+                  customer: connectCustomerId, status, limit: 100,
+                }, acctOpts);
+              } catch (listErr) {
+                console.warn("deleteAccount: connect subscription list failed", {
+                  uid, tid, connectAcctId, status, errorMessage: listErr?.message,
+                });
+                continue;
+              }
+              for (const sub of subs.data) {
+                if (seenSubIds.has(sub.id)) continue;
+                seenSubIds.add(sub.id);
+                try {
+                  await stripe.subscriptions.cancel(sub.id, {}, acctOpts);
+                  stripeCleanup.subscriptionsCanceled += 1;
+                } catch (subErr) {
+                  console.warn("deleteAccount: connect subscription cancel failed", {
+                    uid, tid, subscriptionId: sub.id, status, errorMessage: subErr?.message,
+                  });
+                }
+              }
             }
+            await stripe.customers.del(connectCustomerId, acctOpts);
+            stripeCleanup.connectAccountsCleaned += 1;
+          } catch (perTenantErr) {
+            stripeCleanup.connectAccountsFailed += 1;
+            console.error("deleteAccount: per-tenant cleanup failed", {
+              uid, tid, errorMessage: perTenantErr?.message,
+            });
           }
         }
-        // Delete customer (detaches all saved PMs)
-        await stripe.customers.del(stripeCustomerId);
-        stripeCleanup.customerDeleted = true;
-      } catch (stripeErr) {
-        // Stripe failures are logged but DO NOT block deletion. The platform
-        // operator can clean up the orphan Stripe customer manually if needed.
-        console.error("deleteAccount: Stripe cleanup failed", {
-          uid,
-          stripeCustomerId,
-          errorMessage: stripeErr?.message,
-        });
+      }
+
+      // (b) Legacy platform customer cleanup (pre-migration donors only).
+      if (stripeCustomerId) {
+        try {
+          const seenLegacySubIds = new Set();
+          for (const status of cancelableStatuses) {
+            let subs;
+            try {
+              subs = await stripe.subscriptions.list({
+                customer: stripeCustomerId, status, limit: 100,
+              });
+            } catch (listErr) {
+              console.warn("deleteAccount: legacy subscription list failed", {
+                uid, status, errorMessage: listErr?.message,
+              });
+              continue;
+            }
+            for (const sub of subs.data) {
+              if (seenLegacySubIds.has(sub.id)) continue;
+              seenLegacySubIds.add(sub.id);
+              try {
+                await stripe.subscriptions.cancel(sub.id);
+                stripeCleanup.subscriptionsCanceled += 1;
+              } catch (subErr) {
+                console.warn("deleteAccount: legacy subscription cancel failed", {
+                  uid, subscriptionId: sub.id, status, errorMessage: subErr?.message,
+                });
+              }
+            }
+          }
+          await stripe.customers.del(stripeCustomerId);
+          stripeCleanup.customerDeleted = true;
+        } catch (stripeErr) {
+          console.error("deleteAccount: legacy Stripe cleanup failed", {
+            uid, stripeCustomerId, errorMessage: stripeErr?.message,
+          });
+        }
       }
     }
 

@@ -93,16 +93,18 @@ class StripeService {
 
   // Wallet config builders (Apple Pay + Google Pay).
   //
-  // merchantCountryCode is the country of the PLATFORM Stripe account that
-  // creates the PaymentIntent (we use Stripe Connect destination_charge —
-  // the platform is the merchant of record for the wallet handshake, not the
-  // tenant). Hardcoded to 'US' since this app's platform Stripe account is
-  // US-incorporated; revisit if the platform ever moves jurisdictions.
+  // merchantCountryCode is the country of the CONNECTED account (Direct Charges
+  // model — the charge is created ON the connected account via Stripe-Account
+  // header). Both the platform (Ioel, DE→US registered) and the current
+  // tenant Jym Inc. (Chabad on Campus Mexico, US non-profit) live in US, so
+  // 'US' is correct for both. If a future tenant is in a non-US country,
+  // this needs to become dynamic — read from tenantState.tenantCountry or
+  // similar. For now, hardcoded is safe.
   //
-  // Apple Pay: needs the merchantIdentifier configured in iOS via
-  // Stripe.merchantIdentifier (see main.dart) AND the Apple Pay capability
-  // enabled in the iOS project. Without those, Stripe silently does not
-  // surface the Apple Pay button — passing this config is harmless.
+  // Apple Pay merchant ID (Stripe.merchantIdentifier from dart-define) is
+  // ALWAYS the platform's, not the connected's — per Stripe docs, that's
+  // the correct config for Connect Direct Charges. The charge routes to
+  // the connected account regardless.
   //
   // Google Pay: testEnv must be true on dev builds to hit Google's test PSP
   // sandbox; false on production. Stripe rejects mixing prod testEnv with
