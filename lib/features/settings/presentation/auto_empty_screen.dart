@@ -100,11 +100,11 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
     final profile = ref.watch(userProfileProvider).valueOrNull;
     final tenantState = ref.watch(tenantStateProvider).valueOrNull;
 
-    // Without a saved card the cron's `processPushkaAutoEmpty` hits the
-    // no_saved_card branch and silently advances the schedule each cycle —
-    // the user thinks they're set up but no money ever moves. Surface the
-    // requirement BEFORE save: inline banner + hard block in the save path.
-    final hasSavedCard = ((profile?['stripeDefaultPaymentMethodId'] as String?) ?? '')
+    // Direct Charges: default PM lives per-tenant now. Read from tenantState
+    // (`stripeConnectDefaultPaymentMethodId`), NOT the deprecated user-doc
+    // field. Without this, the auto-empty screen would think the user has
+    // no card and block the schedule save even after they added one.
+    final hasSavedCard = ((tenantState?['stripeConnectDefaultPaymentMethodId'] as String?) ?? '')
         .trim()
         .isNotEmpty;
     final needsCardWarning = _frequency != 'manual' && !hasSavedCard;

@@ -249,7 +249,17 @@
       "Bash(gcloud firestore *)",
       "Bash(firebase firestore:documents:count --project=pushka-app-ioel users)",
       "Bash(node -e \"require\\('./index.js'\\); console.log\\('OK'\\)\")",
-      "Bash(find \"$HOME/AppData/Local/Pub/Cache\" -type d -name \"flutter_stripe_web*\" 2>/dev/null | head -3)"
+      "Bash(find \"$HOME/AppData/Local/Pub/Cache\" -type d -name \"flutter_stripe_web*\" 2>/dev/null | head -3)",
+      "Bash(awk '/exports\\\\.getTenantConfig = onCall/,/^\\\\\\);/' functions/index.js)",
+      "Bash(firebase functions:log --only createPaymentIntent --project pushka-app-ioel --lines 60)",
+      "Bash(firebase functions:log --only createPaymentIntent --project pushka-app-ioel --lines 40)",
+      "Bash(firebase functions:secrets:set STRIPE_WEBHOOK_SECRET --data-file - --project pushka-app-ioel)",
+      "Bash(firebase functions:log --only listSavedCards --project pushka-app-ioel --lines 30)",
+      "Bash(firebase functions:log --project pushka-app-ioel --lines 100)",
+      "Bash(firebase functions:log --only listSavedCards --project pushka-app-ioel --lines 40)",
+      "Bash(firebase functions:log --only listSavedCards --project pushka-app-ioel --lines 15)",
+      "Bash(firebase functions:log --only listSavedCards --project pushka-app-ioel --lines 20)",
+      "Bash(firebase functions:log --only createSetupIntent --project pushka-app-ioel --lines 20)"
     ],
     "additionalDirectories": [
       "C:\\Users\\Ioel\\Downloads",

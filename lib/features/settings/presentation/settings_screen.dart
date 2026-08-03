@@ -937,8 +937,13 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   /// + tr.noSavedCards label when the user has no default PaymentMethod.
   Widget _buildSavedCardPreview(Map<String, dynamic>? profile, S tr) {
     final cs = Theme.of(context).colorScheme;
-    final brand = profile?['stripeDefaultPaymentMethodBrand'] as String?;
-    final last4 = profile?['stripeDefaultPaymentMethodLast4'] as String?;
+    // Direct Charges: read default PM from tenantState (per-tenant scope),
+    // NOT the deprecated user-doc fields. The user-doc profile is passed
+    // in for backwards signature compat but ignored — the new schema is
+    // `stripeConnectDefault*` on `users/{uid}/tenantState/{tid}`.
+    final tenantState = ref.watch(tenantStateProvider).valueOrNull;
+    final brand = tenantState?['stripeConnectDefaultPaymentMethodBrand'] as String?;
+    final last4 = tenantState?['stripeConnectDefaultPaymentMethodLast4'] as String?;
     final hasCard = brand != null && brand.isNotEmpty && last4 != null && last4.isNotEmpty;
 
     return InkWell(
