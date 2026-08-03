@@ -8,8 +8,17 @@ import '../domain/transaction.dart';
 
 class DonationChart extends StatefulWidget {
   final List<Transaction> transactions;
+  /// User's active currency — the chart aggregates only same-currency txs so
+  /// bars never mix, e.g., USD + MXN into a nonsensical total. Historical
+  /// transactions in other currencies are excluded from THIS chart and still
+  /// visible individually in the transaction list below.
+  final String activeCurrency;
 
-  const DonationChart({super.key, required this.transactions});
+  const DonationChart({
+    super.key,
+    required this.transactions,
+    required this.activeCurrency,
+  });
 
   @override
   State<DonationChart> createState() => _DonationChartState();
@@ -35,9 +44,12 @@ class _DonationChartState extends State<DonationChart> {
       months.add(_MonthBucket(month: dt.month, year: dt.year, label: label));
     }
 
+    final activeCode = widget.activeCurrency.toUpperCase();
     for (final t in widget.transactions) {
       if (t.type != TransactionType.tzedaka &&
           t.type != TransactionType.pushkaEmpty) { continue; }
+      // Only aggregate txs in the same currency — see class comment.
+      if (t.currencyCode.toUpperCase() != activeCode) continue;
       for (final b in months) {
         if (t.dateTime.month == b.month && t.dateTime.year == b.year) {
           b.total += t.amount;
@@ -106,7 +118,7 @@ class _DonationChartState extends State<DonationChart> {
                         if (group.x < 0 || group.x >= buckets.length) return null;
                         final b = buckets[group.x];
                         return BarTooltipItem(
-                          '${b.label}\n${formatMoney(b.total)}',
+                          '${b.label}\n${formatMoney(b.total)} ${widget.activeCurrency.toUpperCase()}',
                           const TextStyle(
                             color: Colors.white,
                             fontSize: 12,
