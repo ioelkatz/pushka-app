@@ -14,6 +14,15 @@ import 'app/app.dart';
 import 'app/app_initializer.dart';
 import 'core/hive_cache.dart';
 import 'core/deep_link_handler.dart';
+import 'features/tenant/data/tenant_repository.dart' show TenantSuspendedException;
+
+/// Returns true for exceptions that represent expected business flows —
+/// the app handles them via UX (redirect, snackbar) but they'd otherwise
+/// bubble up to the Crashlytics zone catcher as if they were crashes.
+/// Whitelist ONLY expected exceptions; anything else must still be logged.
+bool _isExpectedBusinessException(Object error) {
+  return error is TenantSuspendedException;
+}
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -86,8 +95,28 @@ Future<void> main() async {
   );
 
   if (!kIsWeb) {
-    FlutterError.onError = FirebaseCrashlytics.instance.recordFlutterFatalError;
+    FlutterError.onError = (details) {
+      // Expected business-flow exceptions surface as Flutter framework errors
+      // when they're thrown inside a widget build / stream — they're already
+      // handled by ref.listen(tenantConfigProvider) which redirects the user
+      // to /suspended. Reporting them to Crashlytics as fatal noise inflates
+      // the crash-free-user metric AND generates alert emails for what is
+      // actually a normal state transition.
+      if (_isExpectedBusinessException(details.exception)) {
+        debugPrint('Suppressing expected exception from Crashlytics: ${details.exception}');
+        return;
+      }
+      FirebaseCrashlytics.instance.recordFlutterFatalError(details);
+    };
     PlatformDispatcher.instance.onError = (error, stack) {
+      // Same policy for async uncaught errors. TenantSuspendedException from
+      // the tenantConfigProvider snapshot stream escapes to the zone through
+      // Riverpod's error propagation; the ref.listen handles the UX but the
+      // exception still reaches this hook.
+      if (_isExpectedBusinessException(error)) {
+        debugPrint('Suppressing expected async exception from Crashlytics: $error');
+        return true;
+      }
       FirebaseCrashlytics.instance.recordError(error, stack, fatal: true);
       return true;
     };
