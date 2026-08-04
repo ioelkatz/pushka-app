@@ -1,24 +1,30 @@
 ﻿import 'package:intl/intl.dart';
 
-/// Formats a monetary amount with thousand separators.
-/// Drops '.00' when the value is a whole number.
-/// Returns the symbol followed by "–" for NaN or infinite values.
-String formatMoney(double value, {String symbol = '\$'}) {
+/// Round-6 audit MEDIUM fix: NumberFormat was created without a locale
+/// which fell back to en-US thousand/decimal separators (`1,500.00`)
+/// regardless of the user's language. Now uses Intl.defaultLocale when set
+/// so ES/FR users see `1.500,00`, EN users `1,500.00`, and HE users get
+/// Hebrew digits when Intl.defaultLocale is 'he'. Callers can override via
+/// the [locale] param when they know the context (e.g. history screen
+/// wants the tx's original locale, not the user's active one).
+String formatMoney(double value, {String symbol = '\$', String? locale}) {
+  final l = locale ?? Intl.defaultLocale;
   if (value.isNaN || value.isInfinite) return '$symbol–';
   if (value == value.roundToDouble() && value.abs() < 1e15) {
-    return '$symbol${NumberFormat('#,##0').format(value.toInt())}';
+    return '$symbol${NumberFormat('#,##0', l).format(value.toInt())}';
   }
-  return '$symbol${NumberFormat('#,##0.00').format(value)}';
+  return '$symbol${NumberFormat('#,##0.00', l).format(value)}';
 }
 
 /// Same as [formatMoney] but without any currency symbol prefix.
 /// Returns "–" for NaN or infinite values.
-String formatAmount(double value) {
+String formatAmount(double value, {String? locale}) {
+  final l = locale ?? Intl.defaultLocale;
   if (value.isNaN || value.isInfinite) return '–';
   if (value == value.roundToDouble() && value.abs() < 1e15) {
-    return NumberFormat('#,##0').format(value.toInt());
+    return NumberFormat('#,##0', l).format(value.toInt());
   }
-  return NumberFormat('#,##0.00').format(value);
+  return NumberFormat('#,##0.00', l).format(value);
 }
 
 // Stripe zero-decimal currencies — amount is in whole units, NOT cents.

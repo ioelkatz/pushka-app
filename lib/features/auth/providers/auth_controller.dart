@@ -75,11 +75,27 @@ class AuthController {
       email: email,
       password: password,
     );
-    await credential.user?.updateDisplayName(name);
-    await _userRepository.createUserDocument(
-      user: credential.user,
-      displayName: name,
-    );
+    // Round-5 audit MEDIUM fix: if updateDisplayName or createUserDocument
+    // throws AFTER the Firebase Auth user was successfully created, we used
+    // to leave an orphaned Auth account. The next signup attempt with the
+    // same email would fail with 'email-already-in-use' and the user could
+    // never recover. Now we rollback the Auth user on failure.
+    try {
+      await credential.user?.updateDisplayName(name);
+      await _userRepository.createUserDocument(
+        user: credential.user,
+        displayName: name,
+      );
+    } catch (e, st) {
+      _recordNonFatal(e, st, op: 'signUp.postCreate', uid: credential.user?.uid);
+      // Best-effort delete of the orphaned Auth user so the email is
+      // re-usable. If this itself fails there's nothing more we can do —
+      // ops can clear the orphan via Auth admin console.
+      try {
+        await credential.user?.delete();
+      } catch (_) { /* orphan will need manual cleanup */ }
+      rethrow;
+    }
     // Send verification email — non-blocking for account creation, but we
     // MUST track whether it actually went out so the register screen doesn't
     // lie to the user (previously the try/catch was silent and the UI always

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:intl/intl.dart';
 import '../hive_cache.dart';
 
 const _supportedCodes = ['es', 'en', 'fr', 'he'];
@@ -9,6 +10,10 @@ final localeProvider = StateNotifierProvider<LocaleNotifier, Locale>((ref) {
   final initial = (saved != null && _supportedCodes.contains(saved))
       ? Locale(saved)
       : const Locale('es');
+  // Round-6 audit MEDIUM fix: set Intl.defaultLocale so NumberFormat +
+  // DateFormat (in format_utils and Reminder) render in the user's language
+  // WITHOUT threading a locale param through every callsite.
+  Intl.defaultLocale = initial.languageCode;
   return LocaleNotifier(initial);
 });
 
@@ -18,6 +23,7 @@ class LocaleNotifier extends StateNotifier<Locale> {
   void setLocale(Locale locale) {
     if (_supportedCodes.contains(locale.languageCode)) {
       state = locale;
+      Intl.defaultLocale = locale.languageCode;
       // Persist immediately so the choice survives app restarts
       HiveCache.instance.saveLanguage(locale.languageCode);
     }

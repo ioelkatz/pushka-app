@@ -6823,10 +6823,22 @@ exports.setUserBlocked = onCall(
 
     if (!uid) throw new HttpsError("invalid-argument", "uid requerido.");
 
-    // Tenant admins can only block users in their own tenant
+    // Tenant admins can only block users in their own tenant.
+    // Round-6 audit MEDIUM fix: check tenantIds[] (multi-tenant), not just
+    // scalar tenantId. A donor whose current active tenant is elsewhere
+    // but who is ALSO a member of this tenant used to slip past the guard
+    // — a tenant_admin from tenant A couldn't block their multi-tenant
+    // member if member.tenantId happened to point at tenant B.
     if (isTenantAdminRole) {
       const targetSnap = await db.collection("users").doc(uid).get();
-      if (!targetSnap.exists || targetSnap.data()?.tenantId !== callerClaims.tenantId) {
+      if (!targetSnap.exists) {
+        throw new HttpsError("permission-denied", "Solo puedes gestionar usuarios de tu organización.");
+      }
+      const targetData = targetSnap.data() || {};
+      const targetTenantIds = Array.isArray(targetData.tenantIds)
+        ? targetData.tenantIds
+        : (targetData.tenantId ? [targetData.tenantId] : []);
+      if (!targetTenantIds.includes(callerClaims.tenantId)) {
         throw new HttpsError("permission-denied", "Solo puedes gestionar usuarios de tu organización.");
       }
     }
@@ -6864,6 +6876,38 @@ exports.setUserBlocked = onCall(
     if (notes !== undefined) adminDataPatch.notes = notes;
 
     await db.collection("adminData").doc(uid).set(adminDataPatch, { merge: true });
+
+    // Round-6 audit MEDIUM fix: activity log entry so audit trail exists.
+    // Blocking a user cancels sessions + prevents access — security-relevant.
+    // Best-effort: log failure never fails the block itself.
+    try {
+      const targetSnap = await db.collection("users").doc(uid).get();
+      const targetData = targetSnap.exists ? (targetSnap.data() || {}) : {};
+      const targetTenantId = targetData.tenantId || null;
+      let targetTenantName = null;
+      if (targetTenantId) {
+        try {
+          const tSnap = await db.collection("tenants").doc(targetTenantId).get();
+          targetTenantName = tSnap.data()?.name || null;
+        } catch (_) { /* leave null */ }
+      }
+      await writeActivityLog({
+        type: isBlocked ? "user_blocked" : "user_unblocked",
+        tenantId: targetTenantId,
+        tenantName: targetTenantName,
+        severity: "warning",
+        requiresAction: false,
+        data: {
+          targetUid: uid,
+          targetEmail: targetData.email || null,
+          actorUid: callerUid,
+          actorEmail: callerRecord.email || null,
+          notes: notes ?? null,
+        },
+      });
+    } catch (logErr) {
+      console.warn("setUserBlocked: activityLog failed (non-fatal)", { uid, error: logErr?.message });
+    }
 
     return { success: true, uid, isBlocked };
   }

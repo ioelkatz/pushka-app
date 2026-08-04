@@ -633,12 +633,20 @@ class NotificationService {
               ? 'ios'
               : Platform.operatingSystem;
     }
-    await tokensRef.set({
+    // Round-5 audit MEDIUM fix: `createdAt` used to be overwritten on every
+    // cold-start sync (merge doesn't preserve — it replaces). Read the doc
+    // first and only set createdAt if it's missing (first write). lastUsedAt
+    // always advances so cleanupStaleFcmTokens can prune inactive devices.
+    final existing = await tokensRef.get();
+    final payload = <String, dynamic>{
       'token': token,
       'platform': platform,
-      'createdAt': FieldValue.serverTimestamp(),
       'lastUsedAt': FieldValue.serverTimestamp(),
-    }, SetOptions(merge: true));
+    };
+    if (!existing.exists || existing.data()?['createdAt'] == null) {
+      payload['createdAt'] = FieldValue.serverTimestamp();
+    }
+    await tokensRef.set(payload, SetOptions(merge: true));
   }
 
   /// Builds an [S] instance for the user's persisted language preference,
