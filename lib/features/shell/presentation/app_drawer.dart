@@ -60,12 +60,16 @@ class AppDrawer extends ConsumerWidget {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         mainAxisSize: MainAxisSize.min,
                         children: [
+                          // Round-5 audit CRITICAL fix: use colorScheme.onPrimary
+                          // (derived from primary luminance) instead of hardcoded
+                          // white so a tenant with a light primary color (yellow /
+                          // cream / cyan) still gets readable text.
                           Text(
                             tr.hello(displayName),
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              color: Colors.white,
+                            style: TextStyle(
+                              color: Theme.of(context).colorScheme.onPrimary,
                               fontSize: 18,
                               fontWeight: FontWeight.w700,
                             ),
@@ -74,7 +78,7 @@ class AppDrawer extends ConsumerWidget {
                           Text(
                             brandName,
                             style: TextStyle(
-                              color: Colors.white.withValues(alpha: 0.75),
+                              color: Theme.of(context).colorScheme.onPrimary.withValues(alpha: 0.75),
                               fontSize: 13,
                               fontWeight: FontWeight.w400,
                             ),
@@ -164,6 +168,8 @@ class AppDrawer extends ConsumerWidget {
     Color blue,
   ) {
     final selected = item == current;
+    // Round-5 audit fix: readable foreground based on primary luminance.
+    final onPrimary = Theme.of(context).colorScheme.onPrimary;
 
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
@@ -174,13 +180,13 @@ class AppDrawer extends ConsumerWidget {
       child: ListTile(
         leading: Icon(
           icon,
-          color: selected ? Colors.white : Theme.of(context).colorScheme.onSurface,
+          color: selected ? onPrimary : Theme.of(context).colorScheme.onSurface,
           size: 24,
         ),
         title: Text(
           title,
           style: TextStyle(
-            color: selected ? Colors.white : Theme.of(context).colorScheme.onSurface,
+            color: selected ? onPrimary : Theme.of(context).colorScheme.onSurface,
             fontSize: 16,
             fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
           ),

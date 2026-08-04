@@ -1798,8 +1798,20 @@ exports.createDonationSubscription = onCall(
     // safeTenantCommissionRate from the tenant doc — ctx.userData is the
     // caller's user doc, but commissionRate lives on the tenant doc.
     const tenantDataForCommission = await db.collection("tenants").doc(tenantId).get();
+    const tenantDataOnce = tenantDataForCommission.data() || {};
+    // Round-6 audit HIGH fix: refuse recurring donations for suspended
+    // tenants. createPaymentIntent has this guard; createDonationSubscription
+    // was missing it — a donor could sub $18/month to a tenant that had
+    // its Connect account revoked, resulting in immediate payment failures
+    // and confused donor charges.
+    if (tenantDataOnce.status === "suspended") {
+      throw new HttpsError(
+        "failed-precondition",
+        "Esta organización está temporalmente suspendida. No se pueden crear donaciones recurrentes.",
+      );
+    }
     const tenantCommissionRate = safeTenantCommissionRate(
-      tenantDataForCommission.data()?.commissionRate, tenantId);
+      tenantDataOnce.commissionRate, tenantId);
 
     const amount = Number(request.data?.amount || 0);
     const currency = validateCurrency(request.data?.currency || "usd");
@@ -4020,17 +4032,20 @@ exports.stripeWebhook = onRequest(
 
           // Fire-and-forget email to tenant admin + super_admin.
           try {
-            const tenantName = disconnectedTenantData.name || disconnectedTenantData.appName || disconnectedTenantId;
+            // Round-6 audit fix: escape all tenant-controlled fields before
+            // interpolating into HTML (tenant admin controls appName/name).
+            const rawTenantName = disconnectedTenantData.name || disconnectedTenantData.appName || disconnectedTenantId;
+            const tenantName = _escapeHtmlForEmail(rawTenantName);
             const adminEmail = disconnectedTenantData.adminEmail || null;
             const whenIso = new Date().toISOString();
-            const subject = `[Pushka] Stripe Connect DESCONECTADO para ${tenantName}`;
+            const subject = `[Pushka] Stripe Connect DESCONECTADO para ${rawTenantName}`;
             const html = `
               <p style="font-family:sans-serif;font-size:15px;line-height:1.5">
                 Se revocó el acceso de Pushka a la cuenta de Stripe de <strong>${tenantName}</strong>. Las donaciones nuevas <b>van a fallar</b> hasta que se reconecte una cuenta.
               </p>
               <table style="font-family:sans-serif;font-size:14px;border-collapse:collapse;margin-top:12px">
-                <tr><td style="padding:4px 12px;color:#64748b">Tenant:</td><td style="padding:4px 12px"><b>${tenantName}</b> (<code>${disconnectedTenantId}</code>)</td></tr>
-                <tr><td style="padding:4px 12px;color:#64748b">Cuenta desconectada:</td><td style="padding:4px 12px;font-family:monospace">${accountId}</td></tr>
+                <tr><td style="padding:4px 12px;color:#64748b">Tenant:</td><td style="padding:4px 12px"><b>${tenantName}</b> (<code>${_escapeHtmlForEmail(disconnectedTenantId)}</code>)</td></tr>
+                <tr><td style="padding:4px 12px;color:#64748b">Cuenta desconectada:</td><td style="padding:4px 12px;font-family:monospace">${_escapeHtmlForEmail(accountId)}</td></tr>
                 <tr><td style="padding:4px 12px;color:#64748b">Fecha (UTC):</td><td style="padding:4px 12px">${whenIso}</td></tr>
               </table>
               <p style="margin-top:20px;padding:12px 16px;background:#fef2f2;border-left:4px solid #dc2626;color:#991b1b;font-family:sans-serif;font-size:14px;line-height:1.5">
@@ -7067,6 +7082,72 @@ exports.deleteAccount = onCall(
       });
     }
 
+    // ---- 4.1. Round-6 audit HIGH fix: cleanup PII in per-tenant team docs ----
+    // tenants/{tid}/team/{uid} carries email + displayName + role. Not
+    // touched by the tenantIds loop above. Iterates userData.tenantIds so
+    // we hit every tenant the user was a member of.
+    const userTenantIds = Array.isArray(userData?.tenantIds)
+      ? userData.tenantIds.filter((t) => typeof t === "string" && t.length > 0)
+      : (userData?.tenantId ? [userData.tenantId] : []);
+    for (const tid of userTenantIds) {
+      try {
+        await db.collection("tenants").doc(tid)
+          .collection("team").doc(uid).delete();
+      } catch (teamErr) {
+        console.warn("deleteAccount: team doc cleanup failed (non-fatal)", {
+          uid, tenantId: tid, error: teamErr?.message,
+        });
+      }
+    }
+
+    // ---- 4.2. Round-6 audit HIGH fix: cleanup _pendingTenantAdmins by email ----
+    // If the user was invited to become tenant_admin under an email that
+    // matches theirs, the pending doc has the email. Delete so PII doesn't
+    // outlive the account.
+    const userEmailLower = String(userData?.email || "").toLowerCase().trim();
+    if (userEmailLower) {
+      try {
+        await db.collection("_pendingTenantAdmins").doc(userEmailLower).delete();
+      } catch (pendErr) {
+        // Doc likely didn't exist — deleting a non-existent doc is a no-op
+        // anyway; catch is only for defense.
+        console.warn("deleteAccount: pendingTenantAdmins cleanup failed", {
+          uid, email: userEmailLower, error: pendErr?.message,
+        });
+      }
+    }
+
+    // ---- 4.3. Round-6 audit MEDIUM fix: cleanup _monthlyActive entries ----
+    // Best-effort scan of docs with prefix `{monthKey}_{tenantId}_{uid}` for
+    // this user across the last 6 months (older buckets get cleaned by the
+    // scheduled resetMonthlyActiveUsers CF over time).
+    try {
+      const now = new Date();
+      const monthsToCheck = [];
+      for (let i = 0; i < 6; i++) {
+        const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - i, 1));
+        monthsToCheck.push(`${d.getUTCFullYear()}_${String(d.getUTCMonth() + 1).padStart(2, "0")}`);
+      }
+      const monthlyBatch = db.batch();
+      let monthlyOps = 0;
+      for (const monthKey of monthsToCheck) {
+        for (const tid of userTenantIds) {
+          const docId = `${monthKey}_${tid}_${uid}`;
+          monthlyBatch.delete(db.collection("_monthlyActive").doc(docId));
+          monthlyOps += 1;
+          if (monthlyOps >= 400) {
+            await monthlyBatch.commit();
+            monthlyOps = 0;
+          }
+        }
+      }
+      if (monthlyOps > 0) await monthlyBatch.commit();
+    } catch (monErr) {
+      console.warn("deleteAccount: _monthlyActive cleanup failed (non-fatal)", {
+        uid, error: monErr?.message,
+      });
+    }
+
     // ---- 5. Tombstone (compliance retention) ----
     // Store the BARE MINIMUM: uid + deletion timestamp + reason. NO PII.
     // Re-registration with the same email is allowed but tombstone persists
@@ -7585,7 +7666,7 @@ exports.switchTenant = onCall(
 // remaining tenant (or clears tenantId if none remain).
 // ---------------------------------------------------------------------------
 exports.leaveTenant = onCall(
-  { enforceAppCheck: false },
+  { secrets: [stripeSecret], enforceAppCheck: false },
   async (request) => {
     if (!request.auth?.uid) throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
     await enforceRateLimit(request.auth.uid, "leaveTenant", 10, 3600);
@@ -7594,7 +7675,53 @@ exports.leaveTenant = onCall(
     const tenantId = String(request.data?.tenantId || "").trim();
     if (!tenantId) throw new HttpsError("invalid-argument", "tenantId requerido.");
 
+    // Round-6 audit CRITICAL fix: cancel donor's active recurring
+    // subscriptions in this tenant's Connect account BEFORE leaving. Without
+    // this, Stripe keeps charging the donor monthly for a tenant they can
+    // no longer see or cancel from the app (listDonationSubscriptions
+    // filters by user's tenantIds). Best-effort: log failures but proceed
+    // with leave so a Stripe outage doesn't block the user from leaving.
+    try {
+      const tenantSnap = await db.collection("tenants").doc(tenantId).get();
+      const tenantData = tenantSnap.exists ? (tenantSnap.data() ?? {}) : {};
+      const connectAccountId = tenantData.stripeConnectAccountId;
+      if (connectAccountId && tenantData.stripeConnectStatus === "active" && stripeSecret.value()) {
+        const stateSnap = await db.collection("users").doc(uid)
+          .collection("tenantState").doc(tenantId).get();
+        const customerId = String(stateSnap.data()?.stripeConnectCustomerId || "").trim();
+        if (customerId) {
+          const stripe = require("stripe")(stripeSecret.value(), { timeout: 15000 });
+          const opts = { stripeAccount: connectAccountId };
+          const subs = await stripe.subscriptions.list({
+            customer: customerId, status: "all", limit: 100,
+          }, opts).catch((err) => {
+            console.warn("leaveTenant: stripe.subscriptions.list failed", {
+              uid, tenantId, error: String(err?.message || err),
+            });
+            return { data: [] };
+          });
+          const ACTIVE_STATUSES = new Set(["active", "trialing", "past_due", "incomplete"]);
+          for (const sub of (subs.data || [])) {
+            if (sub.metadata?.purpose !== "donation_recurring") continue;
+            if (!ACTIVE_STATUSES.has(sub.status)) continue;
+            try {
+              await stripe.subscriptions.cancel(sub.id, {}, opts);
+            } catch (cancelErr) {
+              console.warn("leaveTenant: sub cancel failed", {
+                uid, tenantId, subId: sub.id, error: String(cancelErr?.message || cancelErr),
+              });
+            }
+          }
+        }
+      }
+    } catch (subCleanupErr) {
+      console.warn("leaveTenant: sub cleanup wrapper failed (non-fatal)", {
+        uid, tenantId, error: String(subCleanupErr?.message || subCleanupErr),
+      });
+    }
+
     const userRef = db.collection("users").doc(uid);
+    const stateRef = userRef.collection("tenantState").doc(tenantId);
 
     await db.runTransaction(async (tx) => {
       const userSnap = await tx.get(userRef);
@@ -7619,6 +7746,11 @@ exports.leaveTenant = onCall(
         }
       }
       tx.set(userRef, patch, { merge: true });
+
+      // Round-6 audit HIGH fix: delete the tenantState doc so it doesn't
+      // appear as a ghost in the account switcher. Without this the user
+      // sees the left tenant in listings but can't select it.
+      tx.delete(stateRef);
 
       // Decrement totalUsers only if user was actually a member
       if (wasMember) {
@@ -8011,6 +8143,12 @@ exports.backfillTenantSlugs = onCall(
     const conflicts = [];
     const skippedNoSlug = [];
 
+    // Round-5 audit HIGH fix: normalizeSlug throws HttpsError for invalid
+    // slugs (<3, >30, empty after normalization). Previously that abort the
+    // WHOLE backfill on a single legacy tenant with a weird slug. Now catch
+    // per-tenant and collect the failures so ops sees them without losing
+    // the rest of the sweep.
+    const invalidSlugs = [];
     for (const tenantDoc of tenantsSnap.docs) {
       scanned += 1;
       const tenantId = tenantDoc.id;
@@ -8019,7 +8157,13 @@ exports.backfillTenantSlugs = onCall(
         skippedNoSlug.push(tenantId);
         continue;
       }
-      const slug = normalizeSlug(slugRaw);
+      let slug;
+      try {
+        slug = normalizeSlug(slugRaw);
+      } catch (slugErr) {
+        invalidSlugs.push({ tenantId, slugRaw, error: String(slugErr?.message || slugErr) });
+        continue;
+      }
       const slugRef = db.collection("_tenantSlugs").doc(slug);
       const existing = await slugRef.get();
       if (existing.exists) {
@@ -8047,13 +8191,14 @@ exports.backfillTenantSlugs = onCall(
       skippedAlreadyExists: skipped,
       skippedNoSlug,
       conflicts,
+      invalidSlugs, // Round-5 fix: legacy tenants with malformed slugs
       previousRun, // null on first run; otherwise prior completedAt/created
     };
     console.info("backfillTenantSlugs: completed", summary);
-    // Stamp sentinel — only if there were no conflicts (a conflicting slug
-    // means the backfill is incomplete; keep the prior sentinel state so
-    // ops know reconciliation is still pending).
-    if (conflicts.length === 0) {
+    // Stamp sentinel — only if there were no conflicts AND no invalid slugs
+    // (both mean the backfill is incomplete; keep the prior sentinel state
+    // so ops know reconciliation is still pending).
+    if (conflicts.length === 0 && invalidSlugs.length === 0) {
       await sentinelRef.set({
         completedAt: admin.firestore.FieldValue.serverTimestamp(),
         scanned,
@@ -9321,9 +9466,9 @@ exports.handleStripeConnectOAuth = onRequest(
             <tr><td style="padding:4px 12px;color:#64748b">Tenant:</td><td style="padding:4px 12px"><b>${tenantName}</b> (<code>${tenantId}</code>)</td></tr>
             ${priorRow}
             <tr><td style="padding:4px 12px;color:#64748b">Cuenta nueva:</td><td style="padding:4px 12px;font-family:monospace">${maskedNewAcct}</td></tr>
-            <tr><td style="padding:4px 12px;color:#64748b">Nombre comercial:</td><td style="padding:4px 12px"><b>${businessName || "(no disponible)"}</b></td></tr>
-            <tr><td style="padding:4px 12px;color:#64748b">País:</td><td style="padding:4px 12px">${acctCountry || "(no disponible)"}</td></tr>
-            <tr><td style="padding:4px 12px;color:#64748b">Email Stripe:</td><td style="padding:4px 12px">${acctEmail || "(no disponible)"}</td></tr>
+            <tr><td style="padding:4px 12px;color:#64748b">Nombre comercial:</td><td style="padding:4px 12px"><b>${_escapeHtmlForEmail(businessName || "(no disponible)")}</b></td></tr>
+            <tr><td style="padding:4px 12px;color:#64748b">País:</td><td style="padding:4px 12px">${_escapeHtmlForEmail(acctCountry || "(no disponible)")}</td></tr>
+            <tr><td style="padding:4px 12px;color:#64748b">Email Stripe:</td><td style="padding:4px 12px">${_escapeHtmlForEmail(acctEmail || "(no disponible)")}</td></tr>
             <tr><td style="padding:4px 12px;color:#64748b">Estado KYC:</td><td style="padding:4px 12px">charges_enabled=${chargesEnabled}, payouts_enabled=${payoutsEnabled}</td></tr>
             <tr><td style="padding:4px 12px;color:#64748b">Iniciado por (UID):</td><td style="padding:4px 12px;font-family:monospace">${initiatorUid || "(desconocido)"}</td></tr>
             <tr><td style="padding:4px 12px;color:#64748b">Fecha (UTC):</td><td style="padding:4px 12px">${whenIso}</td></tr>
@@ -9471,7 +9616,7 @@ exports.confirmStripeConnectAccount = onCall(
           <tr><td style="padding:4px 12px;color:#64748b">Tenant:</td><td style="padding:4px 12px"><b>${tenantName}</b> (<code>${tenantId}</code>)</td></tr>
           ${priorRow}
           <tr><td style="padding:4px 12px;color:#64748b">Cuenta activa:</td><td style="padding:4px 12px;font-family:monospace">${maskedNewAcct}</td></tr>
-          <tr><td style="padding:4px 12px;color:#64748b">Nombre comercial:</td><td style="padding:4px 12px"><b>${pending.businessName || "(no disponible)"}</b></td></tr>
+          <tr><td style="padding:4px 12px;color:#64748b">Nombre comercial:</td><td style="padding:4px 12px"><b>${_escapeHtmlForEmail(pending.businessName || "(no disponible)")}</b></td></tr>
           <tr><td style="padding:4px 12px;color:#64748b">Estado inicial:</td><td style="padding:4px 12px">${initialStatus}</td></tr>
           <tr><td style="padding:4px 12px;color:#64748b">Confirmado por (UID):</td><td style="padding:4px 12px;font-family:monospace">${callerUid}</td></tr>
           <tr><td style="padding:4px 12px;color:#64748b">Fecha (UTC):</td><td style="padding:4px 12px">${whenIso}</td></tr>
@@ -10032,6 +10177,52 @@ exports.deleteTenant = onCall(
         result.stripeCustomerDeleted = true;
       } catch (err) {
         result.warnings.push(`stripe customer delete failed: ${err?.message ?? err}`);
+      }
+    }
+
+    // 2.5. Round-6 audit CRITICAL fix: cancel ALL donor recurring
+    // subscriptions on the tenant's Connect account BEFORE dropping
+    // memberships. Without this, donors keep getting charged monthly for a
+    // tenant that no longer exists in the app — they have no UI path to
+    // cancel (listDonationSubscriptions filters by user's tenantIds, which
+    // won't include this one post-delete).
+    const stripeConnectAccountId = tenantData.stripeConnectAccountId || null;
+    if (stripeConnectAccountId && tenantData.stripeConnectStatus === "active" && stripeSecret.value()) {
+      try {
+        const stripe = require("stripe")(stripeSecret.value(), { timeout: 30000 });
+        const opts = { stripeAccount: stripeConnectAccountId };
+        const ACTIVE_STATUSES = new Set(["active", "trialing", "past_due", "incomplete"]);
+        // Paginated list — a large tenant could have thousands of active subs.
+        let startingAfter = null;
+        let donorSubsCanceled = 0;
+        let donorSubCancelFailures = 0;
+        while (true) {
+          const listArgs = { status: "all", limit: 100 };
+          if (startingAfter) listArgs.starting_after = startingAfter;
+          const subs = await stripe.subscriptions.list(listArgs, opts);
+          if (!subs.data || subs.data.length === 0) break;
+          for (const sub of subs.data) {
+            if (sub.metadata?.purpose !== "donation_recurring") continue;
+            if (!ACTIVE_STATUSES.has(sub.status)) continue;
+            try {
+              await stripe.subscriptions.cancel(sub.id, {}, opts);
+              donorSubsCanceled += 1;
+            } catch (cancelErr) {
+              donorSubCancelFailures += 1;
+              console.warn("deleteTenant: donor sub cancel failed", {
+                tenantId, subId: sub.id, error: String(cancelErr?.message || cancelErr),
+              });
+            }
+          }
+          if (!subs.has_more) break;
+          startingAfter = subs.data[subs.data.length - 1].id;
+        }
+        result.donorSubsCanceled = donorSubsCanceled;
+        if (donorSubCancelFailures > 0) {
+          result.warnings.push(`donor sub cancels failed: ${donorSubCancelFailures}`);
+        }
+      } catch (err) {
+        result.warnings.push(`donor subs cleanup failed: ${err?.message ?? err}`);
       }
     }
 
@@ -11842,6 +12033,15 @@ exports.processDueReminders = onSchedule(
 
     if (snap.empty) return;
 
+    // Round-5 audit HIGH fix: staleness cap. If nextTriggerAt is more than
+    // STALENESS_CAP_MIN in the past, skip the fire — sending a "recuérdame"
+    // notification hours late is worse than missing it. Common trigger:
+    // Cloud Scheduler outage, quota exhaustion, or hitting the 500-doc
+    // cap for many ticks. The reminder still advances to its next slot
+    // in the tx below.
+    const STALENESS_CAP_MIN = 30;
+    const staleThresholdMs = now.toMillis() - (STALENESS_CAP_MIN * 60 * 1000);
+
     // Group docs by parent uid so we do ONE getUserTokens per uid (cheap Firestore read).
     const byUid = new Map();
     for (const doc of snap.docs) {
@@ -11850,6 +12050,22 @@ exports.processDueReminders = onSchedule(
       const uid = parts[1];
       if (!byUid.has(uid)) byUid.set(uid, []);
       byUid.get(uid).push(doc);
+    }
+
+    // Round-5 audit fix: batch-load user profiles for each uid ONCE so we
+    // don't do N Firestore reads for language + tenant appName inside the
+    // inner loop. Skipped uids from block-check via getUserTokens still
+    // avoid a second read since we cache here first.
+    const userProfileCache = new Map();
+    async function _getCachedUserProfile(uid) {
+      if (userProfileCache.has(uid)) return userProfileCache.get(uid);
+      let data = {};
+      try {
+        const s = await db.collection("users").doc(uid).get();
+        data = s.exists ? (s.data() || {}) : {};
+      } catch (_) { /* fall back to empty */ }
+      userProfileCache.set(uid, data);
+      return data;
     }
 
     let fired = 0;
@@ -11897,17 +12113,46 @@ exports.processDueReminders = onSchedule(
           continue;
         }
 
+        // Round-5 audit HIGH fix: skip retroactive fires. If we're advancing
+        // past a trigger point that was already >30 min in the past, don't
+        // send the push — the "recuerdame antes" moment is gone. We STILL
+        // advance nextTriggerAt (transaction above) so the next slot fires
+        // normally; we just skip the actual FCM send this tick.
+        const wasStale = data.nextTriggerAt &&
+          typeof data.nextTriggerAt.toMillis === "function" &&
+          data.nextTriggerAt.toMillis() < staleThresholdMs;
+        if (wasStale) {
+          console.warn("processDueReminders: skip_stale", {
+            uid, reminderId: doc.id,
+            ageMinutes: Math.round((now.toMillis() - data.nextTriggerAt.toMillis()) / 60000),
+          });
+          skipped += 1;
+          continue;
+        }
+
         // Now fire the push (best-effort; if it fails we don't retry).
-        const title = String(data.title || "Pushka").slice(0, 100);
+        // Round-5 audit HIGH fix: title fallback should be the tenant's
+        // appName (branding), not the hardcoded "Pushka". User-set title
+        // still wins when present (data.title). We use the user's ACTIVE
+        // tenant per tenantId in the user doc; multi-tenant users get the
+        // brand they last looked at.
+        const userProfile = await _getCachedUserProfile(uid);
+        let tenantAppName = "Pushka";
+        const activeTenantId = String(userProfile.tenantId || "").trim();
+        if (activeTenantId) {
+          try {
+            const tenantSnap = await db.collection("tenants").doc(activeTenantId).get();
+            if (tenantSnap.exists) {
+              const td = tenantSnap.data() || {};
+              tenantAppName = String(td.appName || td.name || "Pushka");
+            }
+          } catch (_) { /* keep default */ }
+        }
+        const title = String(data.title || tenantAppName).slice(0, 100);
         // Body: localized default in the user's language. Falls back to
-        // Spanish if the profile has no language set. Previously the body
-        // was just "🕎" which read as a bug to users receiving the push.
-        let userLang = "es";
-        try {
-          const userSnap = await db.collection("users").doc(uid).get();
-          const raw = String(userSnap.data()?.language || "").trim().toLowerCase();
-          if (["es", "en", "fr", "he"].includes(raw)) userLang = raw;
-        } catch (_) { /* stay with default */ }
+        // Spanish if the profile has no language set.
+        const raw = String(userProfile.language || "").trim().toLowerCase();
+        const userLang = ["es", "en", "fr", "he"].includes(raw) ? raw : "es";
         const bodyByLang = {
           es: "Es momento de dar tzedaka 🕎",
           en: "It's time to give tzedaka 🕎",

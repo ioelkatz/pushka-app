@@ -13,23 +13,33 @@ class AppTheme {
   /// admin used to be able to set a second color, but no widget consumed
   /// `colorScheme.secondary` visually — donors saw no effect. Re-introduce
   /// this when we actually wire up secondary accents (e.g. FAB, chips).
+  /// Round-5 audit CRITICAL fix: pick a readable foreground color for the
+  /// tenant's primary. Hardcoding `Colors.white` used to leave labels
+  /// invisible when the tenant admin picked a light hue (yellow, cream,
+  /// cyan, lime — all pass the hex regex). Threshold 0.5 matches the
+  /// Material 3 heuristic used by ColorScheme.fromSeed().
+  static Color _onColorFor(Color c) =>
+      c.computeLuminance() > 0.5 ? const Color(0xFF0F172A) : Colors.white;
+
   static ({ThemeData light, ThemeData dark}) fromTenantColors({
     Color? primaryColor,
   }) {
     final effectivePrimary = primaryColor ?? AppTokens.primaryBlue;
     final effectiveDark = Color.lerp(effectivePrimary, Colors.white, 0.3) ?? AppTokens.skyBlue;
+    final onLightPrimary = _onColorFor(effectivePrimary);
+    final onDarkPrimary  = _onColorFor(effectiveDark);
 
     final lightBase = light();
     final darkBase = dark();
 
     final lightCS = lightBase.colorScheme.copyWith(
       primary: effectivePrimary,
-      onPrimary: Colors.white,
+      onPrimary: onLightPrimary,
     );
 
     final darkCS = darkBase.colorScheme.copyWith(
       primary: effectiveDark,
-      onPrimary: Colors.white,
+      onPrimary: onDarkPrimary,
     );
 
     return (
@@ -38,7 +48,7 @@ class AppTheme {
         elevatedButtonTheme: ElevatedButtonThemeData(
           style: ElevatedButton.styleFrom(
             backgroundColor: effectivePrimary,
-            foregroundColor: Colors.white,
+            foregroundColor: onLightPrimary,
             minimumSize: const Size(0, AppTokens.buttonHeight),
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(AppTokens.radiusMd),

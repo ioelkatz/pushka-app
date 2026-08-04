@@ -1772,7 +1772,14 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       // for compliance retention, then deletes the Firebase Auth user. The
       // client's `currentUser?.delete()` would only kill the Auth record,
       // leaving Firestore + Stripe data orphaned indefinitely.
-      final callable = FirebaseFunctions.instance.httpsCallable('deleteAccount');
+      // Round-5 audit HIGH fix: client timeout must exceed the server's
+      // timeoutSeconds (300s) so a user in ~15 tenants with active recurring
+      // subs doesn't hit the client's 60s default while the server continues
+      // to completion. Extended to 330s with margin.
+      final callable = FirebaseFunctions.instance.httpsCallable(
+        'deleteAccount',
+        options: HttpsCallableOptions(timeout: const Duration(seconds: 330)),
+      );
       await callable.call();
       // Auth user is gone — GoRouter refresh stream detects sign-out and
       // redirects to /login. Force-reload to clear any in-memory Riverpod
