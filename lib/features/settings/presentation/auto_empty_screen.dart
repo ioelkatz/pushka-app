@@ -945,31 +945,38 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
   }
 
   DateTime _computeNextRunAt() {
-    final now = DateTime.now().toUtc();
+    // Round-6 audit HIGH fix: compute the next run at 08:00 LOCAL time of
+    // the device, then convert to UTC for Firestore. Previously we used
+    // DateTime.utc(...) directly with hour=8, which meant a Mexico user
+    // (UTC-6) had auto-empty fire at 02:00 AM local and an Israel user
+    // (UTC+3) had it fire at 11:00 AM. "08:00 local" is what the config
+    // screen implies to the donor.
+    final nowLocal = DateTime.now();
+    final nowUtc = nowLocal.toUtc();
     if (_frequency == 'weekly') {
-      var next = DateTime.utc(now.year, now.month, now.day, 8, 0, 0);
-      while (next.weekday != _weekday || !next.isAfter(now)) {
-        next = next.add(const Duration(days: 1));
+      var nextLocal = DateTime(nowLocal.year, nowLocal.month, nowLocal.day, 8, 0, 0);
+      while (nextLocal.weekday != _weekday || !nextLocal.toUtc().isAfter(nowUtc)) {
+        nextLocal = nextLocal.add(const Duration(days: 1));
       }
-      return next;
+      return nextLocal.toUtc();
     }
     if (_frequency == 'monthly') {
       int clampDay(int year, int month) {
-        final maxDay = DateTime.utc(year, month + 1, 0).day;
+        final maxDay = DateTime(year, month + 1, 0).day;
         return _dayOfMonth.clamp(1, maxDay);
       }
-      var next = DateTime.utc(now.year, now.month, clampDay(now.year, now.month), 8, 0, 0);
-      if (!next.isAfter(now)) {
-        final nm = now.month == 12 ? 1 : now.month + 1;
-        final ny = now.month == 12 ? now.year + 1 : now.year;
-        next = DateTime.utc(ny, nm, clampDay(ny, nm), 8, 0, 0);
+      var nextLocal = DateTime(nowLocal.year, nowLocal.month, clampDay(nowLocal.year, nowLocal.month), 8, 0, 0);
+      if (!nextLocal.toUtc().isAfter(nowUtc)) {
+        final nm = nowLocal.month == 12 ? 1 : nowLocal.month + 1;
+        final ny = nowLocal.month == 12 ? nowLocal.year + 1 : nowLocal.year;
+        nextLocal = DateTime(ny, nm, clampDay(ny, nm), 8, 0, 0);
       }
-      return next;
+      return nextLocal.toUtc();
     }
     if (_frequency == 'erev_rosh_chodesh') {
-      return _computeNextErevRoshChodesh(now);
+      return _computeNextErevRoshChodesh(nowUtc);
     }
-    return now.add(const Duration(days: 30));
+    return nowUtc.add(const Duration(days: 30));
   }
 
   DateTime _computeNextErevRoshChodesh(DateTime now) {

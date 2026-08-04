@@ -43,6 +43,17 @@ service cloud.firestore {
           value == 'erev_rosh_chodesh';
     }
 
+    // Round-6 audit MEDIUM fix: whitelist matches functions/index.js
+    // CURRENCY_MINIMUMS keys (uppercase — client always sends uppercase).
+    // Without this any 3-char string passed (e.g. 'XYZ' or an emoji) and
+    // downstream admin FX aggregations silently misconverted. MUST stay
+    // in sync with SUPPORTED_CURRENCIES on the server.
+    function validCurrencyCode(code) {
+      return code == 'USD' || code == 'EUR' || code == 'GBP' || code == 'CAD' ||
+          code == 'ILS' || code == 'MXN' || code == 'BRL' || code == 'ARS' ||
+          code == 'CLP' || code == 'COP';
+    }
+
     // tenantId on users/{uid} must reference an existing tenants/{id} document.
     // Without this, any user could self-assign an arbitrary tenantId string
     // and appear as a member of that tenant in `where(tenantId == X)` queries.
@@ -290,7 +301,7 @@ service cloud.firestore {
               request.resource.data.currencyCountry is string) &&
           (!('currencyCode' in request.resource.data) ||
               (request.resource.data.currencyCode is string &&
-                  request.resource.data.currencyCode.size() == 3)) &&
+                  validCurrencyCode(request.resource.data.currencyCode))) &&
           (!('autoEmptyFrequency' in request.resource.data) ||
               (request.resource.data.autoEmptyFrequency is string &&
                   validFrequency(request.resource.data.autoEmptyFrequency))) &&
@@ -322,9 +333,21 @@ service cloud.firestore {
               (request.resource.data.timezone is string &&
                   request.resource.data.timezone.size() > 0 &&
                   request.resource.data.timezone.size() <= 60)) &&
+          // Round-6 audit MEDIUM fix: email must match the incoming Auth
+          // token email + basic format check. Previously any string was
+          // accepted, letting a client rewrite users/{uid}.email to an
+          // arbitrary value and impersonate another user across features
+          // that key off email (e.g. pending tenant admin invites, weekly
+          // summary "from" field). Immutable-once-set: if the doc already
+          // has an email, client can't change it — only the CF onUserDocCreated
+          // (Admin SDK, bypasses rules) can rewrite.
           (!('email' in request.resource.data) ||
               (request.resource.data.email is string &&
-                  request.resource.data.email.size() <= 254)) &&
+                  request.resource.data.email.size() <= 254 &&
+                  request.resource.data.email.matches('.+@.+\\..+') &&
+                  (resource == null ||
+                      !('email' in resource.data) ||
+                      resource.data.email == request.resource.data.email))) &&
           // displayName: cap length AND require at least one non-whitespace
           // char. A name of "   " passes the size check but renders as a blank
           // chip across the UI (donor lists, top-donors leaderboard, history
@@ -391,12 +414,21 @@ service cloud.firestore {
           // malicious client from inflating their own donation history with
           // fake card transactions, and from creating a phantom record
           // alongside the legitimate webhook-written one.
+          // Round-6 audit HIGH fix: positive whitelist instead of blacklist.
+          // The blacklist (paymentMethod != 'card' && != 'auto_card' && != 'auto')
+          // let anything else through — a client with a bug (unknown enum
+          // value) or a malicious payload with 'unknown_method' would pass,
+          // and downstream aggregations that fall back to 'card' would
+          // silently inflate card revenue. The card/auto/auto_card methods
+          // are ONLY written by the Stripe webhook via Admin SDK (bypasses
+          // these rules).
           ('paymentMethod' in request.resource.data) &&
           request.resource.data.paymentMethod is string &&
           request.resource.data.paymentMethod.size() <= 100 &&
-          request.resource.data.paymentMethod != 'card' &&
-          request.resource.data.paymentMethod != 'auto_card' &&
-          request.resource.data.paymentMethod != 'auto' &&
+          (request.resource.data.paymentMethod == 'check' ||
+              request.resource.data.paymentMethod == 'transfer' ||
+              request.resource.data.paymentMethod == 'daf' ||
+              request.resource.data.paymentMethod == 'other') &&
           // status is REQUIRED on client-written transactions and must be one of
           // a known enum. Without this, downstream aggregations would treat a
           // missing status as "completed" and inflate stats with rows the
@@ -410,7 +442,7 @@ service cloud.firestore {
           // FX conversion. Missing currencyCode silently corrupts admin reports.
           ('currencyCode' in request.resource.data) &&
           request.resource.data.currencyCode is string &&
-          request.resource.data.currencyCode.size() == 3 &&
+          validCurrencyCode(request.resource.data.currencyCode) &&
           // tenantId is REQUIRED and must match the user's active tenant. This
           // prevents (a) tenant-less transactions invisible to history queries
           // and (b) tagging a donation as belonging to a tenant the user is

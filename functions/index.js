@@ -87,13 +87,23 @@ async function enforceRateLimit(uid, action, maxCalls, windowSeconds) {
  * Rate-limits unauthenticated callables by client IP. Cloud Run forwards the
  * client IP via x-forwarded-for; in dev/emulator we fall back to "unknown".
  * IPs are not perfect (NAT, mobile carriers, VPN) but better than no limit.
+ *
+ * Round-6 audit HIGH fix: X-Forwarded-For is a chain "client, proxy1, proxy2".
+ * The client controls the FIRST entry (they can prepend fake values), so
+ * picking the leftmost lets an attacker bypass the rate limit trivially by
+ * rotating fake IPs. On Cloud Functions / Cloud Run, the RIGHTMOST entry is
+ * the trusted edge-proxy IP that fronted the request — use that instead.
+ * Fall back to raw connection IP (also trusted) when the header is absent.
  */
 async function enforceRateLimitByIp(request, action, maxCalls, windowSeconds) {
   const fwd = request.rawRequest?.headers?.["x-forwarded-for"];
-  const ip = (Array.isArray(fwd) ? fwd[0] : (fwd || "").split(",")[0])
-    .trim()
-    || request.rawRequest?.ip
-    || "unknown";
+  const chain = (Array.isArray(fwd) ? fwd.join(",") : (fwd || ""))
+    .split(",").map((s) => s.trim()).filter((s) => s.length > 0);
+  // Rightmost entry = trusted edge (Cloud Run adds one hop). Anything to
+  // the left is client-supplied and forgeable.
+  const ip = chain.length > 0
+    ? chain[chain.length - 1]
+    : (request.rawRequest?.ip || "unknown");
   // Sanitize to a Firestore-safe id (max 1500 bytes; commonly < 50).
   const safeIp = ip.replace(/[^a-zA-Z0-9.:_-]/g, "_").slice(0, 100);
   await enforceRateLimit(`ip:${safeIp}`, action, maxCalls, windowSeconds);
