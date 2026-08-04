@@ -201,15 +201,20 @@ class _TenantCodeScreenState extends ConsumerState<TenantCodeScreen> {
   @override
   Widget build(BuildContext context) {
     final tr = S.of(context);
+    // Round-5 audit HIGH fix: respect the system brightness. Previously
+    // forced ThemeData.light() which meant users in dark mode got a
+    // jarring bright red screen every time they opened tenant setup.
+    final systemBrightness = MediaQuery.platformBrightnessOf(context);
+    final isDark = systemBrightness == Brightness.dark;
     return Theme(
-      data: ThemeData.light(useMaterial3: true).copyWith(
+      data: (isDark ? ThemeData.dark() : ThemeData.light()).copyWith(
         colorScheme: ColorScheme.fromSeed(
           seedColor: _kRed,
-          brightness: Brightness.light,
+          brightness: isDark ? Brightness.dark : Brightness.light,
         ),
       ),
       child: Scaffold(
-        backgroundColor: Colors.white,
+        backgroundColor: isDark ? const Color(0xFF0F172A) : Colors.white,
         body: Stack(
           children: [
             // Building image: hidden when keyboard is open to avoid layout jump

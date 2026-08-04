@@ -864,6 +864,9 @@ class S {
     "Compte créé, mais nous n'avons pas pu envoyer l'email de vérification. Demandez-le depuis les Paramètres.",
     'החשבון נוצר, אך לא הצלחנו לשלוח דוא"ל אישור. בקש אותו מההגדרות.',
   );
+  String get showPassword => _t('Mostrar contraseña', 'Show password', 'Afficher le mot de passe', 'הצג סיסמה');
+  String get hidePassword => _t('Ocultar contraseña', 'Hide password', 'Masquer le mot de passe', 'הסתר סיסמה');
+  String get back => _t('Atrás', 'Back', 'Retour', 'חזור');
   String get passwordTooShort => _t('Mínimo 8 caracteres', 'Minimum 8 characters', 'Minimum 8 caractères', 'מינימום 8 תווים');
   String get passwordNeedsNumber => _t('Debe incluir al menos un número', 'Must include at least one number', 'Doit contenir au moins un chiffre', 'חייב לכלול לפחות ספרה אחת');
   String get passwordNeedsUppercase => _t('Debe incluir al menos una mayúscula', 'Must include at least one uppercase letter', 'Doit contenir au moins une majuscule', 'חייב לכלול לפחות אות גדולה אחת');

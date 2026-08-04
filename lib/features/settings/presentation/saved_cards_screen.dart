@@ -820,9 +820,14 @@ class _SavedCardsScreenState extends ConsumerState<SavedCardsScreen> {
             const SizedBox(width: 6),
           ],
           Padding(
-            padding: const EdgeInsets.only(right: 4, left: 8),
+            // Round-6 audit fix: EdgeInsetsDirectional flips in RTL so the
+            // 8px "start" spacing lands on the correct visual side in HE.
+            // Chevron is also directional to point the reading way.
+            padding: const EdgeInsetsDirectional.only(end: 4, start: 8),
             child: Icon(
-              Icons.chevron_right_rounded,
+              Directionality.of(context) == TextDirection.rtl
+                  ? Icons.chevron_left_rounded
+                  : Icons.chevron_right_rounded,
               color: cs.onSurfaceVariant,
               size: 22,
             ),

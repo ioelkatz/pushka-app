@@ -78,10 +78,19 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                       textInputAction: TextInputAction.done,
                       validator: _validatePassword,
                       suffixIcon: IconButton(
+                        // Round-5 audit HIGH fix: TalkBack/VoiceOver used to
+                        // announce just "Botón" — tooltip + semantic label
+                        // now describe the action per current state.
+                        tooltip: _obscurePassword
+                            ? _tr.showPassword
+                            : _tr.hidePassword,
                         icon: Icon(
                           _obscurePassword
                               ? Icons.visibility
                               : Icons.visibility_off,
+                          semanticLabel: _obscurePassword
+                              ? _tr.showPassword
+                              : _tr.hidePassword,
                         ),
                         onPressed: () => setState(
                           () => _obscurePassword = !_obscurePassword,

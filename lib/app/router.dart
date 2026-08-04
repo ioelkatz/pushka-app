@@ -289,6 +289,9 @@ class _TenantMainAppBar extends ConsumerWidget implements PreferredSizeWidget {
       centerTitle: true,
       actions: [
         IconButton(
+          // Round-5 audit fix: TalkBack/VoiceOver need tooltip on
+          // icon-only buttons — was announced as just "Botón".
+          tooltip: tr.settings,
           icon: const Icon(Icons.settings),
           onPressed: onSettingsTap,
         ),
@@ -309,6 +312,8 @@ PreferredSizeWidget? _buildAppBar(BuildContext context, String location) {
       title: Text(tr.savedCards),
       centerTitle: true,
       leading: IconButton(
+        // Round-5 audit fix: back arrow needs tooltip for a11y.
+        tooltip: tr.back,
         icon: Icon(isRtl ? Icons.arrow_forward : Icons.arrow_back),
         onPressed: () {
           final shellNav = shellNavigatorKey.currentState;
@@ -339,6 +344,8 @@ PreferredSizeWidget? _buildAppBar(BuildContext context, String location) {
       title: Text(tr.mySubscriptions),
       centerTitle: true,
       leading: IconButton(
+        // Round-5 audit fix: back arrow needs tooltip for a11y.
+        tooltip: tr.back,
         icon: Icon(isRtl ? Icons.arrow_forward : Icons.arrow_back),
         onPressed: () {
           final shellNav = shellNavigatorKey.currentState;
@@ -356,6 +363,8 @@ PreferredSizeWidget? _buildAppBar(BuildContext context, String location) {
       title: Text(tr.savedCards),
       centerTitle: true,
       leading: IconButton(
+        // Round-5 audit fix: back arrow needs tooltip for a11y.
+        tooltip: tr.back,
         icon: Icon(isRtl ? Icons.arrow_forward : Icons.arrow_back),
         onPressed: () {
           // If a nested screen is pushed on top of Métodos de pago (e.g.
