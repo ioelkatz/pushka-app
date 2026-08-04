@@ -22,7 +22,10 @@
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-  <meta name="apple-mobile-web-app-title" content="Chabad Pushka">
+  <!-- Round-6 audit MEDIUM fix: matches manifest.short_name so Add-to-Home
+       shows the same label on iOS Safari and Android Chrome. Was "Chabad
+       Pushka" while manifest said "Pushka". -->
+  <meta name="apple-mobile-web-app-title" content="Pushka">
   <meta name="theme-color" content="#2563EB">
   <meta name="format-detection" content="telephone=no">
   <link rel="apple-touch-icon" href="icons/Icon-192.png">
@@ -36,8 +39,11 @@
   <link rel="manifest" href="manifest.json">
 
 
-  <!-- viewport-fit=cover + safe area — full-screen en iPhone con notch -->
-  <meta content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" name="viewport">
+  <!-- viewport-fit=cover + safe area — full-screen en iPhone con notch.
+       Round-6 audit HIGH fix (WCAG 2.5.5): removed maximum-scale=1.0 y
+       user-scalable=no. Bloqueaba pinch-zoom para users con baja vision.
+       initial-scale=1 mantiene el fit inicial pero permite zoom manual. -->
+  <meta content="width=device-width, initial-scale=1.0, viewport-fit=cover" name="viewport">
   
   
   

@@ -111,7 +111,8 @@
       ],
       "rewrites": [
         {
-          "source": "**",
+          "//": "Round-6 audit MEDIUM fix: previous rewrite was **  → /index.html which served HTML as a response for missing .js/.wasm/.map (browsers logged 'MIME type mismatch' and Flutter web crashed silently). Now exclude common asset extensions so 404s stay 404 while SPA routes (with no extension) still hit index.html.",
+          "source": "!/@(**\\.js|**\\.wasm|**\\.map|**\\.png|**\\.jpg|**\\.jpeg|**\\.gif|**\\.svg|**\\.webp|**\\.ico|**\\.woff|**\\.woff2|**\\.ttf|**\\.otf|**\\.mp3|**\\.mp4|**\\.pdf|**\\.txt|**\\.xml|**\\.json)",
           "destination": "/index.html"
         }
       ]
