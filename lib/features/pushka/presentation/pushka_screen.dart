@@ -1628,7 +1628,12 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                         decoration: InputDecoration(
                           labelText: S.of(context).amount,
                           floatingLabelStyle: TextStyle(color: Theme.of(ctx).colorScheme.onSurfaceVariant),
-                          hintText: S.of(context).amountHint, prefixText: '\$ ', errorText: error,
+                          // Round-5 audit HIGH fix: prefix matches active
+                          // currency instead of hardcoded `$` (misleading
+                          // for MXN/ARS/EUR/ILS/JPY donors).
+                          hintText: S.of(context).amountHint,
+                          prefixText: '${shortCurrencySymbol(_currencyCodeFromProfile())} ',
+                          errorText: error,
                           border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
                           focusedBorder: OutlineInputBorder(
                             borderRadius: BorderRadius.circular(12),

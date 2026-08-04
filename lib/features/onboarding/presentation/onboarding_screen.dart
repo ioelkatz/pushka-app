@@ -1,20 +1,22 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:smooth_page_indicator/smooth_page_indicator.dart';
 
 import '../../../app/theme/app_tokens.dart';
 import '../../../core/l10n/s.dart';
+import '../../tenant/data/tenant_repository.dart';
 
-class OnboardingScreen extends StatefulWidget {
+class OnboardingScreen extends ConsumerStatefulWidget {
   const OnboardingScreen({super.key});
 
   @override
-  State<OnboardingScreen> createState() => _OnboardingScreenState();
+  ConsumerState<OnboardingScreen> createState() => _OnboardingScreenState();
 }
 
-class _OnboardingScreenState extends State<OnboardingScreen> {
+class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
   final _ctrl = PageController();
   int _page = 0;
   static const _total = 3;
@@ -96,7 +98,11 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                     icon: Icons.volunteer_activism_rounded,
                     color: const Color(0xFF2563EB),
                     title: tr.onboarding1Title,
-                    body: tr.onboarding1Body,
+                    // Round-5 audit fix: parametrized on tenant brand
+                    // instead of hardcoded "Jabad en Campus".
+                    body: tr.onboarding1BodyFor(
+                      ref.watch(tenantConfigProvider).valueOrNull?.appName ?? tr.colelJabad,
+                    ),
                   ),
                   _OnboardingPage(
                     icon: Icons.savings_rounded,

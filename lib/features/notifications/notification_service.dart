@@ -699,7 +699,12 @@ class NotificationService {
     // path (days=[weekday] + dayOfWeekAndTime) reinterpreted the pick as
     // "every week on this weekday forever", which fires on the WRONG date
     // if today is not the picked weekday, and then keeps firing weekly.
-    final oneShot = _readOneShotDate(reminder.id);
+    //
+    // Round-5 audit HIGH fix: prefer reminder.oneShotDate (from Firestore
+    // doc) over Hive-local. On a secondary device Hive never saw the pick
+    // — falling back would schedule the reminder as WEEKLY recurring on
+    // the wrong day.
+    final oneShot = reminder.oneShotDate ?? _readOneShotDate(reminder.id);
     if (oneShot != null) {
       final when = _oneShotAt(oneShot, reminder.time, reminder.minutesBefore);
       if (when == null) {

@@ -1,15 +1,21 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/l10n/s.dart';
 import '../../legal/presentation/legal_screen.dart';
+import '../../tenant/data/tenant_repository.dart';
 
-class AboutScreen extends StatelessWidget {
+class AboutScreen extends ConsumerWidget {
   const AboutScreen({super.key});
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final tr = S.of(context);
     final cs = Theme.of(context).colorScheme;
+    // Round-5 audit HIGH fix: use tenant appName instead of hardcoded
+    // "Jabad en Campus" brand in the copyright line.
+    final tenantAppName =
+        ref.watch(tenantConfigProvider).valueOrNull?.appName ?? tr.colelJabad;
     return SingleChildScrollView(
       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
       child: Column(
@@ -73,10 +79,10 @@ class AboutScreen extends StatelessWidget {
           ),
           const SizedBox(height: 30),
 
-          // Copyright
+          // Copyright — parameterized on tenant brand (Round-5 audit fix).
           Center(
             child: Text(
-              tr.copyright,
+              tr.copyrightFor(tenantAppName),
               style: TextStyle(
                 fontSize: 14,
                 color: cs.onSurfaceVariant,

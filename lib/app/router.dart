@@ -78,7 +78,28 @@ final router = GoRouter(
     }
     // Cold-start deep link: user tapped pushka.app/join/{slug} while logged in.
     // Consume the pending slug and redirect to the join screen.
+    //
+    // Round-5 audit HIGH fix: new user joining via deep link used to bypass
+    // /onboarding entirely — they never got to pick language/currency/presets
+    // and landed inside a tenant with app defaults (Spanish / USD / [1,5,10]).
+    // Now we prioritize onboarding: if onboardingCompleted != true, keep the
+    // pendingJoinSlug for AFTER onboarding and send the user through the
+    // welcome flow first. The slug is consumed on the next pass once
+    // onboarding is done.
     if (loggedIn && pendingJoinSlug != null && !loc.startsWith('/join/')) {
+      final uid = _auth.currentUser?.uid;
+      if (uid != null) {
+        try {
+          final snap = await _firestore.collection('users').doc(uid).get();
+          if (_auth.currentUser?.uid != uid) return '/login';
+          final onboardingDone = snap.data()?['onboardingCompleted'] as bool? ?? false;
+          if (!onboardingDone && loc != '/onboarding') {
+            // Keep the slug pending — /onboarding completion re-enters this
+            // redirect and the branch below will consume it.
+            return '/onboarding';
+          }
+        } catch (_) { /* fall through to consume slug */ }
+      }
       final slug = pendingJoinSlug!;
       pendingJoinSlug = null;
       return '/join/$slug';

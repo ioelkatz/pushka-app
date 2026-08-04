@@ -910,7 +910,12 @@ class S {
   // Legacy getter — kept for callers that don't yet pass a brand. Equivalent
   // to aboutBreadcrumbFor(colelJabad).
   String get aboutBreadcrumb => aboutBreadcrumbFor(colelJabad);
-  String get aboutTitle => colelJabad;
+  /// Round-5 audit fix: was hardcoded to 'Jabad en Campus' via colelJabad,
+  /// making every tenant's About screen show the same brand. Now generic
+  /// "Acerca de" — the tenant identity lives in the copyright line +
+  /// drawer header, both already tenant-parameterized.
+  String get aboutTitle => _t('Acerca de', 'About', 'À propos', 'אודות');
+  String aboutTitleFor(String brand) => _t('Acerca de $brand', 'About $brand', 'À propos de $brand', 'אודות $brand');
   String get aboutSection => _t('Acerca de', 'About', 'À propos', 'אודות');
   String get aboutP1 => _t(
     'Bienvenido a Jabad en Campus. Esta aplicación fue creada para facilitar la tzedaká en nuestra comunidad, liderada por el Rabino Menachem Mendel Meer.',

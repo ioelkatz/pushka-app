@@ -27,8 +27,9 @@
       ],
       "redirects": [
         {
-          "source": "/join/**",
-          "destination": "/get",
+          "//": "Round-5 audit HIGH fix: previous redirect was 302 → /get on this same host, but /get does not exist on the assetlinks target (which only serves /.well-known/assetlinks.json). Users clicking pushka-app-ioel.web.app/join/xxx from a browser used to hit /get and see a broken page. Now redirect to the PWA target which HAS the /join/:slug route.",
+          "source": "/join/:slug",
+          "destination": "https://pushkapp.cc/join/:slug",
           "type": 302
         }
       ]
