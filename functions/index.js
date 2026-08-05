@@ -12122,6 +12122,22 @@ exports.processDueReminders = onSchedule(
       return data;
     }
 
+    // Round-7 regression fix: cache tenant docs by tid so many reminders
+    // firing for the same tenant in one tick don't re-read the tenant
+    // doc for each (was N reads for N reminders — now 1 per unique
+    // tenantId per tick).
+    const tenantCache = new Map();
+    async function _getCachedTenant(tid) {
+      if (tenantCache.has(tid)) return tenantCache.get(tid);
+      let data = {};
+      try {
+        const s = await db.collection("tenants").doc(tid).get();
+        data = s.exists ? (s.data() || {}) : {};
+      } catch (_) { /* fall back to empty */ }
+      tenantCache.set(tid, data);
+      return data;
+    }
+
     let fired = 0;
     let skipped = 0;
     const tasks = [];
@@ -12194,13 +12210,10 @@ exports.processDueReminders = onSchedule(
         let tenantAppName = "Pushka";
         const activeTenantId = String(userProfile.tenantId || "").trim();
         if (activeTenantId) {
-          try {
-            const tenantSnap = await db.collection("tenants").doc(activeTenantId).get();
-            if (tenantSnap.exists) {
-              const td = tenantSnap.data() || {};
-              tenantAppName = String(td.appName || td.name || "Pushka");
-            }
-          } catch (_) { /* keep default */ }
+          // Round-7 regression fix: use tenant cache so N reminders for
+          // the same tenant in one tick only cost 1 tenant doc read.
+          const td = await _getCachedTenant(activeTenantId);
+          tenantAppName = String(td.appName || td.name || "Pushka");
         }
         const title = String(data.title || tenantAppName).slice(0, 100);
         // Body: localized default in the user's language. Falls back to

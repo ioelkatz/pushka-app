@@ -171,6 +171,15 @@ class _SavedCardsScreenState extends ConsumerState<SavedCardsScreen> {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text(tr.cardAdded)),
         );
+        // Round-7 regression fix: without this retry, Hive stays as the
+        // pre-add snapshot and the next open of Saved Cards paints as if
+        // the new card was never added (silent refresh hydrates from CF
+        // eventually — but between the two opens the user sees a stale
+        // list). Delayed silent retry gives the transient network hiccup
+        // time to clear.
+        Future.delayed(const Duration(seconds: 3), () {
+          if (mounted) _loadCards(silent: true);
+        });
         return;
       }
       final isDuplicate = _cards.length <= cardCountBefore;
@@ -511,6 +520,19 @@ class _SavedCardsScreenState extends ConsumerState<SavedCardsScreen> {
           // Worst case: state.autoEmpty* fields stay as-is and the cron
           // skips with no_saved_card on the next tick.
         }
+      }
+      // Round-7 regression fix: sync Hive cache BEFORE the network reload
+      // so a failed _loadCards() doesn't leave the deleted card sitting in
+      // cache. Optimistic UI already removed it from _cards; mirror to disk.
+      final uidForCache = ref.read(firebaseAuthProvider).currentUser?.uid;
+      final tidForCache = ref.read(userProfileProvider).valueOrNull?['tenantId'] as String?;
+      if (uidForCache != null) {
+        await HiveCache.instance.saveSavedCards(
+          uid: uidForCache,
+          tenantId: tidForCache,
+          cards: _cards,
+          defaultPmId: _defaultPaymentMethodId,
+        );
       }
       // Skip the autoSetDefault round-trip — server already promoted.
       await _loadCards();

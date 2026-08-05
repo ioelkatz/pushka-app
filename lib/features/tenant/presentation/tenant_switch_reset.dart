@@ -20,12 +20,23 @@ Future<void> resetTenantScopedState(
   ProviderContainer container, {
   required String? uid,
   required String? outgoingTenantId,
+  bool clearHiveCaches = true,
 }) async {
-  if (uid != null) {
+  // Round-7 regression fix: `clearHiveCaches: false` when called for the
+  // second-pass "invalidate providers with fresh tenant" round. Skipping
+  // the Hive sweep the second time avoids re-iterating every key in the
+  // box just to no-op (the sweep is O(N) over all keys per call).
+  if (clearHiveCaches && uid != null) {
     if (outgoingTenantId != null && outgoingTenantId.isNotEmpty) {
       await HiveCache.instance.clearTenant(uid, outgoingTenantId);
     }
     await HiveCache.instance.clearSavedCards(uid);
+    // Round-7 regression fix: the outgoing tenant's config stayed cached
+    // in Hive under `${uid}_tenant_config`. tenantConfigProvider emits
+    // that cached value BEFORE fetching fresh — so the switcher briefly
+    // painted the previous tenant's branding (appName / logo / primary
+    // color) even after invalidation.
+    await HiveCache.instance.clearTenantConfig(uid);
   }
   // Providers listed in the same order as their justifications:
   //   userProfileProvider   — refreshes tenantId from Firestore so downstream

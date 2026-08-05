@@ -322,7 +322,20 @@
       "Bash(ls C:/dev/pushka_admin/src 2>&1)",
       "Bash(ls C:/dev/pushka_admin/dist 2>&1)",
       "Read(//c/dev/pushka_admin/dist/**)",
-      "Read(//c/dev/pushka_admin/dist/assets/**)"
+      "Read(//c/dev/pushka_admin/dist/assets/**)",
+      "Bash(xargs grep -l -i \"hive\\\\|saved_cards\\\\|donation_subscriptions\")",
+      "Bash(git -C C:/dev/pushka_app log --oneline -20)",
+      "Bash(git -C C:/dev/pushka_app show --stat 9fbff65)",
+      "Bash(git -C C:/dev/pushka_app show 9fbff65 -- functions/index.js)",
+      "Bash(xargs grep -l \"resetTenantScopedState\\\\|changeUserCurrency\\\\|switchTenant\")",
+      "Bash(git -C C:/dev/pushka_app log --oneline -30)",
+      "Bash(npm test *)",
+      "Bash(grep -rn --include=\"*.dart\" -E \"['\\\\\"]\\\\\\\\\\\\$[0-9]|['\\\\\"]\\\\\\\\\\\\$ \" C:/dev/pushka_app/lib)",
+      "Bash(grep -rn --include=\"*.dart\" -E '\"\\\\$[0-9]|\\\\\\\\\\\\$[0-9]' C:/dev/pushka_app/lib)",
+      "Bash(node --test test/)",
+      "Bash(git -C C:/dev/pushka_app log --oneline -20 -- functions/index.js)",
+      "Bash(git -C C:/dev/pushka_app log --all --oneline --grep=\"refund\" -20)",
+      "Bash(git -C C:/dev/pushka_app blame -L 3637,3650 functions/index.js)"
     ],
     "additionalDirectories": [
       "C:\\Users\\Ioel\\Downloads",

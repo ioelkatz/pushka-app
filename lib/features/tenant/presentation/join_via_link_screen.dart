@@ -65,9 +65,11 @@ class _JoinViaLinkScreenState extends ConsumerState<JoinViaLinkScreen> {
     try {
       final repo = ref.read(tenantRepositoryProvider);
       await repo.joinTenant(config.tenantId);
-      try {
-        await repo.switchTenant(config.tenantId);
-      } catch (_) {}
+      // Round-7 regression fix: propagate switchTenant errors instead of
+      // continuing as if it succeeded (which invalidated providers and
+      // redirected while the user's active tenantId stayed at the old
+      // value).
+      await repo.switchTenant(config.tenantId);
       // Round-2 audit fix: shared reset — invalidates userProfile / history /
       // transactions providers too so the History tab doesn't briefly show
       // the previous tenant's rows after the redirect to "/".

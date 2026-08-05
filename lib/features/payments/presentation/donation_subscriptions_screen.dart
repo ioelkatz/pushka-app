@@ -169,6 +169,19 @@ class _DonationSubscriptionsScreenState
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(tr.subscriptionCanceled)),
       );
+      // Round-7 regression fix: optimistically remove the canceled sub
+      // from local + Hive cache BEFORE the silent reload. If the reload
+      // fails (network hiccup post-cancel) the user shouldn't see the
+      // just-canceled sub as active on next screen open.
+      final canceledId = sub['id'] as String?;
+      if (canceledId != null) {
+        final newList = _subs.where((s) => s['id'] != canceledId).toList();
+        setState(() => _subs = newList);
+        final uid = ref.read(currentUserProvider)?.uid;
+        if (uid != null) {
+          await HiveCache.instance.saveSubscriptions(uid: uid, subs: newList);
+        }
+      }
       // Silent refresh — the current list already shows the correct state
       // optimistically (cancel: sub removed / create: waiting for stream)
       // so there's no reason to flash a full-page spinner.
@@ -283,7 +296,11 @@ class _DonationSubscriptionsScreenState
         ((profile?['currencyCode'] as String?)?.trim().isNotEmpty ?? false)
             ? (profile!['currencyCode'] as String)
             : 'usd';
-    final symbol = currencySymbol(currency);
+    // Round-7 regression fix: shortCurrencySymbol renders unambiguous
+    // MX$/AR$/CL$/CO$/US$ prefixes (matches settings_screen / pushka_screen /
+    // auto_empty_screen). The generic currencySymbol() falls back to '$'
+    // for MXN/ARS/CLP/COP which the donor could mistake for USD.
+    final symbol = shortCurrencySymbol(currency);
     final tenantConfig = ref.read(tenantConfigProvider).valueOrNull;
     final merchantDisplayName = tenantConfig?.appName ?? 'Pushka';
     final activeTenantId = profile?['tenantId'] as String?;
@@ -544,6 +561,14 @@ class _DonationSubscriptionsScreenState
       // optimistically (cancel: sub removed / create: waiting for stream)
       // so there's no reason to flash a full-page spinner.
       await _load(silent: true);
+      // Round-7 regression fix: a transient network hiccup between create
+      // and reload leaves Hive at the pre-create list. A delayed retry
+      // covers that case — even if the first reload succeeded, a second
+      // pass 3s later is cheap and idempotent, and Stripe list-subs
+      // eventual-consistency benefits from a slightly-later read too.
+      Future.delayed(const Duration(seconds: 3), () {
+        if (mounted) _load(silent: true);
+      });
     } on FirebaseFunctionsException catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(

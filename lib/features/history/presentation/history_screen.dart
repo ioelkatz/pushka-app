@@ -37,14 +37,13 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
     _tr = S.of(context);
   }
 
-  String _currencySymbol(String code) {
-    const symbols = {
-      'usd': 'US\$', 'eur': '€', 'gbp': '£', 'cad': 'CA\$',
-      'mxn': 'MX\$', 'ars': 'ARS\$', 'brl': 'R\$', 'ils': '₪',
-      'clp': 'CL\$', 'cop': 'CO\$',
-    };
-    return symbols[code.toLowerCase()] ?? '\$';
-  }
+  // Round-7 regression fix: delegate to the shared shortCurrencySymbol so
+  // the tx list uses the SAME symbol table as the rest of the app. The
+  // old local map covered only 10 currencies (mislabelling ARS as 'ARS$'
+  // — one S redundant with the 'AR$' convention used everywhere else)
+  // and let AUD/NZD/UYU/JPY/CNY/KRW/INR/RUB/TRY/CHF fall through to a
+  // plain '$' which lied about the currency.
+  String _currencySymbol(String code) => shortCurrencySymbol(code);
 
   @override
   Widget build(BuildContext context) {

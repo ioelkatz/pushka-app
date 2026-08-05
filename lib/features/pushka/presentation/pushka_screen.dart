@@ -70,6 +70,12 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
   // window. Using DateTime.now() makes a system clock change (manual or NTP)
   // mis-classify a stale snapshot as recent (or vice versa).
   final Stopwatch _localWriteStopwatch = Stopwatch();
+  // Round-7 regression fix: tag the recent-write with its tenantId so a
+  // switch to a different tenant does NOT let the guard block the new
+  // tenant's first sync. Previously the un-scoped stopwatch would still
+  // report `recentWrite=true` up to 4s after donating in A, silently
+  // dropping the incoming pushkaAmount for B.
+  String? _localWriteTenantId;
   // Fingerprint of the relevant fields from the last tenantState snapshot
   // we synced to local state. Compared as a value so two snapshots with
   // the same numbers but different Map identity (Riverpod re-emits new map
@@ -77,7 +83,13 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
   // field touches) don't re-enqueue a useless post-frame callback. The
   // earlier `identical()` check missed those, scheduling work on every
   // tick even though nothing about pushka had actually changed.
+  //
+  // Round-7 regression fix (HIGH #1): also tag with the tenantId. If two
+  // tenants share the same fingerprint values (both freshly onboarded,
+  // both at defaults), the fingerprint match used to block the sync when
+  // switching between them.
   String? _lastSyncedTenantStateFingerprint;
+  String? _lastSyncedFingerprintTenantId;
   String? _lastLoadedCacheTenantId;
 
   // Reference to OUR callback so dispose can compare-and-clear instead of
@@ -861,6 +873,18 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
       final newTenantId = next.valueOrNull?['tenantId'] as String?;
       final uid = ref.read(currentUserProvider)?.uid;
       if (uid != null && newTenantId != null && newTenantId.isNotEmpty) {
+        // Round-7 regression fix: when the tenant actually changes, drop
+        // any in-flight recent-write guard and clear the sync fingerprint
+        // so the incoming tenantState for the new tenant always applies
+        // (even if its numeric fingerprint coincidentally matches the old
+        // one). Belt-and-suspenders together with the per-tenant tagging
+        // added to the fingerprint/stopwatch checks.
+        if (_lastLoadedCacheTenantId != newTenantId) {
+          _localWriteStopwatch.reset();
+          _localWriteTenantId = null;
+          _lastSyncedTenantStateFingerprint = null;
+          _lastSyncedFingerprintTenantId = null;
+        }
         _loadFromCacheFor(uid, newTenantId);
       }
     });
@@ -876,13 +900,21 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
     // Build a value-fingerprint of the fields we actually consume. Two
     // snapshots with the same fingerprint produce no observable change on
     // this screen, so we skip the post-frame entirely.
+    //
+    // Round-7 regression fix (HIGH #1): scope by tenantId so two tenants
+    // with identical values (both fresh-onboarded at defaults) don't fool
+    // the fingerprint check into skipping the very first sync of the new
+    // tenant after a switch.
     final tenantStateFingerprint = tenantState == null
         ? null
         : '${tenantState['pushkaAmount']}|${tenantState['pushkaGoal']}|'
           '${tenantState['streakCount']}|'
           '${(tenantState['presetAmounts'] as List?)?.join(",") ?? ""}';
-    if (tenantState != null && tenantStateFingerprint != _lastSyncedTenantStateFingerprint) {
+    final fingerprintMatches = tenantStateFingerprint == _lastSyncedTenantStateFingerprint &&
+        tenantId == _lastSyncedFingerprintTenantId;
+    if (tenantState != null && !fingerprintMatches) {
       _lastSyncedTenantStateFingerprint = tenantStateFingerprint;
+      _lastSyncedFingerprintTenantId = tenantId;
       final uid = ref.read(currentUserProvider)?.uid;
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
@@ -892,10 +924,16 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
         // pre-date our own write would otherwise revert the optimistic
         // setState. 4-second window comfortably outlasts write+echo.
         // Stopwatch is monotonic (no system-clock-jump risk).
+        //
+        // Round-7 regression fix (CRITICAL): honor the recentWrite guard
+        // ONLY when the incoming snapshot belongs to the same tenant the
+        // write was for. Otherwise a donation in A blocked B's first
+        // pushkaAmount sync for up to 4s after switching.
         if (remoteAmount is num) {
           final remote = remoteAmount.toDouble();
           final recentWrite = _localWriteStopwatch.isRunning &&
-              _localWriteStopwatch.elapsed.inSeconds < 4;
+              _localWriteStopwatch.elapsed.inSeconds < 4 &&
+              _localWriteTenantId == tenantId;
           if (!recentWrite && remote != pushkaAmount) {
             pushkaAmount = remote;
             changed = true;
@@ -1741,6 +1779,10 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
     }
     final tenantId = ref.read(userProfileProvider).valueOrNull?['tenantId'] as String?;
     if (tenantId == null || tenantId.isEmpty) return;
+    // Round-7 regression fix: tag the recent-write with the tenant it
+    // belongs to. The recentWrite guard downstream only honors this
+    // stopwatch when the incoming snapshot is for the SAME tenant.
+    _localWriteTenantId = tenantId;
     _localWriteStopwatch
       ..reset()
       ..start();
@@ -2338,7 +2380,12 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                   child: Text(
                     // Symbol matches the active currency — `formatMoney` alone
                     // renders `$` unconditionally which lied about EUR/JPY/ILS.
-                    formatMoney(currentAmount, symbol: currencySymbol(_currencyCodeFromProfile())),
+                    // Round-7 regression fix: shortCurrencySymbol keeps
+                    // the LatAm prefixes (MX$/AR$/CL$/CO$/US$) unambiguous
+                    // instead of the plain '$' currencySymbol() falls back
+                    // to. The ISO code trails on the next Text so we don't
+                    // want the full "X SYMB $10 USD" repetition either.
+                    formatMoney(currentAmount, symbol: shortCurrencySymbol(_currencyCodeFromProfile())),
                     style: TextStyle(
                       fontSize: 18,
                       fontWeight: FontWeight.w600,

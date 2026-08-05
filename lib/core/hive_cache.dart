@@ -111,6 +111,16 @@ class HiveCache {
     return (tenantId: tenantId, config: config);
   }
 
+  /// Round-7 regression fix: called by resetTenantScopedState on tenant
+  /// switch so the tenantConfigProvider doesn't emit the OLD tenant's
+  /// cached config on next read (branding/appName/logo would flash the
+  /// previous tenant for a beat while the CF re-fetches).
+  Future<void> clearTenantConfig(String uid) async {
+    if (!_initialized) return;
+    await _box!.delete('${uid}_$_keyTenantId');
+    await _box!.delete('${uid}_$_keyTenantConfig');
+  }
+
   // ---------------------------------------------------------------------------
   // Pushka style preference (device-level, no uid prefix)
   // ---------------------------------------------------------------------------

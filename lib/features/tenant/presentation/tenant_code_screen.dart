@@ -111,9 +111,12 @@ class _TenantCodeScreenState extends ConsumerState<TenantCodeScreen> {
       final repo = ref.read(tenantRepositoryProvider);
       final config = await repo.validateSlug(_fullCode);
       await repo.joinTenant(config.tenantId);
-      try {
-        await repo.switchTenant(config.tenantId);
-      } catch (_) {}
+      // Round-7 regression fix: switchTenant errors used to be swallowed
+      // silently — the flow would continue as if the switch succeeded
+      // (invalidating providers, redirecting home) while the user's
+      // active tenantId stayed at the old value. Now surface the failure
+      // so the user knows to retry.
+      await repo.switchTenant(config.tenantId);
       // Round-2 audit fix: use the shared helper so this flow invalidates
       // the same providers as account_switcher_sheet — otherwise the
       // History tab briefly shows the old tenant's transactions.

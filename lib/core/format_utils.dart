@@ -89,7 +89,10 @@ const Map<String, String> _currencySymbols = {
   'inr': '₹',
   'rub': '₽',
   'try': '₺',
-  'chf': 'CHF ',
+  // Round-7 regression fix: CHF used to map to 'CHF ' which combined with
+  // _renderAmount's trailing ISO-code append produced 'CHF 100 CHF'.
+  // Currencies without a dedicated glyph fall through to `null` and
+  // _renderAmount uses the ISO-code-only "CHF 100" fallback.
 };
 
 /// Renders a Stripe smallest-unit integer for a given currency into a

@@ -111,13 +111,16 @@ class AccountSwitcherSheet extends ConsumerWidget {
       );
       await container.read(tenantRepositoryProvider).switchTenant(tenantId);
       // Second pass invalidates providers so they resubscribe with the new
-      // tenantId that Firestore now reports. tenantThemeProvider auto-derives
-      // from tenantConfigProvider via ref.watch(...select(...)) — no explicit
+      // tenantId that Firestore now reports. Skip the Hive cache sweep
+      // (already done in the first pass) so we don't iterate the box
+      // keys again just to no-op. tenantThemeProvider auto-derives from
+      // tenantConfigProvider via ref.watch(...select(...)) — no explicit
       // invalidation needed here.
       await resetTenantScopedState(
         container,
         uid: uid,
         outgoingTenantId: null,
+        clearHiveCaches: false,
       );
     } catch (e) {
       debugPrint('switchTenant failed: $e');
