@@ -77,10 +77,13 @@
         <path d="M14 27 L22 35 L38 17" />
       </svg>
     </div>
-    <h1>¡Gracias por tu donación!</h1>
-    <p>Tu contribución fue procesada exitosamente. Vas a recibir el recibo por email en un momento.</p>
-    <a href="/" class="btn">Volver a la app</a>
-    <p class="footer">Colel Chabad USA · Tu apoyo hace la diferencia</p>
+    <!-- Round-8 audit MEDIUM fix: brand-neutral for multi-tenant SaaS.
+         The tenant identity lives in the app; this static page must not
+         claim one specific org (was "Colel Chabad USA"). -->
+    <h1 id="title">¡Gracias por tu donación!</h1>
+    <p id="body">Tu contribución fue procesada exitosamente. Vas a recibir el recibo por email en un momento.</p>
+    <a href="/" class="btn" id="cta">Volver a la app</a>
+    <p class="footer">Pushka · Tu apoyo hace la diferencia</p>
   </div>
   <script>
     // Auto-redirect a la app después de 5 segundos si el user no clickea

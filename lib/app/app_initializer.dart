@@ -1,6 +1,7 @@
 import 'dart:io' show Platform;
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/widgets.dart' show WidgetsBinding;
 import 'package:app_tracking_transparency/app_tracking_transparency.dart';
 import 'package:firebase_analytics/firebase_analytics.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -109,8 +110,12 @@ Future<void> _performDeferredInit() async {
   // doesn't race the splash teardown.
   if (!kIsWeb && Platform.isIOS) {
     try {
-      // Block-style: prompt → await user's choice → propagate.
-      await Future<void>.delayed(const Duration(milliseconds: 600));
+      // Round-8 audit MEDIUM fix: wait for the FIRST FRAME to render (not
+      // a hardcoded 600ms wall-clock) — the delay was avoiding a race
+      // where the ATT prompt appeared during splash teardown. Waiting on
+      // the actual frame is deterministic and typically much faster than
+      // 600ms on modern devices; on slow devices it gives extra margin.
+      await WidgetsBinding.instance.endOfFrame;
       final status = await AppTrackingTransparency.requestTrackingAuthorization();
       final granted = status == TrackingStatus.authorized;
       // Disable both analytics + crashlytics auto-collection when not

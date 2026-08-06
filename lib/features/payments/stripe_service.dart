@@ -276,7 +276,13 @@ class StripeService {
       // this retry, the next 10 min of payment attempts all bounce with
       // "Tu Pushka se está vaciando automáticamente". Release the lock
       // server-side and try once more.
-      if (e.code == 'aborted') {
+      // Round-8 audit MEDIUM fix: retry also on `internal` (Stripe
+       // connection blip → server throws HttpsError('internal') per
+       // functions/index.js pattern for StripeConnectionError) and
+       // `unavailable` (transient Firestore). Previously only 'aborted'
+       // triggered the self-heal path, exposing donors to a random Stripe
+       // hiccup with no automatic recovery.
+      if (e.code == 'aborted' || e.code == 'internal' || e.code == 'unavailable') {
         // Only release the pushka-empty lock when THIS attempt actually
         // took one (purpose='pushka_empty'). For 'donation' the CF never
         // set the lock, so releasing on the caller's active tenant is a

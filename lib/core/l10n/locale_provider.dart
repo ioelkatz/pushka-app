@@ -31,22 +31,20 @@ class LocaleNotifier extends StateNotifier<Locale> {
 
   void setLanguageCode(String code) => setLocale(Locale(code));
 
-  /// Called when Firestore profile data loads. Applies the remote language only
-  /// if the device has no locally-saved preference (i.e. first install / new device).
-  /// Once the user sets a language manually it is saved in Hive and takes priority.
+  /// Called when Firestore profile data loads. Applies the remote language
+  /// change so a multi-device user who changes language on device A
+  /// eventually sees B update too.
+  ///
+  /// Round-8 audit MEDIUM fix: previously any Hive-saved value pinned the
+  /// device forever — language change on A never propagated to B because
+  /// B had its own Hive preference. Now Firestore wins when it differs
+  /// from the current state (user just set it on another device); Hive
+  /// is updated so cold-starts persist the latest choice.
   void syncFromRemote(String code) {
-    final saved = HiveCache.instance.loadLanguage();
-    if (saved != null) {
-      // Device already has a preference — make sure the notifier reflects it
-      if (_supportedCodes.contains(saved) && state.languageCode != saved) {
-        state = Locale(saved);
-      }
-      return;
-    }
-    // No local preference yet (fresh install) — trust Firestore
-    if (_supportedCodes.contains(code) && state.languageCode != code) {
-      state = Locale(code);
-      HiveCache.instance.saveLanguage(code);
-    }
+    if (!_supportedCodes.contains(code)) return;
+    if (state.languageCode == code) return;
+    state = Locale(code);
+    Intl.defaultLocale = code;
+    HiveCache.instance.saveLanguage(code);
   }
 }
