@@ -67,7 +67,21 @@ class _DonationSubscriptionsScreenState
         if (!mounted) return;
         final data = result.data as Map<dynamic, dynamic>;
         final raw = data['subscriptions'] as List<dynamic>? ?? [];
-        final subs = raw.map((s) => Map<String, dynamic>.from(s as Map)).toList();
+        final serverSubs = raw.map((s) => Map<String, dynamic>.from(s as Map)).toList();
+        // Round-10 audit fix (MEDIUM #1): merge server list with any
+        // still-pending optimistic entries so a create's optimistic tile
+        // doesn't disappear when Stripe list-subs (eventually consistent)
+        // returns without it. Drop optimistic entries once the server
+        // reports a real sub matching amount+currency+interval (best-effort
+        // dedup — real subs don't carry _optimistic:true).
+        final optimisticPending = _subs
+            .where((s) => s['_optimistic'] == true)
+            .where((opt) => !serverSubs.any((sv) =>
+                (sv['amount'] as num?)?.toDouble() == (opt['amount'] as num?)?.toDouble() &&
+                sv['currency'] == opt['currency'] &&
+                sv['interval'] == opt['interval']))
+            .toList();
+        final subs = [...serverSubs, ...optimisticPending];
         setState(() {
           _subs = subs;
           _loading = false;

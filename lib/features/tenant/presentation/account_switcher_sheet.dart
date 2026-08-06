@@ -105,11 +105,17 @@ class AccountSwitcherSheet extends ConsumerWidget {
       // invalidate) — Hive-cached branding of the outgoing tenant must
       // not reach the pushka screen while the switch is in flight.
       // Providers still hold the current state so nothing else races.
-      if (uid != null && outgoingTenantId != null && outgoingTenantId.isNotEmpty) {
-        await HiveCache.instance.clearTenant(uid, outgoingTenantId);
-        // Round-9 regression fix (LOW #2): scope to outgoing tenant so
-        // the next tenant's cached cards can paint immediately.
-        await HiveCache.instance.clearSavedCards(uid, tenantId: outgoingTenantId);
+      // Round-10 audit fix (LOW #2): clearTenantConfig + clearSubscriptions
+      // must run even when outgoingTenantId is null (first activation via
+      // switcher after leaveTenant, cold-start with no active tenant, etc.);
+      // otherwise stale sub/config cache from a prior session leaks in.
+      if (uid != null) {
+        if (outgoingTenantId != null && outgoingTenantId.isNotEmpty) {
+          await HiveCache.instance.clearTenant(uid, outgoingTenantId);
+          // Round-9 regression fix (LOW #2): scope to outgoing tenant so
+          // the next tenant's cached cards can paint immediately.
+          await HiveCache.instance.clearSavedCards(uid, tenantId: outgoingTenantId);
+        }
         await HiveCache.instance.clearTenantConfig(uid);
         await HiveCache.instance.clearSubscriptions(uid);
       }

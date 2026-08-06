@@ -338,7 +338,8 @@
       "Bash(git -C C:/dev/pushka_app blame -L 3637,3650 functions/index.js)",
       "Bash(find \"C:/Users/Ioel/AppData/Local/Pub/Cache/hosted/pub.dev\" -name \"observer.dart\" -path \"*firebase_analytics*\" 2>/dev/null | head -3)",
       "Bash(python -c \"from PIL import Image; import os; d='/c/dev/pushka_app/assets/icons/'; [print\\(f, Image.open\\(d+f\\).size\\) for f in os.listdir\\(d\\) if f.endswith\\('.png'\\)]\")",
-      "Bash(flutter install *)"
+      "Bash(flutter install *)",
+      "Bash(cd c:/dev/pushka_app/functions && node -c index.js 2>&1 | tail -5 && cd .. && flutter analyze lib/features/payments/presentation/donation_subscriptions_screen.dart lib/features/pushka/presentation/pushka_screen.dart lib/features/tenant/presentation/account_switcher_sheet.dart 2>&1 | tail -10)"
     ],
     "additionalDirectories": [
       "C:\\Users\\Ioel\\Downloads",

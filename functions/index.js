@@ -387,7 +387,7 @@ async function getUserLanguage(uid) {
 // handler also calls showNotification). Native builds still need the
 // notification block because their OS displays it while the app is closed
 // via the SDK's built-in handler (avoids requiring Flutter background isolate).
-async function getUserTokens(uid) {
+async function getUserTokens(uid, opts = {}) {
   // Blocked users (setUserBlocked CF writes users/{uid}.isBlocked) should NOT
   // receive any pushes — otherwise reminders and payment notifications keep
   // reaching them and expose data they shouldn't see. Weekly summaries go via
@@ -395,12 +395,19 @@ async function getUserTokens(uid) {
   // Check BEFORE the fcmTokens read so we short-circuit early. Non-fatal: if
   // the check itself fails, fall through and let the send happen (better
   // than silently dropping notifications on a transient Firestore blip).
-  try {
-    const userSnap = await db.collection("users").doc(uid).get();
-    if (userSnap.exists && userSnap.data()?.isBlocked === true) {
-      return [];
-    }
-  } catch (_) { /* fall through */ }
+  //
+  // Round-10 audit fix (MEDIUM #3): callers that already checked isBlocked
+  // (e.g. processDueReminders pre-filters uids once per tick) can skip the
+  // internal re-check by passing `skipBlockedCheck: true`. Without this,
+  // the pre-filter is redundant — same uid billed twice per fire.
+  if (opts.skipBlockedCheck !== true) {
+    try {
+      const userSnap = await db.collection("users").doc(uid).get();
+      if (userSnap.exists && userSnap.data()?.isBlocked === true) {
+        return [];
+      }
+    } catch (_) { /* fall through */ }
+  }
 
   // Round-6 audit LOW fix: cap at 500 tokens. FCM sendEachForMulticast has
   // a 500-token hard limit per call; a user with more (e.g. a bug that
@@ -466,8 +473,10 @@ function flattenPayloadForWeb(payload) {
   return cleaned;
 }
 
-async function sendToUser(uid, payload) {
-  const tokenInfos = await getUserTokens(uid);
+async function sendToUser(uid, payload, opts = {}) {
+  // opts.skipBlockedCheck: caller (e.g. processDueReminders) has already
+  // filtered blocked uids for this tick — avoid billing the same read twice.
+  const tokenInfos = await getUserTokens(uid, opts);
   if (tokenInfos.length === 0) return { successCount: 0 };
 
   // Split tokens by web vs native. Unknown platform falls into native (safe
@@ -7710,23 +7719,26 @@ exports.changeUserCurrency = onCall(
         }, { merge: true });
       }
 
-      // Round-9 regression fix: also reset presets/goal on OTHER tenants
-      // the user belongs to. Currency is user-global, but presets/goal
-      // are stamped per-tenant. Without this, switching to tenant B after
-      // changing currency would show B's old-currency presets rendered
-      // with the new currency symbol — same numeric value, wrong meaning
-      // (e.g. USD $18 preset now rendered as MX$18 which is ~$1 USD).
+      // Round-9 regression fix (refined in Round-10): reset presets/goal
+      // + pushkaAmount on OTHER tenants the user belongs to. Currency is
+      // user-global, so leaving other tenants' pushkaAmount in the old
+      // currency's numeric scale would silently reinterpret it: an ARS
+      // 500 balance would render as US$500 (~350x its real value) on the
+      // next switch. We choose parity with the active-tenant behavior:
+      // change of currency is a hard reset across ALL tenants. The user
+      // sees the currency change as a global "start fresh" — matches the
+      // in-app confirmation dialog copy which already warns about it.
       const otherTenantIds = (userData.tenantIds || [])
         .filter((t) => typeof t === "string" && t !== activeTenantId);
       for (const tid of otherTenantIds) {
         const otherStateRef = userRef.collection("tenantState").doc(tid);
         tx.set(otherStateRef, {
+          pushkaAmount: 0,
           pushkaGoal: newGoal,
           presetAmounts: newPresets,
-          // Do NOT reset pushkaAmount for other tenants — a user with an
-          // accumulated balance in tenant B who changes currency in
-          // tenant A shouldn't lose B's balance. Just re-stamp the goal
-          // and presets so they render in the new currency.
+          autoEmptyTopOffAmount: 0,
+          autoEmptyTopOffEnabled: false,
+          autoEmptyTopOffCurrency: admin.firestore.FieldValue.delete(),
           updatedAt: admin.firestore.FieldValue.serverTimestamp(),
         }, { merge: true });
       }
@@ -12401,6 +12413,8 @@ exports.processDueReminders = onSchedule(
         };
         const body = bodyByLang[userLang];
         tasks.push(
+          // Round-10 audit fix (MEDIUM #3): skip the internal isBlocked
+          // re-check — we already prefetched it once for this tick above.
           sendToUser(uid, {
             notification: { title, body },
             data: {
@@ -12408,7 +12422,7 @@ exports.processDueReminders = onSchedule(
               reminderId: doc.id,
               click_action: "/reminders",
             },
-          }).catch((err) => {
+          }, { skipBlockedCheck: true }).catch((err) => {
             console.warn("processDueReminders: send failed", { uid, reminderId: doc.id, error: err?.message });
           }),
         );

@@ -528,7 +528,10 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                           labelText: tr.amount,
                           floatingLabelStyle: TextStyle(color: Theme.of(ctx).colorScheme.onSurfaceVariant),
                           hintText: '0',
-                          prefixText: '${_shortSymbol(_currencyCodeFromProfile())} ',
+                          // Round-10 audit fix (LOW #1): no trailing space —
+                          // shortCurrencySymbol already appends one for
+                          // unknown codes ('PEN '), producing double-spaces.
+                          prefixText: _shortSymbol(_currencyCodeFromProfile()),
                           suffixText: _currencyCodeFromProfile().toUpperCase(),
                           errorText: error,
                           filled: true,
@@ -1548,7 +1551,8 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                   labelText: S.of(context).amount,
                   floatingLabelStyle: TextStyle(color: cs.onSurfaceVariant),
                   hintText: '0',
-                  prefixText: '${_shortSymbol(_currencyCodeFromProfile())} ',
+                  // Round-10 audit fix (LOW #1): no trailing space.
+                  prefixText: _shortSymbol(_currencyCodeFromProfile()),
                   errorText: error,
                   filled: true,
                   fillColor: cs.surface,
@@ -1701,7 +1705,12 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                           // currency instead of hardcoded `$` (misleading
                           // for MXN/ARS/EUR/ILS/JPY donors).
                           hintText: S.of(context).amountHint,
-                          prefixText: '${shortCurrencySymbol(_currencyCodeFromProfile())} ',
+                          // Round-10 audit fix (LOW #1): shortCurrencySymbol
+                          // now returns 'PEN ' (trailing space) for unknown
+                          // codes, so appending our own ' ' produced 'PEN  '.
+                          // Use the raw symbol; unknown codes still visually
+                          // separate from the digits via the built-in gap.
+                          prefixText: shortCurrencySymbol(_currencyCodeFromProfile()),
                           errorText: error,
                           border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
                           focusedBorder: OutlineInputBorder(
