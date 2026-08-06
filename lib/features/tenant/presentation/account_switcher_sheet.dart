@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 
 import '../../../app/theme/app_tokens.dart';
+import '../../../core/hive_cache.dart';
 import '../../../core/l10n/s.dart';
 import '../../users/presentation/user_profile_provider.dart';
 import '../data/tenant_repository.dart';
@@ -100,22 +101,27 @@ class AccountSwitcherSheet extends ConsumerWidget {
     final uid = container.read(currentUserProvider)?.uid;
     Navigator.of(context).pop();
     try {
-      // Reset Hive cache + tenant-scoped providers via the shared helper so
-      // this stays in lockstep with tenant_code_screen / join_via_link_screen.
-      // Runs BEFORE the CF so any provider re-read while the network call is
-      // in flight doesn't serve stale Hive data from the old tenant.
-      await resetTenantScopedState(
-        container,
-        uid: uid,
-        outgoingTenantId: outgoingTenantId,
-      );
+      // Round-9 regression fix: clear ONLY Hive first (no provider
+      // invalidate) — Hive-cached branding of the outgoing tenant must
+      // not reach the pushka screen while the switch is in flight.
+      // Providers still hold the current state so nothing else races.
+      if (uid != null && outgoingTenantId != null && outgoingTenantId.isNotEmpty) {
+        await HiveCache.instance.clearTenant(uid, outgoingTenantId);
+        // Round-9 regression fix (LOW #2): scope to outgoing tenant so
+        // the next tenant's cached cards can paint immediately.
+        await HiveCache.instance.clearSavedCards(uid, tenantId: outgoingTenantId);
+        await HiveCache.instance.clearTenantConfig(uid);
+        await HiveCache.instance.clearSubscriptions(uid);
+      }
+
+      // Do the switch. After this returns, users/{uid}.tenantId points at
+      // the new tenant server-side.
       await container.read(tenantRepositoryProvider).switchTenant(tenantId);
-      // Second pass invalidates providers so they resubscribe with the new
-      // tenantId that Firestore now reports. Skip the Hive cache sweep
-      // (already done in the first pass) so we don't iterate the box
-      // keys again just to no-op. tenantThemeProvider auto-derives from
-      // tenantConfigProvider via ref.watch(...select(...)) — no explicit
-      // invalidation needed here.
+
+      // NOW invalidate providers — they resubscribe with the new tenantId
+      // and fetch fresh config for it. Hive is already clean so the
+      // "yield cached first" branch of tenantConfigProvider serves nothing
+      // stale.
       await resetTenantScopedState(
         container,
         uid: uid,

@@ -1422,6 +1422,12 @@ class S {
     "Impossible de rejoindre l'organisation. Veuillez réessayer.",
     'לא הצלחנו להצטרף לארגון. נסה שוב.',
   );
+  String get tenantJoinedSwitchFailed => _t(
+    'Te uniste, pero no pudimos activar la organización. Cambia desde el selector.',
+    "You joined, but we couldn't activate it. Switch from the account picker.",
+    "Vous avez rejoint, mais nous n'avons pas pu l'activer. Changez depuis le sélecteur.",
+    'הצטרפת, אך לא הצלחנו להפעיל. עבור באמצעות בורר החשבונות.',
+  );
   String get tenantEnterCode => _t('Ingresar código', 'Enter code', 'Saisir le code', 'הזן קוד');
   String get tenantJoin => _t('Unirme', 'Join', 'Rejoindre', 'הצטרף');
   String get tenantSearch => _t('Buscar', 'Search', 'Rechercher', 'חפש');

@@ -99,6 +99,10 @@ class _SavedCardsScreenState extends ConsumerState<SavedCardsScreen> {
           _cards = cards;
           _defaultPaymentMethodId = defaultId;
           _loading = false;
+          // Round-9 regression fix: clear stale error banner on success.
+          // Without this, the red banner stays up after a silent refresh
+          // recovered — the user thinks cards are still broken.
+          _error = null;
         });
 
         // Persist to Hive so the next open paints instantly.
@@ -535,7 +539,10 @@ class _SavedCardsScreenState extends ConsumerState<SavedCardsScreen> {
         );
       }
       // Skip the autoSetDefault round-trip — server already promoted.
-      await _loadCards();
+      // Round-9 regression fix: silent reload — the optimistic UI already
+      // reflects the deleted card, so a full-screen loading flash on top
+      // of an already-correct list just looks buggy.
+      await _loadCards(silent: true);
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(tr.cardDeleted)),

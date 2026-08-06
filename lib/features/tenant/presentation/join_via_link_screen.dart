@@ -62,13 +62,22 @@ class _JoinViaLinkScreenState extends ConsumerState<JoinViaLinkScreen> {
         .read(userProfileProvider)
         .valueOrNull?['tenantId'] as String?;
     setState(() => _state = const _Joining());
+    // Round-9 regression fix (LOW #3): split join vs switch so a
+    // switchTenant failure after a successful joinTenant doesn't leave
+    // the user membership-in-limbo (joined but still pointing at the old
+    // active tenant, with no snackbar hint that switching failed).
+    final repo = ref.read(tenantRepositoryProvider);
     try {
-      final repo = ref.read(tenantRepositoryProvider);
       await repo.joinTenant(config.tenantId);
-      // Round-7 regression fix: propagate switchTenant errors instead of
-      // continuing as if it succeeded (which invalidated providers and
-      // redirected while the user's active tenantId stayed at the old
-      // value).
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _state = _Preview(config));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(tr.tenantJoinFailed)),
+      );
+      return;
+    }
+    try {
       await repo.switchTenant(config.tenantId);
       // Round-2 audit fix: shared reset — invalidates userProfile / history /
       // transactions providers too so the History tab doesn't briefly show
@@ -82,10 +91,13 @@ class _JoinViaLinkScreenState extends ConsumerState<JoinViaLinkScreen> {
       if (!mounted) return;
       context.go('/');
     } catch (_) {
+      // Join succeeded, switch failed. Membership is persisted server-side
+      // so the user can activate it later from the account switcher —
+      // don't roll back the join, just tell them clearly and go home.
       if (!mounted) return;
       setState(() => _state = _Preview(config));
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(tr.tenantJoinFailed)),
+        SnackBar(content: Text(tr.tenantJoinedSwitchFailed)),
       );
     }
   }

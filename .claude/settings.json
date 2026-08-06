@@ -337,7 +337,8 @@
       "Bash(git -C C:/dev/pushka_app log --all --oneline --grep=\"refund\" -20)",
       "Bash(git -C C:/dev/pushka_app blame -L 3637,3650 functions/index.js)",
       "Bash(find \"C:/Users/Ioel/AppData/Local/Pub/Cache/hosted/pub.dev\" -name \"observer.dart\" -path \"*firebase_analytics*\" 2>/dev/null | head -3)",
-      "Bash(python -c \"from PIL import Image; import os; d='/c/dev/pushka_app/assets/icons/'; [print\\(f, Image.open\\(d+f\\).size\\) for f in os.listdir\\(d\\) if f.endswith\\('.png'\\)]\")"
+      "Bash(python -c \"from PIL import Image; import os; d='/c/dev/pushka_app/assets/icons/'; [print\\(f, Image.open\\(d+f\\).size\\) for f in os.listdir\\(d\\) if f.endswith\\('.png'\\)]\")",
+      "Bash(flutter install *)"
     ],
     "additionalDirectories": [
       "C:\\Users\\Ioel\\Downloads",

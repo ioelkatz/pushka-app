@@ -557,9 +557,29 @@ class _DonationSubscriptionsScreenState
           content: Text(tr.donationProcessed(formatCurrencyAmount(donationAmount, currency))),
         ),
       );
+      // Round-9 regression fix (LOW #8): optimistically append the new sub
+      // so the tile shows up immediately. Stripe list-subs is eventually
+      // consistent — the _load(silent) below can miss the just-created sub
+      // for a few seconds, leaving the donor thinking their action didn't
+      // register. Matches the cancel path's optimistic removal.
+      final uidOptimistic = ref.read(currentUserProvider)?.uid;
+      final optimisticSub = <String, dynamic>{
+        'id': 'optimistic_${DateTime.now().millisecondsSinceEpoch}',
+        'amount': donationAmount,
+        'currency': currency,
+        'interval': chosenInterval,
+        'donationReason': (donationReason == null || donationReason.isEmpty) ? null : donationReason,
+        'status': 'active',
+        '_optimistic': true,
+      };
+      final newList = [..._subs, optimisticSub];
+      setState(() => _subs = newList);
+      if (uidOptimistic != null) {
+        await HiveCache.instance.saveSubscriptions(uid: uidOptimistic, subs: newList);
+      }
       // Silent refresh — the current list already shows the correct state
-      // optimistically (cancel: sub removed / create: waiting for stream)
-      // so there's no reason to flash a full-page spinner.
+      // optimistically (cancel: sub removed / create: appended above) so
+      // there's no reason to flash a full-page spinner.
       await _load(silent: true);
       // Round-7 regression fix: a transient network hiccup between create
       // and reload leaves Hive at the pre-create list. A delayed retry

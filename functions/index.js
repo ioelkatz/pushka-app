@@ -389,8 +389,9 @@ async function getUserLanguage(uid) {
 // via the SDK's built-in handler (avoids requiring Flutter background isolate).
 async function getUserTokens(uid) {
   // Blocked users (setUserBlocked CF writes users/{uid}.isBlocked) should NOT
-  // receive any pushes — otherwise reminders, weekly summaries, and payment
-  // notifications keep reaching them and expose data they shouldn't see.
+  // receive any pushes — otherwise reminders and payment notifications keep
+  // reaching them and expose data they shouldn't see. Weekly summaries go via
+  // email (see the digest CF further down) so they don't route through here.
   // Check BEFORE the fcmTokens read so we short-circuit early. Non-fatal: if
   // the check itself fails, fall through and let the send happen (better
   // than silently dropping notifications on a transient Firestore blip).
@@ -3649,12 +3650,25 @@ exports.stripeWebhook = onRequest(
 
             // BUG-024 fix: also decrement tenant revenue counter so admin
             // finance dashboards show net donations (gross minus refunds).
+            //
+            // Round-9 regression fix (LOW #1): stamp the decrement against
+            // the ORIGINAL donation's month so historical buckets stay
+            // net-accurate. Previously we stamped `now` — a January refund
+            // of an October donation would silently make October look $X
+            // larger than it actually was. Matches the dispute path which
+            // uses applyRevenueDeltaOnce with originalDate.
             if (refundTenantId && deltaSnap.amountUSD > 0) {
-              const now = new Date();
-              const monthKey = `${now.getUTCFullYear()}_${String(now.getUTCMonth() + 1).padStart(2, "0")}`;
+              const originalTxData = originalTxSnap.exists
+                ? originalTxSnap.data()
+                : (invoiceTxSnap?.exists ? invoiceTxSnap.data() : null);
+              const originalCreatedAt = originalTxData?.createdAt;
+              const stampDate = originalCreatedAt?.toDate
+                ? originalCreatedAt.toDate()
+                : new Date();
+              const stampMonthKey = `${stampDate.getUTCFullYear()}_${String(stampDate.getUTCMonth() + 1).padStart(2, "0")}`;
               tx.set(db.collection("tenants").doc(refundTenantId), {
                 revenueStats: {
-                  [monthKey]: { revenue: admin.firestore.FieldValue.increment(-deltaSnap.amountUSD) },
+                  [stampMonthKey]: { revenue: admin.firestore.FieldValue.increment(-deltaSnap.amountUSD) },
                   allTime: { revenue: admin.firestore.FieldValue.increment(-deltaSnap.amountUSD) },
                 },
               }, { merge: true });
@@ -7692,6 +7706,27 @@ exports.changeUserCurrency = onCall(
           // Explicit marker so processPushkaAutoEmpty can distinguish
           // "no top-off configured" (blank) from "configured in currency X".
           autoEmptyTopOffCurrency: admin.firestore.FieldValue.delete(),
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        }, { merge: true });
+      }
+
+      // Round-9 regression fix: also reset presets/goal on OTHER tenants
+      // the user belongs to. Currency is user-global, but presets/goal
+      // are stamped per-tenant. Without this, switching to tenant B after
+      // changing currency would show B's old-currency presets rendered
+      // with the new currency symbol — same numeric value, wrong meaning
+      // (e.g. USD $18 preset now rendered as MX$18 which is ~$1 USD).
+      const otherTenantIds = (userData.tenantIds || [])
+        .filter((t) => typeof t === "string" && t !== activeTenantId);
+      for (const tid of otherTenantIds) {
+        const otherStateRef = userRef.collection("tenantState").doc(tid);
+        tx.set(otherStateRef, {
+          pushkaGoal: newGoal,
+          presetAmounts: newPresets,
+          // Do NOT reset pushkaAmount for other tenants — a user with an
+          // accumulated balance in tenant B who changes currency in
+          // tenant A shouldn't lose B's balance. Just re-stamp the goal
+          // and presets so they render in the new currency.
           updatedAt: admin.firestore.FieldValue.serverTimestamp(),
         }, { merge: true });
       }
@@ -12253,7 +12288,26 @@ exports.processDueReminders = onSchedule(
     let skipped = 0;
     const tasks = [];
 
+    // Round-9 regression fix (LOW #7): pre-check isBlocked once per uid
+    // instead of paying that read inside every getUserTokens call. A user
+    // with M reminders firing this tick used to cost M redundant user-doc
+    // reads (getUserTokens re-checks isBlocked internally). Now we skip
+    // the entire uid batch upfront when blocked.
+    const blockedUids = new Set();
+    const blockedProbes = await Promise.allSettled(
+      Array.from(byUid.keys()).map((u) =>
+        db.collection("users").doc(u).get().then((s) => ({ u, blocked: s.exists && s.data()?.isBlocked === true }))
+      )
+    );
+    for (const p of blockedProbes) {
+      if (p.status === "fulfilled" && p.value.blocked) blockedUids.add(p.value.u);
+    }
+
     for (const [uid, docs] of byUid.entries()) {
+      if (blockedUids.has(uid)) {
+        skipped += docs.length;
+        continue;
+      }
       for (const doc of docs) {
         const data = doc.data();
         const tz = data.timezone || "UTC";

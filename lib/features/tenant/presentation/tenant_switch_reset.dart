@@ -30,7 +30,16 @@ Future<void> resetTenantScopedState(
     if (outgoingTenantId != null && outgoingTenantId.isNotEmpty) {
       await HiveCache.instance.clearTenant(uid, outgoingTenantId);
     }
-    await HiveCache.instance.clearSavedCards(uid);
+    // Round-9 regression fix (LOW #2): clearSavedCards(uid) with no
+    // tenantId nukes EVERY tenant's card cache for this uid — including
+    // tenants the user might switch to next. Scope to the outgoing tenant
+    // only so the next tenant's cached cards paint instantly instead of
+    // re-fetching. On logout we still call the unscoped version separately.
+    if (outgoingTenantId != null && outgoingTenantId.isNotEmpty) {
+      await HiveCache.instance.clearSavedCards(uid, tenantId: outgoingTenantId);
+    } else {
+      await HiveCache.instance.clearSavedCards(uid);
+    }
     // Round-7 regression fix: the outgoing tenant's config stayed cached
     // in Hive under `${uid}_tenant_config`. tenantConfigProvider emits
     // that cached value BEFORE fetching fresh — so the switcher briefly

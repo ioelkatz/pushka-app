@@ -121,6 +121,25 @@ String formatCurrencyAmount(double amount, String currency) {
   return _renderAmount(amount, code, currency.toUpperCase());
 }
 
+/// Currency-aware amount formatter with a caller-provided prefix (usually
+/// a symbol). Unlike [formatMoney] which was locked to 2-decimal-max,
+/// this honors zero-decimal (CLP/JPY/KRW → integer) and three-decimal
+/// (BHD/JOD → three decimals) currencies. Use when the ISO code is shown
+/// separately alongside and you don't want it embedded in the numeric.
+String formatCurrencyAmountWithSymbol(double amount, String currency, {String symbol = '\$'}) {
+  final code = currency.toLowerCase();
+  if (amount.isNaN || amount.isInfinite) return '$symbol–';
+  String body;
+  if (_zeroDecimalCurrencies.contains(code)) {
+    body = NumberFormat('#,##0').format(amount.round());
+  } else if (_threeDecimalCurrencies.contains(code)) {
+    body = NumberFormat('#,##0.000').format(amount);
+  } else {
+    body = formatAmount(amount);
+  }
+  return '$symbol$body';
+}
+
 /// Returns the display symbol for a currency (e.g. `$`, `€`, `MX$`) —
 /// use only when you already know the currency and the context is
 /// unambiguous. Prefer `formatCurrencyAmount` for anything with a number
@@ -157,7 +176,11 @@ String shortCurrencySymbol(String code) {
     case 'RUB': return '₽';
     case 'TRY': return '₺';
     case 'CHF': return 'CHF';
-    default:    return '${code.toUpperCase()}\$';
+    // Round-9 regression fix: appending '$' to unknown codes produced
+    // nonsense like 'PEN$', 'SEK$', 'PLN$', 'BHD$' — none of those use
+    // a dollar sign. Fall back to the ISO code itself with a trailing
+    // space so it reads correctly as a prefix ("PEN 100.00").
+    default:    return '${code.toUpperCase()} ';
   }
 }
 

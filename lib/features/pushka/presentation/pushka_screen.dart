@@ -905,6 +905,16 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
           _localWriteTenantId = null;
           _lastSyncedTenantStateFingerprint = null;
           _lastSyncedFingerprintTenantId = null;
+          // Round-9 regression fix: streakCount is gated behind
+          // `if (!_loadedRemote)` in the fingerprint sync block, which
+          // makes it a one-shot on first snapshot per screen instance.
+          // Without resetting `_loadedRemote` here, the streak banner
+          // keeps painting the previous tenant's streakCount until the
+          // user donates (which re-reads via _updateStreak) or the
+          // screen is remounted. Clear `_streakCount` too so we don't
+          // flash the old value before the incoming snapshot lands.
+          _loadedRemote = false;
+          setState(() => _streakCount = 0);
         }
         _loadFromCacheFor(uid, newTenantId);
       }
@@ -1969,14 +1979,13 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
           '${Uri.encodeComponent(e.key)}=${Uri.encodeQueryComponent(e.value).replaceAll('+', '%20')}')
       .join('&');
 
-  String _currencySymbol(String code) {
-    const symbols = {
-      'usd': 'US\$', 'eur': '€', 'gbp': '£', 'cad': 'CA\$',
-      'mxn': 'MX\$', 'ars': 'ARS\$', 'brl': 'R\$', 'ils': '₪',
-      'clp': 'CL\$', 'cop': 'CO\$',
-    };
-    return symbols[code.toLowerCase()] ?? '\$';
-  }
+  // Round-9 regression fix: was a local map that shadowed shortCurrencySymbol
+  // — covered only 10 codes, used 'ARS$' (vs canonical 'AR$'), and fell
+  // back to plain '$' for anything unknown (JPY/AUD/CHF/etc.). Header,
+  // min/max dialogs called this, so a JPY user saw '$1000' as goal +
+  // 'the minimum amount is $50 JPY' in the min dialog. Now delegates
+  // to the shared canonical.
+  String _currencySymbol(String code) => shortCurrencySymbol(code);
 
   void _showMinAmountDialog(String currency, int minCents, double attempted) {
     final tr = S.of(context);
@@ -2406,7 +2415,17 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                     // instead of the plain '$' currencySymbol() falls back
                     // to. The ISO code trails on the next Text so we don't
                     // want the full "X SYMB $10 USD" repetition either.
-                    formatMoney(currentAmount, symbol: shortCurrencySymbol(_currencyCodeFromProfile())),
+                    //
+                    // Round-9 regression fix (LOW #4): use currency-aware
+                    // formatter so CLP/JPY/KRW render as integers and BHD/JOD
+                    // get three decimals. formatMoney was locked to
+                    // two-decimal-max — a CLP 10 000 preview came out as
+                    // "$10,000.00" which reads as ten thousand cents.
+                    formatCurrencyAmountWithSymbol(
+                      currentAmount,
+                      _currencyCodeFromProfile(),
+                      symbol: shortCurrencySymbol(_currencyCodeFromProfile()),
+                    ),
                     style: TextStyle(
                       fontSize: 18,
                       fontWeight: FontWeight.w600,
@@ -2655,12 +2674,17 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
   }
 
   String _formatQuickAmount(double amount) {
+    // Round-9 regression fix (LOW #5): delegate to the currency-aware
+    // formatter so zero-decimal currencies (CLP/JPY/KRW) round to whole
+    // units and three-decimal (BHD/JOD) get the right precision.
+    // Previously toStringAsFixed(2) forced a decimal tail on integer-only
+    // currencies — CLP 5000 preview became "5000.00" which is nonsense.
     final currency = _currencyCodeFromProfile();
-    final symbol = _shortSymbol(currency);
-    if (amount == amount.roundToDouble()) {
-      return '$symbol${amount.toInt()}';
-    }
-    return '$symbol${amount.toStringAsFixed(2)}';
+    return formatCurrencyAmountWithSymbol(
+      amount,
+      currency,
+      symbol: _shortSymbol(currency),
+    );
   }
 
   List<double> _buildQuickAmounts() {
