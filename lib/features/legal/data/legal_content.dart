@@ -112,7 +112,7 @@ const _legalContentEs = LegalContent(
         title: '2. Información que recopilamos',
         paragraphs: [
           '2.1 Datos de cuenta: nombre, dirección de correo electrónico, foto de perfil (opcional), credenciales de inicio de sesión proporcionadas por Firebase Authentication, idioma preferido y país/moneda.',
-          '2.2 Datos de pago: NO almacenamos los datos completos de tu tarjeta de crédito o débito. El procesamiento se realiza íntegramente a través de Stripe, Inc. Únicamente conservamos un identificador de cliente de Stripe ("stripeCustomerId"), los últimos 4 dígitos de la tarjeta y la marca (Visa, Mastercard, etc.) para mostrarlos en tu lista de tarjetas guardadas.',
+          '2.2 Datos de pago: NO almacenamos los datos completos de tu tarjeta de crédito o débito. El procesamiento se realiza íntegramente a través de Stripe, Inc. Únicamente conservamos identificadores de cliente de Stripe (uno por cada organización a la que donás, en la cuenta Stripe conectada de esa organización), los últimos 4 dígitos de la tarjeta y la marca (Visa, Mastercard, etc.) para mostrarlos en tu lista de tarjetas guardadas.',
           '2.3 Historial de donaciones: monto, moneda, fecha, organización receptora, designación elegida (si aplica), mensaje opcional del donante y método de pago. Esta información es necesaria para cumplir con obligaciones contables y fiscales tanto nuestras como de las Organizaciones receptoras.',
           '2.4 Datos de uso y dispositivo: tipo de dispositivo, sistema operativo, idioma, identificador único de la app (no del dispositivo), región aproximada inferida del idioma o moneda. NO recopilamos tu ubicación GPS precisa.',
           '2.5 Notificaciones push: tokens de Firebase Cloud Messaging para enviarte recordatorios, confirmaciones de pago y avisos de festividades.',
@@ -169,8 +169,8 @@ const _legalContentEs = LegalContent(
         title: '8. Retención y eliminación',
         paragraphs: [
           'Conservamos tu información mientras tu cuenta esté activa. Los datos de transacciones se conservan por al menos el período mínimo requerido por leyes contables, fiscales y antilavado aplicables (típicamente 5 a 10 años, según jurisdicción), incluso después de que cierres tu cuenta.',
-          'Puedes eliminar tu cuenta en cualquier momento desde Configuración → "Eliminar mi cuenta". Al hacerlo: cancelaremos tus suscripciones recurrentes activas, eliminaremos tu cliente en Stripe (lo que desvincula todas las tarjetas guardadas), y borraremos tus datos personales identificables. El historial de transacciones se anonimiza pero se conserva por las razones legales mencionadas arriba.',
-          'También puedes exportar tus datos en cualquier momento desde Configuración → "Exportar mis datos".',
+          'Puedes eliminar tu cuenta en cualquier momento desde Configuración → "Eliminar mi cuenta". Al hacerlo, haremos el mejor esfuerzo por: cancelar tus suscripciones recurrentes activas, eliminar tu cliente en Stripe en cada organización a la que donaste (lo que desvincula todas las tarjetas guardadas), y borrar tus datos personales identificables. Cualquier suscripción que no pueda cancelarse automáticamente (falla temporal de Stripe, organización desconectada) será reintentada por procesos de reconciliación; si detectas que sigues siendo cobrado, contactanos y lo resolvemos manualmente. Los registros de transacciones se eliminan; conservamos únicamente un identificador anónimo (tombstone) con fecha de eliminación para cumplir obligaciones antilavado y fiscales.',
+          'Para solicitar una copia de tus datos en formato exportable, contactanos en $_contactEmail y te la enviaremos dentro del plazo legal aplicable (típicamente 30 días).',
         ],
       ),
       LegalSection(
@@ -377,7 +377,7 @@ const _legalContentEn = LegalContent(
         title: '2. Information we collect',
         paragraphs: [
           '2.1 Account data: name, email address, profile photo (optional), authentication credentials provided by Firebase Authentication, preferred language, and country/currency.',
-          '2.2 Payment data: we DO NOT store your full credit/debit card information. Processing is performed entirely through Stripe, Inc. We only retain a Stripe customer identifier ("stripeCustomerId"), the last 4 digits of the card, and the brand (Visa, Mastercard, etc.) to display in your saved cards list.',
+          '2.2 Payment data: we DO NOT store your full credit/debit card information. Processing is performed entirely through Stripe, Inc. We only retain Stripe customer identifiers (one per organization you donate to, on that organization\'s connected Stripe account), the last 4 digits of the card, and the brand (Visa, Mastercard, etc.) to display in your saved cards list.',
           '2.3 Donation history: amount, currency, date, recipient Organization, chosen designation (if applicable), optional donor message, and payment method. This information is required to comply with accounting and tax obligations both for us and for the recipient Organizations.',
           '2.4 Usage and device data: device type, operating system, language, unique app identifier (not the device), approximate region inferred from language or currency. We DO NOT collect your precise GPS location.',
           '2.5 Push notifications: Firebase Cloud Messaging tokens to send you reminders, payment confirmations, and holiday alerts.',
@@ -434,8 +434,8 @@ const _legalContentEn = LegalContent(
         title: '8. Retention and deletion',
         paragraphs: [
           'We retain your information while your account is active. Transaction data is kept for at least the minimum period required by applicable accounting, tax, and anti-money-laundering laws (typically 5 to 10 years, depending on jurisdiction), even after you close your account.',
-          'You can delete your account at any time from Settings → "Delete my account". When you do: we will cancel your active recurring subscriptions, delete your customer in Stripe (which unlinks all saved cards), and erase your identifiable personal data. Transaction history is anonymized but retained for the legal reasons mentioned above.',
-          'You can also export your data at any time from Settings → "Export my data".',
+          'You can delete your account at any time from Settings → "Delete my account". When you do, we will make best efforts to: cancel your active recurring subscriptions, delete your customer in Stripe on each organization you donated to (which unlinks all saved cards), and erase your identifiable personal data. Any subscription that cannot be canceled automatically (transient Stripe failure, disconnected organization) will be retried by reconciliation processes; if you notice you are still being charged, contact us and we will resolve it manually. Transaction records are deleted; we retain only an anonymous tombstone identifier with the deletion date to comply with anti-money-laundering and tax obligations.',
+          'To request an export of your data, contact us at $_contactEmail and we will send it within the applicable legal timeframe (typically 30 days).',
         ],
       ),
       LegalSection(

@@ -187,13 +187,15 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
                         child: Builder(
                           builder: (_) {
                             final currentLimit = ref.watch(historyLimitProvider);
-                            // Show the "Cargar más" affordance only when:
-                            //   1. the unfiltered list reached the current limit
-                            //      (more pages may exist), AND
-                            //   2. the user isn't filtering — pagination is on
-                            //      the underlying stream, not the filtered view.
-                            final showLoadMore = selectedFilter == _HistoryFilter.all &&
-                                transactions.length >= currentLimit;
+                            // Round-8 audit HIGH fix: previously the "Cargar
+                            // más" affordance was hidden whenever ANY filter
+                            // was active — a user with only Tzedakah txs on
+                            // this page but more Pushka-empty behind it saw
+                            // no way to expand. Now we ALWAYS show the button
+                            // when the underlying stream has reached the
+                            // current page limit; pagination is per-stream,
+                            // not per-filter-view.
+                            final showLoadMore = transactions.length >= currentLimit;
                             return ListView.builder(
                               padding: const EdgeInsets.fromLTRB(18, 4, 18, 18),
                               itemCount: filtered.length + (showLoadMore ? 1 : 0),

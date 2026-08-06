@@ -302,9 +302,30 @@ class NotificationService {
   /// token, persists it to Firestore, and stores the opt-in flag so future
   /// cold-starts silent-refresh transparently.
   ///
+  /// Round-8 audit HIGH fix: some iOS versions (<16.4) don't support
+  /// web push at all. `_messaging.isSupported()` returns false there.
+  /// UIs should call this BEFORE showing the enable toggle so users
+  /// on unsupported platforms see a "not available" message instead of
+  /// a toggle that silently fails.
+  Future<bool> isWebPushSupported() async {
+    if (!kIsWeb) return false;
+    try {
+      return await FirebaseMessaging.instance.isSupported();
+    } catch (_) {
+      return false;
+    }
+  }
+
   /// Returns true if the user granted permission and a token was saved.
   Future<bool> enableWebPush(String uid) async {
     if (!kIsWeb) return false;
+    // Round-8 audit HIGH fix: bail early on unsupported browsers (iOS <16.4)
+    // — before this check the requestPermission call silently returned
+    // 'denied' and the user thought their toggle was broken.
+    if (!await isWebPushSupported()) {
+      debugPrint('NotificationService.enableWebPush: browser does not support push');
+      return false;
+    }
     final vapidKey = _resolveVapidKey();
     if (vapidKey == null) return false;
     try {

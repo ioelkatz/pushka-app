@@ -264,13 +264,34 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
     } else if (!skipBillAnimation) {
       _launchFallingAnimation();
     }
+    // Round-8 audit CRITICAL fix: persist the DELTA via FieldValue.increment
+    // instead of writing the local absolute total. Two devices adding
+    // concurrently used to silently lose one of the increments because
+    // both wrote `base + delta` from the same base snapshot.
     try {
-      await _persistPushkaAmount();
+      await _persistPushkaDelta(clamped);
     } catch (_) {
-      // Persistence failure is non-critical: the local state is updated and
-      // Hive will be retried next time. Swallow to avoid unhandled exceptions.
+      // Persistence failure is non-critical: local state is updated and
+      // the next tenantState snapshot reconciles.
     }
     _updateStreak();
+  }
+
+  Future<void> _persistPushkaDelta(double delta) async {
+    final user = ref.read(currentUserProvider);
+    if (user == null) return;
+    final tenantId = ref.read(userProfileProvider).valueOrNull?['tenantId'] as String?;
+    if (tenantId == null || tenantId.isEmpty) return;
+    _localWriteTenantId = tenantId;
+    _localWriteStopwatch..reset()..start();
+    await Future.wait([
+      ref.read(userRepositoryProvider).incrementPushkaAmount(
+        uid: user.uid,
+        tenantId: tenantId,
+        delta: delta,
+      ),
+      HiveCache.instance.savePushkaAmount(user.uid, tenantId, pushkaAmount),
+    ]);
   }
   
   /// Reads the tenant's default PM from tenantState (Direct Charges model)

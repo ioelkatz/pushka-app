@@ -1,7 +1,9 @@
 {
+    "//id": "Round-8 audit HIGH fix: stable manifest identity. Without `id`, changing start_url or scope makes browsers treat the manifest as a NEW app and orphan existing installations. Never change this value after users have installed.",
+    "id": "/?source=pwa",
     "name": "Chabad Pushka",
     "short_name": "Pushka",
-    "start_url": "/",
+    "start_url": "/?source=pwa",
     "scope": "/",
     "//display": "Round-6 audit MEDIUM fix: was 'fullscreen' which hides Android status bar (users pierden reloj/batería/notificaciones). 'standalone' es el modo esperado para apps PWA — la status bar sigue visible con nuestro theme_color.",
     "display": "standalone",

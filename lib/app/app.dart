@@ -32,14 +32,22 @@ class _PushkaAppState extends ConsumerState<PushkaApp> with WidgetsBindingObserv
     super.initState();
     WidgetsBinding.instance.addObserver(this);
 
-    // Poll tenant status every 60s while the app is in the foreground. The
+    // Poll tenant status while the app is in the foreground. The
     // existing `ref.listen(tenantConfigProvider)` already redirects to
     // /suspended when the loadConfig() throws TenantSuspendedException — but
     // the FutureProvider only re-fires when invalidated. Without this poll an
     // active user keeps using the app after their tenant is suspended until
-    // they restart. 60s is the latency vs. cost trade-off: each tick is one
-    // Cloud Function call.
-    _tenantStatusTimer = Timer.periodic(const Duration(seconds: 60), (_) {
+    // they restart.
+    //
+    // Round-8 audit HIGH fix: raised from 60s to 5min. The old 60s cadence
+    // also re-ran WebStripe.initialise (via ref.listen(tenantConfigProvider)
+    // downstream) with a Firestore .get() and a Stripe SDK re-bootstrap
+    // fetch every minute for every foreground user forever — real quota
+    // waste for a check that only matters when the Rab manually flips
+    // status to suspended (a rare event). 5min gives worst-case ~5min
+    // suspension latency, which is acceptable for a status change that
+    // typically comes with an out-of-band communication anyway.
+    _tenantStatusTimer = Timer.periodic(const Duration(minutes: 5), (_) {
       if (!mounted) return;
       // Only refresh if the user is signed in — otherwise we'd hit auth-required
       // errors with no useful effect.

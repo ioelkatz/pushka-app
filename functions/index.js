@@ -401,11 +401,24 @@ async function getUserTokens(uid) {
     }
   } catch (_) { /* fall through */ }
 
+  // Round-6 audit LOW fix: cap at 500 tokens. FCM sendEachForMulticast has
+  // a 500-token hard limit per call; a user with more (e.g. a bug that
+  // wrote per-launch instead of per-device) would silently fail-send to
+  // everyone above the cap. Prefer most-recently-used so active devices
+  // still receive pushes.
   const snap = await db
     .collection("users")
     .doc(uid)
     .collection("fcmTokens")
-    .get();
+    .orderBy("lastUsedAt", "desc")
+    .limit(500)
+    .get()
+    .catch(async (_) => {
+      // Fallback if the lastUsedAt index is missing on legacy user docs —
+      // plain read up to 500 (no ordering) is still better than the
+      // unbounded original.
+      return db.collection("users").doc(uid).collection("fcmTokens").limit(500).get();
+    });
 
   return snap.docs
     .map((doc) => ({ token: doc.id, platform: doc.get("platform") }))
@@ -6105,9 +6118,23 @@ exports.setAdminClaim = onCall(
       newClaims = { role: "super_admin", admin: true };
     } else if (role === "tenant_admin") {
       if (!tenantId) throw new HttpsError("invalid-argument", "tenantId requerido para tenant_admin.");
+      // Round-6 audit MEDIUM fix: validate that tenantId actually exists
+      // before writing an orphan claim. Previously a super_admin typo (or
+      // a tenant deleted between UI select + submit) created a claim
+      // pointing at a void, and the user got tenant_admin scope on
+      // nothing — worse, if a NEW tenant with the same id ever appeared
+      // (unlikely but possible via slug reuse), they'd inherit admin.
+      const tSnap = await db.collection("tenants").doc(tenantId).get();
+      if (!tSnap.exists) {
+        throw new HttpsError("not-found", `Tenant ${tenantId} no existe. Verificá el id antes de asignar el rol.`);
+      }
       newClaims = { role: "tenant_admin", tenantId };
     } else if (role === "tenant_collaborator") {
       if (!tenantId) throw new HttpsError("invalid-argument", "tenantId requerido para tenant_collaborator.");
+      const tSnap = await db.collection("tenants").doc(tenantId).get();
+      if (!tSnap.exists) {
+        throw new HttpsError("not-found", `Tenant ${tenantId} no existe.`);
+      }
       newClaims = { role: "tenant_collaborator", tenantId };
     }
 
@@ -7885,6 +7912,10 @@ exports.createTenant = onCall(
     if (!(await callerIsSuperAdminFresh(request))) {
       throw new HttpsError("permission-denied", "Solo el super administrador puede crear tenants.");
     }
+    // Round-6 audit LOW fix: rate limit prevents accidental double-submit
+    // (super_admin double-tap in admin panel) creating orphan tenants and
+    // caps blast radius if the super_admin account is ever compromised.
+    await enforceRateLimit(request.auth.uid, "createTenant", 20, 3600);
 
     const {
       name, slug, appName, welcomeText,
@@ -8094,6 +8125,12 @@ exports.createTenant = onCall(
     // sync with handleStripeConnectOAuth.
     const adminPanelUrl = "https://chabad-admin.web.app";
 
+    // Round-8 audit HIGH fix: track welcome-email delivery outcome so the
+    // response tells super_admin whether they need to send the setup link
+    // manually. Previous silent behavior meant the tenant admin never
+    // received the password link and got stuck out of their own panel.
+    let welcomeEmailDelivered = false;
+    let welcomeEmailError = null;
     try {
       await sendEmail({
         to: adminEmail.trim(),
@@ -8106,8 +8143,25 @@ exports.createTenant = onCall(
           stripeConnectUrl: null,
         }),
       });
+      welcomeEmailDelivered = true;
     } catch (e) {
-      console.warn("createTenant: welcome email failed:", e.message);
+      console.error("createTenant: welcome email failed:", e.message);
+      welcomeEmailError = String(e?.message || e).slice(0, 300);
+      // Best-effort ops alert so someone notices even without checking logs.
+      try {
+        await writeActivityLog({
+          type: "tenant_welcome_email_failed",
+          tenantId: tenantRef.id,
+          tenantName: tenantData.name,
+          severity: "warning",
+          requiresAction: true,
+          data: {
+            adminEmail: _redactEmail(adminEmail),
+            passwordSetupLink: passwordSetupLink ? "generated" : "missing",
+            error: welcomeEmailError,
+          },
+        });
+      } catch (_) { /* activity log itself failed — swallow */ }
     }
 
     // BUG-026 fix: provision the Stripe Billing subscription automatically
@@ -8150,6 +8204,12 @@ exports.createTenant = onCall(
       success: true,
       tenantId: tenantRef.id,
       slug: normalizedSlug,
+      // Round-8 audit HIGH fix: surface welcome email delivery outcome so
+      // the super_admin UI can show "email failed — send this link
+      // manually" instead of silently assuming delivery.
+      welcomeEmailDelivered,
+      welcomeEmailError,
+      passwordSetupLink: passwordSetupLink ?? null,
       ...(subscriptionProvision ? { subscription: subscriptionProvision } : {}),
     };
   }
@@ -8409,6 +8469,12 @@ exports.getTenantBranding = onCall(
     if (!isSuper && !isTenantAdmin) {
       throw new HttpsError("permission-denied", "Acceso denegado.");
     }
+    // Round-6 audit LOW fix: rate limit prevents infinite-polling from
+    // tenant_admin dashboards. 120/hr is generous for legitimate use
+    // (branding editor refresh) but caps a runaway polling bug.
+    if (request.auth?.uid) {
+      await enforceRateLimit(request.auth.uid, "getTenantBranding", 120, 3600);
+    }
 
     const tenantId = isSuper
       ? (request.data?.tenantId ?? null)
@@ -8460,6 +8526,10 @@ exports.updateTenant = onCall(
     if (!isSuper && !isTenantAdmin) {
       throw new HttpsError("permission-denied", "Acceso denegado.");
     }
+    // Round-6 audit LOW fix: rate limit — updateTenant triggers
+    // onTenantBrandingUpdated which fans out to every member's tenantState.
+    // A runaway rewrite loop (or compromised admin) could DoS Firestore.
+    await enforceRateLimit(callerUid, "updateTenant", 60, 3600);
 
     const { tenantId, ...updates } = request.data ?? {};
     if (!tenantId) throw new HttpsError("invalid-argument", "tenantId requerido.");
@@ -9347,6 +9417,12 @@ exports.handleStripeConnectOAuth = onRequest(
 
     if (error) {
       console.warn("Stripe Connect OAuth denied:", error);
+      // Round-6 audit LOW fix: delete the state doc so it doesn't sit
+      // consuming Firestore quota for 24h TTL. Best-effort: if state
+      // param is absent, skip (nothing to delete).
+      if (state) {
+        await db.collection("_stripeConnectOAuth").doc(state).delete().catch(() => {});
+      }
       return res.redirect(`https://chabad-admin.web.app/tenants?connect=denied`);
     }
 
@@ -9877,6 +9953,11 @@ async function sendEmail({ to, subject, html }) {
   if (!res.ok) {
     const body = await res.text();
     console.error("sendEmail error:", res.status, body);
+    // Round-8 audit HIGH fix: throw on non-OK so callers wrapping in
+    // `.catch(...)` actually see the failure. Previous silent behavior
+    // meant welcome-email failures (createTenant) and dunning notices
+    // never surfaced — admin thought the email went out.
+    throw new Error(`SendGrid ${res.status}: ${body.slice(0, 400)}`);
   }
 }
 
@@ -10081,6 +10162,10 @@ exports.cancelTenantSubscription = onCall(
     if (!(await callerIsSuperAdminFresh(request))) {
       throw new HttpsError("permission-denied", "Solo el super administrador.");
     }
+    // Round-6 audit LOW fix: symmetry with deleteTenant which already
+    // rate-limits (20/hr). Prevents accidental double-cancel + caps blast
+    // radius if super_admin credentials leak.
+    await enforceRateLimit(request.auth.uid, "cancelTenantSubscription", 20, 3600);
 
     const { tenantId } = request.data ?? {};
     if (!tenantId) throw new HttpsError("invalid-argument", "tenantId requerido.");
@@ -10826,6 +10911,10 @@ exports.resolveActivityItem = onCall(
     if (!(await callerIsSuperAdminFresh(request))) {
       throw new HttpsError("permission-denied", "Solo el super administrador.");
     }
+    // Round-6 audit LOW fix: rate limit — spam of writes from a compromised
+    // super_admin could burn Firestore quota.
+    await enforceRateLimit(request.auth.uid, "resolveActivityItem", 200, 3600);
+
     const { id } = request.data ?? {};
     if (!id || typeof id !== "string") {
       throw new HttpsError("invalid-argument", "id requerido.");
@@ -12035,12 +12124,28 @@ exports.onUserTimezoneChanged = onDocumentUpdated(
     const newTz = after.timezone;
     if (typeof newTz !== "string" || newTz.length === 0) return;
 
+    // Round-6 audit LOW fix: validate IANA-shape before running through
+    // Luxon. Arbitrary strings ("hola", "utc-3", etc) make Luxon return
+    // Invalid DateTime → Timestamp.fromDate(NaN) crashes the batch commit.
+    // Use DateTime.now().setZone(x).isValid as the ground-truth check.
+    try {
+      const { DateTime } = require("luxon");
+      if (!DateTime.now().setZone(newTz).isValid) {
+        console.warn("onUserTimezoneChanged: invalid IANA tz — skipping", { uid: event.params.uid, newTz });
+        return;
+      }
+    } catch (_) { /* if luxon load fails, fall through and trust newTz */ }
+
     const { uid } = event.params;
     const remindersRef = db.collection("users").doc(uid).collection("reminders");
     const snap = await remindersRef.get();
     if (snap.empty) return;
 
-    const batch = db.batch();
+    // Round-6 audit LOW fix: paginate the batch — a user with >500 reminders
+    // used to blow the single-batch limit and the tz stayed desynced across
+    // all of them. Chunk to 400 for margin.
+    let batch = db.batch();
+    let batchOps = 0;
     let recomputed = 0;
     for (const doc of snap.docs) {
       const data = doc.data();
@@ -12051,9 +12156,15 @@ exports.onUserTimezoneChanged = onDocumentUpdated(
         timezone: newTz,
         nextTriggerAt: nextTriggerAt ? admin.firestore.Timestamp.fromDate(nextTriggerAt) : null,
       }, { merge: true });
+      batchOps += 1;
       recomputed += 1;
+      if (batchOps >= 400) {
+        await batch.commit();
+        batch = db.batch();
+        batchOps = 0;
+      }
     }
-    if (recomputed > 0) await batch.commit();
+    if (batchOps > 0) await batch.commit();
     console.info("onUserTimezoneChanged: recomputed reminders", { uid, newTz, recomputed });
   },
 );
@@ -12215,7 +12326,15 @@ exports.processDueReminders = onSchedule(
           const td = await _getCachedTenant(activeTenantId);
           tenantAppName = String(td.appName || td.name || "Pushka");
         }
-        const title = String(data.title || tenantAppName).slice(0, 100);
+        // Round-6 audit MEDIUM fix: String.slice cuts UTF-16 code units,
+        // not code points — a surrogate pair (emoji) at char 100 would
+        // split in half and render mojibake. Split on Array.from() which
+        // iterates code points then rejoin.
+        const rawTitle = String(data.title || tenantAppName);
+        const titleCodepoints = Array.from(rawTitle);
+        const title = titleCodepoints.length > 100
+            ? titleCodepoints.slice(0, 100).join("")
+            : rawTitle;
         // Body: localized default in the user's language. Falls back to
         // Spanish if the profile has no language set.
         const raw = String(userProfile.language || "").trim().toLowerCase();

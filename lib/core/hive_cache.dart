@@ -15,9 +15,33 @@ class HiveCache {
   Future<void> init() => _initFuture ??= _doInit();
 
   Future<void> _doInit() async {
-    await Hive.initFlutter();
-    _box = await Hive.openBox(_boxName);
-    _initialized = true;
+    // Round-8 audit HIGH fix: openBox can throw when the on-disk file is
+    // corrupt (device disk-full during a prior write, killed mid-write, or
+    // a Hive schema change). main.dart awaits this before runApp — an
+    // unhandled throw here would crash the cold-start with no UI. Best-
+    // effort recovery: wipe the corrupt box and open a fresh one. Loss of
+    // local cache is acceptable (data is server-side authoritative);
+    // never-launching is not.
+    try {
+      await Hive.initFlutter();
+      _box = await Hive.openBox(_boxName);
+      _initialized = true;
+    } catch (e, st) {
+      // ignore: avoid_print
+      print('[HiveCache] openBox failed, wiping and retrying: $e\n$st');
+      try {
+        await Hive.deleteBoxFromDisk(_boxName);
+        _box = await Hive.openBox(_boxName);
+        _initialized = true;
+      } catch (e2) {
+        // Second failure — proceed uninitialised so downstream callers
+        // (loadX / saveX) all no-op via their `if (!_initialized) return`
+        // guards. App loses local cache but boots.
+        // ignore: avoid_print
+        print('[HiveCache] second openBox failed, running without cache: $e2');
+        _initialized = false;
+      }
+    }
   }
 
   // ---------------------------------------------------------------------------

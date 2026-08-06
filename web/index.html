@@ -16,7 +16,10 @@
 
   <meta charset="UTF-8">
   <meta content="IE=Edge" http-equiv="X-UA-Compatible">
-  <meta name="description" content="Chabad Pushka - Tu alcancía de tzedaká digital. Donaciones seguras con Stripe.">
+  <!-- Round-6 audit LOW fix: brand-neutral for the multi-tenant SaaS.
+       Tenant-specific meta (og:image, description) is emitted per-route
+       via SSR when we add it; static shell stays generic. -->
+  <meta name="description" content="Pushka - Alcancía digital de tzedaká. Donaciones seguras.">
 
   <!-- iOS PWA meta — Add to Home Screen enables full-screen standalone mode -->
   <meta name="mobile-web-app-capable" content="yes">
@@ -66,8 +69,11 @@
     body {
       margin: 0;
       min-height: 100%;
-      background-color: #3B7FD8;
-          background-size: 100% 100%;
+      /* Round-6 audit MEDIUM fix: matches manifest.json.background_color
+         (#2563EB) so cold-start doesn't flash from Chrome's tab color to
+         our body color, then to the manifest splash, then to app content. */
+      background-color: #2563EB;
+      background-size: 100% 100%;
     }
 
     .center {
@@ -213,6 +219,6 @@
   <!-- Version marker for debugging cache issues — grep this string on
        deployed HTML to confirm the newest build is being served.
        Bump the date on each significant deploy. -->
-  <meta name="pushka-version" content="2026-07-21-offline-opportunistic">
+  <meta name="pushka-version" content="2026-08-05-r7-regression-fixes">
 
 </body></html>
