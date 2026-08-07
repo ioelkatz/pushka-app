@@ -17,6 +17,14 @@
           ]
         },
         {
+          "//": "apple-app-site-association has NO file extension. Without an explicit Content-Type, Firebase Hosting serves it as application/octet-stream and iOS silently rejects the file (Universal Links stop working). Force application/json.",
+          "source": "/.well-known/apple-app-site-association",
+          "headers": [
+            { "key": "Content-Type", "value": "application/json" },
+            { "key": "Cache-Control", "value": "public, max-age=86400, s-maxage=86400" }
+          ]
+        },
+        {
           "source": "**/*.html",
           "headers": [
             { "key": "Cache-Control", "value": "public, max-age=300, s-maxage=300" },

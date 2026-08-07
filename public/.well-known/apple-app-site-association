@@ -1,7 +1,19 @@
 {
+  "_TODO": "Replace REPLACE_ME_APPLE_TEAM_ID with the 10-char Apple Team ID once Jym Inc's Apple Developer enrollment is provisioned. Team ID appears in developer.apple.com > Membership. Serving with a placeholder will make iOS silently reject the association — the file below is scaffolding, NOT production-ready until the Team ID lands.",
   "applinks": {
-    "apps": [],
-    "details": []
+    "details": [
+      {
+        "appIDs": ["REPLACE_ME_APPLE_TEAM_ID.com.pushka.app"],
+        "components": [
+          { "/": "/join/*", "comment": "Deep link to join a tenant via slug" },
+          { "/": "/donation-success*", "comment": "Post-checkout redirect from Stripe" },
+          { "/": "/donation-cancel*", "comment": "Cancelled-checkout redirect from Stripe" },
+          { "/": "/get*", "comment": "Universal Links entry point (open app or install prompt)" }
+        ]
+      }
+    ]
   },
-  "_TODO": "Replace details[0] with {\"appID\": \"<TEAM_ID>.com.pushka.app\", \"paths\": [\"/join/*\"]} once the Apple Developer account is provisioned and a real TEAM_ID is available. Serving an empty details[] avoids the previous broken literal 'TEAM_ID.com.pushka.app' which iOS silently rejects."
+  "webcredentials": {
+    "apps": ["REPLACE_ME_APPLE_TEAM_ID.com.pushka.app"]
+  }
 }

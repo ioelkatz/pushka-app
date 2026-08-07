@@ -18,6 +18,7 @@ import '../features/tenant/presentation/tenant_code_screen.dart';
 import '../features/tenant/presentation/tenant_suspended_screen.dart';
 import '../features/tenant/presentation/join_via_link_screen.dart';
 import '../core/deep_link_handler.dart';
+import '../core/hostname_tenant_map.dart';
 
 import '../features/pushka/presentation/pushka_screen.dart';
 import '../features/wallet/presentation/wallet_screen.dart';
@@ -156,7 +157,19 @@ final router = GoRouter(
           _cachedTenantCheckUid = uid;
           _cachedHasTenant = tenantId != null && tenantId.isNotEmpty;
         }
-        if (_cachedHasTenant == false) return '/tenant-setup';
+        if (_cachedHasTenant == false) {
+          // If the user landed on a hostname that's mapped to a specific
+          // tenant (e.g. app.jabadencampus.com → jabadencampus), skip the
+          // code-entry screen and drop them straight into the join flow.
+          // Zero friction for donors who arrive via a tenant-branded URL.
+          // Falls back to /tenant-setup when no mapping matches (mobile
+          // installs, generic hosts, unmapped tenants).
+          final hostSlug = tenantSlugFromHostname();
+          if (hostSlug != null && !loc.startsWith('/join/')) {
+            return '/join/$hostSlug';
+          }
+          return '/tenant-setup';
+        }
       }
     }
     return null;
