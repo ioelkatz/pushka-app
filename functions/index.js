@@ -3404,6 +3404,29 @@ exports.stripeWebhook = onRequest(
         }
         const txRates = await getExchangeRates(null);
         const txSnap = buildCurrencySnapshot(amount, txCurrency, txRates);
+
+        // Round-11 audit IMPORTANTE fix: check if the user was blocked
+        // between createPaymentIntent and this webhook. Stripe already
+        // charged the card — we can't retroactively refuse the funds —
+        // but we FLAG the tx as blocked-at-charge so the admin can
+        // decide (refund manually, keep, review). Without this, admin
+        // blocks a suspected fraud user, they complete an open checkout,
+        // and the tx lands in the tenant's revenue as if the block never
+        // happened. Non-fatal: any Firestore read failure defaults to
+        // "not blocked" so we never break the webhook.
+        let flaggedBlocked = false;
+        try {
+          const blockCheckSnap = await db.collection("users").doc(uid).get();
+          if (blockCheckSnap.exists && blockCheckSnap.data()?.isBlocked === true) {
+            flaggedBlocked = true;
+            console.warn("stripeWebhook: payment_intent.succeeded from BLOCKED user — flagging tx", {
+              uid, paymentIntentId: docId, tenantId: txTenantId,
+            });
+          }
+        } catch (blockErr) {
+          console.warn("stripeWebhook: block check failed (non-fatal)", { uid, err: blockErr?.message });
+        }
+
         await db
           .collection("users")
           .doc(uid)
@@ -3417,7 +3440,8 @@ exports.stripeWebhook = onRequest(
             ...(txTenantId ? { tenantId: txTenantId } : {}),
             description: txDesc,
             paymentMethod: txPaymentMethod,
-            status: 'completed',
+            status: flaggedBlocked ? 'flagged_blocked_user' : 'completed',
+            ...(flaggedBlocked ? { flaggedBlocked: true } : {}),
             // donorMessage was sanitized in createPaymentIntent before being
             // stamped on the PI metadata; re-sanitize defensively here so a
             // forged event (theoretical — Stripe signature blocks this) can't
@@ -4616,6 +4640,24 @@ exports.onTransactionCreated = onDocumentCreated(
         console.warn("activeUsersThisMonth: update failed (non-fatal)", String(err?.message || err));
       }
     }
+
+    // Round-11 audit MENOR + IMPORTANTE fix: denormalize `transactionCount`
+    // and `lastDonationAt` onto `users/{uid}` so the admin CRM can show
+    // them without an N+1 aggregation. Only count actual donations
+    // (tzedaka + pushkaEmpty), NOT refunds or wallet fills — those would
+    // inflate the count misleadingly. Best-effort; if this fails the
+    // trigger still succeeded at delivering the notification.
+    const countsAsDonation = type === "tzedaka" || type === "pushkaEmpty";
+    if (countsAsDonation && uid) {
+      try {
+        await db.collection("users").doc(uid).set({
+          transactionCount: admin.firestore.FieldValue.increment(1),
+          lastDonationAt: admin.firestore.FieldValue.serverTimestamp(),
+        }, { merge: true });
+      } catch (err) {
+        console.warn("onTransactionCreated: denorm failed (non-fatal)", String(err?.message || err));
+      }
+    }
   },
 );
 
@@ -4819,6 +4861,17 @@ exports.onTenantBrandingUpdated = onDocumentUpdated(
       // the secondary accent visually. The field is also gone from the
       // admin web editor + Flutter theme.
       contactPhone: "tenantContactPhone",
+      // Round-11 audit MEDIO fix: previous mapping omitted these branded
+      // fields. Any future UI that reads them from tenantState (support
+      // screen, welcome copy, privacy link surfacing, address block) would
+      // see stale data indefinitely because we never propagated the
+      // updates. Mirror everything now so the deuda técnica desaparece
+      // before anyone reads the stale field.
+      welcomeText: "tenantWelcomeText",
+      contactEmail: "tenantContactEmail",
+      privacyPolicyUrl: "tenantPrivacyPolicyUrl",
+      city: "tenantCity",
+      country: "tenantCountry",
     };
     const changes = {};
     for (const [src, dest] of Object.entries(fieldMap)) {
@@ -6749,6 +6802,16 @@ exports.getRecentTransactions = onCall(
           amountUSD: Math.round((amountUSD || 0) * 100) / 100,
           description: tx.description ?? "",
           createdAt: createdAt.toISOString(),
+          // Round-11 audit IMPORTANTE fix: expose these fields so the admin
+          // TransactionsPage can render the "Recurrente" badge, show donor
+          // messages, and filter by designation. Previously they were
+          // stripped from the response and the page had no way to
+          // differentiate recurring vs one-off donations.
+          paymentMethod: tx.paymentMethod ?? null,
+          status: tx.status ?? null,
+          subscriptionId: tx.subscriptionId ?? null,
+          donorMessage: tx.donorMessage ?? null,
+          donationReason: tx.donationReason ?? null,
         };
       });
 
@@ -8437,12 +8500,32 @@ exports.backfillTenantSlugs = onCall(
         }
         continue;
       }
-      await slugRef.create({
-        tenantId,
-        createdAt: admin.firestore.FieldValue.serverTimestamp(),
-        backfilled: true,
-      });
-      created += 1;
+      // Round-11 audit MEDIO fix: two super_admins running the backfill
+      // concurrently used to race — the second attempt's `.create()` would
+      // throw ALREADY_EXISTS on the first slug the first attempt just
+      // created between our .get() (above) and this .create(). That
+      // aborted the whole second sweep half-way. Catch the race and
+      // re-classify as skippedAlreadyExists or conflicts depending on
+      // whether the winning doc points at the same tenant.
+      try {
+        await slugRef.create({
+          tenantId,
+          createdAt: admin.firestore.FieldValue.serverTimestamp(),
+          backfilled: true,
+        });
+        created += 1;
+      } catch (raceErr) {
+        if (raceErr?.code === 6 || /ALREADY_EXISTS/i.test(String(raceErr?.message))) {
+          const raced = await slugRef.get();
+          if (raced.exists && raced.data()?.tenantId === tenantId) {
+            skipped += 1;
+          } else {
+            conflicts.push({ slug, tenantId, ownerTenantId: raced.data()?.tenantId, raceLost: true });
+          }
+        } else {
+          throw raceErr;
+        }
+      }
     }
 
     const summary = {
@@ -8788,12 +8871,15 @@ exports.updateTenant = onCall(
     // (the next time that user signs up, they'll be the canonical admin).
     if (isSuper && "adminEmail" in updates && typeof patch.adminEmail === "string" && patch.adminEmail.length > 0) {
       const oldEmail = (snap.data()?.adminEmail ?? "").toLowerCase();
+      const oldAdminUid = snap.data()?.adminUid || null;
       const newEmail = patch.adminEmail.toLowerCase();
       patch.adminEmail = newEmail; // normalize storage to lowercase
       if (newEmail !== oldEmail) {
+        let newAdminUid = null;
         try {
           const targetRecord = await admin.auth().getUserByEmail(newEmail);
-          patch.adminUid = targetRecord.uid;
+          newAdminUid = targetRecord.uid;
+          patch.adminUid = newAdminUid;
         } catch (lookupErr) {
           // user-not-found → null out adminUid; the new admin can sign up
           // later and the team subcollection sweep will reconcile.
@@ -8801,6 +8887,74 @@ exports.updateTenant = onCall(
           console.info("updateTenant: adminEmail target has no auth account yet", {
             tenantId, newEmail,
           });
+        }
+
+        // Round-11 audit IMPORTANTE fix: the old code only rewrote
+        // tenants/{tid}.adminEmail — it did NOT grant the tenant_admin
+        // custom claim to the new admin nor revoke it from the outgoing
+        // one. Result: the new admin literally could not log into the
+        // panel ("no permisos"), and the outgoing admin kept full write
+        // access to a tenant that was no longer theirs. UI had a hint
+        // "recordá asignarle el rol" but nothing enforced it. Now we
+        // atomically transfer the claim + team-subcollection record.
+        //
+        // Also update tenants/{tid}/team subcollection so the roster
+        // reflects the swap immediately — otherwise the outgoing admin
+        // still appears in the team list.
+        if (newAdminUid) {
+          try {
+            const newUserRecord = await admin.auth().getUser(newAdminUid);
+            const newClaims = { ...(newUserRecord.customClaims || {}) };
+            newClaims.role = "tenant_admin";
+            newClaims.tenantId = tenantId;
+            await admin.auth().setCustomUserClaims(newAdminUid, newClaims);
+            // Force refresh on next request so the new admin doesn't wait
+            // for the ~1h token cache.
+            await admin.auth().revokeRefreshTokens(newAdminUid);
+
+            // Team subcollection: mark the new admin active with role
+            // tenant_admin (idempotent — merge preserves other fields).
+            await db.collection("tenants").doc(tenantId).collection("team")
+              .doc(newAdminUid).set({
+                uid: newAdminUid,
+                email: newEmail,
+                role: "tenant_admin",
+                status: "active",
+                addedAt: admin.firestore.FieldValue.serverTimestamp(),
+                addedBy: request.auth?.uid || "updateTenant",
+              }, { merge: true });
+          } catch (claimErr) {
+            console.warn("updateTenant: failed to grant tenant_admin claim to new admin", {
+              tenantId, newAdminUid, error: claimErr?.message,
+            });
+          }
+        }
+
+        if (oldAdminUid && oldAdminUid !== newAdminUid) {
+          try {
+            const oldUserRecord = await admin.auth().getUser(oldAdminUid);
+            const oldClaims = { ...(oldUserRecord.customClaims || {}) };
+            // Only strip the tenant_admin claim if it was pointing at THIS
+            // tenant — a super_admin retains super_admin, an admin who
+            // manages a different tenant keeps that binding.
+            if (oldClaims.role === "tenant_admin" && oldClaims.tenantId === tenantId) {
+              delete oldClaims.role;
+              delete oldClaims.tenantId;
+              await admin.auth().setCustomUserClaims(oldAdminUid, oldClaims);
+              await admin.auth().revokeRefreshTokens(oldAdminUid);
+            }
+            // Mark the outgoing admin as removed from the team roster.
+            await db.collection("tenants").doc(tenantId).collection("team")
+              .doc(oldAdminUid).set({
+                status: "removed",
+                removedAt: admin.firestore.FieldValue.serverTimestamp(),
+                removedBy: request.auth?.uid || "updateTenant",
+              }, { merge: true });
+          } catch (revokeErr) {
+            console.warn("updateTenant: failed to revoke tenant_admin claim from old admin", {
+              tenantId, oldAdminUid, error: revokeErr?.message,
+            });
+          }
         }
       }
     }
@@ -8828,7 +8982,19 @@ exports.updateTenant = onCall(
             if (newSlugSnap.exists && newSlugSnap.data()?.tenantId !== tenantId) {
               throw new HttpsError("already-exists", `El código "${normalizedSlug}" ya está en uso.`);
             }
-            if (oldSlugRef) tx.delete(oldSlugRef);
+            // Round-11 audit MEDIO fix: instead of hard-deleting the old
+            // slug lock, convert it into a redirect. Users with the old
+            // link saved (pushkapp.cc/j/oldslug in WhatsApp, email,
+            // bookmarks) get seamlessly routed to the new tenant instead
+            // of a "código no encontrado" screen. getTenantBySlug follows
+            // the redirectTo field one hop.
+            if (oldSlugRef) {
+              tx.set(oldSlugRef, {
+                redirectTo: normalizedSlug,
+                tenantId, // keep for defense-in-depth reverse lookups
+                redirectedAt: admin.firestore.FieldValue.serverTimestamp(),
+              }, { merge: true });
+            }
             tx.set(newSlugRef, {
               tenantId,
               createdAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -9037,8 +9203,24 @@ exports.getTenantBySlug = onCall(
 
     if (!slug) throw new HttpsError("invalid-argument", "slug requerido.");
 
+    // Round-11 audit MEDIO fix: honor slug redirects. When a tenant renames
+    // their slug via updateTenant, the old lock doc is rewritten with a
+    // `redirectTo` field pointing to the new slug. Old links (WhatsApp,
+    // email, bookmarks) transparently resolve to the new tenant instead of
+    // showing "no encontrado". Single hop only to prevent loops.
+    let effectiveSlug = slug;
+    try {
+      const oldLockSnap = await db.collection("_tenantSlugs").doc(slug).get();
+      if (oldLockSnap.exists) {
+        const lockData = oldLockSnap.data() || {};
+        if (typeof lockData.redirectTo === "string" && lockData.redirectTo.length > 0 && lockData.redirectTo !== slug) {
+          effectiveSlug = lockData.redirectTo.toLowerCase().replace(/[^a-z0-9]/g, "");
+        }
+      }
+    } catch (_) { /* fall through to canonical query */ }
+
     const snap = await db.collection("tenants")
-      .where("slug", "==", slug)
+      .where("slug", "==", effectiveSlug)
       .where("status", "in", ["active", "trial", "grace_period"])
       .limit(1)
       .get();

@@ -10,6 +10,9 @@
         ],
         "pwa": [
           "pushka-pwa"
+        ],
+        "landing": [
+          "pushka-landing"
         ]
       }
     }

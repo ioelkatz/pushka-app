@@ -13,6 +13,7 @@ class TenantSummary {
     this.country,
     this.logoUrl,
     this.primaryColor,
+    this.brandingVersion,
   });
 
   final String tenantId;
@@ -24,6 +25,22 @@ class TenantSummary {
   final String? country;
   final String? logoUrl;
   final Color? primaryColor;
+  // Round-11 audit MEDIO fix: monotonic timestamp used to cache-bust
+  // logoUrl. When an admin uploads a new logo to the SAME URL (or the
+  // CDN returns the same URL with different bytes), CachedNetworkImage
+  // keeps the old bytes forever. Appending `?v=<brandingVersion>` to
+  // the URL forces a re-fetch when it changes. Populated from the
+  // tenant doc's `updatedAt` field.
+  final int? brandingVersion;
+
+  /// Logo URL with a cache-bust query param appended when a
+  /// brandingVersion is known. Returns null when no logo is set.
+  String? get cacheBustedLogoUrl {
+    if (logoUrl == null || logoUrl!.isEmpty) return null;
+    if (brandingVersion == null) return logoUrl;
+    final sep = logoUrl!.contains('?') ? '&' : '?';
+    return '${logoUrl!}${sep}v=$brandingVersion';
+  }
 
   /// "Polanco · Ciudad de México" / "Ciudad de México" / "" depending on what's set.
   String get locationLabel {
@@ -44,6 +61,20 @@ class TenantSummary {
   }
 
   factory TenantSummary.fromMap(Map<String, dynamic> data) {
+    // Extract a numeric branding version from either a Firestore Timestamp
+    // (which arrives as a Map with seconds/nanoseconds) or a millis int.
+    int? extractVersion(dynamic raw) {
+      if (raw == null) return null;
+      if (raw is int) return raw;
+      if (raw is num) return raw.toInt();
+      if (raw is Map) {
+        final secs = raw['_seconds'] ?? raw['seconds'];
+        if (secs is num) return secs.toInt() * 1000;
+      }
+      // DateTime shape via toDate() isn't reachable here because we already
+      // received parsed data. Any exotic shape falls through to null.
+      return null;
+    }
     return TenantSummary(
       tenantId: (data['tenantId'] as String?) ?? '',
       name: (data['name'] as String?) ?? '',
@@ -54,6 +85,7 @@ class TenantSummary {
       country: data['country'] as String?,
       logoUrl: data['logoUrl'] as String?,
       primaryColor: _parseColor(data['primaryColor'] as String?),
+      brandingVersion: extractVersion(data['updatedAt']) ?? extractVersion(data['brandingUpdatedAt']),
     );
   }
 

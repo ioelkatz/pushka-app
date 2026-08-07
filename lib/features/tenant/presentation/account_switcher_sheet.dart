@@ -168,7 +168,10 @@ class _OrgTile extends StatelessWidget {
         ),
         child: Row(
           children: [
-            _OrgAvatar(name: summary.name, logoUrl: summary.logoUrl),
+            // Round-11 audit MEDIO fix: use cacheBustedLogoUrl so a
+            // re-uploaded logo (same URL, new bytes) actually updates
+            // instead of showing the cached copy indefinitely.
+            _OrgAvatar(name: summary.name, logoUrl: summary.cacheBustedLogoUrl),
             const SizedBox(width: 12),
             Expanded(
               child: Text(
