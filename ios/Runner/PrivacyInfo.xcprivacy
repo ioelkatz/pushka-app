@@ -24,8 +24,21 @@
 <dict>
     <key>NSPrivacyTracking</key>
     <true/>
+    <!--
+      Domains Firebase Analytics + Crashlytics reach when the user grants
+      ATT (setAnalyticsCollectionEnabled(true) after
+      requestTrackingAuthorization). Apple hard-rejects binaries that
+      declare NSPrivacyTracking=true with an empty domains array — it
+      reads as "we track but won't say where". If in the future we drop
+      ATT entirely (never call requestTrackingAuthorization), flip
+      NSPrivacyTracking to false and empty this array in the same commit.
+    -->
     <key>NSPrivacyTrackingDomains</key>
-    <array/>
+    <array>
+        <string>app-measurement.com</string>
+        <string>firebase-settings.crashlytics.com</string>
+        <string>firebase-crashlytics-reports-pa.googleapis.com</string>
+    </array>
     <key>NSPrivacyCollectedDataTypes</key>
     <array>
         <dict>

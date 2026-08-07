@@ -7021,6 +7021,57 @@ exports.deleteAccount = onCall(
       ? [...userData.tenantIds]
       : (userData.tenantId ? [userData.tenantId] : []);
 
+    // Round-11 audit fix (IMPORTANT): reject deletion when the caller is
+    // the ONLY tenant_admin of any tenant. Silent orphaning would leave
+    // recurring donation subscriptions billing OTHER donors forever with
+    // no one able to cancel them, no branding updates, no invite codes,
+    // and no admin visibility. The user must transfer the role first
+    // (via account switcher > organization > invite another admin >
+    // switch role) before deletion succeeds.
+    //
+    // We iterate memberships and check each tenant's team subcollection
+    // for other active tenant_admins. If any tenant has none, we throw
+    // failed-precondition with the offending tenant name so the client
+    // can guide the user.
+    const orphaningTenants = [];
+    for (const tid of tenantMemberships) {
+      try {
+        const teamSnap = await db.collection("tenants").doc(tid).collection("team")
+          .where("role", "==", "tenant_admin")
+          .get();
+        const otherAdmins = teamSnap.docs.filter((d) => {
+          const data = d.data() || {};
+          if (d.id === uid) return false;
+          // Only count active admins; suspended/pending don't cover for us.
+          const status = data.status || "active";
+          return status === "active";
+        });
+        if (otherAdmins.length === 0) {
+          // Check if THIS user is actually a tenant_admin (they might just
+          // be a donor with no admin role — then orphaning doesn't apply).
+          const selfTeamSnap = await db.collection("tenants").doc(tid)
+            .collection("team").doc(uid).get();
+          const selfIsAdmin = selfTeamSnap.exists && selfTeamSnap.data()?.role === "tenant_admin";
+          if (selfIsAdmin) {
+            const tenantName = (await db.collection("tenants").doc(tid).get())
+              .data()?.name || tid;
+            orphaningTenants.push(tenantName);
+          }
+        }
+      } catch (probeErr) {
+        // Firestore transient error — fail closed rather than let a silent
+        // orphan slip through. User can retry.
+        console.warn("deleteAccount: orphan probe failed", { uid, tid, error: probeErr?.message });
+        throw new HttpsError("unavailable", "No pudimos verificar tus organizaciones. Reintentá en un momento.");
+      }
+    }
+    if (orphaningTenants.length > 0) {
+      throw new HttpsError(
+        "failed-precondition",
+        `Sos el único administrador de: ${orphaningTenants.join(", ")}. Transferí el rol a otra persona antes de eliminar tu cuenta.`,
+      );
+    }
+
     // ---- 1. Stripe cleanup (best-effort; don't block deletion on it) ----
     // BUG #1 fix: Direct Charges migration moved customers per-tenant. The
     // OLD flat `stripeCustomerId` is deprecated and NEVER populated for
@@ -7322,11 +7373,59 @@ exports.deleteAccount = onCall(
       }
     }
 
+    // ---- 6b. Round-11 audit fix (IMPORTANT): scrub historical PII in
+    // `_activityLog`. Every `writeActivityLog` call across the app stamps
+    // `data.uid` (and often `data.donorName` / `data.donorEmail`) so the
+    // tenant admins' feed can attribute activity. Those entries stay
+    // forever unless we redact — a lingering donor email in the log
+    // violates GDPR "right to be forgotten" after the user requests
+    // deletion. Redact IN-PLACE with best-effort batches; don't block
+    // the overall delete on a transient Firestore error here.
+    try {
+      const activityQuery = db.collection("_activityLog").where("data.uid", "==", uid);
+      const activitySnap = await activityQuery.get();
+      const REDACTED = "[deleted]";
+      const CHUNK = 400; // Firestore batch limit is 500; leave headroom.
+      let redactedCount = 0;
+      for (let i = 0; i < activitySnap.docs.length; i += CHUNK) {
+        const batch = db.batch();
+        const slice = activitySnap.docs.slice(i, i + CHUNK);
+        for (const doc of slice) {
+          batch.update(doc.ref, {
+            "data.email": REDACTED,
+            "data.donorEmail": REDACTED,
+            "data.donorName": REDACTED,
+            "data.userEmail": REDACTED,
+            "data.userName": REDACTED,
+            "data.redactedAt": admin.firestore.FieldValue.serverTimestamp(),
+          });
+        }
+        await batch.commit();
+        redactedCount += slice.length;
+      }
+      if (redactedCount > 0) {
+        console.info("deleteAccount: activity log PII redacted", { uid, redactedCount });
+      }
+    } catch (redactErr) {
+      // Non-fatal — log for follow-up; ops can run a backfill later.
+      console.warn("deleteAccount: activity log redact failed", { uid, error: redactErr?.message });
+    }
+
     // ---- 7. Delete Firebase Auth user (irreversible) ----
-    // This MUST be last — once gone, the client's request.auth is invalidated
-    // for any retry. Failure here would leave an orphan Auth record but all
-    // data is already gone, so the user can't access anything anyway.
-    await admin.auth().deleteUser(uid);
+    // Round-11 audit fix (IMPORTANT): idempotency guard. If a previous
+    // attempt already deleted the Auth user but crashed BEFORE returning
+    // success, the client retries and this call throws "auth/user-not-found".
+    // Swallow that specific case — the tombstone marker below is the source
+    // of truth. Any other Auth error still bubbles up so the client sees it.
+    try {
+      await admin.auth().deleteUser(uid);
+    } catch (authErr) {
+      if (authErr?.code === "auth/user-not-found") {
+        console.info("deleteAccount: auth user already gone (idempotent retry)", { uid });
+      } else {
+        throw authErr;
+      }
+    }
 
     console.info("deleteAccount: completed", {
       uid,
