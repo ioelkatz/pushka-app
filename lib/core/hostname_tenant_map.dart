@@ -18,13 +18,10 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 /// a store doesn't have a hostname to key off of, and the user's tenant
 /// selection is either persisted server-side or entered via code.
 const Map<String, String> _hostnameToTenantSlug = {
-  // First production tenant. TODO: verify the slug matches the actual
-  // `tenants/{tid}.slug` value in prod Firestore before enabling the
-  // custom domain — a mismatch here silently sends users to the "code
-  // not found" screen instead of joining. The admin panel's tenant
-  // detail page shows the canonical slug.
-  'app.jabadencampus.com': 'jabadencampus',
-  'www.app.jabadencampus.com': 'jabadencampus',
+  // First production tenant. Slug verified 2026-08-07 from admin panel
+  // (Organizaciones → Jabad en Campus → Slug field): `jym770`.
+  'app.jabadencampus.com': 'jym770',
+  'www.app.jabadencampus.com': 'jym770',
 };
 
 /// Returns the tenant slug bound to the current web hostname, or `null`
