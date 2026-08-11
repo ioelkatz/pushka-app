@@ -1855,20 +1855,55 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
     if (!ref.read(isOfflineProvider)) return true;
     if (!mounted) return false;
     final tr = S.of(context);
-    await showDialog<void>(
+    await showModalBottomSheet<void>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        title: Text(tr.offlineDialogTitle,
-            style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w700)),
-        content: Text(tr.offlineDonationBlocked,
-            style: const TextStyle(fontSize: 14, height: 1.4)),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(),
-            child: Text(tr.commonUnderstood),
+      isScrollControlled: true,
+      useSafeArea: true,
+      backgroundColor: Theme.of(context).colorScheme.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
+      ),
+      builder: (ctx) => SafeArea(
+        top: false,
+        child: Padding(
+          padding: EdgeInsets.only(bottom: MediaQuery.of(ctx).viewInsets.bottom),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Center(
+                  child: Container(
+                    width: 36,
+                    height: 4,
+                    margin: const EdgeInsets.only(bottom: 16),
+                    decoration: BoxDecoration(
+                      color: Theme.of(ctx).colorScheme.outlineVariant,
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                ),
+                Text(
+                  tr.offlineDialogTitle,
+                  style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  tr.offlineDonationBlocked,
+                  style: const TextStyle(fontSize: 14, height: 1.4),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 20),
+                FilledButton(
+                  onPressed: () => Navigator.of(ctx).pop(),
+                  child: Text(tr.commonUnderstood),
+                ),
+              ],
+            ),
           ),
-        ],
+        ),
       ),
     );
     return false;
@@ -1899,79 +1934,116 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
         ? tenantContact.trim()
         : 'support@pushkaapp.com';
 
-    await showDialog<void>(
+    await showModalBottomSheet<void>(
       context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
       // Force explicit dismissal — payment failure is critical, tap-outside
       // must not silently close the alert.
-      barrierDismissible: false,
-      builder: (ctx) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        title: Row(
-          children: [
-            Container(
-              width: 36, height: 36,
-              decoration: BoxDecoration(
-                color: const Color(0xFFFFE5E5),
-                borderRadius: BorderRadius.circular(10),
+      isDismissible: false,
+      enableDrag: false,
+      backgroundColor: Theme.of(context).colorScheme.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
+      ),
+      builder: (ctx) => PopScope(
+        canPop: false,
+        child: SafeArea(
+          top: false,
+          child: Padding(
+            padding: EdgeInsets.only(bottom: MediaQuery.of(ctx).viewInsets.bottom),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Center(
+                    child: Container(
+                      width: 36,
+                      height: 4,
+                      margin: const EdgeInsets.only(bottom: 16),
+                      decoration: BoxDecoration(
+                        color: Theme.of(ctx).colorScheme.outlineVariant,
+                        borderRadius: BorderRadius.circular(2),
+                      ),
+                    ),
+                  ),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Container(
+                        width: 36, height: 36,
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFFFE5E5),
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: const Icon(Icons.error_outline_rounded,
+                            color: Color(0xFFCC2936), size: 22),
+                      ),
+                      const SizedBox(width: 12),
+                      Flexible(
+                        child: Text(
+                          tr.donationFailedTitle,
+                          style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
+                          textAlign: TextAlign.center,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  Text(
+                    tr.donationFailedBody(reason),
+                    style: const TextStyle(fontSize: 14, height: 1.4),
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 20),
+                  if (onRetry != null) ...[
+                    FilledButton(
+                      style: FilledButton.styleFrom(
+                        backgroundColor: AppTokens.primaryBlue,
+                        foregroundColor: Colors.white,
+                      ),
+                      onPressed: () {
+                        Navigator.of(ctx).pop();
+                        onRetry();
+                      },
+                      child: Text(tr.donationRetryBtn),
+                    ),
+                    const SizedBox(height: 8),
+                  ],
+                  TextButton(
+                    onPressed: () async {
+                      Navigator.of(ctx).pop();
+                      // Build a mailto: with a pre-filled subject + body that
+                      // includes the failure detail — saves the donor typing and
+                      // gives the rab enough context to triage.
+                      final uri = Uri(
+                        scheme: 'mailto',
+                        path: supportEmail,
+                        query: _encodeMailtoQuery({
+                          'subject': tr.donationEmailSubject,
+                          'body': tr.donationEmailBody(reason),
+                        }),
+                      );
+                      try {
+                        await launchUrl(uri, mode: LaunchMode.externalApplication);
+                      } catch (_) {
+                        // launchUrl can throw on platforms without a mail handler;
+                        // swallow — sheet already closed, user can try again.
+                      }
+                    },
+                    child: Text(tr.donationContactRabBtn),
+                  ),
+                  TextButton(
+                    onPressed: () => Navigator.of(ctx).pop(),
+                    child: Text(tr.donationCloseBtn),
+                  ),
+                ],
               ),
-              child: const Icon(Icons.error_outline_rounded,
-                  color: Color(0xFFCC2936), size: 22),
             ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Text(
-                tr.donationFailedTitle,
-                style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
-              ),
-            ),
-          ],
-        ),
-        content: Text(
-          tr.donationFailedBody(reason),
-          style: const TextStyle(fontSize: 14, height: 1.4),
-        ),
-        actionsAlignment: MainAxisAlignment.end,
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(),
-            child: Text(tr.donationCloseBtn),
           ),
-          TextButton(
-            onPressed: () async {
-              Navigator.of(ctx).pop();
-              // Build a mailto: with a pre-filled subject + body that
-              // includes the failure detail — saves the donor typing and
-              // gives the rab enough context to triage.
-              final uri = Uri(
-                scheme: 'mailto',
-                path: supportEmail,
-                query: _encodeMailtoQuery({
-                  'subject': tr.donationEmailSubject,
-                  'body': tr.donationEmailBody(reason),
-                }),
-              );
-              try {
-                await launchUrl(uri, mode: LaunchMode.externalApplication);
-              } catch (_) {
-                // launchUrl can throw on platforms without a mail handler;
-                // swallow — dialog already closed, user can try again.
-              }
-            },
-            child: Text(tr.donationContactRabBtn),
-          ),
-          if (onRetry != null)
-            FilledButton(
-              style: FilledButton.styleFrom(
-                backgroundColor: AppTokens.primaryBlue,
-                foregroundColor: Colors.white,
-              ),
-              onPressed: () {
-                Navigator.of(ctx).pop();
-                onRetry();
-              },
-              child: Text(tr.donationRetryBtn),
-            ),
-        ],
+        ),
       ),
     );
   }

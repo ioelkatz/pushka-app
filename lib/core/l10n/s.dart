@@ -951,10 +951,10 @@ class S {
   /// shows their own name in the about/legal footer instead of the hardcoded
   /// "Jabad en Campus".
   String copyrightFor(String brand) => _t(
-        '© 2026 $brand. Todos los derechos reservados.',
-        '© 2026 $brand. All rights reserved.',
-        '© 2026 $brand. Tous droits réservés.',
-        '© 2026 $brand. כל הזכויות שמורות.',
+        '© 2026 $brand.\nTodos los derechos reservados.',
+        '© 2026 $brand.\nAll rights reserved.',
+        '© 2026 $brand.\nTous droits réservés.',
+        '© 2026 $brand.\nכל הזכויות שמורות.',
       );
   String get copyright => copyrightFor(colelJabad);
 

@@ -308,39 +308,75 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   }) async {
     if (!mounted) return;
     final tr = S.of(context);
-    await showDialog<void>(
+    await showModalBottomSheet<void>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(tr.authErrorTitle),
-        content: SingleChildScrollView(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(tr.authErrorIntro, style: const TextStyle(fontSize: 13)),
-              const SizedBox(height: 8),
-              SelectableText('Source: $source',
-                  style: const TextStyle(fontFamily: 'monospace', fontSize: 11)),
-              SelectableText('Code:   $code',
-                  style: const TextStyle(fontFamily: 'monospace', fontSize: 11)),
-              const SizedBox(height: 6),
-              const Text('Message:', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
-              SelectableText(message,
-                  style: const TextStyle(fontFamily: 'monospace', fontSize: 11)),
-              const SizedBox(height: 12),
-              Text(
-                tr.authErrorCopyHint,
-                style: const TextStyle(fontSize: 12, color: Colors.grey),
-              ),
-            ],
+      isScrollControlled: true,
+      useSafeArea: true,
+      backgroundColor: Theme.of(context).colorScheme.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
+      ),
+      builder: (ctx) => SafeArea(
+        top: false,
+        child: Padding(
+          padding: EdgeInsets.only(bottom: MediaQuery.of(ctx).viewInsets.bottom),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Center(
+                  child: Container(
+                    width: 36,
+                    height: 4,
+                    margin: const EdgeInsets.only(bottom: 16),
+                    decoration: BoxDecoration(
+                      color: Theme.of(ctx).colorScheme.outlineVariant,
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                ),
+                Text(
+                  tr.authErrorTitle,
+                  style: Theme.of(ctx).textTheme.titleLarge,
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 12),
+                Flexible(
+                  child: SingleChildScrollView(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(tr.authErrorIntro, style: const TextStyle(fontSize: 13)),
+                        const SizedBox(height: 8),
+                        SelectableText('Source: $source',
+                            style: const TextStyle(fontFamily: 'monospace', fontSize: 11)),
+                        SelectableText('Code:   $code',
+                            style: const TextStyle(fontFamily: 'monospace', fontSize: 11)),
+                        const SizedBox(height: 6),
+                        const Text('Message:', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
+                        SelectableText(message,
+                            style: const TextStyle(fontFamily: 'monospace', fontSize: 11)),
+                        const SizedBox(height: 12),
+                        Text(
+                          tr.authErrorCopyHint,
+                          style: const TextStyle(fontSize: 12, color: Colors.grey),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                TextButton(
+                  onPressed: () => Navigator.of(ctx).pop(),
+                  child: Text(tr.close),
+                ),
+              ],
+            ),
           ),
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(),
-            child: Text(tr.close),
-          ),
-        ],
       ),
     );
   }

@@ -113,16 +113,17 @@ class AppDrawer extends ConsumerWidget {
             ),
           ),
 
-          // Footer con versión y patrocinadores. Padding-left ajustado
-          // para alinear con la posición horizontal de los iconos del nav:
-          // Container.margin 8 (del _item) + ListTile.contentPadding 16
-          // = 24 px del borde del drawer.
+          // Footer con versión y patrocinadores. Padding-left 12 para
+          // que el texto arranque cerca del borde izquierdo del drawer
+          // (aliado a la línea horizontal del border-top que va 0→full).
+          // 24 quedaba demasiado adentro; 12 mantiene un respiro sin
+          // pegarse al borde.
           //
           // Todos los textos con el mismo color/peso (onSurfaceVariant +
           // w400) para dar consistencia visual — antes el nombre del Rab
           // resaltaba con onSurface + w500 y rompía la armonía del footer.
           Container(
-            padding: const EdgeInsets.fromLTRB(24, 16, 20, 16),
+            padding: const EdgeInsets.fromLTRB(12, 16, 20, 16),
             decoration: BoxDecoration(
               border: Border(top: BorderSide(color: Theme.of(context).colorScheme.outlineVariant)),
             ),

@@ -133,41 +133,68 @@ class _DonationSubscriptionsScreenState
     final details = subTenantLabel.isNotEmpty
         ? '$subTenantLabel — $amountLabel · $intervalLabel'
         : '$amountLabel · $intervalLabel';
-    final confirmed = await showDialog<bool>(
+    final confirmed = await showModalBottomSheet<bool>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(tr.cancelSubscriptionConfirmTitle),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(details, style: const TextStyle(fontWeight: FontWeight.w600)),
-            const SizedBox(height: 8),
-            Text(tr.cancelSubscriptionConfirmBody),
-          ],
+      isScrollControlled: true,
+      useSafeArea: true,
+      backgroundColor: Theme.of(context).colorScheme.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
+      ),
+      builder: (ctx) => SafeArea(
+        top: false,
+        child: Padding(
+          padding: EdgeInsets.only(bottom: MediaQuery.of(ctx).viewInsets.bottom),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Center(
+                  child: Container(
+                    width: 36,
+                    height: 4,
+                    margin: const EdgeInsets.only(bottom: 16),
+                    decoration: BoxDecoration(
+                      color: Theme.of(ctx).colorScheme.outlineVariant,
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                ),
+                Text(
+                  tr.cancelSubscriptionConfirmTitle,
+                  style: Theme.of(ctx).textTheme.titleLarge,
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 12),
+                Text(details,
+                    style: const TextStyle(fontWeight: FontWeight.w600),
+                    textAlign: TextAlign.center),
+                const SizedBox(height: 8),
+                Text(tr.cancelSubscriptionConfirmBody,
+                    textAlign: TextAlign.center),
+                const SizedBox(height: 20),
+                FilledButton(
+                  style: FilledButton.styleFrom(
+                    backgroundColor: AppTokens.primaryBlue,
+                    foregroundColor: Colors.white,
+                  ),
+                  onPressed: () => Navigator.of(ctx).pop(true),
+                  child: Text(
+                    tr.confirm,
+                    style: const TextStyle(fontWeight: FontWeight.w700),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                TextButton(
+                  onPressed: () => Navigator.of(ctx).pop(false),
+                  child: Text(tr.cancel),
+                ),
+              ],
+            ),
+          ),
         ),
-        actions: [
-          // Explicit back-out. Without this the dialog had only "Confirm" so
-          // users who tapped Cancel-subscription by mistake had to hit the
-          // Android back button (and iOS users had no obvious escape).
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(false),
-            child: Text(tr.cancel),
-          ),
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(true),
-            style: TextButton.styleFrom(
-              foregroundColor: AppTokens.primaryBlue,
-            ),
-            child: Text(
-              tr.confirm,
-              style: const TextStyle(
-                fontWeight: FontWeight.w700,
-                color: AppTokens.primaryBlue,
-              ),
-            ),
-          ),
-        ],
       ),
     );
     if (confirmed != true || !mounted) return;
@@ -333,21 +360,60 @@ class _DonationSubscriptionsScreenState
               orElse: () => null,
             );
     if (existingSubHere != null && mounted) {
-      final proceed = await showDialog<bool>(
+      final proceed = await showModalBottomSheet<bool>(
         context: context,
-        builder: (ctx) => AlertDialog(
-          title: Text(tr.recurringAlreadyActiveTitle),
-          content: Text(tr.recurringAlreadyActiveBody),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: Text(tr.cancel),
+        isScrollControlled: true,
+        useSafeArea: true,
+        backgroundColor: Theme.of(context).colorScheme.surface,
+        shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
+        ),
+        builder: (ctx) => SafeArea(
+          top: false,
+          child: Padding(
+            padding: EdgeInsets.only(bottom: MediaQuery.of(ctx).viewInsets.bottom),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Center(
+                    child: Container(
+                      width: 36,
+                      height: 4,
+                      margin: const EdgeInsets.only(bottom: 16),
+                      decoration: BoxDecoration(
+                        color: Theme.of(ctx).colorScheme.outlineVariant,
+                        borderRadius: BorderRadius.circular(2),
+                      ),
+                    ),
+                  ),
+                  Text(
+                    tr.recurringAlreadyActiveTitle,
+                    style: Theme.of(ctx).textTheme.titleLarge,
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 12),
+                  Text(
+                    tr.recurringAlreadyActiveBody,
+                    style: Theme.of(ctx).textTheme.bodyMedium,
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 20),
+                  FilledButton(
+                    onPressed: () => Navigator.pop(ctx, true),
+                    child: Text(tr.continueLabel),
+                  ),
+                  const SizedBox(height: 8),
+                  TextButton(
+                    onPressed: () => Navigator.pop(ctx, false),
+                    child: Text(tr.cancel),
+                  ),
+                ],
+              ),
             ),
-            TextButton(
-              onPressed: () => Navigator.pop(ctx, true),
-              child: Text(tr.continueLabel),
-            ),
-          ],
+          ),
         ),
       );
       if (proceed != true || !mounted) return;

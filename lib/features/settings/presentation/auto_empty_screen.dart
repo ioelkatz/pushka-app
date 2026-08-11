@@ -754,60 +754,93 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
     final tr = S.of(context);
     const accent = AppTokens.primaryBlue;
 
-    await showDialog<void>(
+    await showModalBottomSheet<void>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        title: Row(
-          children: [
-            Icon(Icons.credit_card_off_rounded, color: accent, size: 22),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Text(
-                tr.noCardsYet,
-                style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
-              ),
-            ),
-          ],
-        ),
-        content: Text(
-          tr.noSavedCards,
-          style: const TextStyle(fontSize: 14, height: 1.5),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: Text(
-              tr.cancelBtn,
-              style: TextStyle(color: Theme.of(ctx).colorScheme.onSurfaceVariant),
+      isScrollControlled: true,
+      useSafeArea: true,
+      backgroundColor: Theme.of(context).colorScheme.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
+      ),
+      builder: (ctx) => SafeArea(
+        top: false,
+        child: Padding(
+          padding: EdgeInsets.only(bottom: MediaQuery.of(ctx).viewInsets.bottom),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Center(
+                  child: Container(
+                    width: 36,
+                    height: 4,
+                    margin: const EdgeInsets.only(bottom: 16),
+                    decoration: BoxDecoration(
+                      color: Theme.of(ctx).colorScheme.outlineVariant,
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                ),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(Icons.credit_card_off_rounded, color: accent, size: 22),
+                    const SizedBox(width: 10),
+                    Flexible(
+                      child: Text(
+                        tr.noCardsYet,
+                        style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
+                        textAlign: TextAlign.center,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  tr.noSavedCards,
+                  style: const TextStyle(fontSize: 14, height: 1.5),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 20),
+                ElevatedButton.icon(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: accent,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                  ),
+                  icon: const Icon(Icons.add_card_rounded, size: 18),
+                  label: Text(
+                    tr.addCard,
+                    style: const TextStyle(fontWeight: FontWeight.w700),
+                  ),
+                  onPressed: () {
+                    // Capture both the screen-level navigator and GoRouter BEFORE
+                    // popping anything: after the sheet + screen pops, the original
+                    // BuildContext is dead and cannot be used for navigation.
+                    final screenNavigator = Navigator.of(context);
+                    final goRouter = GoRouter.of(context);
+                    Navigator.pop(ctx); // close sheet
+                    screenNavigator.pop(); // close AutoEmptyScreen (MaterialPageRoute)
+                    goRouter.go('/settings/saved-cards');
+                  },
+                ),
+                const SizedBox(height: 8),
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx),
+                  child: Text(
+                    tr.cancelBtn,
+                    style: TextStyle(color: Theme.of(ctx).colorScheme.onSurfaceVariant),
+                  ),
+                ),
+              ],
             ),
           ),
-          ElevatedButton.icon(
-            style: ElevatedButton.styleFrom(
-              backgroundColor: accent,
-              foregroundColor: Colors.white,
-              padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(10),
-              ),
-            ),
-            icon: const Icon(Icons.add_card_rounded, size: 18),
-            label: Text(
-              tr.addCard,
-              style: const TextStyle(fontWeight: FontWeight.w700),
-            ),
-            onPressed: () {
-              // Capture both the screen-level navigator and GoRouter BEFORE
-              // popping anything: after the dialog + screen pops, the original
-              // BuildContext is dead and cannot be used for navigation.
-              final screenNavigator = Navigator.of(context);
-              final goRouter = GoRouter.of(context);
-              Navigator.pop(ctx); // close dialog
-              screenNavigator.pop(); // close AutoEmptyScreen (MaterialPageRoute)
-              goRouter.go('/settings/saved-cards');
-            },
-          ),
-        ],
+        ),
       ),
     );
   }
@@ -1084,37 +1117,75 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
   }
 
   Future<void> _showMonthlyDialog() async {
-    final result = await showDialog<int>(
+    final tr = S.of(context);
+    final result = await showModalBottomSheet<int>(
       context: context,
-      builder: (context) => AlertDialog(
-        content: SizedBox(
-          width: double.maxFinite,
-          child: GridView.builder(
-            shrinkWrap: true,
-            // Allow day 1-31. Months without day 31 (or 30, or 29 in Feb) are
-            // handled server-side by processPushkaAutoEmpty in
-            // functions/index.js: it clamps the configured day to the actual
-            // month length, so picking 31 fires on the 30th in April / 28th in
-            // February. The picker should not silently forbid the user's
-            // legitimate choice.
-            itemCount: 31,
-            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-              crossAxisCount: 7,
-              mainAxisSpacing: 8,
-              crossAxisSpacing: 8,
-            ),
-            itemBuilder: (context, index) {
-              final value = index + 1;
-              return InkWell(
-                onTap: () => Navigator.pop(context, value),
-                child: Center(
-                  child: Text(
-                    value.toString(),
-                    style: const TextStyle(fontSize: 16),
+      isScrollControlled: true,
+      useSafeArea: true,
+      backgroundColor: Theme.of(context).colorScheme.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
+      ),
+      builder: (ctx) => SafeArea(
+        top: false,
+        child: Padding(
+          padding: EdgeInsets.only(bottom: MediaQuery.of(ctx).viewInsets.bottom),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Center(
+                  child: Container(
+                    width: 36,
+                    height: 4,
+                    margin: const EdgeInsets.only(bottom: 16),
+                    decoration: BoxDecoration(
+                      color: Theme.of(ctx).colorScheme.outlineVariant,
+                      borderRadius: BorderRadius.circular(2),
+                    ),
                   ),
                 ),
-              );
-            },
+                Text(
+                  tr.dayOfMonth,
+                  style: Theme.of(ctx).textTheme.titleLarge,
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 16),
+                SizedBox(
+                  width: double.maxFinite,
+                  child: GridView.builder(
+                    shrinkWrap: true,
+                    physics: const NeverScrollableScrollPhysics(),
+                    // Allow day 1-31. Months without day 31 (or 30, or 29 in Feb) are
+                    // handled server-side by processPushkaAutoEmpty in
+                    // functions/index.js: it clamps the configured day to the actual
+                    // month length, so picking 31 fires on the 30th in April / 28th in
+                    // February. The picker should not silently forbid the user's
+                    // legitimate choice.
+                    itemCount: 31,
+                    gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                      crossAxisCount: 7,
+                      mainAxisSpacing: 8,
+                      crossAxisSpacing: 8,
+                    ),
+                    itemBuilder: (context, index) {
+                      final value = index + 1;
+                      return InkWell(
+                        onTap: () => Navigator.pop(ctx, value),
+                        child: Center(
+                          child: Text(
+                            value.toString(),
+                            style: const TextStyle(fontSize: 16),
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ),

@@ -1477,18 +1477,55 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     // the donor knows what to do (enroll in system Settings vs contact support).
     Future<void> showBiometricError(String message) async {
       if (!mounted) return;
-      await showDialog<void>(
+      await showModalBottomSheet<void>(
         context: context,
-        builder: (ctx) => AlertDialog(
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-          title: Text(tr.biometricAuth),
-          content: Text(message),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(ctx).pop(),
-              child: Text(tr.commonUnderstood),
+        isScrollControlled: true,
+        useSafeArea: true,
+        backgroundColor: Theme.of(context).colorScheme.surface,
+        shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
+        ),
+        builder: (ctx) => SafeArea(
+          top: false,
+          child: Padding(
+            padding: EdgeInsets.only(bottom: MediaQuery.of(ctx).viewInsets.bottom),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Center(
+                    child: Container(
+                      width: 36,
+                      height: 4,
+                      margin: const EdgeInsets.only(bottom: 16),
+                      decoration: BoxDecoration(
+                        color: Theme.of(ctx).colorScheme.outlineVariant,
+                        borderRadius: BorderRadius.circular(2),
+                      ),
+                    ),
+                  ),
+                  Text(
+                    tr.biometricAuth,
+                    style: Theme.of(ctx).textTheme.titleLarge,
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 12),
+                  Text(
+                    message,
+                    style: Theme.of(ctx).textTheme.bodyMedium,
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 20),
+                  FilledButton(
+                    onPressed: () => Navigator.of(ctx).pop(),
+                    child: Text(tr.commonUnderstood),
+                  ),
+                ],
+              ),
             ),
-          ],
+          ),
         ),
       );
     }
@@ -1569,79 +1606,102 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
     String? result;
     try {
-      result = await showDialog<String>(
+      result = await showModalBottomSheet<String>(
       context: context,
-      barrierDismissible: true,
+      isScrollControlled: true,
+      useSafeArea: true,
+      backgroundColor: Theme.of(context).colorScheme.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
+      ),
       builder: (ctx) {
         String? errorText;
 
         return StatefulBuilder(
-          builder: (ctx, setDialogState) => AlertDialog(
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(22)),
-            scrollable: true,
-            contentPadding: const EdgeInsets.fromLTRB(20, 22, 20, 0),
-            actionsPadding: const EdgeInsets.fromLTRB(20, 10, 20, 18),
-            content: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text(title, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
-              const SizedBox(height: 14),
-              if (isPhone) ...[
-                Row(children: [
-                  OutlinedButton(
-                    onPressed: () {
-                      showCountryPicker(context: ctx, showPhoneCode: true,
-                        countryListTheme: CountryListThemeData(inputDecoration: InputDecoration(labelText: S.of(context).searchCountry, hintText: S.of(context).nameOrCode, prefixIcon: const Icon(Icons.search))),
-                        onSelect: (Country country) { setDialogState(() { phonePrefix = '+${country.phoneCode}'; phoneFlag = country.flagEmoji; }); },
-                      );
-                    },
-                    child: Text('$phoneFlag $phonePrefix'),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(child: TextField(
-                    controller: controller,
-                    autofocus: true,
-                    keyboardType: TextInputType.phone,
-                    decoration: InputDecoration(hintText: S.of(context).phoneHint, errorText: errorText,
-                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                      focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: AppTokens.primaryBlue, width: 1.6)),
+          builder: (ctx, setSheetState) => SafeArea(
+            top: false,
+            child: Padding(
+              padding: EdgeInsets.only(bottom: MediaQuery.of(ctx).viewInsets.bottom),
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Center(
+                      child: Container(
+                        width: 36,
+                        height: 4,
+                        margin: const EdgeInsets.only(bottom: 16),
+                        decoration: BoxDecoration(
+                          color: Theme.of(ctx).colorScheme.outlineVariant,
+                          borderRadius: BorderRadius.circular(2),
+                        ),
+                      ),
                     ),
-                    onChanged: (_) { if (errorText != null) setDialogState(() => errorText = null); },
-                  )),
-                ]),
-              ] else ...[
-                TextField(
-                  controller: controller,
-                  autofocus: true,
-                  keyboardType: _keyboardTypeForKey(fieldKey),
-                  decoration: InputDecoration(hintText: S.of(context).enterField(title.toLowerCase()), errorText: errorText,
-                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                    focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: AppTokens.primaryBlue, width: 1.6)),
-                  ),
-                  onChanged: (_) { if (errorText != null) setDialogState(() => errorText = null); },
+                    Text(title, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700), textAlign: TextAlign.center),
+                    const SizedBox(height: 14),
+                    if (isPhone) ...[
+                      Row(children: [
+                        OutlinedButton(
+                          onPressed: () {
+                            showCountryPicker(context: ctx, showPhoneCode: true,
+                              countryListTheme: CountryListThemeData(inputDecoration: InputDecoration(labelText: S.of(context).searchCountry, hintText: S.of(context).nameOrCode, prefixIcon: const Icon(Icons.search))),
+                              onSelect: (Country country) { setSheetState(() { phonePrefix = '+${country.phoneCode}'; phoneFlag = country.flagEmoji; }); },
+                            );
+                          },
+                          child: Text('$phoneFlag $phonePrefix'),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(child: TextField(
+                          controller: controller,
+                          autofocus: true,
+                          keyboardType: TextInputType.phone,
+                          decoration: InputDecoration(hintText: S.of(context).phoneHint, errorText: errorText,
+                            border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                            focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: AppTokens.primaryBlue, width: 1.6)),
+                          ),
+                          onChanged: (_) { if (errorText != null) setSheetState(() => errorText = null); },
+                        )),
+                      ]),
+                    ] else ...[
+                      TextField(
+                        controller: controller,
+                        autofocus: true,
+                        keyboardType: _keyboardTypeForKey(fieldKey),
+                        decoration: InputDecoration(hintText: S.of(context).enterField(title.toLowerCase()), errorText: errorText,
+                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                          focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: AppTokens.primaryBlue, width: 1.6)),
+                        ),
+                        onChanged: (_) { if (errorText != null) setSheetState(() => errorText = null); },
+                      ),
+                    ],
+                    const SizedBox(height: 20),
+                    SizedBox(width: double.infinity, height: 48, child: ElevatedButton(
+                      style: ElevatedButton.styleFrom(backgroundColor: AppTokens.primaryBlue, foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
+                      onPressed: () {
+                        final typed = controller.text.trim();
+                        // For phone, only prepend the country prefix when the user
+                        // actually typed a number. Empty input must stay empty so
+                        // the field can be cleared (not submitted as "+1").
+                        final value = isPhone
+                            ? (typed.isEmpty ? '' : '$phonePrefix $typed'.trim())
+                            : typed;
+                        final validationError = _validateByKey(fieldKey, value);
+                        if (validationError != null) { setSheetState(() => errorText = validationError); return; }
+                        Navigator.pop(ctx, value);
+                      },
+                      child: Text(S.of(context).save, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+                    )),
+                    const SizedBox(height: 8),
+                    SizedBox(width: double.infinity, height: 44, child: TextButton(
+                      onPressed: () => Navigator.pop(ctx),
+                      child: Text(S.of(context).cancel, style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant, fontWeight: FontWeight.w500)),
+                    )),
+                  ],
                 ),
-              ],
-            ]),
-            actions: [
-              SizedBox(width: double.infinity, height: 48, child: ElevatedButton(
-                style: ElevatedButton.styleFrom(backgroundColor: AppTokens.primaryBlue, foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
-                onPressed: () {
-                  final typed = controller.text.trim();
-                  // For phone, only prepend the country prefix when the user
-                  // actually typed a number. Empty input must stay empty so
-                  // the field can be cleared (not submitted as "+1").
-                  final value = isPhone
-                      ? (typed.isEmpty ? '' : '$phonePrefix $typed'.trim())
-                      : typed;
-                  final validationError = _validateByKey(fieldKey, value);
-                  if (validationError != null) { setDialogState(() => errorText = validationError); return; }
-                  Navigator.pop(ctx, value);
-                },
-                child: Text(S.of(context).save, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
-              )),
-              SizedBox(width: double.infinity, height: 44, child: TextButton(
-                onPressed: () => Navigator.pop(ctx),
-                child: Text(S.of(context).cancel, style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant, fontWeight: FontWeight.w500)),
-              )),
-            ],
+              ),
+            ),
           ),
         );
       },
@@ -1812,9 +1872,14 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     final tr = S.of(context);
     final confirmWord = tr.deleteConfirmWord;
 
-    final result = await showDialog<bool>(
+    final result = await showModalBottomSheet<bool>(
       context: context,
-      barrierDismissible: true,
+      isScrollControlled: true,
+      useSafeArea: true,
+      backgroundColor: Theme.of(context).colorScheme.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
+      ),
       builder: (ctx) => _DeleteConfirmDialog(
         confirmWord: confirmWord,
         title: tr.deleteAccountTitle,
@@ -1851,45 +1916,61 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
     bool? result;
     try {
-      result = await showDialog<bool>(
+      result = await showModalBottomSheet<bool>(
       context: context,
-      barrierDismissible: true,
+      isScrollControlled: true,
+      useSafeArea: true,
+      backgroundColor: Theme.of(context).colorScheme.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
+      ),
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setSS) {
           final cs = Theme.of(ctx).colorScheme;
-          return AlertDialog(
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-            contentPadding: const EdgeInsets.fromLTRB(24, 24, 24, 0),
-            actionsPadding: const EdgeInsets.fromLTRB(24, 8, 24, 20),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(tr.verifyIdentityTitle, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
-                const SizedBox(height: 8),
-                Text(tr.verifyIdentityBody, style: TextStyle(fontSize: 14, color: cs.onSurfaceVariant, height: 1.4)),
-                if (isPassword) ...[
-                  const SizedBox(height: 16),
-                  TextField(
-                    controller: ctrl,
-                    autofocus: !isGoogle && !isApple,
-                    obscureText: true,
-                    decoration: InputDecoration(
-                      labelText: tr.passwordField,
-                      errorText: errorText,
-                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                      focusedBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12),
-                        borderSide: BorderSide(color: AppTokens.primaryBlue, width: 2),
+          return SafeArea(
+            top: false,
+            child: Padding(
+              padding: EdgeInsets.only(bottom: MediaQuery.of(ctx).viewInsets.bottom),
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Center(
+                      child: Container(
+                        width: 36,
+                        height: 4,
+                        margin: const EdgeInsets.only(bottom: 16),
+                        decoration: BoxDecoration(
+                          color: cs.outlineVariant,
+                          borderRadius: BorderRadius.circular(2),
+                        ),
                       ),
                     ),
-                    onChanged: (_) { if (errorText != null) setSS(() => errorText = null); },
-                    onSubmitted: (_) => _reAuthWithPassword(user, ctrl, tr, setSS, ctx, () => loading, (v) => loading = v, (v) => errorText = v),
-                  ),
-                ],
-              ],
-            ),
-            actions: [
+                    Text(tr.verifyIdentityTitle, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700), textAlign: TextAlign.center),
+                    const SizedBox(height: 8),
+                    Text(tr.verifyIdentityBody, style: TextStyle(fontSize: 14, color: cs.onSurfaceVariant, height: 1.4)),
+                    if (isPassword) ...[
+                      const SizedBox(height: 16),
+                      TextField(
+                        controller: ctrl,
+                        autofocus: !isGoogle && !isApple,
+                        obscureText: true,
+                        decoration: InputDecoration(
+                          labelText: tr.passwordField,
+                          errorText: errorText,
+                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                          focusedBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(12),
+                            borderSide: BorderSide(color: AppTokens.primaryBlue, width: 2),
+                          ),
+                        ),
+                        onChanged: (_) { if (errorText != null) setSS(() => errorText = null); },
+                        onSubmitted: (_) => _reAuthWithPassword(user, ctrl, tr, setSS, ctx, () => loading, (v) => loading = v, (v) => errorText = v),
+                      ),
+                    ],
+                    const SizedBox(height: 20),
               if (isPassword)
                 SizedBox(
                   width: double.infinity,
@@ -2023,7 +2104,10 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   child: Text(tr.cancel, style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant, fontWeight: FontWeight.w500)),
                 ),
               ),
-            ],
+                  ],
+                ),
+              ),
+            ),
           );
         },
       ),
@@ -2074,21 +2158,60 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   }
 
   Future<void> _showLogoutDialog() async {
-    final result = await showDialog<bool>(
+    final result = await showModalBottomSheet<bool>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: Text(S.of(context).logoutTitle),
-        content: Text(S.of(context).logoutConfirm),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: Text(S.of(context).cancel),
+      isScrollControlled: true,
+      useSafeArea: true,
+      backgroundColor: Theme.of(context).colorScheme.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
+      ),
+      builder: (ctx) => SafeArea(
+        top: false,
+        child: Padding(
+          padding: EdgeInsets.only(bottom: MediaQuery.of(ctx).viewInsets.bottom),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Center(
+                  child: Container(
+                    width: 36,
+                    height: 4,
+                    margin: const EdgeInsets.only(bottom: 16),
+                    decoration: BoxDecoration(
+                      color: Theme.of(ctx).colorScheme.outlineVariant,
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                ),
+                Text(
+                  S.of(ctx).logoutTitle,
+                  style: Theme.of(ctx).textTheme.titleLarge,
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  S.of(ctx).logoutConfirm,
+                  style: Theme.of(ctx).textTheme.bodyMedium,
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 20),
+                FilledButton(
+                  onPressed: () => Navigator.pop(ctx, true),
+                  child: Text(S.of(ctx).logoutTitle),
+                ),
+                const SizedBox(height: 8),
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx, false),
+                  child: Text(S.of(ctx).cancel),
+                ),
+              ],
+            ),
           ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: Text(S.of(context).logoutTitle),
-          ),
-        ],
+        ),
       ),
     );
 
@@ -2174,72 +2297,94 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
     // Confirmation modal
     final tr = S.of(context);
-    final confirmed = await showDialog<bool>(
+    final confirmed = await showModalBottomSheet<bool>(
       context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      backgroundColor: Theme.of(context).colorScheme.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
+      ),
       builder: (ctx) {
         final cs = Theme.of(ctx).colorScheme;
-        return AlertDialog(
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-          contentPadding: const EdgeInsets.fromLTRB(24, 24, 24, 0),
-          actionsPadding: const EdgeInsets.fromLTRB(24, 8, 24, 20),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(tr.changeCurrencyTitle, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
-              const SizedBox(height: 14),
-              Row(
+        return SafeArea(
+          top: false,
+          child: Padding(
+            padding: EdgeInsets.only(bottom: MediaQuery.of(ctx).viewInsets.bottom),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  // "From" — derive flag from currency at render time so it
-                  // can never drift from selectedCurrency (previous bug: the
-                  // state var selectedFlag could stay 🇺🇸 while
-                  // selectedCurrency was 'EUR', producing a mismatched
-                  // display and a confirm dialog showing the same flag on
-                  // both sides after switching from EUR → USD).
-                  Text(_flagForCurrency(selectedCurrency), style: const TextStyle(fontSize: 26)),
-                  const SizedBox(width: 6),
-                  Text(selectedCurrency, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 10),
-                    child: Icon(Icons.arrow_forward_rounded, size: 18, color: cs.onSurfaceVariant),
+                  Center(
+                    child: Container(
+                      width: 36,
+                      height: 4,
+                      margin: const EdgeInsets.only(bottom: 16),
+                      decoration: BoxDecoration(
+                        color: cs.outlineVariant,
+                        borderRadius: BorderRadius.circular(2),
+                      ),
+                    ),
                   ),
-                  Text(_flagForCurrency(selected['currency']!), style: const TextStyle(fontSize: 26)),
-                  const SizedBox(width: 6),
-                  Text(selected['currency']!, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+                  Text(tr.changeCurrencyTitle, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700), textAlign: TextAlign.center),
+                  const SizedBox(height: 14),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      // "From" — derive flag from currency at render time so it
+                      // can never drift from selectedCurrency (previous bug: the
+                      // state var selectedFlag could stay 🇺🇸 while
+                      // selectedCurrency was 'EUR', producing a mismatched
+                      // display and a confirm dialog showing the same flag on
+                      // both sides after switching from EUR → USD).
+                      Text(_flagForCurrency(selectedCurrency), style: const TextStyle(fontSize: 26)),
+                      const SizedBox(width: 6),
+                      Text(selectedCurrency, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 10),
+                        child: Icon(Icons.arrow_forward_rounded, size: 18, color: cs.onSurfaceVariant),
+                      ),
+                      Text(_flagForCurrency(selected['currency']!), style: const TextStyle(fontSize: 26)),
+                      const SizedBox(width: 6),
+                      Text(selected['currency']!, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  Text(
+                    tr.currencyChangeConfirmBody,
+                    style: TextStyle(fontSize: 14, color: cs.onSurfaceVariant, height: 1.4),
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 20),
+                  SizedBox(
+                    width: double.infinity,
+                    height: 48,
+                    child: ElevatedButton(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: cs.primary,
+                        foregroundColor: cs.onPrimary,
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                        elevation: 0,
+                      ),
+                      onPressed: () => Navigator.pop(ctx, true),
+                      child: Text(tr.continueLabel, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  SizedBox(
+                    width: double.infinity,
+                    height: 44,
+                    child: TextButton(
+                      onPressed: () => Navigator.pop(ctx, false),
+                      child: Text(tr.cancel, style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant, fontWeight: FontWeight.w500)),
+                    ),
+                  ),
                 ],
               ),
-              const SizedBox(height: 12),
-              Text(
-                tr.currencyChangeConfirmBody,
-                style: TextStyle(fontSize: 14, color: cs.onSurfaceVariant, height: 1.4),
-              ),
-            ],
+            ),
           ),
-          actions: [
-            SizedBox(
-              width: double.infinity,
-              height: 48,
-              child: ElevatedButton(
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: cs.primary,
-                  foregroundColor: cs.onPrimary,
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                  elevation: 0,
-                ),
-                onPressed: () => Navigator.pop(ctx, true),
-                child: Text(tr.continueLabel, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
-              ),
-            ),
-            const SizedBox(height: 4),
-            SizedBox(
-              width: double.infinity,
-              height: 44,
-              child: TextButton(
-                onPressed: () => Navigator.pop(ctx, false),
-                child: Text(tr.cancel, style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant, fontWeight: FontWeight.w500)),
-              ),
-            ),
-          ],
         );
       },
     );
@@ -2388,67 +2533,81 @@ class _DeleteConfirmDialogState extends State<_DeleteConfirmDialog> {
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
-    return AlertDialog(
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-      contentPadding: const EdgeInsets.fromLTRB(24, 24, 24, 0),
-      actionsPadding: const EdgeInsets.fromLTRB(24, 8, 24, 20),
-      content: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(widget.title, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
-          const SizedBox(height: 10),
-          Text(widget.body, style: TextStyle(fontSize: 14, color: cs.onSurfaceVariant, height: 1.4)),
-          const SizedBox(height: 16),
-          Text(widget.instruction, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500)),
-          const SizedBox(height: 8),
-          TextField(
-            controller: _ctrl,
-            autofocus: true,
-            autocorrect: false,
-            textCapitalization: TextCapitalization.characters,
-            decoration: InputDecoration(
-              hintText: widget.confirmWord,
-              border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-              focusedBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
-                borderSide: BorderSide(color: AppTokens.primaryBlue, width: 2),
-              ),
-            ),
-          ),
-        ],
-      ),
-      actions: [
-        ValueListenableBuilder<TextEditingValue>(
-          valueListenable: _ctrl,
-          builder: (_, value, _) {
-            final matches = value.text.trim() == widget.confirmWord;
-            return SizedBox(
-              width: double.infinity,
-              height: 48,
-              child: ElevatedButton(
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: matches ? const Color(0xFFB91C1C) : cs.surfaceContainerHighest,
-                  foregroundColor: matches ? Colors.white : cs.onSurfaceVariant,
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                  elevation: 0,
+    return SafeArea(
+      top: false,
+      child: Padding(
+        padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Center(
+                child: Container(
+                  width: 36,
+                  height: 4,
+                  margin: const EdgeInsets.only(bottom: 16),
+                  decoration: BoxDecoration(
+                    color: cs.outlineVariant,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
                 ),
-                onPressed: matches ? () => Navigator.pop(context, true) : null,
-                child: Text(widget.continueLabel, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
               ),
-            );
-          },
-        ),
-        const SizedBox(height: 4),
-        SizedBox(
-          width: double.infinity,
-          height: 44,
-          child: TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: Text(widget.cancelLabel, style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant, fontWeight: FontWeight.w500)),
+              Text(widget.title, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700), textAlign: TextAlign.center),
+              const SizedBox(height: 10),
+              Text(widget.body, style: TextStyle(fontSize: 14, color: cs.onSurfaceVariant, height: 1.4)),
+              const SizedBox(height: 16),
+              Text(widget.instruction, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500)),
+              const SizedBox(height: 8),
+              TextField(
+                controller: _ctrl,
+                autofocus: true,
+                autocorrect: false,
+                textCapitalization: TextCapitalization.characters,
+                decoration: InputDecoration(
+                  hintText: widget.confirmWord,
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: BorderSide(color: AppTokens.primaryBlue, width: 2),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 20),
+              ValueListenableBuilder<TextEditingValue>(
+                valueListenable: _ctrl,
+                builder: (_, value, _) {
+                  final matches = value.text.trim() == widget.confirmWord;
+                  return SizedBox(
+                    width: double.infinity,
+                    height: 48,
+                    child: ElevatedButton(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: matches ? const Color(0xFFB91C1C) : cs.surfaceContainerHighest,
+                        foregroundColor: matches ? Colors.white : cs.onSurfaceVariant,
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                        elevation: 0,
+                      ),
+                      onPressed: matches ? () => Navigator.pop(context, true) : null,
+                      child: Text(widget.continueLabel, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+                    ),
+                  );
+                },
+              ),
+              const SizedBox(height: 8),
+              SizedBox(
+                width: double.infinity,
+                height: 44,
+                child: TextButton(
+                  onPressed: () => Navigator.pop(context, false),
+                  child: Text(widget.cancelLabel, style: TextStyle(color: cs.onSurfaceVariant, fontWeight: FontWeight.w500)),
+                ),
+              ),
+            ],
           ),
         ),
-      ],
+      ),
     );
   }
 }
