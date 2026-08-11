@@ -1886,19 +1886,32 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                 ),
                 Text(
                   tr.offlineDialogTitle,
-                  style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
+                  style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
                   textAlign: TextAlign.center,
                 ),
-                const SizedBox(height: 12),
+                const SizedBox(height: 14),
                 Text(
                   tr.offlineDonationBlocked,
-                  style: const TextStyle(fontSize: 14, height: 1.4),
                   textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 14,
+                    color: Theme.of(ctx).colorScheme.onSurfaceVariant,
+                    height: 1.4,
+                  ),
                 ),
                 const SizedBox(height: 20),
-                FilledButton(
-                  onPressed: () => Navigator.of(ctx).pop(),
-                  child: Text(tr.commonUnderstood),
+                SizedBox(
+                  width: double.infinity,
+                  height: 48,
+                  child: ElevatedButton(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppTokens.primaryBlue,
+                      foregroundColor: Colors.white,
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    ),
+                    onPressed: () => Navigator.of(ctx).pop(),
+                    child: Text(tr.commonUnderstood, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+                  ),
                 ),
               ],
             ),
@@ -1985,59 +1998,76 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                       Flexible(
                         child: Text(
                           tr.donationFailedTitle,
-                          style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
+                          style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
                           textAlign: TextAlign.center,
                         ),
                       ),
                     ],
                   ),
-                  const SizedBox(height: 12),
+                  const SizedBox(height: 14),
                   Text(
                     tr.donationFailedBody(reason),
-                    style: const TextStyle(fontSize: 14, height: 1.4),
                     textAlign: TextAlign.center,
+                    style: TextStyle(
+                      fontSize: 14,
+                      color: Theme.of(ctx).colorScheme.onSurfaceVariant,
+                      height: 1.4,
+                    ),
                   ),
                   const SizedBox(height: 20),
                   if (onRetry != null) ...[
-                    FilledButton(
-                      style: FilledButton.styleFrom(
-                        backgroundColor: AppTokens.primaryBlue,
-                        foregroundColor: Colors.white,
+                    SizedBox(
+                      width: double.infinity,
+                      height: 48,
+                      child: ElevatedButton(
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: AppTokens.primaryBlue,
+                          foregroundColor: Colors.white,
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                        ),
+                        onPressed: () {
+                          Navigator.of(ctx).pop();
+                          onRetry();
+                        },
+                        child: Text(tr.donationRetryBtn, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
                       ),
-                      onPressed: () {
-                        Navigator.of(ctx).pop();
-                        onRetry();
-                      },
-                      child: Text(tr.donationRetryBtn),
                     ),
                     const SizedBox(height: 8),
                   ],
-                  TextButton(
-                    onPressed: () async {
-                      Navigator.of(ctx).pop();
-                      // Build a mailto: with a pre-filled subject + body that
-                      // includes the failure detail — saves the donor typing and
-                      // gives the rab enough context to triage.
-                      final uri = Uri(
-                        scheme: 'mailto',
-                        path: supportEmail,
-                        query: _encodeMailtoQuery({
-                          'subject': tr.donationEmailSubject,
-                          'body': tr.donationEmailBody(reason),
-                        }),
-                      );
-                      try {
-                        await launchUrl(uri, mode: LaunchMode.externalApplication);
-                      } catch (_) {
-                        // launchUrl can throw on platforms without a mail handler;
-                        // swallow — sheet already closed, user can try again.
-                      }
-                    },
-                    child: Text(tr.donationContactRabBtn),
+                  SizedBox(
+                    width: double.infinity,
+                    height: 44,
+                    child: TextButton(
+                      onPressed: () async {
+                        Navigator.of(ctx).pop();
+                        // Build a mailto: with a pre-filled subject + body that
+                        // includes the failure detail — saves the donor typing and
+                        // gives the rab enough context to triage.
+                        final uri = Uri(
+                          scheme: 'mailto',
+                          path: supportEmail,
+                          query: _encodeMailtoQuery({
+                            'subject': tr.donationEmailSubject,
+                            'body': tr.donationEmailBody(reason),
+                          }),
+                        );
+                        try {
+                          await launchUrl(uri, mode: LaunchMode.externalApplication);
+                        } catch (_) {
+                          // launchUrl can throw on platforms without a mail handler;
+                          // swallow — sheet already closed, user can try again.
+                        }
+                      },
+                      child: Text(tr.donationContactRabBtn, style: TextStyle(color: Theme.of(ctx).colorScheme.onSurfaceVariant, fontWeight: FontWeight.w500)),
+                    ),
                   ),
-                  TextButton(
-                    onPressed: () => Navigator.of(ctx).pop(),
-                    child: Text(tr.donationCloseBtn),
+                  SizedBox(
+                    width: double.infinity,
+                    height: 44,
+                    child: TextButton(
+                      onPressed: () => Navigator.of(ctx).pop(),
+                      child: Text(tr.donationCloseBtn, style: TextStyle(color: Theme.of(ctx).colorScheme.onSurfaceVariant, fontWeight: FontWeight.w500)),
+                    ),
                   ),
                 ],
               ),

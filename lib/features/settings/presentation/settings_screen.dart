@@ -1508,19 +1508,32 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   ),
                   Text(
                     tr.biometricAuth,
-                    style: Theme.of(ctx).textTheme.titleLarge,
+                    style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
                     textAlign: TextAlign.center,
                   ),
-                  const SizedBox(height: 12),
+                  const SizedBox(height: 14),
                   Text(
                     message,
-                    style: Theme.of(ctx).textTheme.bodyMedium,
                     textAlign: TextAlign.center,
+                    style: TextStyle(
+                      fontSize: 14,
+                      color: Theme.of(ctx).colorScheme.onSurfaceVariant,
+                      height: 1.4,
+                    ),
                   ),
                   const SizedBox(height: 20),
-                  FilledButton(
-                    onPressed: () => Navigator.of(ctx).pop(),
-                    child: Text(tr.commonUnderstood),
+                  SizedBox(
+                    width: double.infinity,
+                    height: 48,
+                    child: ElevatedButton(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppTokens.primaryBlue,
+                        foregroundColor: Colors.white,
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      ),
+                      onPressed: () => Navigator.of(ctx).pop(),
+                      child: Text(tr.commonUnderstood, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+                    ),
                   ),
                 ],
               ),
@@ -1949,8 +1962,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                       ),
                     ),
                     Text(tr.verifyIdentityTitle, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700), textAlign: TextAlign.center),
-                    const SizedBox(height: 8),
-                    Text(tr.verifyIdentityBody, style: TextStyle(fontSize: 14, color: cs.onSurfaceVariant, height: 1.4)),
+                    const SizedBox(height: 14),
+                    Text(tr.verifyIdentityBody, textAlign: TextAlign.center, style: TextStyle(fontSize: 14, color: cs.onSurfaceVariant, height: 1.4)),
                     if (isPassword) ...[
                       const SizedBox(height: 16),
                       TextField(
@@ -1977,10 +1990,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   height: 48,
                   child: ElevatedButton(
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFFB91C1C),
+                      backgroundColor: Theme.of(ctx).colorScheme.error,
                       foregroundColor: Colors.white,
                       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                      elevation: 0,
                     ),
                     onPressed: loading ? null : () => _reAuthWithPassword(user, ctrl, tr, setSS, ctx, () => loading, (v) => loading = v, (v) => errorText = v),
                     child: loading && !isGoogle
@@ -2095,7 +2107,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   ),
                 ),
               ],
-              const SizedBox(height: 4),
+              const SizedBox(height: 8),
               SizedBox(
                 width: double.infinity,
                 height: 44,
@@ -2189,24 +2201,41 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 ),
                 Text(
                   S.of(ctx).logoutTitle,
-                  style: Theme.of(ctx).textTheme.titleLarge,
+                  style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
                   textAlign: TextAlign.center,
                 ),
-                const SizedBox(height: 12),
+                const SizedBox(height: 14),
                 Text(
                   S.of(ctx).logoutConfirm,
-                  style: Theme.of(ctx).textTheme.bodyMedium,
                   textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 14,
+                    color: Theme.of(ctx).colorScheme.onSurfaceVariant,
+                    height: 1.4,
+                  ),
                 ),
                 const SizedBox(height: 20),
-                FilledButton(
-                  onPressed: () => Navigator.pop(ctx, true),
-                  child: Text(S.of(ctx).logoutTitle),
+                SizedBox(
+                  width: double.infinity,
+                  height: 48,
+                  child: ElevatedButton(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Theme.of(ctx).colorScheme.error,
+                      foregroundColor: Colors.white,
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    ),
+                    onPressed: () => Navigator.pop(ctx, true),
+                    child: Text(S.of(ctx).logoutTitle, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+                  ),
                 ),
                 const SizedBox(height: 8),
-                TextButton(
-                  onPressed: () => Navigator.pop(ctx, false),
-                  child: Text(S.of(ctx).cancel),
+                SizedBox(
+                  width: double.infinity,
+                  height: 44,
+                  child: TextButton(
+                    onPressed: () => Navigator.pop(ctx, false),
+                    child: Text(S.of(ctx).cancel, style: TextStyle(color: Theme.of(ctx).colorScheme.onSurfaceVariant, fontWeight: FontWeight.w500)),
+                  ),
                 ),
               ],
             ),
@@ -2363,16 +2392,15 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     height: 48,
                     child: ElevatedButton(
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: cs.primary,
-                        foregroundColor: cs.onPrimary,
+                        backgroundColor: AppTokens.primaryBlue,
+                        foregroundColor: Colors.white,
                         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                        elevation: 0,
                       ),
                       onPressed: () => Navigator.pop(ctx, true),
                       child: Text(tr.continueLabel, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
                     ),
                   ),
-                  const SizedBox(height: 4),
+                  const SizedBox(height: 8),
                   SizedBox(
                     width: double.infinity,
                     height: 44,
@@ -2584,10 +2612,9 @@ class _DeleteConfirmDialogState extends State<_DeleteConfirmDialog> {
                     height: 48,
                     child: ElevatedButton(
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: matches ? const Color(0xFFB91C1C) : cs.surfaceContainerHighest,
+                        backgroundColor: matches ? cs.error : cs.surfaceContainerHighest,
                         foregroundColor: matches ? Colors.white : cs.onSurfaceVariant,
                         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                        elevation: 0,
                       ),
                       onPressed: matches ? () => Navigator.pop(context, true) : null,
                       child: Text(widget.continueLabel, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),

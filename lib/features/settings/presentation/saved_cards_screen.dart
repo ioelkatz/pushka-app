@@ -406,28 +406,41 @@ class _SavedCardsScreenState extends ConsumerState<SavedCardsScreen> {
                   ),
                   Text(
                     tr.deleteCardLinkedAutoEmptyTitle,
-                    style: Theme.of(ctx).textTheme.titleLarge,
+                    style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
                     textAlign: TextAlign.center,
                   ),
-                  const SizedBox(height: 12),
+                  const SizedBox(height: 14),
                   Text(
                     dialogBody,
-                    style: Theme.of(ctx).textTheme.bodyMedium,
                     textAlign: TextAlign.center,
+                    style: TextStyle(
+                      fontSize: 14,
+                      color: Theme.of(ctx).colorScheme.onSurfaceVariant,
+                      height: 1.4,
+                    ),
                   ),
                   const SizedBox(height: 20),
-                  FilledButton(
-                    style: FilledButton.styleFrom(
-                      backgroundColor: Theme.of(ctx).colorScheme.error,
-                      foregroundColor: Theme.of(ctx).colorScheme.onError,
+                  SizedBox(
+                    width: double.infinity,
+                    height: 48,
+                    child: ElevatedButton(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Theme.of(ctx).colorScheme.error,
+                        foregroundColor: Colors.white,
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      ),
+                      onPressed: () => Navigator.pop(ctx, true),
+                      child: Text(tr.deleteConfirm, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
                     ),
-                    onPressed: () => Navigator.pop(ctx, true),
-                    child: Text(tr.deleteConfirm),
                   ),
                   const SizedBox(height: 8),
-                  TextButton(
-                    onPressed: () => Navigator.pop(ctx, false),
-                    child: Text(tr.cancelBtn),
+                  SizedBox(
+                    width: double.infinity,
+                    height: 44,
+                    child: TextButton(
+                      onPressed: () => Navigator.pop(ctx, false),
+                      child: Text(tr.cancelBtn, style: TextStyle(color: Theme.of(ctx).colorScheme.onSurfaceVariant, fontWeight: FontWeight.w500)),
+                    ),
                   ),
                 ],
               ),
@@ -469,28 +482,41 @@ class _SavedCardsScreenState extends ConsumerState<SavedCardsScreen> {
                   ),
                   Text(
                     tr.confirmDeleteCard,
-                    style: Theme.of(ctx).textTheme.titleLarge,
+                    style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
                     textAlign: TextAlign.center,
                   ),
-                  const SizedBox(height: 12),
+                  const SizedBox(height: 14),
                   Text(
                     tr.confirmDeleteCardBody,
-                    style: Theme.of(ctx).textTheme.bodyMedium,
                     textAlign: TextAlign.center,
+                    style: TextStyle(
+                      fontSize: 14,
+                      color: Theme.of(ctx).colorScheme.onSurfaceVariant,
+                      height: 1.4,
+                    ),
                   ),
                   const SizedBox(height: 20),
-                  FilledButton(
-                    style: FilledButton.styleFrom(
-                      backgroundColor: Theme.of(ctx).colorScheme.error,
-                      foregroundColor: Theme.of(ctx).colorScheme.onError,
+                  SizedBox(
+                    width: double.infinity,
+                    height: 48,
+                    child: ElevatedButton(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Theme.of(ctx).colorScheme.error,
+                        foregroundColor: Colors.white,
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      ),
+                      onPressed: () => Navigator.pop(ctx, true),
+                      child: Text(tr.deleteConfirm, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
                     ),
-                    onPressed: () => Navigator.pop(ctx, true),
-                    child: Text(tr.deleteConfirm),
                   ),
                   const SizedBox(height: 8),
-                  TextButton(
-                    onPressed: () => Navigator.pop(ctx, false),
-                    child: Text(tr.cancelBtn),
+                  SizedBox(
+                    width: double.infinity,
+                    height: 44,
+                    child: TextButton(
+                      onPressed: () => Navigator.pop(ctx, false),
+                      child: Text(tr.cancelBtn, style: TextStyle(color: Theme.of(ctx).colorScheme.onSurfaceVariant, fontWeight: FontWeight.w500)),
+                    ),
                   ),
                 ],
               ),

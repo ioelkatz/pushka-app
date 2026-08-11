@@ -309,28 +309,41 @@ class _RemindersScreenState extends ConsumerState<RemindersScreen> {
                 ),
                 Text(
                   tr.deleteReminderTitle,
-                  style: Theme.of(ctx).textTheme.titleLarge,
+                  style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
                   textAlign: TextAlign.center,
                 ),
-                const SizedBox(height: 12),
+                const SizedBox(height: 14),
                 Text(
                   tr.deleteReminderConfirm(reminder.title),
-                  style: Theme.of(ctx).textTheme.bodyMedium,
                   textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 14,
+                    color: Theme.of(ctx).colorScheme.onSurfaceVariant,
+                    height: 1.4,
+                  ),
                 ),
                 const SizedBox(height: 20),
-                FilledButton(
-                  style: FilledButton.styleFrom(
-                    backgroundColor: Theme.of(ctx).colorScheme.error,
-                    foregroundColor: Theme.of(ctx).colorScheme.onError,
+                SizedBox(
+                  width: double.infinity,
+                  height: 48,
+                  child: ElevatedButton(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Theme.of(ctx).colorScheme.error,
+                      foregroundColor: Colors.white,
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    ),
+                    onPressed: () => Navigator.pop(ctx, true),
+                    child: Text(tr.delete, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
                   ),
-                  onPressed: () => Navigator.pop(ctx, true),
-                  child: Text(tr.delete),
                 ),
                 const SizedBox(height: 8),
-                TextButton(
-                  onPressed: () => Navigator.pop(ctx, false),
-                  child: Text(tr.cancel),
+                SizedBox(
+                  width: double.infinity,
+                  height: 44,
+                  child: TextButton(
+                    onPressed: () => Navigator.pop(ctx, false),
+                    child: Text(tr.cancel, style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant, fontWeight: FontWeight.w500)),
+                  ),
                 ),
               ],
             ),

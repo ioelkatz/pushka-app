@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 import 'package:sign_in_with_apple/sign_in_with_apple.dart'
     show SignInWithAppleAuthorizationException, AuthorizationErrorCode;
 
+import '../../../app/theme/app_tokens.dart';
 import '../../../core/l10n/s.dart';
 import '../providers/auth_controller.dart';
 
@@ -339,10 +340,10 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                 ),
                 Text(
                   tr.authErrorTitle,
-                  style: Theme.of(ctx).textTheme.titleLarge,
+                  style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
                   textAlign: TextAlign.center,
                 ),
-                const SizedBox(height: 12),
+                const SizedBox(height: 14),
                 Flexible(
                   child: SingleChildScrollView(
                     child: Column(
@@ -368,10 +369,19 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                     ),
                   ),
                 ),
-                const SizedBox(height: 16),
-                TextButton(
-                  onPressed: () => Navigator.of(ctx).pop(),
-                  child: Text(tr.close),
+                const SizedBox(height: 20),
+                SizedBox(
+                  width: double.infinity,
+                  height: 48,
+                  child: ElevatedButton(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppTokens.primaryBlue,
+                      foregroundColor: Colors.white,
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    ),
+                    onPressed: () => Navigator.of(ctx).pop(),
+                    child: Text(tr.close, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+                  ),
                 ),
               ],
             ),

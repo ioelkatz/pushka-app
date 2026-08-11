@@ -791,50 +791,59 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
                     Flexible(
                       child: Text(
                         tr.noCardsYet,
-                        style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
+                        style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
                         textAlign: TextAlign.center,
                       ),
                     ),
                   ],
                 ),
-                const SizedBox(height: 12),
+                const SizedBox(height: 14),
                 Text(
                   tr.noSavedCards,
-                  style: const TextStyle(fontSize: 14, height: 1.5),
                   textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 14,
+                    color: Theme.of(ctx).colorScheme.onSurfaceVariant,
+                    height: 1.4,
+                  ),
                 ),
                 const SizedBox(height: 20),
-                ElevatedButton.icon(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: accent,
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(10),
+                SizedBox(
+                  width: double.infinity,
+                  height: 48,
+                  child: ElevatedButton.icon(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: accent,
+                      foregroundColor: Colors.white,
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                     ),
+                    icon: const Icon(Icons.add_card_rounded, size: 18),
+                    label: Text(
+                      tr.addCard,
+                      style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+                    ),
+                    onPressed: () {
+                      // Capture both the screen-level navigator and GoRouter BEFORE
+                      // popping anything: after the sheet + screen pops, the original
+                      // BuildContext is dead and cannot be used for navigation.
+                      final screenNavigator = Navigator.of(context);
+                      final goRouter = GoRouter.of(context);
+                      Navigator.pop(ctx); // close sheet
+                      screenNavigator.pop(); // close AutoEmptyScreen (MaterialPageRoute)
+                      goRouter.go('/settings/saved-cards');
+                    },
                   ),
-                  icon: const Icon(Icons.add_card_rounded, size: 18),
-                  label: Text(
-                    tr.addCard,
-                    style: const TextStyle(fontWeight: FontWeight.w700),
-                  ),
-                  onPressed: () {
-                    // Capture both the screen-level navigator and GoRouter BEFORE
-                    // popping anything: after the sheet + screen pops, the original
-                    // BuildContext is dead and cannot be used for navigation.
-                    final screenNavigator = Navigator.of(context);
-                    final goRouter = GoRouter.of(context);
-                    Navigator.pop(ctx); // close sheet
-                    screenNavigator.pop(); // close AutoEmptyScreen (MaterialPageRoute)
-                    goRouter.go('/settings/saved-cards');
-                  },
                 ),
                 const SizedBox(height: 8),
-                TextButton(
-                  onPressed: () => Navigator.pop(ctx),
-                  child: Text(
-                    tr.cancelBtn,
-                    style: TextStyle(color: Theme.of(ctx).colorScheme.onSurfaceVariant),
+                SizedBox(
+                  width: double.infinity,
+                  height: 44,
+                  child: TextButton(
+                    onPressed: () => Navigator.pop(ctx),
+                    child: Text(
+                      tr.cancelBtn,
+                      style: TextStyle(color: Theme.of(ctx).colorScheme.onSurfaceVariant, fontWeight: FontWeight.w500),
+                    ),
                   ),
                 ),
               ],
@@ -1149,10 +1158,10 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
                 ),
                 Text(
                   tr.dayOfMonth,
-                  style: Theme.of(ctx).textTheme.titleLarge,
+                  style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
                   textAlign: TextAlign.center,
                 ),
-                const SizedBox(height: 16),
+                const SizedBox(height: 14),
                 SizedBox(
                   width: double.maxFinite,
                   child: GridView.builder(

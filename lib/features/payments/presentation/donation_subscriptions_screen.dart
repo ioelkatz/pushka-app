@@ -164,32 +164,45 @@ class _DonationSubscriptionsScreenState
                 ),
                 Text(
                   tr.cancelSubscriptionConfirmTitle,
-                  style: Theme.of(ctx).textTheme.titleLarge,
+                  style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
                   textAlign: TextAlign.center,
                 ),
-                const SizedBox(height: 12),
+                const SizedBox(height: 14),
                 Text(details,
                     style: const TextStyle(fontWeight: FontWeight.w600),
                     textAlign: TextAlign.center),
                 const SizedBox(height: 8),
-                Text(tr.cancelSubscriptionConfirmBody,
-                    textAlign: TextAlign.center),
-                const SizedBox(height: 20),
-                FilledButton(
-                  style: FilledButton.styleFrom(
-                    backgroundColor: AppTokens.primaryBlue,
-                    foregroundColor: Colors.white,
+                Text(
+                  tr.cancelSubscriptionConfirmBody,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 14,
+                    color: Theme.of(ctx).colorScheme.onSurfaceVariant,
+                    height: 1.4,
                   ),
-                  onPressed: () => Navigator.of(ctx).pop(true),
-                  child: Text(
-                    tr.confirm,
-                    style: const TextStyle(fontWeight: FontWeight.w700),
+                ),
+                const SizedBox(height: 20),
+                SizedBox(
+                  width: double.infinity,
+                  height: 48,
+                  child: ElevatedButton(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Theme.of(ctx).colorScheme.error,
+                      foregroundColor: Colors.white,
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    ),
+                    onPressed: () => Navigator.of(ctx).pop(true),
+                    child: Text(tr.confirm, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
                   ),
                 ),
                 const SizedBox(height: 8),
-                TextButton(
-                  onPressed: () => Navigator.of(ctx).pop(false),
-                  child: Text(tr.cancel),
+                SizedBox(
+                  width: double.infinity,
+                  height: 44,
+                  child: TextButton(
+                    onPressed: () => Navigator.of(ctx).pop(false),
+                    child: Text(tr.cancel, style: TextStyle(color: Theme.of(ctx).colorScheme.onSurfaceVariant, fontWeight: FontWeight.w500)),
+                  ),
                 ),
               ],
             ),
@@ -391,24 +404,41 @@ class _DonationSubscriptionsScreenState
                   ),
                   Text(
                     tr.recurringAlreadyActiveTitle,
-                    style: Theme.of(ctx).textTheme.titleLarge,
+                    style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
                     textAlign: TextAlign.center,
                   ),
-                  const SizedBox(height: 12),
+                  const SizedBox(height: 14),
                   Text(
                     tr.recurringAlreadyActiveBody,
-                    style: Theme.of(ctx).textTheme.bodyMedium,
                     textAlign: TextAlign.center,
+                    style: TextStyle(
+                      fontSize: 14,
+                      color: Theme.of(ctx).colorScheme.onSurfaceVariant,
+                      height: 1.4,
+                    ),
                   ),
                   const SizedBox(height: 20),
-                  FilledButton(
-                    onPressed: () => Navigator.pop(ctx, true),
-                    child: Text(tr.continueLabel),
+                  SizedBox(
+                    width: double.infinity,
+                    height: 48,
+                    child: ElevatedButton(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppTokens.primaryBlue,
+                        foregroundColor: Colors.white,
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      ),
+                      onPressed: () => Navigator.pop(ctx, true),
+                      child: Text(tr.continueLabel, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+                    ),
                   ),
                   const SizedBox(height: 8),
-                  TextButton(
-                    onPressed: () => Navigator.pop(ctx, false),
-                    child: Text(tr.cancel),
+                  SizedBox(
+                    width: double.infinity,
+                    height: 44,
+                    child: TextButton(
+                      onPressed: () => Navigator.pop(ctx, false),
+                      child: Text(tr.cancel, style: TextStyle(color: Theme.of(ctx).colorScheme.onSurfaceVariant, fontWeight: FontWeight.w500)),
+                    ),
                   ),
                 ],
               ),
