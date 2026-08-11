@@ -1,4 +1,5 @@
 import 'package:cloud_functions/cloud_functions.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 // Hide TextDirection from intl — it collides with Flutter's dart:ui
@@ -216,6 +217,9 @@ class _DonationSubscriptionsScreenState
   }
 
   bool _biometricEnabled() {
+    // Web (PWA) no soporta biometría — retornar false evita el bloqueo
+    // "Autenticación requerida" heredado de sesiones nativas.
+    if (kIsWeb) return false;
     final profile = ref.read(userProfileProvider).valueOrNull;
     return (profile?['biometricAuthenticationEnabled'] as bool?) ?? false;
   }

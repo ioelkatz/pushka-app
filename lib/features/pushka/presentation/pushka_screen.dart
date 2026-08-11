@@ -2248,6 +2248,14 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
   }
 
   bool _biometricEnabled() {
+    // Web (PWA) no soporta biometría — el package `local_auth` solo
+    // tiene implementación en Android/iOS/macOS/Windows. Si un user
+    // heredó `biometricAuthenticationEnabled: true` de una sesión
+    // nativa (APK anterior) y ahora abre la PWA, sin este short-circuit
+    // cada donación / vaciado dispara "Autenticación requerida" y
+    // bloquea el flow. Retornar false en web hace que ni siquiera se
+    // intente autenticar.
+    if (kIsWeb) return false;
     final profile = ref.read(userProfileProvider).valueOrNull;
     return (profile?['biometricAuthenticationEnabled'] as bool?) ?? false;
   }
