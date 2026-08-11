@@ -357,7 +357,10 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           _buildPushkaStyleSelector(ref),
           const SizedBox(height: 18),
 
-          // APPEARANCE
+          // APPEARANCE — usa el mismo Switch standard que los otros toggles
+          // (sonido, pagos parciales, biométrica, música ambiental) para
+          // consistencia visual. La única distinción es el ícono sol/luna
+          // en el thumb (thumbIcon), que Material Switch soporta nativo.
           Row(
             children: [
               Expanded(
@@ -367,11 +370,18 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 ),
               ),
               const SizedBox(width: 8),
-              _ThemeToggle(
-                isDark: ref.watch(themeModeProvider) == ThemeMode.dark,
+              Switch(
+                value: ref.watch(themeModeProvider) == ThemeMode.dark,
                 onChanged: (dark) => ref.read(themeModeProvider.notifier).setMode(
                   dark ? ThemeMode.dark : ThemeMode.light,
                 ),
+                thumbIcon: WidgetStateProperty.resolveWith<Icon?>((states) {
+                  final isDark = states.contains(WidgetState.selected);
+                  return Icon(
+                    isDark ? Icons.dark_mode_outlined : Icons.light_mode_outlined,
+                    size: 16,
+                  );
+                }),
               ),
             ],
           ),
@@ -2445,131 +2455,4 @@ class _DeleteConfirmDialogState extends State<_DeleteConfirmDialog> {
   }
 }
 
-
-class _ThemeToggle extends StatefulWidget {
-  final bool isDark;
-  final ValueChanged<bool> onChanged;
-  const _ThemeToggle({required this.isDark, required this.onChanged});
-
-  @override
-  State<_ThemeToggle> createState() => _ThemeToggleState();
-}
-
-class _ThemeToggleState extends State<_ThemeToggle> with SingleTickerProviderStateMixin {
-  late AnimationController _ctrl;
-  late bool _showDark;
-
-  @override
-  void initState() {
-    super.initState();
-    _showDark = widget.isDark;
-    _ctrl = AnimationController(vsync: this, duration: const Duration(milliseconds: 380));
-  }
-
-  @override
-  void didUpdateWidget(_ThemeToggle old) {
-    super.didUpdateWidget(old);
-    if (!_ctrl.isAnimating && old.isDark != widget.isDark) {
-      setState(() => _showDark = widget.isDark);
-    }
-  }
-
-  @override
-  void dispose() {
-    _ctrl.dispose();
-    super.dispose();
-  }
-
-  void _toggle() {
-    if (_ctrl.isAnimating) return;
-    final newDark = !_showDark;
-    bool flipped = false;
-
-    _ctrl.reset();
-    void listener() {
-      if (!flipped && _ctrl.value >= 0.5) {
-        flipped = true;
-        setState(() => _showDark = newDark);
-      }
-    }
-
-    _ctrl.addListener(listener);
-    _ctrl.forward().then((_) {
-      _ctrl.removeListener(listener);
-      widget.onChanged(newDark);
-    });
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    const trackW = 52.0;
-    const trackH = 32.0;
-    const thumbD = 24.0;
-    const pad = 4.0;
-    const travel = trackW - thumbD - pad * 2;
-
-    // Colores idénticos al SwitchTheme activo definido en AppTheme
-    const orange = Color(0xFFFF9500);
-    const skyBlue = Color(0xFF60A5FA);
-    final trackColor = _showDark
-        ? skyBlue.withValues(alpha: 0.45)
-        : orange.withValues(alpha: 0.45);
-    final thumbColor = _showDark ? skyBlue : orange;
-
-    return GestureDetector(
-      onTap: _toggle,
-      child: SizedBox(
-        width: 60,
-        height: 48,
-        child: Center(
-          child: AnimatedBuilder(
-            animation: _ctrl,
-            builder: (_, _) {
-              final t = _ctrl.value;
-              // 1 → 0 → 1: sale a la izq y vuelve a la der
-              final pos = t < 0.5 ? 1.0 - t * 2.0 : (t - 0.5) * 2.0;
-              return SizedBox(
-                width: trackW,
-                height: trackH,
-                child: Stack(
-                  clipBehavior: Clip.none,
-                  children: [
-                    Positioned.fill(
-                      child: DecoratedBox(
-                        decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(trackH / 2),
-                          color: trackColor,
-                        ),
-                      ),
-                    ),
-                    Positioned(
-                      left: pad + pos * travel,
-                      top: pad,
-                      child: Container(
-                        width: thumbD,
-                        height: thumbD,
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          color: thumbColor,
-                          boxShadow: const [
-                            BoxShadow(color: Colors.black26, blurRadius: 4, offset: Offset(0, 2)),
-                          ],
-                        ),
-                        child: Icon(
-                          _showDark ? Icons.dark_mode_outlined : Icons.light_mode_outlined,
-                          size: 14,
-                          color: Colors.white,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              );
-            },
-          ),
-        ),
-      ),
-    );
-  }
-}
 
