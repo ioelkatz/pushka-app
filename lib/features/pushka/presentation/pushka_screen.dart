@@ -321,11 +321,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
       final tr = S.of(context);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Row(children: [
-            const Icon(Icons.savings_outlined, color: Colors.white, size: 20),
-            const SizedBox(width: 10),
-            Expanded(child: Text(tr.pushkaEmptyHint)),
-          ]),
+          content: Text(tr.pushkaEmptyHint),
           behavior: SnackBarBehavior.floating,
           duration: const Duration(seconds: 3),
         ),
