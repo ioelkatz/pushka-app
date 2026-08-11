@@ -466,7 +466,18 @@ service cloud.firestore {
             'secondDays',
             'secondIsHoliday',
             'oneShotDate',
-            'createdAt'
+            'createdAt',
+            // Server-owned fields (populated by onReminderWrite +
+            // processDueReminders via Admin SDK). Included in the allowlist
+            // because client updates use set(..., merge:true), which causes
+            // request.resource.data to be the RESULTING MERGED document —
+            // so once the CF has stamped these, subsequent client updates
+            // carry them through the merge and would otherwise fail
+            // hasOnly(). Client mutation is blocked separately by
+            // hasNoServerOnlyReminderFieldsWritten() (immutable-from-client).
+            'nextTriggerAt',
+            'lastTriggeredAt',
+            'timezone'
           ]) &&
           request.resource.data.title is string &&
           request.resource.data.title.size() <= 100 &&
@@ -511,18 +522,34 @@ service cloud.firestore {
     }
 
     // Server-owned reminder fields — populated by onReminderWrite +
-    // processDueReminders. Clients MUST NOT include them in writes: if
-    // toMap() ever accidentally leaks a stale server value, the whole
-    // update gets rejected (fail-loud rather than silently overwrite
-    // scheduler state with the client's cached snapshot).
+    // processDueReminders. Clients MUST NOT MUTATE them.
     //
-    // The allowlist above (validReminderDoc.hasOnly) already excludes them,
-    // so this check is redundant defense-in-depth — but keeping it explicit
-    // documents intent for future rule reviewers.
+    // On CREATE (resource == null): require the fields be ABSENT — the
+    // client has no business seeding server-scheduler state.
+    //
+    // On UPDATE: require each field's post-write value == pre-write value.
+    //   Previous version used `!('field' in request.resource.data)` on both
+    //   create and update. That was correct for `.update()` writes but WRONG
+    //   for `.set(..., merge: true)`: with merge, request.resource.data is
+    //   the RESULTING MERGED document, so pre-existing server-owned fields
+    //   get carried through the merge and appear in request.resource.data.
+    //   Result: the very first client update to any reminder that had already
+    //   been touched by onReminderWrite (i.e. any reminder in the wild)
+    //   failed with PERMISSION_DENIED — surfaced in the app as
+    //   "Could not update reminder". The equality check below correctly
+    //   allows the client to keep the existing server-owned values through
+    //   the merge, while still blocking any attempt to alter them.
     function hasNoServerOnlyReminderFieldsWritten() {
-      return !('nextTriggerAt' in request.resource.data) &&
-          !('lastTriggeredAt' in request.resource.data) &&
-          !('timezone' in request.resource.data);
+      return resource == null
+          ? (!('nextTriggerAt' in request.resource.data) &&
+              !('lastTriggeredAt' in request.resource.data) &&
+              !('timezone' in request.resource.data))
+          : (request.resource.data.get('nextTriggerAt', null) ==
+                  resource.data.get('nextTriggerAt', null) &&
+              request.resource.data.get('lastTriggeredAt', null) ==
+                  resource.data.get('lastTriggeredAt', null) &&
+              request.resource.data.get('timezone', null) ==
+                  resource.data.get('timezone', null));
     }
 
     function validTokenDoc(tokenId) {
