@@ -160,7 +160,7 @@ class S {
   String get support => _t('Soporte', 'Support', 'Assistance', 'תמיכה');
   String get about => _t('Acerca de', 'About', 'À propos', 'אודות');
   String version(String v) => _t('Versión $v', 'Version $v', 'Version $v', 'גרסה $v');
-  String get sponsoredBy => _t('Patrocinado por', 'Sponsored by', 'Parrainé par', 'בחסות');
+  String get sponsoredBy => _t('Patrocinado por el', 'Sponsored by', 'Parrainé par', 'בחסות');
   String get sponsorLine1 => _t('Rabino Menachem Mendel Meer', 'Rabbi Menachem Mendel Meer', 'Rabbin Menachem Mendel Meer', 'הרב מנחם מנדל מיר');
   String get sponsorLine2 => _t('', '', '', '');
   String get defaultUser => _t('Usuario', 'User', 'Utilisateur', 'משתמש');
