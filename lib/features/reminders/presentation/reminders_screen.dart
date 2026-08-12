@@ -354,16 +354,22 @@ class _RemindersScreenState extends ConsumerState<RemindersScreen> {
   }
 
   Future<void> _showAddReminderDialog() async {
-    // Fix: pedir permiso de notificaciones ANTES de abrir el form. Antes
-    // se pedía al cold-start de la app (invasivo), ahora es contextual —
-    // el user solo ve el prompt cuando de verdad va a crear un reminder,
-    // que es cuando cobran sentido las notificaciones. Si el user declina,
-    // permitimos crear el reminder igual (queda guardado, procesa la
-    // cron server-side igual — solo no verá el aviso local en el device).
+    // Fix: pedir permiso de notificaciones ANTES de abrir el form.
+    // Si el user rechaza, NO tiene sentido crear un recordatorio (no le
+    // va a sonar nunca). Cerramos el prompt y NO abrimos el form. En
+    // web (kIsWeb) skippeamos el gate — el flujo de web push tiene su
+    // propio opt-in en Settings, y bloquear crear reminders en web
+    // frenaría a users que planean activar push más adelante.
     if (!kIsWeb) {
-      await NotificationService.instance.ensureNotificationPermission();
+      final granted = await NotificationService.instance.ensureNotificationPermission();
+      if (!mounted) return;
+      if (!granted) {
+        // User declinó — no abrimos el form. Salida silenciosa: el prompt
+        // del OS ya explicó qué implica no permitir, no hace falta otro
+        // snackbar redundante.
+        return;
+      }
     }
-    if (!mounted) return;
 
     final result = await Navigator.of(context, rootNavigator: true)
         .push<ReminderDraft>(
@@ -534,6 +540,31 @@ class _RemindersScreenState extends ConsumerState<RemindersScreen> {
       _showMessage(tr.signInToModify);
       return;
     }
+
+    // Fix: al ACTIVAR (value == true) un reminder desde el switch, hay
+    // que verificar que la app tenga permiso de notificaciones. Sin
+    // esto el reminder queda "activo" en Firestore pero el device
+    // nunca lo notifica — falso positivo grave.
+    //
+    // Si ya tiene permiso: sigue directo. Si no: pedir. Si el user
+    // rechaza, el switch DEBE volver a OFF (rebuild via provider) y
+    // NO tocar Firestore. Skip en kIsWeb — el web push tiene su
+    // propio opt-in en Settings.
+    if (value && !kIsWeb) {
+      final hasPerm = await NotificationService.instance.hasNotificationPermission();
+      if (!hasPerm) {
+        final granted = await NotificationService.instance.ensureNotificationPermission();
+        if (!mounted) return;
+        if (!granted) {
+          // User rechazó — dejamos el reminder como estaba (isEnabled=false).
+          // El Switch se autoactualiza porque nunca escribimos a Firestore,
+          // el StreamProvider emite el valor anterior. Solo forzamos rebuild.
+          setState(() {});
+          return;
+        }
+      }
+    }
+
     final repo = ref.read(reminderRepositoryProvider);
     final updated = reminder.copyWith(isEnabled: value);
     try {

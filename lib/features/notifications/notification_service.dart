@@ -498,6 +498,23 @@ class NotificationService {
   bool get utcFallbackPersisted =>
       (_metaBox?.get(_kUtcFallback) as bool?) ?? false;
 
+  /// Verifica si las notificaciones ya están permitidas SIN mostrar
+  /// prompt al user. Útil para gate un toggle: si el user activa un
+  /// switch de "recordar" y el permiso ya está concedido, no molestar
+  /// con el diálogo; si no está, entonces sí pedir (via ensureNotificationPermission).
+  /// Web retorna `false` — usar `webPushIsEnabled()` para el path web.
+  Future<bool> hasNotificationPermission() async {
+    if (kIsWeb) return false;
+    try {
+      final settings = await _messaging.getNotificationSettings();
+      return settings.authorizationStatus == AuthorizationStatus.authorized ||
+          settings.authorizationStatus == AuthorizationStatus.provisional;
+    } catch (e) {
+      debugPrint('hasNotificationPermission: check failed: $e');
+      return false;
+    }
+  }
+
   /// Pide permisos de notificaciones (FCM + local + exact alarms Android +
   /// iOS notification settings). El OS muestra el prompt nativo la primera
   /// vez; en llamadas subsiguientes retorna el estado actual sin volver a
