@@ -354,6 +354,17 @@ class _RemindersScreenState extends ConsumerState<RemindersScreen> {
   }
 
   Future<void> _showAddReminderDialog() async {
+    // Fix: pedir permiso de notificaciones ANTES de abrir el form. Antes
+    // se pedía al cold-start de la app (invasivo), ahora es contextual —
+    // el user solo ve el prompt cuando de verdad va a crear un reminder,
+    // que es cuando cobran sentido las notificaciones. Si el user declina,
+    // permitimos crear el reminder igual (queda guardado, procesa la
+    // cron server-side igual — solo no verá el aviso local en el device).
+    if (!kIsWeb) {
+      await NotificationService.instance.ensureNotificationPermission();
+    }
+    if (!mounted) return;
+
     final result = await Navigator.of(context, rootNavigator: true)
         .push<ReminderDraft>(
       MaterialPageRoute(builder: (_) => const _ReminderFormPage()),

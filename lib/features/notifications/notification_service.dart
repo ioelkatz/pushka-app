@@ -155,16 +155,15 @@ class NotificationService {
     // silent-refresh here only if the user previously opted in.
     if (!kIsWeb) {
       await _configureLocalTimezone();
-      try {
-        await _requestPermissions();
-      } catch (e) {
-        debugPrint('NotificationService.initialize: FCM permission request failed: $e');
-      }
-      try {
-        await _requestLocalNotificationPermissions();
-      } catch (e) {
-        debugPrint('NotificationService.initialize: local permission request failed: $e');
-      }
+      // Fix: NO pedir permisos de notificaciones en cold start.
+      // Antes: la app pedía permiso al arrancar sin contexto — si el user
+      // decía "Don't allow" volvía a preguntar en próximos launches en
+      // Android 13+ (comportamiento del OS), forzando al user a activarlas
+      // igual. Ahora respetamos que el user pueda usar la app sin
+      // notificaciones. El permiso se pide RECIÉN cuando el user intenta
+      // crear un recordatorio (contextual, via ensureNotificationPermission).
+      // Los listeners de FCM se registran igual (abajo) para que si el
+      // user activa notificaciones más tarde, todo funcione sin restart.
       await _initializeLocalNotifications();
     }
 
@@ -499,12 +498,30 @@ class NotificationService {
   bool get utcFallbackPersisted =>
       (_metaBox?.get(_kUtcFallback) as bool?) ?? false;
 
-  Future<void> _requestPermissions() async {
-    await _messaging.requestPermission(
-      alert: true,
-      badge: true,
-      sound: true,
-    );
+  /// Pide permisos de notificaciones (FCM + local + exact alarms Android +
+  /// iOS notification settings). El OS muestra el prompt nativo la primera
+  /// vez; en llamadas subsiguientes retorna el estado actual sin volver a
+  /// preguntar (Android 13+ / iOS).
+  ///
+  /// Devuelve `true` si el user tiene notificaciones activas al terminar,
+  /// `false` si las declinó o el request falló. Web retorna `false` — para
+  /// web use `enableWebPush()` que maneja el flujo específico del browser.
+  Future<bool> ensureNotificationPermission() async {
+    if (kIsWeb) return false;
+    try {
+      final settings = await _messaging.requestPermission(
+        alert: true,
+        badge: true,
+        sound: true,
+      );
+      final fcmOk = settings.authorizationStatus == AuthorizationStatus.authorized ||
+          settings.authorizationStatus == AuthorizationStatus.provisional;
+      await _requestLocalNotificationPermissions();
+      return fcmOk;
+    } catch (e) {
+      debugPrint('ensureNotificationPermission: request failed: $e');
+      return false;
+    }
   }
 
   Future<void> _requestLocalNotificationPermissions() async {

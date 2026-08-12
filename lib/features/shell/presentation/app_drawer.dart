@@ -133,38 +133,49 @@ class AppDrawer extends ConsumerWidget {
             endIndent: 24,
             color: Theme.of(context).colorScheme.outlineVariant,
           ),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(4, 16, 20, 16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  tr.version(AppTokens.appVersion),
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: Theme.of(context).colorScheme.onSurfaceVariant,
-                    fontWeight: FontWeight.w400,
+          // SizedBox(width: infinity) fuerza que el Padding+Column ocupe
+          // el ancho completo del Drawer — sin esto Column se colapsa a
+          // su intrinsic width y visualmente parece centrado aunque
+          // tenga crossAxisAlignment.start. Con el ancho fijado, el
+          // padding-left del Padding se aplica desde el borde real.
+          SizedBox(
+            width: double.infinity,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(0, 16, 20, 16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    tr.version(AppTokens.appVersion),
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                      fontWeight: FontWeight.w400,
+                    ),
                   ),
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  tr.sponsoredBy,
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: Theme.of(context).colorScheme.onSurfaceVariant,
-                    fontWeight: FontWeight.w400,
+                  // Interlineado uniforme (4) entre las 3 líneas —
+                  // antes v1.0.0 vs sponsoredBy tenía 8, rompiendo la
+                  // consistencia con sponsoredBy vs sponsorLine1 que era 4.
+                  const SizedBox(height: 4),
+                  Text(
+                    tr.sponsoredBy,
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                      fontWeight: FontWeight.w400,
+                    ),
                   ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  tr.sponsorLine1,
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: Theme.of(context).colorScheme.onSurfaceVariant,
-                    fontWeight: FontWeight.w400,
+                  const SizedBox(height: 4),
+                  Text(
+                    tr.sponsorLine1,
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                      fontWeight: FontWeight.w400,
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
         ],
