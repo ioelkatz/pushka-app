@@ -141,7 +141,11 @@ class AppDrawer extends ConsumerWidget {
           SizedBox(
             width: double.infinity,
             child: Padding(
-              padding: const EdgeInsets.fromLTRB(0, 16, 20, 16),
+              // padding-left 24 alinea el texto con la posición horizontal
+              // del icono del último item del nav ("Acerca de") + con el
+              // indent del Divider de arriba. Todo el bloque del footer
+              // arranca en x=24 → consistencia visual perfecta.
+              padding: const EdgeInsets.fromLTRB(24, 16, 20, 16),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
