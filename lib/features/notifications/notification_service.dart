@@ -617,10 +617,56 @@ class NotificationService {
   Future<NotificationPermissionResult> ensureNotificationPermission() async {
     if (kIsWeb) return NotificationPermissionResult.granted;
 
-    // iOS + fallback: some Android OEMs don't route their POST_NOTIFICATIONS
-    // grant through permission_handler's channel — use FCM's request as a
-    // secondary source of truth AND to trigger iOS' native prompt (which is
-    // owned by the messaging channel there).
+    // ANDROID PATH — usar EXCLUSIVAMENTE permission_handler.
+    //
+    // Bug histórico: llamar `_messaging.requestPermission()` + luego
+    // `ph.Permission.notification.request()` consumía DOS disparos del
+    // prompt del OS por cada tap del user en "Activar". Después de 2 taps
+    // ya estaba `permanentlyDenied` y el prompt dejaba de aparecer. Ahora
+    // en Android solo pasamos por permission_handler y solo pedimos si el
+    // status es `denied` (no `permanentlyDenied`). En iOS mantenemos FCM
+    // + iosPlugin porque son el path canónico ahí y no tienen el problema
+    // del budget de 2 disparos.
+    if (!Platform.isIOS) {
+      ph.PermissionStatus status;
+      try {
+        status = await ph.Permission.notification.status;
+      } catch (e) {
+        debugPrint('ensureNotificationPermission (android): status read failed: $e');
+        return NotificationPermissionResult.deniedByUser;
+      }
+
+      if (status.isGranted || status.isLimited || status.isProvisional) {
+        await refreshExactAlarmsFlag();
+        return NotificationPermissionResult.granted;
+      }
+
+      if (status.isPermanentlyDenied) {
+        // No pedir de nuevo — el OS retorna denied sin UI. El caller abre
+        // Settings via openNotificationSettings().
+        return NotificationPermissionResult.permanentlyDenied;
+      }
+
+      // status.isDenied — el OS aún permite un disparo del prompt.
+      try {
+        final requested = await ph.Permission.notification.request();
+        if (requested.isGranted ||
+            requested.isLimited ||
+            requested.isProvisional) {
+          await refreshExactAlarmsFlag();
+          return NotificationPermissionResult.granted;
+        }
+        if (requested.isPermanentlyDenied) {
+          return NotificationPermissionResult.permanentlyDenied;
+        }
+        return NotificationPermissionResult.deniedByUser;
+      } catch (e) {
+        debugPrint('ensureNotificationPermission (android): request failed: $e');
+        return NotificationPermissionResult.deniedByUser;
+      }
+    }
+
+    // iOS PATH — FCM + local plugin son el canonical path aquí.
     bool fcmOk = false;
     try {
       final settings = await _messaging.requestPermission(
@@ -632,10 +678,9 @@ class NotificationService {
           settings.authorizationStatus == AuthorizationStatus.authorized ||
               settings.authorizationStatus == AuthorizationStatus.provisional;
     } catch (e) {
-      debugPrint('ensureNotificationPermission: FCM request failed: $e');
+      debugPrint('ensureNotificationPermission (ios): FCM request failed: $e');
     }
 
-    // iOS local notification permissions (Darwin plugin — no-op on Android).
     try {
       final iosPlugin = _localNotifications
           .resolvePlatformSpecificImplementation<
@@ -646,19 +691,14 @@ class NotificationService {
         sound: true,
       );
     } catch (e) {
-      debugPrint('ensureNotificationPermission: iOS request failed: $e');
+      debugPrint('ensureNotificationPermission (ios): local request failed: $e');
     }
 
-    // Android is where the permanently-denied distinction actually matters.
-    // On iOS, permission_handler's status maps back to the same FCM state
-    // we already read above; we still use it because it gives us the
-    // permanentlyDenied signal on both platforms in one API.
     ph.PermissionStatus status;
     try {
       status = await ph.Permission.notification.status;
     } catch (e) {
-      debugPrint('ensureNotificationPermission: status read failed: $e');
-      // Fall back to the FCM signal — better than lying about the state.
+      debugPrint('ensureNotificationPermission (ios): status read failed: $e');
       return fcmOk
           ? NotificationPermissionResult.granted
           : NotificationPermissionResult.deniedByUser;
@@ -670,12 +710,10 @@ class NotificationService {
     }
 
     if (status.isPermanentlyDenied) {
-      // Nothing to gain from calling request() — the OS will silently
-      // return denied without showing UI. The caller must open Settings.
       return NotificationPermissionResult.permanentlyDenied;
     }
 
-    // status.isDenied (or .isRestricted) — the OS will still show its prompt.
+    // iOS status still denied — try one explicit request via permission_handler.
     try {
       final requested = await ph.Permission.notification.request();
       if (requested.isGranted ||
@@ -687,9 +725,6 @@ class NotificationService {
       if (requested.isPermanentlyDenied) {
         return NotificationPermissionResult.permanentlyDenied;
       }
-      // FCM sometimes reports authorized even though permission_handler
-      // reports denied — keep the union semantics so we don't paint the
-      // user into a corner when one channel returned a stale value.
       if (fcmOk) {
         await refreshExactAlarmsFlag();
         return NotificationPermissionResult.granted;
