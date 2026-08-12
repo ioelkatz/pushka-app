@@ -91,6 +91,15 @@ dependencies:
   cached_network_image: ^3.4.1
   flutter_timezone: ^5.1.0
   flutter_stripe_web: ^7.6.0
+  # Runtime notification permissions on Android 13+ (POST_NOTIFICATIONS).
+  # We use permission_handler because it distinguishes `denied` from
+  # `permanentlyDenied` — flutter_local_notifications' request returns a
+  # plain bool that treats "user checked Don't ask again" identically to a
+  # first-time denial. That distinction drives the UX in reminders_screen:
+  # when permanently denied we open the app's system settings directly
+  # via `openAppSettings()` instead of firing a doomed request that returns
+  # false without ever showing the OS prompt.
+  permission_handler: ^11.3.1
 
 
 dev_dependencies:

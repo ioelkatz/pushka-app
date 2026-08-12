@@ -678,6 +678,30 @@ class S {
         "Activez les notifications dans les paramètres du système pour utiliser les rappels.",
         'הפעל התראות בהגדרות המערכת כדי להשתמש בתזכורות.',
       );
+  String get enableNotificationsTitle => _t(
+        'Activar notificaciones',
+        'Enable notifications',
+        'Activer les notifications',
+        'הפעל התראות',
+      );
+  String get enableNotificationsBody => _t(
+        'Para recibir tus recordatorios necesitamos activar las notificaciones.',
+        'To receive your reminders we need to enable notifications.',
+        'Pour recevoir vos rappels, nous devons activer les notifications.',
+        'כדי לקבל תזכורות עלינו להפעיל את ההתראות.',
+      );
+  String get enableNotificationsPrimary => _t(
+        'Activar',
+        'Enable',
+        'Activer',
+        'הפעל',
+      );
+  String get enableNotificationsSecondary => _t(
+        'Ahora no',
+        'Not now',
+        'Pas maintenant',
+        'לא עכשיו',
+      );
   String reminderLimitReached(int max) => _t(
         'Límite de $max recordatorios alcanzado',
         'Limit of $max reminders reached',

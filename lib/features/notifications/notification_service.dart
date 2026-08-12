@@ -7,12 +7,50 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:hive_flutter/hive_flutter.dart';
+import 'package:permission_handler/permission_handler.dart' as ph;
 import 'package:timezone/data/latest.dart' as tz;
 import 'package:timezone/timezone.dart' as tz;
 
 import '../reminders/domain/reminder.dart';
 import '../../core/hive_cache.dart';
 import '../../core/l10n/s.dart';
+
+/// Outcome of [NotificationService.ensureNotificationPermission].
+///
+/// The three-way split is the whole point of using `permission_handler`
+/// instead of the plain `bool` return the plugins used to give us:
+/// `permanentlyDenied` is what Android reports once the user has ticked
+/// "Don't allow" twice (or once on API 33+ with "Don't ask again"), and it
+/// means the OS will NOT show its prompt anymore — the caller has to
+/// send the user into system settings via `openAppSettings()` for anything
+/// to happen. Conflating it with `deniedByUser` (a fresh rejection where a
+/// re-request WILL still show the prompt) is exactly what confused users
+/// and produced the "toggle silently reopens the sheet with no prompt" UX.
+enum NotificationPermissionResult {
+  /// Notifications are enabled — the caller can proceed to schedule.
+  granted,
+
+  /// User dismissed the OS prompt this time, but a future request will still
+  /// show the prompt (Android under the two-strike limit, or iOS pre-block).
+  deniedByUser,
+
+  /// OS will no longer show its native prompt — only OS Settings can flip
+  /// this. Callers should route the user to `openAppSettings()` instead of
+  /// firing another doomed request.
+  permanentlyDenied,
+}
+
+/// Opens the app's system notification/settings page. Exposed as a top-level
+/// helper so UI layers don't have to import `permission_handler` directly.
+Future<bool> openNotificationSettings() async {
+  if (kIsWeb) return false;
+  try {
+    return await ph.openAppSettings();
+  } catch (e) {
+    debugPrint('openNotificationSettings failed: $e');
+    return false;
+  }
+}
 
 class NotificationService {
   NotificationService._();
@@ -551,82 +589,117 @@ class NotificationService {
     }
   }
 
-  /// Pide permisos de notificaciones (FCM + local). El OS muestra el prompt
-  /// nativo la primera vez; en llamadas subsiguientes retorna el estado
-  /// actual sin volver a preguntar (Android 13+ / iOS).
+  /// Pide permisos de notificaciones (FCM + local). Devuelve un tri-estado
+  /// que distingue rechazo temporal ("Don't allow" con el prompt aún vivo)
+  /// de rechazo permanente (Android agotó los dos disparos del prompt del
+  /// sistema, o el user marcó "Don't ask again"). El caller usa la
+  /// diferencia para decidir entre volver a intentar o mandar al user a
+  /// Settings del OS via `openNotificationSettings()`.
   ///
-  /// Devuelve `true` si el user tiene notificaciones activas al terminar,
-  /// `false` si las declinó o el request falló. Web retorna `false` — para
-  /// web use `enableWebPush()` que maneja el flujo específico del browser.
+  /// - `granted`             → todo listo, agendar el reminder
+  /// - `deniedByUser`        → user dijo que no; un próximo intento va a
+  ///                           mostrar el prompt del OS otra vez
+  /// - `permanentlyDenied`   → el OS NO va a mostrar más el prompt. El
+  ///                           caller debe abrir OS Settings.
+  ///
+  /// Web retorna `granted` para no bloquear el flujo — la app web tiene un
+  /// opt-in separado en Settings (`enableWebPush()`); acá tratamos el gate
+  /// como "no aplica" y dejamos que el resto del flujo siga.
   ///
   /// Round-12 fix: NO abre el settings del OS para SCHEDULE_EXACT_ALARM
-  /// dentro de este método. Antes el flujo era: pedir POST_NOTIFICATIONS
-  /// (user rechaza) → **acto seguido abrir Settings del OS para exact
-  /// alarms** (Android 12+). El user creía haber "activado las
-  /// notificaciones" cuando en realidad solo activó el toggle de exact
-  /// alarms — POST_NOTIFICATIONS seguía denegado y el switch del reminder
-  /// no funcionaba en la siguiente tap. Ahora exact alarms se releen sin
-  /// prompt (`refreshExactAlarmsFlag`) y el `_safeZonedSchedule` cae a
-  /// inexact si hace falta. Cuando el user finalmente lo habilite en OS
-  /// Settings por su cuenta, la próxima llamada a `scheduleReminder` lo
-  /// detecta automáticamente.
-  Future<bool> ensureNotificationPermission() async {
-    if (kIsWeb) return false;
+  /// dentro de este método. Ahora exact alarms se releen sin prompt
+  /// (`refreshExactAlarmsFlag`) y el `_safeZonedSchedule` cae a inexact si
+  /// hace falta.
+  ///
+  /// Round-13 fix: retornar enum en lugar de bool para que la UI pueda
+  /// diferenciar el caso "permanently denied" y abrir Settings del OS
+  /// directamente en vez de mostrar snackbars inútiles.
+  Future<NotificationPermissionResult> ensureNotificationPermission() async {
+    if (kIsWeb) return NotificationPermissionResult.granted;
+
+    // iOS + fallback: some Android OEMs don't route their POST_NOTIFICATIONS
+    // grant through permission_handler's channel — use FCM's request as a
+    // secondary source of truth AND to trigger iOS' native prompt (which is
+    // owned by the messaging channel there).
+    bool fcmOk = false;
     try {
       final settings = await _messaging.requestPermission(
         alert: true,
         badge: true,
         sound: true,
       );
-      var fcmOk = settings.authorizationStatus == AuthorizationStatus.authorized ||
-          settings.authorizationStatus == AuthorizationStatus.provisional;
+      fcmOk =
+          settings.authorizationStatus == AuthorizationStatus.authorized ||
+              settings.authorizationStatus == AuthorizationStatus.provisional;
+    } catch (e) {
+      debugPrint('ensureNotificationPermission: FCM request failed: $e');
+    }
 
-      // Also request via flutter_local_notifications' Android-side
-      // requestNotificationsPermission — same POST_NOTIFICATIONS underneath,
-      // but some Android OEM builds report the state one API more reliably
-      // than the other. If either grants, consider it granted.
-      bool localOk = false;
-      try {
-        final androidPlugin = _localNotifications
-            .resolvePlatformSpecificImplementation<
-                AndroidFlutterLocalNotificationsPlugin>();
-        if (androidPlugin != null) {
-          final r = await androidPlugin.requestNotificationsPermission();
-          localOk = r == true;
-        }
-      } catch (e) {
-        debugPrint('ensureNotificationPermission: local request failed: $e');
-      }
+    // iOS local notification permissions (Darwin plugin — no-op on Android).
+    try {
+      final iosPlugin = _localNotifications
+          .resolvePlatformSpecificImplementation<
+              IOSFlutterLocalNotificationsPlugin>();
+      await iosPlugin?.requestPermissions(
+        alert: true,
+        badge: true,
+        sound: true,
+      );
+    } catch (e) {
+      debugPrint('ensureNotificationPermission: iOS request failed: $e');
+    }
 
-      // iOS local notification permissions (no-op on Android).
-      try {
-        final iosPlugin = _localNotifications
-            .resolvePlatformSpecificImplementation<
-                IOSFlutterLocalNotificationsPlugin>();
-        await iosPlugin?.requestPermissions(
-          alert: true,
-          badge: true,
-          sound: true,
-        );
-      } catch (e) {
-        debugPrint('ensureNotificationPermission: iOS request failed: $e');
-      }
+    // Android is where the permanently-denied distinction actually matters.
+    // On iOS, permission_handler's status maps back to the same FCM state
+    // we already read above; we still use it because it gives us the
+    // permanentlyDenied signal on both platforms in one API.
+    ph.PermissionStatus status;
+    try {
+      status = await ph.Permission.notification.status;
+    } catch (e) {
+      debugPrint('ensureNotificationPermission: status read failed: $e');
+      // Fall back to the FCM signal — better than lying about the state.
+      return fcmOk
+          ? NotificationPermissionResult.granted
+          : NotificationPermissionResult.deniedByUser;
+    }
 
-      final granted = fcmOk || localOk;
+    if (status.isGranted || status.isLimited || status.isProvisional) {
+      await refreshExactAlarmsFlag();
+      return NotificationPermissionResult.granted;
+    }
 
-      // Refresh exact-alarms FLAG (read-only — does NOT open Settings). If
-      // permission was denied, don't even bother — user hasn't granted the
-      // basic notification permission yet, so nothing will fire anyway.
-      // If permission was granted, this lets subsequent scheduleReminder
-      // calls know whether to use exact or inexact scheduling.
-      if (granted) {
+    if (status.isPermanentlyDenied) {
+      // Nothing to gain from calling request() — the OS will silently
+      // return denied without showing UI. The caller must open Settings.
+      return NotificationPermissionResult.permanentlyDenied;
+    }
+
+    // status.isDenied (or .isRestricted) — the OS will still show its prompt.
+    try {
+      final requested = await ph.Permission.notification.request();
+      if (requested.isGranted ||
+          requested.isLimited ||
+          requested.isProvisional) {
         await refreshExactAlarmsFlag();
+        return NotificationPermissionResult.granted;
       }
-
-      return granted;
+      if (requested.isPermanentlyDenied) {
+        return NotificationPermissionResult.permanentlyDenied;
+      }
+      // FCM sometimes reports authorized even though permission_handler
+      // reports denied — keep the union semantics so we don't paint the
+      // user into a corner when one channel returned a stale value.
+      if (fcmOk) {
+        await refreshExactAlarmsFlag();
+        return NotificationPermissionResult.granted;
+      }
+      return NotificationPermissionResult.deniedByUser;
     } catch (e) {
       debugPrint('ensureNotificationPermission: request failed: $e');
-      return false;
+      return fcmOk
+          ? NotificationPermissionResult.granted
+          : NotificationPermissionResult.deniedByUser;
     }
   }
 

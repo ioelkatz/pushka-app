@@ -402,28 +402,23 @@ class _RemindersScreenState extends ConsumerState<RemindersScreen>
   }
 
   Future<void> _showAddReminderDialog() async {
-    // Fix: pedir permiso de notificaciones ANTES de abrir el form.
-    // Si el user rechaza, NO tiene sentido crear un recordatorio (no le
-    // va a sonar nunca). En web (kIsWeb) skippeamos el gate — el flujo
-    // de web push tiene su propio opt-in en Settings, y bloquear crear
-    // reminders en web frenaría a users que planean activar push más
-    // adelante.
-    //
-    // Round-12 fix: si el permiso YA está concedido (via OS Settings tras
-    // un rechazo previo), no volver a molestar con el prompt — chequear
-    // primero con `hasNotificationPermission`. Además: si sigue denegado,
-    // mostrar snackbar informativo en vez de silent return, así el user
-    // sabe por qué no pasó nada.
+    // Round-13 fix: unified permission gate. If the permission is already
+    // granted (or we're on web where the reminders form itself is the gate)
+    // we jump straight to the form. Otherwise we ALWAYS show the "Activar
+    // notificaciones" bottom sheet — the previous flow showed a snackbar
+    // when Android's second denial silently returned false from
+    // requestPermission, and the user (correctly) read that as "toggle
+    // doesn't work". Now the sheet's Activar button routes through
+    // ensureNotificationPermission and, on permanentlyDenied, opens OS
+    // Settings via openAppSettings() so the user has a clear path forward.
     if (!kIsWeb) {
       final ns = NotificationService.instance;
-      var granted = await ns.hasNotificationPermission();
-      if (!granted) {
-        granted = await ns.ensureNotificationPermission();
-      }
+      final hasPerm = await ns.hasNotificationPermission();
       if (!mounted) return;
-      if (!granted) {
-        _showMessage(S.of(context).notificationsRequired);
-        return;
+      if (!hasPerm) {
+        final granted = await _requestNotificationPermissionWithSheet();
+        if (!mounted) return;
+        if (!granted) return; // user declined or opened Settings — no dialog.
       }
     }
 
@@ -609,27 +604,29 @@ class _RemindersScreenState extends ConsumerState<RemindersScreen>
       });
     }
 
-    // Fix: al ACTIVAR (value == true) un reminder desde el switch, hay
-    // que verificar que la app tenga permiso de notificaciones. Sin
-    // esto el reminder queda "activo" en Firestore pero el device
-    // nunca lo notifica — falso positivo grave.
-    //
-    // Si ya tiene permiso: sigue directo. Si no: pedir. Si el user
-    // rechaza, el switch vuelve a OFF (revertimos el optimistic value) y
-    // mostramos un snackbar explicando por qué. NO tocamos Firestore.
-    // Skip en kIsWeb — el web push tiene su propio opt-in en Settings.
+    // Round-13 fix: al ACTIVAR el switch (value == true), verificar
+    // permiso de notificaciones. Si ya está concedido → seguir directo.
+    // Si NO → SIEMPRE mostrar el bottom sheet con "Activar / Ahora no"
+    // (no snackbars). El botón "Activar" dispara el flujo real:
+    // - primer o segundo intento → prompt del OS
+    // - permanentlyDenied → abre OS Settings via openAppSettings()
+    // Cualquier rechazo revierte el switch a OFF SIN snackbar — el user
+    // ya vio la sheet, no hace falta insistir. Skip en kIsWeb: el web
+    // push tiene su propio opt-in en Settings.
     if (value && !kIsWeb) {
       final ns = NotificationService.instance;
-      var hasPerm = await ns.hasNotificationPermission();
-      if (!hasPerm) {
-        hasPerm = await ns.ensureNotificationPermission();
-      }
+      final hasPerm = await ns.hasNotificationPermission();
       if (!mounted) return;
       if (!hasPerm) {
-        // Revert optimistic switch value and inform the user why.
-        setState(() => _pendingSwitchValue.remove(reminder.id));
-        _showMessage(tr.notificationsRequired);
-        return;
+        final granted = await _requestNotificationPermissionWithSheet();
+        if (!mounted) return;
+        if (!granted) {
+          // Revert optimistic switch value silently. No snackbar — the sheet
+          // already communicated intent, either the user declined or was
+          // taken to Settings; noise here would just add friction.
+          setState(() => _pendingSwitchValue.remove(reminder.id));
+          return;
+        }
       }
     }
 
@@ -661,6 +658,144 @@ class _RemindersScreenState extends ConsumerState<RemindersScreen>
       setState(() => _pendingSwitchValue.remove(reminder.id));
     } else {
       _pendingSwitchValue.remove(reminder.id);
+    }
+  }
+
+  /// Shows a bottom sheet with "Activar" / "Ahora no" buttons and drives the
+  /// permission dance. Returns `true` only if the OS ended up granting.
+  ///
+  /// The sheet ALWAYS appears when the caller detects the permission is not
+  /// granted — that's the whole point of the round-13 rewrite. Before this,
+  /// once Android hit its two-strike prompt limit our `requestPermission`
+  /// silently returned false without any UI, and users read the toggle as
+  /// broken. Now:
+  ///   - Activar → `ensureNotificationPermission()`:
+  ///       - granted            → true, caller proceeds
+  ///       - deniedByUser       → false, no snackbar (sheet was the message)
+  ///       - permanentlyDenied  → open OS Settings, return false; the user
+  ///                              flips notifications on themselves and next
+  ///                              tap of the toggle will short-circuit past
+  ///                              the sheet because hasNotificationPermission
+  ///                              will be true.
+  ///   - Ahora no             → false, no snackbar.
+  ///
+  /// The same helper is reused by the "add reminder" button so both entry
+  /// points behave identically.
+  Future<bool> _requestNotificationPermissionWithSheet() async {
+    if (!mounted) return false;
+    final tr = S.of(context);
+    final cs = Theme.of(context).colorScheme;
+    final choice = await showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      backgroundColor: cs.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
+      ),
+      builder: (ctx) => SafeArea(
+        top: false,
+        child: Padding(
+          padding: EdgeInsets.only(bottom: MediaQuery.of(ctx).viewInsets.bottom),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Center(
+                  child: Container(
+                    width: 36,
+                    height: 4,
+                    margin: const EdgeInsets.only(bottom: 16),
+                    decoration: BoxDecoration(
+                      color: Theme.of(ctx).colorScheme.outlineVariant,
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                ),
+                Text(
+                  tr.enableNotificationsTitle,
+                  style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 14),
+                Text(
+                  tr.enableNotificationsBody,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 14,
+                    color: Theme.of(ctx).colorScheme.onSurfaceVariant,
+                    height: 1.4,
+                  ),
+                ),
+                const SizedBox(height: 20),
+                SizedBox(
+                  width: double.infinity,
+                  height: 48,
+                  child: ElevatedButton(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppTokens.primaryBlue,
+                      foregroundColor: Colors.white,
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12)),
+                    ),
+                    onPressed: () => Navigator.pop(ctx, true),
+                    child: Text(
+                      tr.enableNotificationsPrimary,
+                      style: const TextStyle(
+                          fontSize: 16, fontWeight: FontWeight.w700),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                SizedBox(
+                  width: double.infinity,
+                  height: 44,
+                  child: TextButton(
+                    onPressed: () => Navigator.pop(ctx, false),
+                    child: Text(
+                      tr.enableNotificationsSecondary,
+                      style: TextStyle(
+                        color: Theme.of(ctx).colorScheme.onSurfaceVariant,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+
+    if (!mounted) return false;
+    // User dismissed by swipe / backdrop tap / back gesture → treat as "Ahora no".
+    if (choice != true) return false;
+
+    final ns = NotificationService.instance;
+    final result = await ns.ensureNotificationPermission();
+    if (!mounted) return false;
+
+    switch (result) {
+      case NotificationPermissionResult.granted:
+        return true;
+      case NotificationPermissionResult.deniedByUser:
+        // Prompt was shown, user hit Don't allow. Silent — the sheet already
+        // told them what we needed, no follow-up snackbar.
+        return false;
+      case NotificationPermissionResult.permanentlyDenied:
+        // Android has burned its two-strike budget (or "Don't ask again" was
+        // ticked). Requesting again would be a no-op that returns denied
+        // without UI, which is exactly the trap that made users think the
+        // toggle was broken. Send them straight to OS Settings so they can
+        // flip the switch themselves; when they come back, the next tap
+        // short-circuits past this helper because hasNotificationPermission
+        // will now be true. didChangeAppLifecycleState clears any leftover
+        // optimistic state on resume.
+        await openNotificationSettings();
+        return false;
     }
   }
 
