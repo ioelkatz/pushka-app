@@ -113,20 +113,28 @@ class AppDrawer extends ConsumerWidget {
             ),
           ),
 
-          // Footer con versión y patrocinadores. Padding-left 12 para
-          // que el texto arranque cerca del borde izquierdo del drawer
-          // (aliado a la línea horizontal del border-top que va 0→full).
-          // 24 quedaba demasiado adentro; 12 mantiene un respiro sin
-          // pegarse al borde.
+          // Footer con versión y patrocinadores.
           //
-          // Todos los textos con el mismo color/peso (onSurfaceVariant +
-          // w400) para dar consistencia visual — antes el nombre del Rab
-          // resaltaba con onSurface + w500 y rompía la armonía del footer.
-          Container(
-            padding: const EdgeInsets.fromLTRB(12, 16, 20, 16),
-            decoration: BoxDecoration(
-              border: Border(top: BorderSide(color: Theme.of(context).colorScheme.outlineVariant)),
-            ),
+          // La línea horizontal (Divider) usa indent 24 en ambos lados
+          // para alinearse con la posición horizontal del icono del
+          // ULTIMO item del nav ("Acerca de"): _item aplica
+          // Container.margin horizontal 8 + ListTile.contentPadding
+          // horizontal 16 = 24 px desde el borde del drawer hasta el
+          // icono. Divider ahora arranca y termina en esa misma x.
+          //
+          // Texto del footer con padding-left 4 (prácticamente pegado
+          // al borde izquierdo del drawer). Todos los textos comparten
+          // el mismo color/peso (onSurfaceVariant + w400) para
+          // consistencia visual.
+          Divider(
+            height: 1,
+            thickness: 1,
+            indent: 24,
+            endIndent: 24,
+            color: Theme.of(context).colorScheme.outlineVariant,
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(4, 16, 20, 16),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
