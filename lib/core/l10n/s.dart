@@ -672,6 +672,12 @@ class S {
   String get signInToModify => _t('Inicia sesión para modificar recordatorios', 'Sign in to modify reminders', 'Connectez-vous pour modifier les rappels', 'התחבר כדי לשנות תזכורות');
   String get signInToDelete => _t('Inicia sesión para eliminar recordatorios', 'Sign in to delete reminders', 'Connectez-vous pour supprimer les rappels', 'התחבר כדי למחוק תזכורות');
   String get couldNotDelete => _t('No se pudo eliminar el recordatorio', 'Could not delete reminder', 'Impossible de supprimer le rappel', 'לא ניתן למחוק את התזכורת');
+  String get notificationsRequired => _t(
+        'Activá las notificaciones en Ajustes del sistema para usar recordatorios.',
+        'Enable notifications in system Settings to use reminders.',
+        "Activez les notifications dans les paramètres du système pour utiliser les rappels.",
+        'הפעל התראות בהגדרות המערכת כדי להשתמש בתזכורות.',
+      );
   String reminderLimitReached(int max) => _t(
         'Límite de $max recordatorios alcanzado',
         'Limit of $max reminders reached',

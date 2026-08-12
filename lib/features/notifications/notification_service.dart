@@ -503,26 +503,73 @@ class NotificationService {
   /// switch de "recordar" y el permiso ya está concedido, no molestar
   /// con el diálogo; si no está, entonces sí pedir (via ensureNotificationPermission).
   /// Web retorna `false` — usar `webPushIsEnabled()` para el path web.
+  ///
+  /// Round-12 fix: chequea DOS fuentes (FCM + flutter_local_notifications)
+  /// y considera concedido si CUALQUIERA reporta true. Motivo: en algunas
+  /// versiones de firebase_messaging el `getNotificationSettings()` de
+  /// Android devuelve un valor cacheado post-plugin-init que no refleja el
+  /// cambio hecho por el user en Settings del sistema. El check de
+  /// `areNotificationsEnabled()` del plugin local usa
+  /// `NotificationManagerCompat.from(ctx).areNotificationsEnabled()` que
+  /// SIEMPRE es real-time. Si el user habilita notifs en Settings del OS y
+  /// vuelve a la app, la próxima llamada a este método devuelve true, en
+  /// vez de quedar bloqueado en un valor stale.
   Future<bool> hasNotificationPermission() async {
     if (kIsWeb) return false;
+    // On Android, prefer the real-time OS check via flutter_local_notifications
+    // (uses NotificationManagerCompat.areNotificationsEnabled() — the source
+    // of truth for whether posted notifications will actually be shown). The
+    // firebase_messaging `getNotificationSettings()` cache can drift after
+    // the user changes the OS toggle without a cold-start, so leaning on it
+    // exclusively risks BOTH a false-positive (user revoked in Settings,
+    // FCM still cached "authorized" → toggle turns ON but reminders never
+    // fire) AND a false-negative (user granted in Settings, FCM cached
+    // "denied" → toggle stays broken until app restart — the exact bug
+    // reported by the user this round). Falling back to FCM only when the
+    // Android plugin isn't available (iOS + edge errors) preserves iOS
+    // correctness.
+    try {
+      final androidPlugin = _localNotifications
+          .resolvePlatformSpecificImplementation<
+              AndroidFlutterLocalNotificationsPlugin>();
+      if (androidPlugin != null) {
+        final enabled = await androidPlugin.areNotificationsEnabled();
+        if (enabled != null) return enabled;
+        // Pre-Android-13 devices with no runtime permission concept return
+        // null here — fall through to FCM (which reports via legacy path).
+      }
+    } catch (e) {
+      debugPrint('hasNotificationPermission: local check failed: $e');
+    }
     try {
       final settings = await _messaging.getNotificationSettings();
       return settings.authorizationStatus == AuthorizationStatus.authorized ||
           settings.authorizationStatus == AuthorizationStatus.provisional;
     } catch (e) {
-      debugPrint('hasNotificationPermission: check failed: $e');
+      debugPrint('hasNotificationPermission: FCM check failed: $e');
       return false;
     }
   }
 
-  /// Pide permisos de notificaciones (FCM + local + exact alarms Android +
-  /// iOS notification settings). El OS muestra el prompt nativo la primera
-  /// vez; en llamadas subsiguientes retorna el estado actual sin volver a
-  /// preguntar (Android 13+ / iOS).
+  /// Pide permisos de notificaciones (FCM + local). El OS muestra el prompt
+  /// nativo la primera vez; en llamadas subsiguientes retorna el estado
+  /// actual sin volver a preguntar (Android 13+ / iOS).
   ///
   /// Devuelve `true` si el user tiene notificaciones activas al terminar,
   /// `false` si las declinó o el request falló. Web retorna `false` — para
   /// web use `enableWebPush()` que maneja el flujo específico del browser.
+  ///
+  /// Round-12 fix: NO abre el settings del OS para SCHEDULE_EXACT_ALARM
+  /// dentro de este método. Antes el flujo era: pedir POST_NOTIFICATIONS
+  /// (user rechaza) → **acto seguido abrir Settings del OS para exact
+  /// alarms** (Android 12+). El user creía haber "activado las
+  /// notificaciones" cuando en realidad solo activó el toggle de exact
+  /// alarms — POST_NOTIFICATIONS seguía denegado y el switch del reminder
+  /// no funcionaba en la siguiente tap. Ahora exact alarms se releen sin
+  /// prompt (`refreshExactAlarmsFlag`) y el `_safeZonedSchedule` cae a
+  /// inexact si hace falta. Cuando el user finalmente lo habilite en OS
+  /// Settings por su cuenta, la próxima llamada a `scheduleReminder` lo
+  /// detecta automáticamente.
   Future<bool> ensureNotificationPermission() async {
     if (kIsWeb) return false;
     try {
@@ -531,39 +578,81 @@ class NotificationService {
         badge: true,
         sound: true,
       );
-      final fcmOk = settings.authorizationStatus == AuthorizationStatus.authorized ||
+      var fcmOk = settings.authorizationStatus == AuthorizationStatus.authorized ||
           settings.authorizationStatus == AuthorizationStatus.provisional;
-      await _requestLocalNotificationPermissions();
-      return fcmOk;
+
+      // Also request via flutter_local_notifications' Android-side
+      // requestNotificationsPermission — same POST_NOTIFICATIONS underneath,
+      // but some Android OEM builds report the state one API more reliably
+      // than the other. If either grants, consider it granted.
+      bool localOk = false;
+      try {
+        final androidPlugin = _localNotifications
+            .resolvePlatformSpecificImplementation<
+                AndroidFlutterLocalNotificationsPlugin>();
+        if (androidPlugin != null) {
+          final r = await androidPlugin.requestNotificationsPermission();
+          localOk = r == true;
+        }
+      } catch (e) {
+        debugPrint('ensureNotificationPermission: local request failed: $e');
+      }
+
+      // iOS local notification permissions (no-op on Android).
+      try {
+        final iosPlugin = _localNotifications
+            .resolvePlatformSpecificImplementation<
+                IOSFlutterLocalNotificationsPlugin>();
+        await iosPlugin?.requestPermissions(
+          alert: true,
+          badge: true,
+          sound: true,
+        );
+      } catch (e) {
+        debugPrint('ensureNotificationPermission: iOS request failed: $e');
+      }
+
+      final granted = fcmOk || localOk;
+
+      // Refresh exact-alarms FLAG (read-only — does NOT open Settings). If
+      // permission was denied, don't even bother — user hasn't granted the
+      // basic notification permission yet, so nothing will fire anyway.
+      // If permission was granted, this lets subsequent scheduleReminder
+      // calls know whether to use exact or inexact scheduling.
+      if (granted) {
+        await refreshExactAlarmsFlag();
+      }
+
+      return granted;
     } catch (e) {
       debugPrint('ensureNotificationPermission: request failed: $e');
       return false;
     }
   }
 
-  Future<void> _requestLocalNotificationPermissions() async {
-    final androidPlugin = _localNotifications
-        .resolvePlatformSpecificImplementation<
-            AndroidFlutterLocalNotificationsPlugin>();
-    await androidPlugin?.requestNotificationsPermission();
-    final exactGranted =
-        await androidPlugin?.requestExactAlarmsPermission() ?? true;
-    _canScheduleExact = exactGranted;
-    if (!exactGranted) {
-      debugPrint(
-        'NotificationService: SCHEDULE_EXACT_ALARM denied — '
-        'reminders will fire within ~15min of target via inexact alarm.',
-      );
+  /// Reads `canScheduleExactNotifications()` — a real-time OS check that
+  /// does NOT open settings — and updates `_canScheduleExact`. Called on
+  /// each `scheduleReminder` so a user who grants SCHEDULE_EXACT_ALARM via
+  /// OS Settings mid-session picks up exact scheduling without a restart.
+  Future<void> refreshExactAlarmsFlag() async {
+    if (kIsWeb) return;
+    try {
+      final androidPlugin = _localNotifications
+          .resolvePlatformSpecificImplementation<
+              AndroidFlutterLocalNotificationsPlugin>();
+      if (androidPlugin == null) return; // iOS — not applicable.
+      final can = await androidPlugin.canScheduleExactNotifications();
+      // Null = older Android with no exact-alarm concept → treat as allowed.
+      _canScheduleExact = can ?? true;
+      if (!_canScheduleExact) {
+        debugPrint(
+          'NotificationService: SCHEDULE_EXACT_ALARM currently denied — '
+          'reminders will fire within ~15min of target via inexact alarm.',
+        );
+      }
+    } catch (e) {
+      debugPrint('refreshExactAlarmsFlag: check failed: $e');
     }
-
-    final iosPlugin = _localNotifications
-        .resolvePlatformSpecificImplementation<
-            IOSFlutterLocalNotificationsPlugin>();
-    await iosPlugin?.requestPermissions(
-      alert: true,
-      badge: true,
-      sound: true,
-    );
   }
 
   AndroidScheduleMode get _androidScheduleMode => _canScheduleExact
@@ -733,6 +822,14 @@ class NotificationService {
     }
 
     await cancelReminder(reminder);
+
+    // Round-12 fix: re-check exact-alarms permission on every schedule so a
+    // user who granted SCHEDULE_EXACT_ALARM via OS Settings mid-session
+    // gets exact scheduling without a full app restart. Read-only — does
+    // NOT open Settings. If revoked mid-session, _safeZonedSchedule still
+    // catches the exact_alarms_not_permitted PlatformException and falls
+    // back to inexact.
+    await refreshExactAlarmsFlag();
 
     debugPrint('NotificationService.scheduleReminder: id=${reminder.id} '
         'title="${reminder.title}" days=${reminder.days} time=${reminder.time.hour}:${reminder.time.minute} '

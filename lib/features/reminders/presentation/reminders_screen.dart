@@ -23,11 +23,54 @@ class RemindersScreen extends ConsumerStatefulWidget {
   ConsumerState<RemindersScreen> createState() => _RemindersScreenState();
 }
 
-class _RemindersScreenState extends ConsumerState<RemindersScreen> {
+class _RemindersScreenState extends ConsumerState<RemindersScreen>
+    with WidgetsBindingObserver {
   /// Per-reminder in-flight future — used as a serial mutex so two fast taps
   /// on the same reminder's Switch don't fire two update+schedule pipelines
   /// whose completion order is undefined. Second-tap awaits the first.
   final Map<String, Future<void>> _toggleInFlight = {};
+
+  /// Optimistic UI overlay for the per-reminder Switch.
+  ///
+  /// Round-12 fix: the Material Switch is fully controlled by the `value`
+  /// prop, and that prop was bound straight to `reminder.isEnabled` (from
+  /// the Firestore stream). When `_runToggle` aborted early — e.g. the user
+  /// declined the notification permission — we never wrote the new value,
+  /// the stream re-emitted the OLD value, and the switch snapped back to
+  /// its previous position with NO feedback. User's read: "el toggle no me
+  /// deja". Now the switch renders `_pendingSwitchValue[id] ?? isEnabled`,
+  /// we set the pending value BEFORE any await, and we clear it after the
+  /// write succeeds (stream will re-emit) OR revert it on failure while
+  /// also showing a snackbar so the failure is visible.
+  final Map<String, bool> _pendingSwitchValue = {};
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state != AppLifecycleState.resumed) return;
+    // User is back in the app — possibly from OS Settings where they may
+    // have (a) granted the notification permission we asked for and (b)
+    // granted SCHEDULE_EXACT_ALARM. `hasNotificationPermission()` reads
+    // real-time state on next tap, so we don't need to force-refresh here.
+    // But we DO clear stale pending switch values — if the user backgrounded
+    // the app while the permission prompt was open, `_runToggle` may have
+    // been suspended and never got to clear its pending entry. Force a
+    // rebuild so the Switch matches the provider's isEnabled value.
+    if (_pendingSwitchValue.isNotEmpty && mounted) {
+      setState(_pendingSwitchValue.clear);
+    }
+  }
 
   /// Locale-aware copy for the "reminders don't fire in the browser" banner.
   /// The S delegate has no key for it (owned elsewhere) so we inline the four
@@ -266,7 +309,12 @@ class _RemindersScreenState extends ConsumerState<RemindersScreen> {
                 ),
               ),
               Switch(
-                value: reminder.isEnabled,
+                // Optimistic overlay: while a toggle write is in flight (or
+                // an aborted attempt is being reverted), show the pending
+                // value so the switch never appears "stuck" on the previous
+                // state. Cleared once the Firestore stream re-emits or the
+                // attempt is definitively rolled back — see `_pendingSwitchValue`.
+                value: _pendingSwitchValue[reminder.id] ?? reminder.isEnabled,
                 onChanged: onToggle,
               ),
             ],
@@ -356,17 +404,25 @@ class _RemindersScreenState extends ConsumerState<RemindersScreen> {
   Future<void> _showAddReminderDialog() async {
     // Fix: pedir permiso de notificaciones ANTES de abrir el form.
     // Si el user rechaza, NO tiene sentido crear un recordatorio (no le
-    // va a sonar nunca). Cerramos el prompt y NO abrimos el form. En
-    // web (kIsWeb) skippeamos el gate — el flujo de web push tiene su
-    // propio opt-in en Settings, y bloquear crear reminders en web
-    // frenaría a users que planean activar push más adelante.
+    // va a sonar nunca). En web (kIsWeb) skippeamos el gate — el flujo
+    // de web push tiene su propio opt-in en Settings, y bloquear crear
+    // reminders en web frenaría a users que planean activar push más
+    // adelante.
+    //
+    // Round-12 fix: si el permiso YA está concedido (via OS Settings tras
+    // un rechazo previo), no volver a molestar con el prompt — chequear
+    // primero con `hasNotificationPermission`. Además: si sigue denegado,
+    // mostrar snackbar informativo en vez de silent return, así el user
+    // sabe por qué no pasó nada.
     if (!kIsWeb) {
-      final granted = await NotificationService.instance.ensureNotificationPermission();
+      final ns = NotificationService.instance;
+      var granted = await ns.hasNotificationPermission();
+      if (!granted) {
+        granted = await ns.ensureNotificationPermission();
+      }
       if (!mounted) return;
       if (!granted) {
-        // User declinó — no abrimos el form. Salida silenciosa: el prompt
-        // del OS ya explicó qué implica no permitir, no hace falta otro
-        // snackbar redundante.
+        _showMessage(S.of(context).notificationsRequired);
         return;
       }
     }
@@ -541,27 +597,39 @@ class _RemindersScreenState extends ConsumerState<RemindersScreen> {
       return;
     }
 
+    // Optimistic UI: paint the switch in the desired position BEFORE any
+    // await. Without this, the switch appears "stuck" during the async
+    // permission dance and — worse — an aborted attempt (user denied
+    // permission) leaves no visible trace, so the user reads it as a bug.
+    // The pending entry is cleared either by the Firestore stream re-emit
+    // (success path) or by the failure branch below with a snackbar.
+    if (mounted) {
+      setState(() {
+        _pendingSwitchValue[reminder.id] = value;
+      });
+    }
+
     // Fix: al ACTIVAR (value == true) un reminder desde el switch, hay
     // que verificar que la app tenga permiso de notificaciones. Sin
     // esto el reminder queda "activo" en Firestore pero el device
     // nunca lo notifica — falso positivo grave.
     //
     // Si ya tiene permiso: sigue directo. Si no: pedir. Si el user
-    // rechaza, el switch DEBE volver a OFF (rebuild via provider) y
-    // NO tocar Firestore. Skip en kIsWeb — el web push tiene su
-    // propio opt-in en Settings.
+    // rechaza, el switch vuelve a OFF (revertimos el optimistic value) y
+    // mostramos un snackbar explicando por qué. NO tocamos Firestore.
+    // Skip en kIsWeb — el web push tiene su propio opt-in en Settings.
     if (value && !kIsWeb) {
-      final hasPerm = await NotificationService.instance.hasNotificationPermission();
+      final ns = NotificationService.instance;
+      var hasPerm = await ns.hasNotificationPermission();
       if (!hasPerm) {
-        final granted = await NotificationService.instance.ensureNotificationPermission();
-        if (!mounted) return;
-        if (!granted) {
-          // User rechazó — dejamos el reminder como estaba (isEnabled=false).
-          // El Switch se autoactualiza porque nunca escribimos a Firestore,
-          // el StreamProvider emite el valor anterior. Solo forzamos rebuild.
-          setState(() {});
-          return;
-        }
+        hasPerm = await ns.ensureNotificationPermission();
+      }
+      if (!mounted) return;
+      if (!hasPerm) {
+        // Revert optimistic switch value and inform the user why.
+        setState(() => _pendingSwitchValue.remove(reminder.id));
+        _showMessage(tr.notificationsRequired);
+        return;
       }
     }
 
@@ -570,13 +638,29 @@ class _RemindersScreenState extends ConsumerState<RemindersScreen> {
     try {
       await repo.updateReminder(user.uid, updated);
     } catch (_) {
-      if (mounted) _showMessage(tr.couldNotUpdateReminder);
+      if (mounted) {
+        setState(() => _pendingSwitchValue.remove(reminder.id));
+        _showMessage(tr.couldNotUpdateReminder);
+      }
       return;
     }
     try {
       await NotificationService.instance.scheduleReminder(updated, tr: tr);
     } catch (e) {
       debugPrint('scheduleReminder failed: $e');
+      // scheduleReminder failure is NOT fatal — the Firestore write
+      // succeeded, and the server-side scheduler will still fire based
+      // on the persisted reminder. Do NOT revert the switch.
+    }
+    // Success: the Firestore write happened. Once the stream re-emits
+    // with isEnabled=value, the fallback (reminder.isEnabled) already
+    // matches the pending value, so we can drop the optimistic entry
+    // without visual jitter. Guarded by mounted since scheduleReminder
+    // awaits platform channels that can outlast the widget.
+    if (mounted) {
+      setState(() => _pendingSwitchValue.remove(reminder.id));
+    } else {
+      _pendingSwitchValue.remove(reminder.id);
     }
   }
 
@@ -594,6 +678,10 @@ class _RemindersScreenState extends ConsumerState<RemindersScreen> {
       if (mounted) _showMessage(tr.couldNotDelete);
       return;
     }
+    // Drop any lingering optimistic-toggle entry for the deleted reminder so
+    // the map doesn't leak keys across a rapid delete-recreate-with-same-id
+    // cycle (Firestore ids are unique in practice, but the tidy-up is free).
+    _pendingSwitchValue.remove(reminder.id);
     try {
       // forgetReminder = cancelReminder + clearOneShotDate; keeps the
       // reminders_meta Hive box from leaking stale one-shot entries pointing
