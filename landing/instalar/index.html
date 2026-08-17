@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="robots" content="noindex, nofollow">
   <title>Instalar Pushka — Jabad en Campus</title>
-  <link rel="icon" href="../favicon.png">
+  <link rel="icon" href="/favicon.png">
   <style>
     :root {
       --bg: #FDFAF5;
@@ -135,7 +135,9 @@
       <p class="sub">Tu alcancía de tzedaká — Jabad en Campus</p>
     </header>
 
-    <a class="cta" href="pushka.apk" download>Descargar la app</a>
+    <!-- Ruta ABSOLUTA obligatoria: el target `landing` tiene trailingSlash:false, asi que
+         /instalar/ redirige 301 a /instalar y un href relativo resolveria a /pushka.apk (404). -->
+    <a class="cta" href="/instalar/pushka.apk" download="pushka.apk">Descargar la app</a>
     <p class="cta-note">Android · 104 MB · versión 1.0.0</p>
 
     <h2>Cómo instalarla</h2>
