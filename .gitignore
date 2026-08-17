@@ -88,3 +88,6 @@ run.ps1
 
 # Temporary fix/migration scripts
 fix*.js
+
+# APK de sideload servido desde landing/instalar (no versionar, 100+ MB)
+landing/instalar/*.apk

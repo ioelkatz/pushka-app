@@ -62,6 +62,14 @@
           "headers": [
             { "key": "Cache-Control", "value": "public, max-age=86400" }
           ]
+        },
+        {
+          "//": "APK sideload de /instalar/. Content-Type explícito para que Chrome lo trate como instalable (sin esto Firebase puede servirlo como octet-stream y el instalador de Android no lo reconoce). no-store para que un APK viejo cacheado no se sirva después de subir una versión nueva con el mismo nombre.",
+          "source": "**/*.apk",
+          "headers": [
+            { "key": "Content-Type", "value": "application/vnd.android.package-archive" },
+            { "key": "Cache-Control", "value": "no-store" }
+          ]
         }
       ]
     },
