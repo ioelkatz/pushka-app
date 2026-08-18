@@ -598,17 +598,13 @@ class _OtpBoxState extends State<_OtpBox> {
       width: widget.width,
       height: widget.height,
       decoration: BoxDecoration(
-        color: filled ? _kRed.withValues(alpha: 0.06) : Colors.white,
+        // La celda queda SIEMPRE blanca y plana, vacia o llena. Antes el
+        // relleno rosado al 6% mas un boxShadow negro al 18% hacian que,
+        // apenas escribias, la casilla se viera gris y hundida. Lo unico
+        // que cambia al escribir es el borde (gris -> rojo) y la letra.
+        color: Colors.white,
         borderRadius: BorderRadius.circular(12),
         border: Border.all(color: borderColor, width: borderWidth),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.18),
-            blurRadius: 6,
-            spreadRadius: 0,
-            offset: const Offset(0, 3),
-          ),
-        ],
       ),
       child: KeyboardListener(
         focusNode: FocusNode(),
@@ -624,6 +620,9 @@ class _OtpBoxState extends State<_OtpBox> {
           controller: widget.controller,
           focusNode: widget.focusNode,
           textAlign: TextAlign.center,
+          // Con contentPadding.zero el TextField no centra verticalmente
+          // por su cuenta y el glifo se apoyaba fuera del eje de la celda.
+          textAlignVertical: TextAlignVertical.center,
           maxLength: 1,
           keyboardType: TextInputType.visiblePassword,
           textCapitalization: TextCapitalization.characters,
