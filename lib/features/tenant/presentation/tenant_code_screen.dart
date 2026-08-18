@@ -17,6 +17,12 @@ import 'tenant_switch_reset.dart';
 
 const _kRed = Color(0xFFf82c4a);
 
+/// Mail al que escribe el donante que perdió su código de invitación.
+///
+/// Es el del Rab (Jabad en Campus), no el del super_admin de la plataforma:
+/// quien reparte los códigos y conoce a los donantes es él.
+const _kSupportEmail = 'jymmexico@gmail.com';
+
 /// Cuanto se sube el caracter dentro de su celda OTP, como fraccion del
 /// fontSize.
 ///
@@ -159,14 +165,21 @@ class _TenantCodeScreenState extends ConsumerState<TenantCodeScreen> {
     }
   }
 
-  // Fallback para usuarios que perdieron el código: abre un mail a Ioel
-  // (super_admin) que puede guiarlos manualmente. Hardcoded porque en esta
-  // pantalla todavía no hay tenantId asociado al user.
+  // Fallback para usuarios que perdieron el código: abre un mail al Rab, que
+  // es quien reparte los códigos de invitación y puede guiarlos. Antes iba a
+  // ioelkatz@gmail.com (super_admin), pero el donante no tiene por qué
+  // escribirle al desarrollador de la plataforma.
+  //
+  // Hardcoded a propósito: esta pantalla es pre-tenant-join, no hay tenantId
+  // todavía, así que no se puede leer `contactEmail` del TenantConfig. Cuando
+  // haya un segundo tenant esto necesita otra solución — el mail correcto
+  // depende de a qué organización quiere entrar el usuario, que es
+  // justamente lo que aún no sabemos.
   Future<void> _contactSupport() async {
     final tr = S.of(context);
     final uri = Uri(
       scheme: 'mailto',
-      path: 'ioelkatz@gmail.com',
+      path: _kSupportEmail,
       queryParameters: {'subject': tr.tenantCodeMailSubject},
     );
     try {
