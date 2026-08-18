@@ -105,7 +105,10 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
                     ),
                   ),
                   _OnboardingPage(
-                    icon: Icons.savings_rounded,
+                    // NO usar Icons.savings* aca: en Material son una alcancia
+                    // con forma de cerdo, inaceptable en una app de tzedaka.
+                    // Cualquier reemplazo futuro debe evitar esa familia.
+                    icon: Icons.track_changes_rounded,
                     color: const Color(0xFF059669),
                     title: tr.onboarding2Title,
                     body: tr.onboarding2Body,
