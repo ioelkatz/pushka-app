@@ -24,18 +24,19 @@ const _kRed = Color(0xFFf82c4a);
 const _kSupportEmail = 'jymmexico@gmail.com';
 
 /// Cuanto se sube el caracter dentro de su celda OTP, como fraccion del
-/// fontSize.
+/// fontSize. Se aplica DIRECTO con un Transform.translate, sin intermediarios.
 ///
 /// Flutter centra la *line box* de la fuente (ascent + descent), no el glifo.
 /// El codigo de invitacion es solo mayusculas y digitos, que no tienen
-/// descendentes: el hueco reservado bajo la linea base queda vacio y la letra
-/// se ve caida. Con el strut forzado a height 1.0 la linea base cae a ~0.79em
-/// y sobra ~0.21em abajo contra ~0.08em arriba, asi que hay que compensar
-/// ~0.13em recortando desde abajo.
+/// descendentes, asi que el hueco reservado bajo la linea base queda vacio y
+/// la letra se ve caida. Con el strut forzado a height 1.0 la caja mide
+/// exactamente fontSize: en Roboto la linea base queda a ~0.79em, dejando
+/// ~0.08em libres arriba contra ~0.21em abajo. Hay que subir la mitad de esa
+/// diferencia, ~0.065em, para que el centrado caiga sobre la banda del glifo.
 ///
 /// Es el unico numero a tocar si el caracter queda alto o bajo: subirlo lo
-/// sube, bajarlo lo baja.
-const double _kGlyphLift = 0.13;
+/// sube, bajarlo lo baja. A fontSize ~23 px, 0.01 equivale a ~0.23 px.
+const double _kGlyphLift = 0.07;
 
 class TenantCodeScreen extends ConsumerStatefulWidget {
   const TenantCodeScreen({super.key});
@@ -644,52 +645,78 @@ class _OtpBoxState extends State<_OtpBox> {
             widget.onCharInput(widget.index, '');
           }
         },
-        child: TextField(
-          controller: widget.controller,
-          focusNode: widget.focusNode,
-          textAlign: TextAlign.center,
-          textAlignVertical: TextAlignVertical.center,
-          // Un StrutStyle forzado a height 1.0 fija la line box en exactamente
-          // fontSize. Sin esto la caja mide ascent + descent (~1.17em en
-          // Roboto) y el centrado arrastra ese sobrante.
-          strutStyle: StrutStyle(
-            fontSize: fontSize,
-            height: 1.0,
-            forceStrutHeight: true,
-            leading: 0,
-          ),
-          maxLength: 1,
-          keyboardType: TextInputType.visiblePassword,
-          textCapitalization: TextCapitalization.characters,
-          autocorrect: false,
-          enableSuggestions: false,
-          inputFormatters: [
-            FilteringTextInputFormatter.allow(RegExp(r'[a-zA-Z0-9]')),
+        child: Stack(
+          alignment: Alignment.center,
+          children: [
+            // El caracter se pinta aparte del TextField y se posiciona a mano.
+            //
+            // Dejarselo al InputDecorator no funciono: centra la line box de
+            // la fuente, y el contentPadding con el que se intento compensar
+            // solo corre la mitad de lo que se le pasa, ademas de pasar por
+            // el layout interno del decorator. Pintando el glifo nosotros el
+            // desplazamiento es exacto y hay un solo numero que lo gobierna.
+            Transform.translate(
+              offset: Offset(0, -fontSize * _kGlyphLift),
+              child: Text(
+                widget.controller.text,
+                textAlign: TextAlign.center,
+                strutStyle: StrutStyle(
+                  fontSize: fontSize,
+                  height: 1.0,
+                  forceStrutHeight: true,
+                  leading: 0,
+                ),
+                style: TextStyle(
+                  fontSize: fontSize,
+                  height: 1.0,
+                  fontWeight: FontWeight.w700,
+                  color: const Color(0xFF1E293B),
+                ),
+              ),
+            ),
+            // El TextField real ocupa toda la celda: conserva el area tactil
+            // y todo el manejo de teclado, foco, backspace y pegado. Solo se
+            // le apaga lo visual (texto transparente y sin cursor), porque de
+            // eso se encarga el Text de arriba. El foco ya se comunica con el
+            // borde rojo de 2 px.
+            Positioned.fill(
+              child: TextField(
+                controller: widget.controller,
+                focusNode: widget.focusNode,
+                textAlign: TextAlign.center,
+                showCursor: false,
+                maxLength: 1,
+                keyboardType: TextInputType.visiblePassword,
+                textCapitalization: TextCapitalization.characters,
+                autocorrect: false,
+                enableSuggestions: false,
+                inputFormatters: [
+                  FilteringTextInputFormatter.allow(RegExp(r'[a-zA-Z0-9]')),
+                ],
+                style: TextStyle(
+                  fontSize: fontSize,
+                  fontWeight: FontWeight.w700,
+                  color: Colors.transparent,
+                ),
+                decoration: const InputDecoration(
+                  counterText: '',
+                  border: InputBorder.none,
+                  enabledBorder: InputBorder.none,
+                  focusedBorder: InputBorder.none,
+                  errorBorder: InputBorder.none,
+                  filled: false,
+                  contentPadding: EdgeInsets.zero,
+                ),
+                onChanged: (value) {
+                  if (value.length > 1) {
+                    widget.onPaste(value);
+                    return;
+                  }
+                  widget.onCharInput(widget.index, value);
+                },
+              ),
+            ),
           ],
-          style: TextStyle(
-            fontSize: fontSize,
-            height: 1.0,
-            fontWeight: FontWeight.w700,
-            color: const Color(0xFF1E293B),
-          ),
-          decoration: InputDecoration(
-            counterText: '',
-            border: InputBorder.none,
-            enabledBorder: InputBorder.none,
-            focusedBorder: InputBorder.none,
-            errorBorder: InputBorder.none,
-            filled: false,
-            // Recorta desde abajo el hueco de los descendentes, asi el
-            // centrado cae sobre la banda del glifo. Ver _kGlyphLift.
-            contentPadding: EdgeInsets.only(bottom: fontSize * _kGlyphLift),
-          ),
-          onChanged: (value) {
-            if (value.length > 1) {
-              widget.onPaste(value);
-              return;
-            }
-            widget.onCharInput(widget.index, value);
-          },
         ),
       ),
     );
