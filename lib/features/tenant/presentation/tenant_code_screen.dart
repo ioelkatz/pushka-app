@@ -322,16 +322,8 @@ class _TenantCodeScreenState extends ConsumerState<TenantCodeScreen> {
                                 color: Color(0xFF1E293B),
                               ),
                             ),
-                            const SizedBox(height: 6),
-                            Text(
-                              tr.tenantCodeSubtitle,
-                              textAlign: TextAlign.center,
-                              style: const TextStyle(
-                                fontSize: 13,
-                                color: Color(0xFF64748B),
-                                height: 1.45,
-                              ),
-                            ),
+                            // El subtitulo "Tu rab te lo compartio por mensaje"
+                            // se saco por pedido del cliente.
                             const SizedBox(height: 28),
                             _OtpRow(
                               controllers: _controllers,

@@ -2698,12 +2698,6 @@ class S {
     "Saisissez votre code d'invitation",
     'הזן את קוד ההזמנה',
   );
-  String get tenantCodeSubtitle => _t(
-    'Tu rab te lo compartió por mensaje.',
-    'Your rabbi shared it with you by message.',
-    'Votre rabbin vous l\'a partagé par message.',
-    'הרב שלך שיתף אותו איתך בהודעה.',
-  );
   String get tenantCodeJoinButton => _t('Unirse', 'Join', 'Rejoindre', 'הצטרף');
   String get tenantCodeLostCode => _t(
     '¿Perdiste el código? Contacta a tu rab',
