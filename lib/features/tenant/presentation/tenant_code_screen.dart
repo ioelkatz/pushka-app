@@ -17,6 +17,20 @@ import 'tenant_switch_reset.dart';
 
 const _kRed = Color(0xFFf82c4a);
 
+/// Cuanto se sube el caracter dentro de su celda OTP, como fraccion del
+/// fontSize.
+///
+/// Flutter centra la *line box* de la fuente (ascent + descent), no el glifo.
+/// El codigo de invitacion es solo mayusculas y digitos, que no tienen
+/// descendentes: el hueco reservado bajo la linea base queda vacio y la letra
+/// se ve caida. Con el strut forzado a height 1.0 la linea base cae a ~0.79em
+/// y sobra ~0.21em abajo contra ~0.08em arriba, asi que hay que compensar
+/// ~0.13em recortando desde abajo.
+///
+/// Es el unico numero a tocar si el caracter queda alto o bajo: subirlo lo
+/// sube, bajarlo lo baja.
+const double _kGlyphLift = 0.13;
+
 class TenantCodeScreen extends ConsumerStatefulWidget {
   const TenantCodeScreen({super.key});
 
@@ -583,6 +597,7 @@ class _OtpBoxState extends State<_OtpBox> {
   Widget build(BuildContext context) {
     final filled = widget.controller.text.isNotEmpty;
     final focused = widget.focusNode.hasFocus;
+    final fontSize = widget.width * 0.44;
 
     final borderColor = widget.hasError
         ? _kRed
@@ -620,9 +635,16 @@ class _OtpBoxState extends State<_OtpBox> {
           controller: widget.controller,
           focusNode: widget.focusNode,
           textAlign: TextAlign.center,
-          // Con contentPadding.zero el TextField no centra verticalmente
-          // por su cuenta y el glifo se apoyaba fuera del eje de la celda.
           textAlignVertical: TextAlignVertical.center,
+          // Un StrutStyle forzado a height 1.0 fija la line box en exactamente
+          // fontSize. Sin esto la caja mide ascent + descent (~1.17em en
+          // Roboto) y el centrado arrastra ese sobrante.
+          strutStyle: StrutStyle(
+            fontSize: fontSize,
+            height: 1.0,
+            forceStrutHeight: true,
+            leading: 0,
+          ),
           maxLength: 1,
           keyboardType: TextInputType.visiblePassword,
           textCapitalization: TextCapitalization.characters,
@@ -632,18 +654,21 @@ class _OtpBoxState extends State<_OtpBox> {
             FilteringTextInputFormatter.allow(RegExp(r'[a-zA-Z0-9]')),
           ],
           style: TextStyle(
-            fontSize: widget.width * 0.44,
+            fontSize: fontSize,
+            height: 1.0,
             fontWeight: FontWeight.w700,
             color: const Color(0xFF1E293B),
           ),
-          decoration: const InputDecoration(
+          decoration: InputDecoration(
             counterText: '',
             border: InputBorder.none,
             enabledBorder: InputBorder.none,
             focusedBorder: InputBorder.none,
             errorBorder: InputBorder.none,
             filled: false,
-            contentPadding: EdgeInsets.zero,
+            // Recorta desde abajo el hueco de los descendentes, asi el
+            // centrado cae sobre la banda del glifo. Ver _kGlyphLift.
+            contentPadding: EdgeInsets.only(bottom: fontSize * _kGlyphLift),
           ),
           onChanged: (value) {
             if (value.length > 1) {
