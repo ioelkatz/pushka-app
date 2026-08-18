@@ -8075,7 +8075,15 @@ const TENANT_PUBLIC_FIELDS = [
 
 // Fields exposed to authenticated users of the tenant (same as public + status
 // so members can see if their own tenant is in grace_period / suspended).
-const TENANT_MEMBER_FIELDS = [...TENANT_PUBLIC_FIELDS, "status"];
+// `stripeConnectAccountId` es member-only A PROPOSITO: NO va en
+// TENANT_PUBLIC_FIELDS porque getTenantBySlug / listDiscoverableTenants son
+// endpoints sin autenticar. Para un miembro autenticado no es un dato nuevo
+// (createPaymentIntent ya le devuelve el mismo acct_ en `connectAccountId`),
+// pero el bootstrap de WebStripe en la PWA lo necesita ANTES de que exista
+// ningun PaymentIntent. Antes el cliente lo leia directo de tenants/{id}, lo
+// que solo funcionaba para staff: la regla de Firestore exige isTenantMember()
+// (tenant_admin o tenant_collaborator) y un donante comun no tiene claim de rol.
+const TENANT_MEMBER_FIELDS = [...TENANT_PUBLIC_FIELDS, "status", "stripeConnectAccountId"];
 
 // Fallback donationReasons list. Returned by getTenantConfig (and the public
 // branding endpoints) when a tenant doc has no donationReasons set, so every

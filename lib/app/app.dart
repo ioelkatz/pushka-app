@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -24,7 +25,8 @@ class PushkaApp extends ConsumerStatefulWidget {
   ConsumerState<PushkaApp> createState() => _PushkaAppState();
 }
 
-class _PushkaAppState extends ConsumerState<PushkaApp> with WidgetsBindingObserver {
+class _PushkaAppState extends ConsumerState<PushkaApp>
+    with WidgetsBindingObserver {
   Timer? _tenantStatusTimer;
 
   @override
@@ -91,8 +93,13 @@ class _PushkaAppState extends ConsumerState<PushkaApp> with WidgetsBindingObserv
     // syncFromRemote itself respects a Hive-saved manual preference, so users
     // who already chose a language won't be overridden.
     final userLang = profile['language'] as String?;
-    final tenantLang = ref.read(tenantConfigProvider).valueOrNull?.defaultLanguage;
-    final effectiveLang = (userLang != null && userLang.isNotEmpty) ? userLang : tenantLang;
+    final tenantLang = ref
+        .read(tenantConfigProvider)
+        .valueOrNull
+        ?.defaultLanguage;
+    final effectiveLang = (userLang != null && userLang.isNotEmpty)
+        ? userLang
+        : tenantLang;
     if (effectiveLang != null && effectiveLang.isNotEmpty) {
       ref.read(localeProvider.notifier).syncFromRemote(effectiveLang);
     }
@@ -127,8 +134,13 @@ class _PushkaAppState extends ConsumerState<PushkaApp> with WidgetsBindingObserv
 
       // Same tenant fallback as _applyProfilePreferences above.
       final userLang = profile['language'] as String?;
-      final tenantLang = ref.read(tenantConfigProvider).valueOrNull?.defaultLanguage;
-      final effectiveLang = (userLang != null && userLang.isNotEmpty) ? userLang : tenantLang;
+      final tenantLang = ref
+          .read(tenantConfigProvider)
+          .valueOrNull
+          ?.defaultLanguage;
+      final effectiveLang = (userLang != null && userLang.isNotEmpty)
+          ? userLang
+          : tenantLang;
       if (effectiveLang != null && effectiveLang.isNotEmpty) {
         ref.read(localeProvider.notifier).syncFromRemote(effectiveLang);
       }
@@ -156,10 +168,9 @@ class _PushkaAppState extends ConsumerState<PushkaApp> with WidgetsBindingObserv
       // the auth flow on web / freeze the redirect return handoff.
       Future(() async {
         try {
-          await UserRepository(FirebaseFirestore.instance).ensureUserDocument(
-            user: user,
-            displayName: user.displayName,
-          );
+          await UserRepository(
+            FirebaseFirestore.instance,
+          ).ensureUserDocument(user: user, displayName: user.displayName);
         } catch (e) {
           // ignore: avoid_print
           debugPrint('ensureUserDocument listener error (non-fatal): $e');
@@ -192,25 +203,22 @@ class _PushkaAppState extends ConsumerState<PushkaApp> with WidgetsBindingObserv
       // Stripe.js instance → sheet hangs at "No se pudo iniciar el pago".
       // See stripe_web_bootstrap_web.dart for the coalescing + idempotency
       // logic. No-op on native.
+      // Solo web: en native `initWebStripeForTenant` es un stub no-op
+      // (stripe_web_bootstrap_stub.dart) porque flutter_stripe resuelve la
+      // cuenta conectada en el propio flujo de pago via Stripe.stripeAccountId.
+      // Antes esto corria en todas las plataformas y disparaba una lectura a
+      // Firestore por cada emision del tenant para no hacer nada.
       final tenant = next.valueOrNull;
-      if (tenant != null) {
-        // Read stripeConnectAccountId directly from tenants/{id} — the
-        // Firestore rule `isTenantMember() && callerTenantId() == tenantId`
-        // already permits members to read their own tenant doc. Adding the
-        // field to TenantConfig would require a CF response change + cache
-        // schema bump; the direct read is cheaper and self-contained.
-        Future(() async {
-          try {
-            final snap = await FirebaseFirestore.instance
-                .collection('tenants')
-                .doc(tenant.tenantId)
-                .get();
-            final acct = snap.data()?['stripeConnectAccountId'] as String?;
-            await initWebStripeForTenant(acct);
-          } catch (e) {
-            debugPrint('initWebStripeForTenant: bootstrap fetch failed (non-fatal): $e');
-          }
-        });
+      if (kIsWeb && tenant != null) {
+        // El accountId ahora viaja dentro del propio TenantConfig, servido por
+        // getTenantConfig. Antes se leia directo de `tenants/{id}` con la
+        // premisa de que la regla lo permitia a cualquier miembro — falso: la
+        // regla exige isTenantMember(), que es tenant_admin o
+        // tenant_collaborator. Un donante comun no tiene claim de rol, asi que
+        // recibia permission-denied en cada arranque y el pre-warm no ocurria
+        // nunca justo para quien va a pagar. Quedaba tapado por el bootstrap
+        // de red que showWebDonationSheet hace como safety net.
+        unawaited(initWebStripeForTenant(tenant.stripeConnectAccountId));
       }
     });
 
