@@ -407,8 +407,8 @@
 
     <div class="invite-code-wrap">
       <div class="invite-code-label" data-i18n="invite_code_label">Cuando abras la app, ingresa este código:</div>
-      <div class="invite-code-block" id="invite-code" role="button" tabindex="0" data-i18n-attr="aria-label:invite_code_aria" aria-label="Copiar código 770JYM">
-        <span dir="ltr" style="unicode-bidi:isolate">770JYM</span>
+      <div class="invite-code-block" id="invite-code" role="button" tabindex="0" data-i18n-attr="aria-label:invite_code_aria" aria-label="Copiar código JYM770">
+        <span dir="ltr" style="unicode-bidi:isolate">JYM770</span>
         <span class="invite-code-copied" id="invite-code-copied" data-i18n="invite_code_copied_badge">¡Copiado!</span>
       </div>
     </div>
@@ -576,7 +576,7 @@
     // translation source; data-i18n-attr="attrName:key" sets an attribute
     // (used for alt, aria-label, meta content).
     //
-    // 770JYM stays literal in EVERY language (it's a code). Symbols like ↑, ⋮
+    // JYM770 stays literal in EVERY language (it's a code). Symbols like ↑, ⋮
     // are wrapped inline with <span dir="ltr"> so they render correctly in
     // Hebrew RTL context.
     const I18N = {
@@ -594,7 +594,7 @@
         btn_install_ios: 'Instalar en iPhone',
         btn_install_android: 'Instalar en Android',
         invite_code_label: 'Cuando abras la app, ingresa este código:',
-        invite_code_aria: 'Copiar código 770JYM',
+        invite_code_aria: 'Copiar código JYM770',
         invite_code_copied_badge: '¡Copiado!',
         ios_instructions_title: 'Cómo instalar en iPhone:',
         ios_instructions_step1: 'Tocá el botón "Instalar en iPhone" arriba',
@@ -654,7 +654,7 @@
         btn_install_ios: 'Install on iPhone',
         btn_install_android: 'Install on Android',
         invite_code_label: 'When you open the app, enter this code:',
-        invite_code_aria: 'Copy code 770JYM',
+        invite_code_aria: 'Copy code JYM770',
         invite_code_copied_badge: 'Copied!',
         ios_instructions_title: 'How to install on iPhone:',
         ios_instructions_step1: 'Tap the "Install on iPhone" button above',
@@ -711,7 +711,7 @@
         btn_install_ios: 'Installer sur iPhone',
         btn_install_android: 'Installer sur Android',
         invite_code_label: 'Quand tu ouvres l\'app, saisis ce code :',
-        invite_code_aria: 'Copier le code 770JYM',
+        invite_code_aria: 'Copier le code JYM770',
         invite_code_copied_badge: 'Copié !',
         ios_instructions_title: 'Comment installer sur iPhone :',
         ios_instructions_step1: 'Touche le bouton "Installer sur iPhone" ci-dessus',
@@ -1236,7 +1236,7 @@
       const copiedBadge = document.getElementById('invite-code-copied');
       if (codeBlock) {
         const doCopyCode = function () {
-          const code = '770JYM';
+          const code = 'JYM770';
           const showBadge = function () {
             if (!copiedBadge) return;
             copiedBadge.classList.add('show');
