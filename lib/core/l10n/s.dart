@@ -1927,6 +1927,12 @@ class S {
     '© 2026 $brand.\nכל הזכויות שמורות.',
   );
   String get copyright => copyrightFor(colelJabad);
+  String versionLabel(String version) => _t(
+    'Versión $version',
+    'Version $version',
+    'Version $version',
+    'גרסה $version',
+  );
 
   // ---------------------------------------------------------------------------
   // AUTO EMPTY SCREEN
