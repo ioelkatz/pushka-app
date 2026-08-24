@@ -12,8 +12,15 @@ import '../../../core/l10n/s.dart';
 import '../../users/presentation/user_profile_provider.dart';
 import '../data/tenant_repository.dart';
 import 'tenant_switch_reset.dart';
-// Join code: "770-JYM". 6 OTP boxes split [7][7][0]–[J][Y][M].
-// Dash is a fixed visual separator. One-tap flow: validate → auto-join.
+// Codigo de invitacion del primer tenant: "JYM-770".
+// 6 celdas OTP repartidas [J][Y][M]–[7][7][0]. El guion es un separador
+// visual fijo, no se escribe. Flujo de un toque: validar -> unirse.
+//
+// OJO: este comentario decia "770-JYM" con las celdas [7][7][0]-[J][Y][M], y
+// estaba al reves. _fullCode concatena las celdas EN ORDEN y pasa a
+// minusculas, y el slug del tenant es `jym770` (ver hostname_tenant_map.dart),
+// asi que hay que tipear J Y M 7 7 0. Con 770-JYM la CF responde "codigo no
+// encontrado".
 
 const _kRed = Color(0xFFf82c4a);
 

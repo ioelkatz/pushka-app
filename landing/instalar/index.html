@@ -135,6 +135,29 @@
       <p class="sub">Tu alcancía de tzedaká — Jabad en Campus</p>
     </header>
 
+    <!-- Bloque iOS: oculto por defecto, lo revela el script del final. Un APK
+         no se puede instalar en iPhone, asi que ahi se ofrece la PWA. -->
+    <div id="ios" hidden>
+      <a class="cta" href="https://app.jabadencampus.com">Abrir la app</a>
+      <p class="cta-note">iPhone · se agrega a la pantalla de inicio</p>
+
+      <h2>Cómo agregarla a tu iPhone</h2>
+      <ol>
+        <li>Tocá <b>Abrir la app</b>. Se abre en Safari.
+          <span class="hint">Tiene que ser Safari. Desde Chrome en iPhone no se puede agregar a la pantalla de inicio.</span></li>
+        <li>Tocá el botón <b>Compartir</b>, el cuadradito con la flecha hacia arriba, abajo en el centro.</li>
+        <li>Bajá en la lista y elegí <b>Agregar a inicio</b>.</li>
+        <li>Tocá <b>Agregar</b> arriba a la derecha.</li>
+        <li>Listo — ya tenés el ícono de <b>Pushka</b> en la pantalla de inicio. Abrila desde ahí e iniciá sesión con tu cuenta de Google.</li>
+      </ol>
+
+      <div class="callout">
+        <b>Abrila siempre desde el ícono</b>
+        <p>Si entrás desde el navegador funciona igual, pero se ve con la barra de Safari encima y no llegan las notificaciones. Desde el ícono se abre a pantalla completa.</p>
+      </div>
+    </div>
+
+    <div id="android">
     <!-- Ruta ABSOLUTA obligatoria: el target `landing` tiene trailingSlash:false, asi que
          /instalar/ redirige 301 a /instalar y un href relativo resolveria a /pushka.apk (404). -->
     <a class="cta" href="/instalar/pushka.apk" download="pushka.apk">Descargar la app</a>
@@ -165,10 +188,30 @@
       <b>¿Preferís no instalar nada?</b>
       <p>También podés usar la app directo desde el navegador en <a href="https://app.jabadencampus.com">app.jabadencampus.com</a> y agregarla a la pantalla de inicio desde el menú de Chrome (⋮ → Instalar aplicación).</p>
     </div>
+    </div><!-- /#android -->
+
+    <div class="callout">
+      <b>Vas a necesitar el código de invitación</b>
+      <p>La primera vez que entres te lo va a pedir. Es <b>JYM-770</b>.</p>
+    </div>
 
     <footer>
       Jabad en Campus · <a href="https://app.jabadencampus.com">app.jabadencampus.com</a>
     </footer>
   </div>
+
+  <script>
+    // Un .apk no se instala en iOS, asi que ahi mostramos el camino de la PWA.
+    // iPadOS 13+ se declara como Macintosh en el userAgent, por eso el chequeo
+    // extra de maxTouchPoints: sin eso un iPad recibe el APK.
+    (function () {
+      var ua = navigator.userAgent || '';
+      var isIOS = /iPad|iPhone|iPod/.test(ua) ||
+                  (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1);
+      if (!isIOS) return;
+      document.getElementById('android').hidden = true;
+      document.getElementById('ios').hidden = false;
+    })();
+  </script>
 </body>
 </html>
