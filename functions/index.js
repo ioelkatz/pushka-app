@@ -4994,29 +4994,41 @@ exports.monitorStripeWebhookStuckEvents = onSchedule(
 let _hebcalCachePromise = null;
 function _getHebcal() {
   if (!_hebcalCachePromise) {
+    // `months` ya no se usa: se dejó de excluir Elul del cálculo de Erev Rosh
+    // Chodesh (ver computeNextErevRoshChodesh).
     _hebcalCachePromise = import("@hebcal/core").then((mod) => ({
       HDate: mod.HDate,
-      HMonths: mod.months,
     }));
   }
   return _hebcalCachePromise;
 }
 
 async function computeNextErevRoshChodesh(baseDate) {
-  const { HDate, HMonths } = await _getHebcal();
+  const { HDate } = await _getHebcal();
   const now = new Date(baseDate);
-  // Erev Rosh Chodesh = day 29 of any Hebrew month, EXCEPT Elul (whose day 29
-  // leads into Tishrei = Erev Rosh HaShana, handled separately as a holiday).
-  // Day 29 always exists regardless of whether the month has 29 or 30 days,
-  // and is the colloquial "day before Rosh Chodesh begins".
+  // Erev Rosh Chodesh = día 29 de CUALQUIER mes hebreo. El día 29 existe
+  // siempre, tenga el mes 29 o 30 días, y es el día previo a que entre Rosh
+  // Chodesh.
+  //
+  // Elul ya NO se excluye. Antes se salteaba con el argumento de que su día 29
+  // desemboca en Tishrei y "se maneja aparte como festividad", pero nunca se
+  // manejó en ningún lado: el resultado era que el 29 de Elul —Erev Rosh
+  // Hashaná, uno de los días más fuertes del año para dar tzedaká— quedaba
+  // fuera del calendario de vaciado automático. Reportado por Ioel: con la
+  // exclusión, el 11/09/2026 (viernes, 29 de Elul) se salteaba y el próximo
+  // cobro saltaba al 11/10.
+  //
+  // OJO con la zona horaria: HDate() lee los componentes LOCALES de la fecha.
+  // Acá se fija 08:00 UTC y Cloud Functions corre en UTC, así que coincide. Si
+  // alguna vez se corre este cálculo fuera de UTC, hay que forzar TZ=UTC o el
+  // resultado se corre un día.
   for (let dayOffset = 0; dayOffset < 400; dayOffset++) {
     const candidate = new Date(now);
     candidate.setUTCDate(candidate.getUTCDate() + dayOffset);
     candidate.setUTCHours(8, 0, 0, 0);
     if (candidate <= now) continue;
 
-    const hd = new HDate(candidate);
-    if (hd.getDate() === 29 && hd.getMonth() !== HMonths.ELUL) {
+    if (new HDate(candidate).getDate() === 29) {
       return candidate;
     }
   }
