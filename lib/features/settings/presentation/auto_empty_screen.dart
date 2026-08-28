@@ -1,8 +1,9 @@
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart' show kIsWeb, defaultTargetPlatform;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:cloud_functions/cloud_functions.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 
 import '../../../app/theme/app_tokens.dart';
 import '../../../core/format_utils.dart' show shortCurrencySymbol;
@@ -453,8 +454,10 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
                           // (i.e., enabling auto-empty for the first time or re-enabling).
                           // No consent re-prompt when simply changing day/frequency of
                           // an already-active schedule.
-                          if (_frequency != 'manual' &&
-                              _savedFrequency == 'manual') {
+                          final needsConsent =
+                              _frequency != 'manual' &&
+                              _savedFrequency == 'manual';
+                          if (needsConsent) {
                             final accepted = await _showConsentDialog();
                             if (!accepted || !mounted) return;
                           }
@@ -473,6 +476,16 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
                           }
                           setState(() => _saving = true);
                           try {
+                            // El consentimiento se registra ANTES de guardar
+                            // el horario, y si falla se aborta el guardado.
+                            // Al revés, un fallo intermedio dejaría un cobro
+                            // recurrente activo sin evidencia de que el
+                            // usuario lo autorizó — justo el caso que este
+                            // registro existe para cubrir.
+                            if (needsConsent) {
+                              await _recordConsent(user.uid, tr);
+                              if (!mounted) return;
+                            }
                             await _saveConfig(user.uid);
                             if (!mounted) return;
                             navigator.pop();
@@ -1010,6 +1023,57 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
     if (kIsWeb) return false;
     final profile = ref.read(userProfileProvider).valueOrNull;
     return (profile?['biometricAuthenticationEnabled'] as bool?) ?? false;
+  }
+
+  /// Registra en el servidor la autorización de cobro recurrente.
+  ///
+  /// Manda el texto EXACTO que se mostró en pantalla, no una referencia a la
+  /// clave de traducción: las traducciones cambian, y si mañana hay una
+  /// disputa hay que poder reconstruir qué decía el diálogo el día que el
+  /// usuario aceptó. El timestamp y la IP los pone la función, no el
+  /// dispositivo.
+  ///
+  /// Propaga la excepción a propósito: quien la llama aborta el guardado.
+  Future<void> _recordConsent(String uid, S tr) async {
+    final tenantId =
+        ref.read(userProfileProvider).valueOrNull?['tenantId'] as String?;
+    if (tenantId == null || tenantId.isEmpty) {
+      throw StateError('sin tenantId al registrar el consentimiento');
+    }
+    final currency =
+        (ref.read(userProfileProvider).valueOrNull?['currencyCode']
+            as String?) ??
+        'USD';
+
+    // EXACTAMENTE lo que renderiza _showConsentDialog: título y cuerpo, nada
+    // más. Los getters autoEmptyConsentBullet1/3 existen en s.dart pero el
+    // diálogo no los muestra; incluirlos acá haría que el registro afirme que
+    // el usuario leyó un texto que nunca vio, que es peor que no tener
+    // registro. Si algún día se agregan al diálogo, hay que sumarlos también
+    // acá — los dos tienen que decir lo mismo.
+    final shownText =
+        '${tr.autoEmptyConsentTitle}\n\n${tr.autoEmptyConsentBody}';
+
+    // Se lee el locale ANTES del await para no cruzar el BuildContext por un
+    // gap asíncrono.
+    final localeCode = Localizations.localeOf(context).languageCode;
+    final info = await PackageInfo.fromPlatform();
+
+    await FirebaseFunctions.instance
+        .httpsCallable('recordAutoEmptyConsent')
+        .call({
+          'tenantId': tenantId,
+          'frequency': _frequency,
+          'weekday': _frequency == 'weekly' ? _weekday : null,
+          'dayOfMonth': _frequency == 'monthly' ? _dayOfMonth : null,
+          'topOffEnabled': _topOffEnabled,
+          'topOffAmount': _topOffAmount ?? 0,
+          'currency': currency,
+          'consentText': shownText,
+          'locale': localeCode,
+          'appVersion': '${info.version}+${info.buildNumber}',
+          'platform': kIsWeb ? 'web' : defaultTargetPlatform.name,
+        });
   }
 
   Future<void> _saveConfig(String uid) async {

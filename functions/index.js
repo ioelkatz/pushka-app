@@ -95,7 +95,7 @@ async function enforceRateLimit(uid, action, maxCalls, windowSeconds) {
  * the trusted edge-proxy IP that fronted the request — use that instead.
  * Fall back to raw connection IP (also trusted) when the header is absent.
  */
-async function enforceRateLimitByIp(request, action, maxCalls, windowSeconds) {
+function trustedCallerIp(request) {
   const fwd = request.rawRequest?.headers?.["x-forwarded-for"];
   const chain = (Array.isArray(fwd) ? fwd.join(",") : (fwd || ""))
     .split(",").map((s) => s.trim()).filter((s) => s.length > 0);
@@ -105,8 +105,11 @@ async function enforceRateLimitByIp(request, action, maxCalls, windowSeconds) {
     ? chain[chain.length - 1]
     : (request.rawRequest?.ip || "unknown");
   // Sanitize to a Firestore-safe id (max 1500 bytes; commonly < 50).
-  const safeIp = ip.replace(/[^a-zA-Z0-9.:_-]/g, "_").slice(0, 100);
-  await enforceRateLimit(`ip:${safeIp}`, action, maxCalls, windowSeconds);
+  return ip.replace(/[^a-zA-Z0-9.:_-]/g, "_").slice(0, 100);
+}
+
+async function enforceRateLimitByIp(request, action, maxCalls, windowSeconds) {
+  await enforceRateLimit(`ip:${trustedCallerIp(request)}`, action, maxCalls, windowSeconds);
 }
 
 // Exhaustive list of currencies accepted by the app and their Stripe minimum
@@ -7812,6 +7815,113 @@ exports.joinTenant = onCall(
 // Also stamps `autoEmptyTopOffCurrency` on every top-off write (empty
 // string here since we're CLEARING it) so `processPushkaAutoEmpty`'s
 // guard has an unambiguous "no top-off configured" marker.
+// ---------------------------------------------------------------------------
+// recordAutoEmptyConsent — deja evidencia de la autorización de cobro
+// recurrente del vaciado automático.
+//
+// Antes el diálogo "Acepto y Activo" solo devolvía un booleano en el cliente:
+// no quedaba ningún rastro de quién autorizó, cuándo, ni qué texto aceptó. En
+// una disputa de Stripe por un cobro recurrente eso es justamente lo que hay
+// que poder mostrar.
+//
+// Vive del lado del servidor a propósito. Un registro escrito por el cliente
+// no sirve como evidencia: el reloj, el texto y hasta el propio hecho de haber
+// aceptado serían todos afirmaciones del mismo dispositivo que se está
+// cuestionando. Acá el timestamp y la IP los pone el servidor, y la colección
+// es de solo lectura para el cliente.
+//
+// El cliente la llama ANTES de guardar el horario. Si esta función falla, el
+// guardado se aborta. Así la garantía es "si hay horario activo, hay
+// consentimiento registrado", nunca al revés.
+// ---------------------------------------------------------------------------
+const AUTO_EMPTY_CONSENT_FREQUENCIES = ["weekly", "monthly", "erev_rosh_chodesh"];
+
+exports.recordAutoEmptyConsent = onCall(
+  { enforceAppCheck: false },
+  async (request) => {
+    if (!request.auth?.uid) throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
+    const uid = request.auth.uid;
+    await enforceRateLimit(uid, "recordAutoEmptyConsent", 30, 3600);
+
+    const d = request.data || {};
+
+    const tenantId = String(d.tenantId || "").trim();
+    if (!tenantId) throw new HttpsError("invalid-argument", "tenantId requerido.");
+
+    const frequency = String(d.frequency || "").trim();
+    if (!AUTO_EMPTY_CONSENT_FREQUENCIES.includes(frequency)) {
+      throw new HttpsError("invalid-argument", `Frecuencia inválida: ${frequency}`);
+    }
+
+    // El texto exacto que el usuario vio en pantalla. Es el corazón de la
+    // evidencia: las traducciones cambian con el tiempo, así que guardar una
+    // referencia a la clave de i18n no alcanzaría para reconstruir después
+    // qué decía el diálogo el día que aceptó.
+    const consentText = String(d.consentText || "").trim().slice(0, 4000);
+    if (consentText.length < 20) {
+      throw new HttpsError("invalid-argument", "consentText requerido.");
+    }
+
+    // El usuario debe pertenecer al tenant que dice estar autorizando.
+    const userSnap = await db.collection("users").doc(uid).get();
+    if (!userSnap.exists) throw new HttpsError("not-found", "Usuario no encontrado.");
+    const userData = userSnap.data() || {};
+    const memberOf = Array.isArray(userData.tenantIds)
+      ? userData.tenantIds
+      : (userData.tenantId ? [userData.tenantId] : []);
+    if (!memberOf.includes(tenantId)) {
+      throw new HttpsError("permission-denied", "No perteneces a esa organización.");
+    }
+
+    const topOffEnabled = d.topOffEnabled === true;
+    const rawAmount = Number(d.topOffAmount);
+    const topOffAmount = Number.isFinite(rawAmount) && rawAmount > 0 ? rawAmount : 0;
+    // validateCurrency tira invalid-argument si no está en SUPPORTED_CURRENCIES.
+    const currency = validateCurrency(d.currency);
+
+    const consentRef = db.collection("users").doc(uid).collection("consents").doc();
+    const record = {
+      type: "auto_empty",
+      uid,
+      tenantId,
+      frequency,
+      weekday: Number.isFinite(Number(d.weekday)) ? Number(d.weekday) : null,
+      dayOfMonth: Number.isFinite(Number(d.dayOfMonth)) ? Number(d.dayOfMonth) : null,
+      topOffEnabled,
+      topOffAmount,
+      currency,
+      consentText,
+      consentLocale: String(d.locale || "").slice(0, 10),
+      appVersion: String(d.appVersion || "").slice(0, 40),
+      platform: String(d.platform || "").slice(0, 20),
+      // Timestamp e IP los pone el servidor: son los dos datos que el cliente
+      // no debe poder afirmar por sí mismo.
+      ip: trustedCallerIp(request),
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    };
+    await consentRef.set(record);
+
+    // Espejo en tenantState para que el cron y el panel vean de un vistazo que
+    // hay consentimiento, sin tener que consultar la subcolección.
+    //
+    // Se escriben también uid y tenantId porque validTenantStateFields los
+    // exige en el documento resultante: si esta función creara el doc sin
+    // ellos, el próximo guardado del cliente fallaría contra las reglas.
+    await db.collection("users").doc(uid)
+      .collection("tenantState").doc(tenantId)
+      .set({
+        uid,
+        tenantId,
+        autoEmptyConsentAt: admin.firestore.FieldValue.serverTimestamp(),
+        autoEmptyConsentId: consentRef.id,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      }, { merge: true });
+
+    console.info("recordAutoEmptyConsent", { uid, tenantId, frequency, consentId: consentRef.id });
+    return { consentId: consentRef.id };
+  }
+);
+
 // ---------------------------------------------------------------------------
 exports.changeUserCurrency = onCall(
   { enforceAppCheck: false },

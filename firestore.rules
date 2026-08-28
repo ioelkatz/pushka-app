@@ -740,6 +740,16 @@ service cloud.firestore {
         allow write: if false;
       }
 
+      // Consentimientos de cobro recurrente (auto-vaciado). Los escribe SOLO
+      // la CF recordAutoEmptyConsent con el admin SDK, que se saltea estas
+      // reglas. El cliente no puede escribir ni borrar: si pudiera, el
+      // registro dejaría de servir como evidencia en una disputa, que es su
+      // única razón de existir. El dueño y los admins pueden leerlo.
+      match /consents/{consentId} {
+        allow read: if isOwner(uid) || isAdmin();
+        allow write: if false;
+      }
+
     }
 
     // Collection-group read para /users/*/transactions — powers el
