@@ -127,6 +127,12 @@ service cloud.firestore {
               'streakCount', 'lastStreakDate',
               'autoEmptyFrequency', 'autoEmptyWeekday', 'autoEmptyDayOfMonth',
               'autoEmptyTopOffEnabled', 'autoEmptyTopOffAmount', 'autoEmptyNextRunAt',
+              // autoEmptyTopOffCurrency lo escribe el cliente desde el Round-4
+              // audit (sella la moneda en la que se configuro el top-off para
+              // que el cron detecte drift) pero NUNCA se agrego aca. Resultado:
+              // hasOnly() rechazaba TODO guardado de auto-vaciado no manual y
+              // el usuario solo veia "Error al guardar. Intenta nuevamente.".
+              'autoEmptyTopOffCurrency',
               'autoEmptyPaymentMethodId', 'autoEmptyDonationReason',
               'createdAt', 'updatedAt'];
     }
@@ -172,6 +178,14 @@ service cloud.firestore {
               (request.resource.data.autoEmptyTopOffAmount is number &&
                   request.resource.data.autoEmptyTopOffAmount >= 0 &&
                   request.resource.data.autoEmptyTopOffAmount <= 10000000)) &&
+          // Moneda en la que se configuro el top-off. Se valida contra la misma
+          // lista que el resto de la app: SUPPORTED_CURRENCIES en
+          // functions/index.js son exactamente estas 10, asi que un usuario no
+          // puede terminar con una moneda que esta regla rechace.
+          (!('autoEmptyTopOffCurrency' in request.resource.data) ||
+              request.resource.data.autoEmptyTopOffCurrency == null ||
+              (request.resource.data.autoEmptyTopOffCurrency is string &&
+                  validCurrencyCode(request.resource.data.autoEmptyTopOffCurrency))) &&
           (!('autoEmptyNextRunAt' in request.resource.data) ||
               request.resource.data.autoEmptyNextRunAt == null ||
               (request.resource.data.autoEmptyNextRunAt is timestamp &&

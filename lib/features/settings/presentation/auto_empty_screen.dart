@@ -48,7 +48,7 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
   // Saved cards for the card picker
   List<Map<String, dynamic>> _cards = [];
   bool _loadingCards = false;
-  String? _selectedCardId;  // null = use current default
+  String? _selectedCardId; // null = use current default
 
   // Optional donation designación (per-tenant). null = "Sin designación".
   // Persisted to tenantState.autoEmptyDonationReason so the cron can stamp
@@ -65,13 +65,17 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
     if (_loadingCards) return;
     setState(() => _loadingCards = true);
     try {
-      final callable = FirebaseFunctions.instance.httpsCallable('listSavedCards');
+      final callable = FirebaseFunctions.instance.httpsCallable(
+        'listSavedCards',
+      );
       final result = await callable.call({});
       if (!mounted) return;
       final data = result.data as Map<dynamic, dynamic>;
       final rawCards = data['cards'] as List<dynamic>? ?? [];
       setState(() {
-        _cards = rawCards.map((c) => Map<String, dynamic>.from(c as Map)).toList();
+        _cards = rawCards
+            .map((c) => Map<String, dynamic>.from(c as Map))
+            .toList();
         // Sync `_selectedCardId` with the visible "selected" card. The card
         // selector UI falls back to the default-flagged card (or first in
         // list) when _selectedCardId is null — without this sync, that
@@ -81,7 +85,9 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
         // with no pin set + tapping Guardar (or even just changing
         // frequency) stored `autoEmptyPaymentMethodId: null` instead of
         // the visible card. Now the visible card IS the saved card.
-        if (_selectedCardId == null && _frequency != 'manual' && _cards.isNotEmpty) {
+        if (_selectedCardId == null &&
+            _frequency != 'manual' &&
+            _cards.isNotEmpty) {
           final defaultCard = _cards.firstWhere(
             (c) => c['isDefault'] == true,
             orElse: () => _cards.first,
@@ -111,9 +117,10 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
     // even though the schedule can pin any pmId (state.autoEmptyPaymentMethodId).
     // Read via HiveCache — same source the SavedCards screen uses — so
     // there's no extra CF roundtrip on this screen.
-    final hasDefault = ((tenantState?['stripeConnectDefaultPaymentMethodId'] as String?) ?? '')
-        .trim()
-        .isNotEmpty;
+    final hasDefault =
+        ((tenantState?['stripeConnectDefaultPaymentMethodId'] as String?) ?? '')
+            .trim()
+            .isNotEmpty;
     final uid = user?.uid;
     final tid = tenantState?['tenantId'] as String?;
     final cachedCards = (uid != null)
@@ -128,12 +135,18 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
         setState(() {
-          _frequency = (tenantState['autoEmptyFrequency'] as String?) ?? 'manual';
+          _frequency =
+              (tenantState['autoEmptyFrequency'] as String?) ?? 'manual';
           _savedFrequency = _frequency;
-          _weekday = (tenantState['autoEmptyWeekday'] as num?)?.toInt() ?? DateTime.monday;
-          _dayOfMonth = (tenantState['autoEmptyDayOfMonth'] as num?)?.toInt() ?? 1;
-          _topOffEnabled = (tenantState['autoEmptyTopOffEnabled'] as bool?) ?? false;
-          _topOffAmount = (tenantState['autoEmptyTopOffAmount'] as num?)?.toDouble();
+          _weekday =
+              (tenantState['autoEmptyWeekday'] as num?)?.toInt() ??
+              DateTime.monday;
+          _dayOfMonth =
+              (tenantState['autoEmptyDayOfMonth'] as num?)?.toInt() ?? 1;
+          _topOffEnabled =
+              (tenantState['autoEmptyTopOffEnabled'] as bool?) ?? false;
+          _topOffAmount = (tenantState['autoEmptyTopOffAmount'] as num?)
+              ?.toDouble();
           // Field is now ALWAYS visible (disabled when toggle is off). Show
           // the last saved amount if any, else default to "0" so the user
           // sees a concrete starting value instead of an empty field.
@@ -144,8 +157,8 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
           // an opinionated default over having to opt in to a destination.
           final savedReason = tenantState['autoEmptyDonationReason'] as String?;
           final defaults = tr.defaultDonationReasons;
-          _selectedDonationReason = savedReason ??
-              (_frequency != 'manual' ? defaults.first : null);
+          _selectedDonationReason =
+              savedReason ?? (_frequency != 'manual' ? defaults.first : null);
         });
         if (_frequency != 'manual') _loadCards();
       });
@@ -154,10 +167,7 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
     final cs = Theme.of(context).colorScheme;
 
     return Scaffold(
-      appBar: AppBar(
-        title: Text(tr.autoEmpty),
-        centerTitle: true,
-      ),
+      appBar: AppBar(title: Text(tr.autoEmpty), centerTitle: true),
       body: SafeArea(
         child: SingleChildScrollView(
           padding: const EdgeInsets.fromLTRB(20, 18, 20, 24),
@@ -184,15 +194,21 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
                   decoration: BoxDecoration(
                     color: const Color(0xFFFFF7ED),
                     borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: const Color(0xFFFED7AA), width: 1),
+                    border: Border.all(
+                      color: const Color(0xFFFED7AA),
+                      width: 1,
+                    ),
                   ),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Row(
                         children: [
-                          const Icon(Icons.credit_card_off_rounded,
-                              color: Color(0xFFB45309), size: 20),
+                          const Icon(
+                            Icons.credit_card_off_rounded,
+                            color: Color(0xFFB45309),
+                            size: 20,
+                          ),
                           const SizedBox(width: 10),
                           Expanded(
                             child: Text(
@@ -257,7 +273,9 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
                   ),
                   child: Text(
                     tr.autoEmptyInfo,
-                    style: TextStyle(color: Theme.of(context).colorScheme.onSurface),
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.onSurface,
+                    ),
                   ),
                 ),
                 const SizedBox(height: 20),
@@ -268,10 +286,7 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
                   style: const TextStyle(fontWeight: FontWeight.w600),
                 ),
                 const SizedBox(height: 8),
-                _buildSelectTile(
-                  _weekdayLabel(_weekday),
-                  _showWeeklyDialog,
-                ),
+                _buildSelectTile(_weekdayLabel(_weekday), _showWeeklyDialog),
                 const SizedBox(height: 20),
               ],
               if (_frequency == 'monthly') ...[
@@ -280,23 +295,23 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
                   style: const TextStyle(fontWeight: FontWeight.w600),
                 ),
                 const SizedBox(height: 8),
-                _buildSelectTile(
-                  _dayOfMonth.toString(),
-                  _showMonthlyDialog,
-                ),
+                _buildSelectTile(_dayOfMonth.toString(), _showMonthlyDialog),
                 const SizedBox(height: 20),
               ],
-              if (_frequency != 'manual' && (_loadingCards || _cards.isNotEmpty)) ...[
+              if (_frequency != 'manual' &&
+                  (_loadingCards || _cards.isNotEmpty)) ...[
                 Text(
                   tr.cardForAutoEmpty,
                   style: const TextStyle(fontWeight: FontWeight.w600),
                 ),
                 const SizedBox(height: 8),
                 _loadingCards
-                    ? const Center(child: Padding(
-                        padding: EdgeInsets.symmetric(vertical: 12),
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      ))
+                    ? const Center(
+                        child: Padding(
+                          padding: EdgeInsets.symmetric(vertical: 12),
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        ),
+                      )
                     : _buildCardSelector(tr),
                 const SizedBox(height: 20),
               ],
@@ -324,12 +339,16 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
                           // (matches the "first-time activation" behavior
                           // of switching from manual to a schedule).
                           if (value && _topOffAmount == null) {
-                            final goal = (ref.read(tenantStateProvider).valueOrNull
-                                ?['pushkaGoal'] as num?)?.toDouble();
-                            _topOffAmount = goal ??
-                                (_frequency == 'weekly' ? 18 : 36);
-                            _amountController.text =
-                                _topOffAmount!.toStringAsFixed(0);
+                            final goal =
+                                (ref
+                                            .read(tenantStateProvider)
+                                            .valueOrNull?['pushkaGoal']
+                                        as num?)
+                                    ?.toDouble();
+                            _topOffAmount =
+                                goal ?? (_frequency == 'weekly' ? 18 : 36);
+                            _amountController.text = _topOffAmount!
+                                .toStringAsFixed(0);
                           }
                         });
                       },
@@ -355,8 +374,9 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
                   const SizedBox(height: 12),
                   TextField(
                     controller: _amountController,
-                    keyboardType:
-                        const TextInputType.numberWithOptions(decimal: true),
+                    keyboardType: const TextInputType.numberWithOptions(
+                      decimal: true,
+                    ),
                     style: const TextStyle(
                       fontSize: 16,
                       fontWeight: FontWeight.w500,
@@ -365,7 +385,8 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
                       // Show the user's currency symbol, not a hardcoded '$'.
                       // Reads currencyCode from the user profile and maps to a
                       // short glyph via _shortCurrencySymbol.
-                      prefixText: '${shortCurrencySymbol((profile?['currencyCode'] as String?) ?? 'USD')} ',
+                      prefixText:
+                          '${shortCurrencySymbol((profile?['currencyCode'] as String?) ?? 'USD')} ',
                       prefixStyle: TextStyle(
                         fontSize: 16,
                         color: Theme.of(context).colorScheme.onSurfaceVariant,
@@ -373,7 +394,10 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
                       ),
                       filled: true,
                       fillColor: Theme.of(context).colorScheme.surface,
-                      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 14,
+                      ),
                       border: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(12),
                         borderSide: BorderSide(color: cs.outline),
@@ -384,12 +408,16 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
                       ),
                       focusedBorder: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(12),
-                        borderSide: BorderSide(color: AppTokens.primaryBlue, width: 2),
+                        borderSide: BorderSide(
+                          color: AppTokens.primaryBlue,
+                          width: 2,
+                        ),
                       ),
                     ),
                     onChanged: (value) {
-                      final parsed =
-                          double.tryParse(value.replaceAll(',', '.'));
+                      final parsed = double.tryParse(
+                        value.replaceAll(',', '.'),
+                      );
                       _topOffAmount = parsed;
                     },
                   ),
@@ -399,89 +427,90 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
               SizedBox(
                 width: double.infinity,
                 child: ElevatedButton(
-                      onPressed: user == null || _saving
-                          ? null
-                          : () async {
-                              // Hard block: enabling a non-manual schedule with no
-                              // saved card creates a "configured but broken" state
-                              // — the cron silently skips every cycle and the user
-                              // never finds out. Surface a dialog with a CTA to
-                              // /settings/saved-cards before any save attempt.
-                              if (needsCardWarning) {
-                                await _showAddCardRequiredDialog();
-                                return;
-                              }
-                              if (_frequency != 'manual' &&
-                                  _topOffEnabled &&
-                                  (_topOffAmount == null || _topOffAmount! <= 0)) {
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  SnackBar(content: Text(tr.enterValidAmount)),
-                                );
-                                return;
-                              }
-                              final messenger = ScaffoldMessenger.of(context);
-                              final navigator = Navigator.of(context);
-                              // Require explicit consent only when switching FROM manual
-                              // (i.e., enabling auto-empty for the first time or re-enabling).
-                              // No consent re-prompt when simply changing day/frequency of
-                              // an already-active schedule.
-                              if (_frequency != 'manual' && _savedFrequency == 'manual') {
-                                final accepted = await _showConsentDialog();
-                                if (!accepted || !mounted) return;
-                              }
-                              if (_biometricEnabled()) {
-                                final authenticated = await BiometricService.instance.authenticate(
-                                  reason: tr.biometricReasonEmpty,
-                                );
-                                if (!authenticated) {
-                                  if (!mounted) return;
-                                  messenger.showSnackBar(
-                                    SnackBar(content: Text(tr.authRequired)),
-                                  );
-                                  return;
-                                }
-                                if (!mounted) return;
-                              }
-                              setState(() => _saving = true);
-                              try {
-                                await _saveConfig(user.uid);
-                                if (!mounted) return;
-                                navigator.pop();
-                                // When this screen was pushed on top of the
-                                // Vaciar Pushka sheet, also dismiss the sheet
-                                // so the user lands back on Mi Pushka home
-                                // instead of the half-filled sheet.
-                                if (widget.popExtra && navigator.canPop()) {
-                                  navigator.pop();
-                                }
-                                messenger.showSnackBar(
-                                  SnackBar(content: Text(tr.settingsSaved)),
-                                );
-                              } catch (e) {
-                                if (!mounted) return;
-                                debugPrint('auto-empty save error: $e');
-                                messenger.showSnackBar(
-                                  SnackBar(content: Text(tr.saveError)),
-                                );
-                              } finally {
-                                if (mounted) setState(() => _saving = false);
-                              }
-                            },
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: AppTokens.primaryBlue,
-                        foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(vertical: 16),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                      ),
-                      child: Text(
-                        tr.saveBtn,
-                        style: const TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
+                  onPressed: user == null || _saving
+                      ? null
+                      : () async {
+                          // Hard block: enabling a non-manual schedule with no
+                          // saved card creates a "configured but broken" state
+                          // — the cron silently skips every cycle and the user
+                          // never finds out. Surface a dialog with a CTA to
+                          // /settings/saved-cards before any save attempt.
+                          if (needsCardWarning) {
+                            await _showAddCardRequiredDialog();
+                            return;
+                          }
+                          if (_frequency != 'manual' &&
+                              _topOffEnabled &&
+                              (_topOffAmount == null || _topOffAmount! <= 0)) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(content: Text(tr.enterValidAmount)),
+                            );
+                            return;
+                          }
+                          final messenger = ScaffoldMessenger.of(context);
+                          final navigator = Navigator.of(context);
+                          // Require explicit consent only when switching FROM manual
+                          // (i.e., enabling auto-empty for the first time or re-enabling).
+                          // No consent re-prompt when simply changing day/frequency of
+                          // an already-active schedule.
+                          if (_frequency != 'manual' &&
+                              _savedFrequency == 'manual') {
+                            final accepted = await _showConsentDialog();
+                            if (!accepted || !mounted) return;
+                          }
+                          if (_biometricEnabled()) {
+                            final authenticated = await BiometricService
+                                .instance
+                                .authenticate(reason: tr.biometricReasonEmpty);
+                            if (!authenticated) {
+                              if (!mounted) return;
+                              messenger.showSnackBar(
+                                SnackBar(content: Text(tr.authRequired)),
+                              );
+                              return;
+                            }
+                            if (!mounted) return;
+                          }
+                          setState(() => _saving = true);
+                          try {
+                            await _saveConfig(user.uid);
+                            if (!mounted) return;
+                            navigator.pop();
+                            // When this screen was pushed on top of the
+                            // Vaciar Pushka sheet, also dismiss the sheet
+                            // so the user lands back on Mi Pushka home
+                            // instead of the half-filled sheet.
+                            if (widget.popExtra && navigator.canPop()) {
+                              navigator.pop();
+                            }
+                            messenger.showSnackBar(
+                              SnackBar(content: Text(tr.settingsSaved)),
+                            );
+                          } catch (e) {
+                            if (!mounted) return;
+                            debugPrint('auto-empty save error: $e');
+                            messenger.showSnackBar(
+                              SnackBar(content: Text(tr.saveError)),
+                            );
+                          } finally {
+                            if (mounted) setState(() => _saving = false);
+                          }
+                        },
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppTokens.primaryBlue,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                  child: Text(
+                    tr.saveBtn,
+                    style: const TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
                 ),
               ),
             ],
@@ -497,8 +526,12 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
   Widget _buildDonationReasonPicker(S tr) {
     // Same tenant-first fallback used across the donation flow so admin-web
     // designation edits propagate to every picker instance.
-    final tenantReasons = ref.read(tenantConfigProvider).valueOrNull?.donationReasons ?? const <String>[];
-    final reasons = tenantReasons.isNotEmpty ? tenantReasons : tr.defaultDonationReasons;
+    final tenantReasons =
+        ref.read(tenantConfigProvider).valueOrNull?.donationReasons ??
+        const <String>[];
+    final reasons = tenantReasons.isNotEmpty
+        ? tenantReasons
+        : tr.defaultDonationReasons;
     final cs = Theme.of(context).colorScheme;
     return Padding(
       padding: const EdgeInsets.only(bottom: 20),
@@ -529,21 +562,23 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
                 border: Border.all(color: cs.outline),
                 borderRadius: BorderRadius.circular(12),
               ),
-              child: Row(children: [
-                Expanded(
-                  child: Text(
-                    _selectedDonationReason ?? tr.donationReasonNone,
-                    style: TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w500,
-                      color: _selectedDonationReason == null
-                          ? cs.onSurfaceVariant
-                          : cs.onSurface,
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      _selectedDonationReason ?? tr.donationReasonNone,
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w500,
+                        color: _selectedDonationReason == null
+                            ? cs.onSurfaceVariant
+                            : cs.onSurface,
+                      ),
                     ),
                   ),
-                ),
-                Icon(Icons.keyboard_arrow_down, color: cs.onSurfaceVariant),
-              ]),
+                  Icon(Icons.keyboard_arrow_down, color: cs.onSurfaceVariant),
+                ],
+              ),
             ),
           ),
         ],
@@ -627,11 +662,13 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
       barrierColor: const Color(0xDD000000),
       builder: (sheetCtx) {
         final cs = Theme.of(sheetCtx).colorScheme;
-        final selectedId = _selectedCardId ??
+        final selectedId =
+            _selectedCardId ??
             (_cards.firstWhere(
-              (c) => c['isDefault'] == true,
-              orElse: () => _cards.first,
-            )['id'] as String);
+                  (c) => c['isDefault'] == true,
+                  orElse: () => _cards.first,
+                )['id']
+                as String);
         return SafeArea(
           top: false,
           child: SingleChildScrollView(
@@ -642,7 +679,8 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
               children: [
                 Center(
                   child: Container(
-                    width: 36, height: 4,
+                    width: 36,
+                    height: 4,
                     margin: const EdgeInsets.only(bottom: 16),
                     decoration: BoxDecoration(
                       color: cs.outlineVariant,
@@ -665,7 +703,12 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
     }
   }
 
-  Widget _buildCardTile(BuildContext ctx, Map<String, dynamic> card, String selectedId, S tr) {
+  Widget _buildCardTile(
+    BuildContext ctx,
+    Map<String, dynamic> card,
+    String selectedId,
+    S tr,
+  ) {
     final cs = Theme.of(ctx).colorScheme;
     final pmId = card['id'] as String;
     final brand = (card['brand'] as String? ?? 'card').toLowerCase();
@@ -677,8 +720,12 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
         decoration: BoxDecoration(
-          color: isSelected ? AppTokens.primaryBlue.withValues(alpha: 0.12) : cs.surface,
-          border: Border.all(color: isSelected ? AppTokens.primaryBlue : cs.outline),
+          color: isSelected
+              ? AppTokens.primaryBlue.withValues(alpha: 0.12)
+              : cs.surface,
+          border: Border.all(
+            color: isSelected ? AppTokens.primaryBlue : cs.outline,
+          ),
           borderRadius: BorderRadius.circular(12),
         ),
         child: Row(
@@ -706,7 +753,11 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
                 ),
                 child: Text(
                   tr.cardDefault,
-                  style: TextStyle(fontSize: 11, color: cs.onPrimaryContainer, fontWeight: FontWeight.w600),
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: cs.onPrimaryContainer,
+                    fontWeight: FontWeight.w600,
+                  ),
                 ),
               ),
             if (isSelected)
@@ -765,7 +816,9 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
       builder: (ctx) => SafeArea(
         top: false,
         child: Padding(
-          padding: EdgeInsets.only(bottom: MediaQuery.of(ctx).viewInsets.bottom),
+          padding: EdgeInsets.only(
+            bottom: MediaQuery.of(ctx).viewInsets.bottom,
+          ),
           child: Padding(
             padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
             child: Column(
@@ -786,12 +839,19 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
                 Row(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    Icon(Icons.credit_card_off_rounded, color: accent, size: 22),
+                    Icon(
+                      Icons.credit_card_off_rounded,
+                      color: accent,
+                      size: 22,
+                    ),
                     const SizedBox(width: 10),
                     Flexible(
                       child: Text(
                         tr.noCardsYet,
-                        style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
+                        style: const TextStyle(
+                          fontSize: 20,
+                          fontWeight: FontWeight.w700,
+                        ),
                         textAlign: TextAlign.center,
                       ),
                     ),
@@ -815,12 +875,17 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
                     style: ElevatedButton.styleFrom(
                       backgroundColor: accent,
                       foregroundColor: Colors.white,
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
                     ),
                     icon: const Icon(Icons.add_card_rounded, size: 18),
                     label: Text(
                       tr.addCard,
-                      style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+                      style: const TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w700,
+                      ),
                     ),
                     onPressed: () {
                       // Capture both the screen-level navigator and GoRouter BEFORE
@@ -829,7 +894,8 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
                       final screenNavigator = Navigator.of(context);
                       final goRouter = GoRouter.of(context);
                       Navigator.pop(ctx); // close sheet
-                      screenNavigator.pop(); // close AutoEmptyScreen (MaterialPageRoute)
+                      screenNavigator
+                          .pop(); // close AutoEmptyScreen (MaterialPageRoute)
                       goRouter.go('/settings/saved-cards');
                     },
                   ),
@@ -842,7 +908,10 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
                     onPressed: () => Navigator.pop(ctx),
                     child: Text(
                       tr.cancelBtn,
-                      style: TextStyle(color: Theme.of(ctx).colorScheme.onSurfaceVariant, fontWeight: FontWeight.w500),
+                      style: TextStyle(
+                        color: Theme.of(ctx).colorScheme.onSurfaceVariant,
+                        fontWeight: FontWeight.w500,
+                      ),
                     ),
                   ),
                 ),
@@ -900,7 +969,12 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
                 const SizedBox(height: 16),
                 Text(
                   tr.autoEmptyConsentBody,
-                  style: TextStyle(fontSize: 15, fontWeight: FontWeight.w500, height: 1.55, color: cs.onSurface),
+                  style: TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w500,
+                    height: 1.55,
+                    color: cs.onSurface,
+                  ),
                 ),
                 const SizedBox(height: 20),
                 SizedBox(
@@ -917,7 +991,10 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
                     onPressed: () => Navigator.pop(ctx, true),
                     child: Text(
                       tr.autoEmptyConsentAccept,
-                      style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
+                      style: const TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w700,
+                      ),
                     ),
                   ),
                 ),
@@ -936,7 +1013,8 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
   }
 
   Future<void> _saveConfig(String uid) async {
-    final tenantId = ref.read(userProfileProvider).valueOrNull?['tenantId'] as String?;
+    final tenantId =
+        ref.read(userProfileProvider).valueOrNull?['tenantId'] as String?;
     if (tenantId == null || tenantId.isEmpty) return;
     final repo = ref.read(userRepositoryProvider);
     final nextRunAt = _frequency == 'manual' ? null : _computeNextRunAt();
@@ -954,9 +1032,7 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
       if (nextRunAt.isBefore(now) || nextRunAt.isAfter(maxFuture)) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(S.of(context).deviceClockSkewError),
-            ),
+            SnackBar(content: Text(S.of(context).deviceClockSkewError)),
           );
         }
         return;
@@ -967,8 +1043,9 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
     // configured in so the server cron can detect drift after a currency
     // change and refuse to charge in the wrong currency.
     final activeCurrency =
-        (ref.read(userProfileProvider).valueOrNull?['currencyCode'] as String?) ??
-            'USD';
+        (ref.read(userProfileProvider).valueOrNull?['currencyCode']
+            as String?) ??
+        'USD';
     await repo.updateTenantState(
       uid: uid,
       tenantId: tenantId,
@@ -976,16 +1053,19 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
       autoEmptyWeekday: _frequency == 'weekly' ? _weekday : null,
       autoEmptyDayOfMonth: _frequency == 'monthly' ? _dayOfMonth : null,
       autoEmptyTopOffEnabled: _frequency == 'manual' ? false : _topOffEnabled,
-      autoEmptyTopOffAmount:
-          _frequency == 'manual' ? null : (_topOffAmount ?? 0),
-      autoEmptyTopOffCurrency:
-          _frequency == 'manual' ? null : activeCurrency,
+      autoEmptyTopOffAmount: _frequency == 'manual'
+          ? null
+          : (_topOffAmount ?? 0),
+      autoEmptyTopOffCurrency: _frequency == 'manual' ? null : activeCurrency,
       autoEmptyNextRunAt: nextRunAt,
       autoEmptyClearNextRunAt: _frequency == 'manual',
       autoEmptyPaymentMethodId: _frequency != 'manual' ? _selectedCardId : null,
       autoEmptyClearPaymentMethodId: _frequency == 'manual',
-      autoEmptyDonationReason: _frequency != 'manual' ? _selectedDonationReason : null,
-      autoEmptyClearDonationReason: _frequency == 'manual' || _selectedDonationReason == null,
+      autoEmptyDonationReason: _frequency != 'manual'
+          ? _selectedDonationReason
+          : null,
+      autoEmptyClearDonationReason:
+          _frequency == 'manual' || _selectedDonationReason == null,
     );
   }
 
@@ -999,8 +1079,16 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
     final nowLocal = DateTime.now();
     final nowUtc = nowLocal.toUtc();
     if (_frequency == 'weekly') {
-      var nextLocal = DateTime(nowLocal.year, nowLocal.month, nowLocal.day, 8, 0, 0);
-      while (nextLocal.weekday != _weekday || !nextLocal.toUtc().isAfter(nowUtc)) {
+      var nextLocal = DateTime(
+        nowLocal.year,
+        nowLocal.month,
+        nowLocal.day,
+        8,
+        0,
+        0,
+      );
+      while (nextLocal.weekday != _weekday ||
+          !nextLocal.toUtc().isAfter(nowUtc)) {
         nextLocal = nextLocal.add(const Duration(days: 1));
       }
       return nextLocal.toUtc();
@@ -1010,7 +1098,15 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
         final maxDay = DateTime(year, month + 1, 0).day;
         return _dayOfMonth.clamp(1, maxDay);
       }
-      var nextLocal = DateTime(nowLocal.year, nowLocal.month, clampDay(nowLocal.year, nowLocal.month), 8, 0, 0);
+
+      var nextLocal = DateTime(
+        nowLocal.year,
+        nowLocal.month,
+        clampDay(nowLocal.year, nowLocal.month),
+        8,
+        0,
+        0,
+      );
       if (!nextLocal.toUtc().isAfter(nowUtc)) {
         final nm = nowLocal.month == 12 ? 1 : nowLocal.month + 1;
         final ny = nowLocal.month == 12 ? nowLocal.year + 1 : nowLocal.year;
@@ -1025,19 +1121,176 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
   }
 
   DateTime _computeNextErevRoshChodesh(DateTime now) {
-    // months are 0-indexed to match the Cloud Function table (JS convention)
+    // Meses 0-indexados (convención JS), para espejar la Cloud Function.
+    //
+    // ESTA TABLA LA GENERA hebcal, NO SE EDITA A MANO. El servidor
+    // (computeNextErevRoshChodesh en functions/index.js) no usa tabla: calcula
+    // en vivo con @hebcal/core el día 29 de cada mes hebreo, salvo Elul. Acá no
+    // hay librería de calendario hebreo, así que se precalcula lo mismo.
+    //
+    // La tabla anterior estaba TODA corrida un día antes que el servidor: el
+    // usuario configuraba viendo una fecha y el cobro salía al día siguiente.
+    // Regenerada el 2026-08-24 desde @hebcal/core con el mismo criterio que el
+    // servidor, y verificada año por año contra él.
+    //
+    // Para regenerarla (desde functions/):
+    //   node -e "(async()=>{const m=await import('@hebcal/core');
+    //     const H=m.HDate,E=m.months.ELUL;
+    //     for(let y=2025;y<=2035;y++){const l=[];
+    //       const d=new Date(Date.UTC(y,0,1));
+    //       while(d.getUTCFullYear()===y){const h=new H(new Date(d));
+    //         if(h.getDate()===29&&h.getMonth()!==E)
+    //           l.push('['+d.getUTCMonth()+','+d.getUTCDate()+']');
+    //         d.setUTCDate(d.getUTCDate()+1);}
+    //       console.log(y+': ['+l.join(',')+'],');}})()"
     const table = <int, List<List<int>>>{
-      2025: [[0,29],[1,27],[2,29],[3,27],[4,27],[5,25],[6,25],[7,23],[9,21],[10,20],[11,19]],
-      2026: [[0,18],[1,16],[2,18],[3,16],[4,16],[5,14],[6,14],[7,12],[9,10],[10,9],[11,9]],
-      2027: [[0,8],[1,6],[2,8],[3,7],[4,6],[5,5],[6,4],[7,3],[8,1],[9,30],[10,29],[11,29]],
-      2028: [[0,28],[1,26],[2,27],[3,25],[4,25],[5,23],[6,23],[7,21],[9,19],[10,18],[11,17]],
-      2029: [[0,16],[1,14],[2,16],[3,14],[4,14],[5,12],[6,12],[7,10],[9,8],[10,7],[11,6]],
-      2030: [[0,4],[1,2],[2,4],[3,3],[4,2],[5,1],[5,30],[6,30],[7,28],[9,26],[10,25],[11,25]],
-      2031: [[0,24],[1,22],[2,24],[3,22],[4,22],[5,20],[6,20],[7,18],[9,16],[10,15],[11,15]],
-      2032: [[0,13],[1,12],[2,12],[3,11],[4,10],[5,9],[6,8],[7,7],[9,5],[10,3],[11,3]],
-      2033: [[0,2],[1,1],[1,28],[2,30],[3,29],[4,28],[5,27],[6,26],[7,25],[9,22],[10,22],[11,21]],
-      2034: [[0,21],[1,19],[2,21],[3,19],[4,19],[5,17],[6,17],[7,15],[9,13],[10,12],[11,12]],
-      2035: [[0,10],[1,9],[2,11],[3,9],[4,9],[5,7],[6,7],[7,5],[9,3],[10,2],[11,1],[11,31]],
+      2025: [
+        [0, 30],
+        [1, 28],
+        [2, 30],
+        [3, 28],
+        [4, 28],
+        [5, 26],
+        [6, 26],
+        [7, 24],
+        [9, 22],
+        [10, 21],
+        [11, 20],
+      ],
+      2026: [
+        [0, 19],
+        [1, 17],
+        [2, 19],
+        [3, 17],
+        [4, 17],
+        [5, 15],
+        [6, 15],
+        [7, 13],
+        [9, 11],
+        [10, 10],
+        [11, 10],
+      ],
+      2027: [
+        [0, 9],
+        [1, 7],
+        [2, 9],
+        [3, 8],
+        [4, 7],
+        [5, 6],
+        [6, 5],
+        [7, 4],
+        [8, 2],
+        [9, 31],
+        [10, 30],
+        [11, 30],
+      ],
+      2028: [
+        [0, 29],
+        [1, 27],
+        [2, 28],
+        [3, 26],
+        [4, 26],
+        [5, 24],
+        [6, 24],
+        [7, 22],
+        [9, 20],
+        [10, 19],
+        [11, 18],
+      ],
+      2029: [
+        [0, 17],
+        [1, 15],
+        [2, 17],
+        [3, 15],
+        [4, 15],
+        [5, 13],
+        [6, 13],
+        [7, 11],
+        [9, 9],
+        [10, 8],
+        [11, 7],
+      ],
+      2030: [
+        [0, 5],
+        [1, 3],
+        [2, 5],
+        [3, 4],
+        [4, 3],
+        [5, 2],
+        [6, 1],
+        [6, 31],
+        [7, 29],
+        [9, 27],
+        [10, 26],
+        [11, 26],
+      ],
+      2031: [
+        [0, 25],
+        [1, 23],
+        [2, 25],
+        [3, 23],
+        [4, 23],
+        [5, 21],
+        [6, 21],
+        [7, 19],
+        [9, 17],
+        [10, 16],
+        [11, 15],
+      ],
+      2032: [
+        [0, 14],
+        [1, 12],
+        [2, 13],
+        [3, 11],
+        [4, 11],
+        [5, 9],
+        [6, 9],
+        [7, 7],
+        [9, 5],
+        [10, 4],
+        [11, 3],
+      ],
+      2033: [
+        [0, 1],
+        [0, 30],
+        [2, 1],
+        [2, 31],
+        [3, 29],
+        [4, 29],
+        [5, 27],
+        [6, 27],
+        [7, 25],
+        [9, 23],
+        [10, 22],
+        [11, 22],
+      ],
+      2034: [
+        [0, 21],
+        [1, 19],
+        [2, 21],
+        [3, 19],
+        [4, 19],
+        [5, 17],
+        [6, 17],
+        [7, 15],
+        [9, 13],
+        [10, 12],
+        [11, 12],
+      ],
+      2035: [
+        [0, 11],
+        [1, 9],
+        [2, 11],
+        [3, 10],
+        [4, 9],
+        [5, 8],
+        [6, 7],
+        [7, 6],
+        [8, 4],
+        [10, 2],
+        [11, 2],
+        [11, 31],
+      ],
     };
     for (final year in [now.year, now.year + 1]) {
       final yearDates = table[year];
@@ -1084,15 +1337,17 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
       // if they don't want top-off.
       if (wasManual && picked != 'manual') {
         _topOffEnabled = true;
-        final goal = (ref.read(tenantStateProvider).valueOrNull
-            ?['pushkaGoal'] as num?)?.toDouble();
+        final goal =
+            (ref.read(tenantStateProvider).valueOrNull?['pushkaGoal'] as num?)
+                ?.toDouble();
         _topOffAmount = goal ?? _topOffAmount ?? 18;
         // Seed the designación to the tenant's first reason so the
         // schedule starts with a concrete destination instead of the
         // empty/Sin designación state.
         if (_selectedDonationReason == null) {
-          final cfgReasons = ref.read(tenantConfigProvider).valueOrNull
-                  ?.donationReasons ?? const <String>[];
+          final cfgReasons =
+              ref.read(tenantConfigProvider).valueOrNull?.donationReasons ??
+              const <String>[];
           if (cfgReasons.isNotEmpty) {
             _selectedDonationReason = cfgReasons.first;
           }
@@ -1138,7 +1393,9 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
       builder: (ctx) => SafeArea(
         top: false,
         child: Padding(
-          padding: EdgeInsets.only(bottom: MediaQuery.of(ctx).viewInsets.bottom),
+          padding: EdgeInsets.only(
+            bottom: MediaQuery.of(ctx).viewInsets.bottom,
+          ),
           child: Padding(
             padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
             child: Column(
@@ -1158,7 +1415,10 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
                 ),
                 Text(
                   tr.dayOfMonth,
-                  style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
+                  style: const TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.w700,
+                  ),
                   textAlign: TextAlign.center,
                 ),
                 const SizedBox(height: 14),
@@ -1174,11 +1434,12 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
                     // February. The picker should not silently forbid the user's
                     // legitimate choice.
                     itemCount: 31,
-                    gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                      crossAxisCount: 7,
-                      mainAxisSpacing: 8,
-                      crossAxisSpacing: 8,
-                    ),
+                    gridDelegate:
+                        const SliverGridDelegateWithFixedCrossAxisCount(
+                          crossAxisCount: 7,
+                          mainAxisSpacing: 8,
+                          crossAxisSpacing: 8,
+                        ),
                     itemBuilder: (context, index) {
                       final value = index + 1;
                       return InkWell(
@@ -1229,6 +1490,3 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
     }
   }
 }
-
-
-
