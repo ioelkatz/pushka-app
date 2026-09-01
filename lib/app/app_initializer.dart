@@ -21,6 +21,29 @@ import '../features/feedback/feedback_service.dart';
 import '../core/deep_link_handler.dart';
 import 'router.dart' show initNotificationNavigation, router;
 
+/// Qué proveedor de App Check usa este binario: `'playintegrity'` o `'debug'`.
+///
+/// El default es DELIBERADAMENTE el estricto. De los dos errores posibles, el
+/// caro es publicar en la tienda con el proveedor de debug: sería una app
+/// pública sin atestación real y sin ninguna señal visible de que algo está
+/// mal. Olvidarse el flag en un build de sideload, en cambio, se nota enseguida
+/// y no expone nada.
+///
+/// Por eso los builds de sideload tienen que pedirlo EXPLÍCITAMENTE:
+///
+///   flutter build apk --flavor prod --split-per-abi \
+///     --dart-define=APP_CHECK_PROVIDER=debug \
+///     --dart-define=STRIPE_PUBLISHABLE_KEY=pk_live_...
+///
+/// Y el build de tienda no lleva el flag:
+///
+///   flutter build appbundle --flavor prod \
+///     --dart-define=STRIPE_PUBLISHABLE_KEY=pk_live_...
+const _appCheckProvider = String.fromEnvironment(
+  'APP_CHECK_PROVIDER',
+  defaultValue: 'playintegrity',
+);
+
 /// Deferred initialization future — started in main(), awaited in splash.
 late final Future<void> appDeferredInit;
 
@@ -45,7 +68,10 @@ Future<void> activateAppCheck() async {
     // skip activation completa (con siteKey vacío el provider tira
     // errores internos que Firebase Auth propaga como
     // 'auth/network-request-failed' en signup/login).
-    const siteKey = String.fromEnvironment('RECAPTCHA_SITE_KEY', defaultValue: '');
+    const siteKey = String.fromEnvironment(
+      'RECAPTCHA_SITE_KEY',
+      defaultValue: '',
+    );
     if (siteKey.isNotEmpty) {
       await FirebaseAppCheck.instance.activate(
         providerWeb: ReCaptchaV3Provider(siteKey),
@@ -54,19 +80,36 @@ Future<void> activateAppCheck() async {
     return;
   }
 
-  // Android/iOS: en la branch `pwa-sideload-launch` usamos DebugProvider
-  // SIEMPRE porque el APK se distribuye fuera de Play Store (Play
-  // Integrity no puede attestar apps sideload) y el .ipa PWA no aplica
-  // acá. El primer launch imprime un token secret que hay que registrar
-  // en Firebase Console → App Check → Manage debug tokens para que las
-  // CFs enforced acepten requests.
+  // Android/iOS: el proveedor depende de CÓMO se distribuye este binario.
   //
-  // Cuando migremos a Play Store / App Store (branch dev), este código
-  // vuelve a ser AndroidPlayIntegrityProvider() / AppleDeviceCheckProvider()
-  // en release mode.
+  //   Sideload (APK directo)  → DebugProvider. Play Integrity no puede
+  //                             attestar una app que no vino de Play Store:
+  //                             fallaría en todos los usuarios.
+  //   Play Store / App Store  → PlayIntegrity / DeviceCheck. Es la
+  //                             atestación real; sin ella App Check no
+  //                             protege nada.
+  //
+  // En debug SIEMPRE va el DebugProvider, sin importar el flag: Play
+  // Integrity tampoco puede attestar un build de debug, y si se deja el
+  // proveedor estricto falla la atestación, quema el presupuesto de
+  // reintentos y aparece "verificación de seguridad fallida" en pantalla.
+  if (kDebugMode || _appCheckProvider == 'debug') {
+    // El primer arranque imprime en logcat un token que hay que registrar en
+    // Firebase Console → App Check → Manage debug tokens para que las CFs con
+    // enforcement acepten requests desde este dispositivo.
+    await FirebaseAppCheck.instance.activate(
+      providerAndroid: AndroidDebugProvider(),
+      providerApple: AppleDebugProvider(),
+    );
+    return;
+  }
+
   await FirebaseAppCheck.instance.activate(
-    providerAndroid: AndroidDebugProvider(),
-    providerApple: AppleDebugProvider(),
+    providerAndroid: const AndroidPlayIntegrityProvider(),
+    // App Attest con caída a DeviceCheck: App Attest es más fuerte pero
+    // requiere iOS 14+, y el fallback cubre los dispositivos viejos sin
+    // dejarlos afuera.
+    providerApple: const AppleAppAttestWithDeviceCheckFallbackProvider(),
   );
 }
 
@@ -116,14 +159,17 @@ Future<void> _performDeferredInit() async {
       // the actual frame is deterministic and typically much faster than
       // 600ms on modern devices; on slow devices it gives extra margin.
       await WidgetsBinding.instance.endOfFrame;
-      final status = await AppTrackingTransparency.requestTrackingAuthorization();
+      final status =
+          await AppTrackingTransparency.requestTrackingAuthorization();
       final granted = status == TrackingStatus.authorized;
       // Disable both analytics + crashlytics auto-collection when not
       // granted. Crash REPORTING still works (manual recordError calls)
       // but won't auto-attach device identifiers across sessions.
       try {
         await FirebaseAnalytics.instance.setAnalyticsCollectionEnabled(granted);
-        await FirebaseCrashlytics.instance.setCrashlyticsCollectionEnabled(granted);
+        await FirebaseCrashlytics.instance.setCrashlyticsCollectionEnabled(
+          granted,
+        );
       } catch (e) {
         debugPrint('appDeferredInit: ATT analytics gate apply failed: $e');
       }
@@ -229,12 +275,13 @@ Future<void> _syncUserTimezone() async {
           .doc(user.uid)
           .get();
       if (snap.exists && snap.get('timezone') == tz) return;
-    } catch (_) { /* fall through to write */ }
+    } catch (_) {
+      /* fall through to write */
+    }
 
-    await FirebaseFirestore.instance
-        .collection('users')
-        .doc(user.uid)
-        .set({'timezone': tz}, SetOptions(merge: true));
+    await FirebaseFirestore.instance.collection('users').doc(user.uid).set({
+      'timezone': tz,
+    }, SetOptions(merge: true));
   } catch (e) {
     debugPrint('_syncUserTimezone failed: $e');
   }
@@ -254,9 +301,7 @@ Future<void> _initNotificationsChain() async {
         try {
           final repo = ReminderRepository(FirebaseFirestore.instance);
           final reminders = await repo.fetchAll(user.uid);
-          await Future.wait(
-            reminders.map((r) => ns.scheduleReminder(r)),
-          );
+          await Future.wait(reminders.map((r) => ns.scheduleReminder(r)));
           await ns.markResyncDone();
         } catch (e) {
           debugPrint('appDeferredInit: reminder resync failed: $e');
