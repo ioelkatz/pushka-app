@@ -147,14 +147,22 @@ Pushka exige **iniciar sesión y además un código de invitación**. Si no se l
 dan credenciales al revisor, abre la app, choca contra el login y rechaza por
 "no pudimos revisar la funcionalidad".
 
-Hay que declarar que **todas las funciones están restringidas** y entregar:
+Hay que declarar que **todas las funciones están restringidas** y entregar las
+credenciales de la cuenta de prueba.
+
+**La cuenta ya está creada** (2026-09-02) en la app de producción:
 
 ```
-Usuario      una cuenta de prueba REAL creada en producción
-Contraseña   —
-Instrucciones  Iniciar sesión con Google. Cuando pida el código de
-               invitación, ingresar JYM-770.
+Usuario        play-review@jabadencampus.com
+Contraseña     está en la memoria del proyecto, no en el repositorio
+Instrucciones  Iniciar sesión con correo y contraseña (NO con Google).
+               Cuando la app pida el código de invitación, ingresar JYM-770.
 ```
 
-**Crear esa cuenta de prueba antes de enviar a revisión.** Con Google Sign-In
-conviene una cuenta de Google dedicada, no la personal de nadie.
+⚠️ **Que sea con correo y contraseña, no con Google Sign-In.** La app acepta
+los dos, pero si el revisor entra con una cuenta de Google desde los centros de
+datos de Google, salta la verificación de seguridad de la propia Google y queda
+trabado — y termina reportando que la app no funciona.
+
+⚠️ **No borrar esa cuenta**: Google la usa en cada revisión, también en las
+actualizaciones futuras.
