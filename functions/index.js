@@ -5380,6 +5380,16 @@ async function _runPushkaAutoEmptyTick() {
             currency: rawCurrency,
             customerId,
             pmId,
+            // Mail al que Stripe manda el comprobante. El vaciado automatico
+            // cobra off-session: el usuario no esta mirando la pantalla, asi
+            // que el recibo es la unica prueba que le llega de que le
+            // cobraron. Sin esto el cargo aparecia solo en el resumen de la
+            // tarjeta, que es exactamente el escenario que termina en
+            // contracargo. El pago manual ya lo mandaba (createPaymentIntent);
+            // este flujo se habia quedado sin el.
+            receiptEmail: String(
+              userData.billingEmail || userData.email || "",
+            ).trim() || null,
             newPushkaAmount,
             normalNextDate,
             tenantId,
@@ -5425,6 +5435,7 @@ async function _runPushkaAutoEmptyTick() {
           // charged off-session anyway.
           payment_method_types: ["card"],
           error_on_requires_action: true,
+          receipt_email: plan.receiptEmail || undefined,
           metadata: {
             uid,
             source: "pushka",

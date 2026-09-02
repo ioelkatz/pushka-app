@@ -1,7 +1,7 @@
 # Ficha de Google Play — Jabad en Campus
 
-Estado: **borrador cálido listo, con tres arreglos de política pendientes de
-integrar.** Última revisión: 2026-09-02.
+Estado: **texto final, listo para que lo apruebe el Rab.** Última revisión:
+2026-09-02.
 
 La misión que define este texto está en la memoria del proyecto
 (`project_mision_jabad_en_campus`). Reglas fijas decididas por Ioel:
@@ -38,137 +38,102 @@ pegar desde WhatsApp el "—" se convierte en dos guiones.
 La pushka de Jabad en Campus: la alcancía de siempre, en tu teléfono.
 ```
 
-## Descripción completa — borrador actual, 2253 de 4000 caracteres
+## Descripción completa — 3014 de 4000 caracteres
 
 > Play muestra solo las **tres primeras líneas** antes del botón "Más
-> información". El primer párrafo mide 246 caracteres, así que entra entero:
+> información". El primer párrafo mide 240 caracteres, así que entra entero:
 > quien no toca nada ya leyó marca, ciudad, misión, tzedaká y la palabra
 > pushka.
 
 ```
-En Jabad en Campus trabajamos con jóvenes judíos de Ciudad de México que crecieron lejos de sus raíces. Los invitamos a un Shabat, a una carne asada, a ponerse tefilín por primera vez. Todo eso se sostiene con tzedaká, y esta app es nuestra pushka.
+En Jabad en Campus trabajamos con jóvenes judíos de Ciudad de México que crecieron lejos de sus raíces. Los invitamos a un Shabat, a una carne asada, a ponerse tefilín. Nada de eso se cobra: lo paga la tzedaká, y esta app es nuestra pushka.
 
-Un viernes cualquiera hay jalá en la mesa, ensaladas, dos que discuten de futbol y alguien acomodando sillas de más. Siempre faltan sillas. Nadie los apura y nadie los juzga. Hay chavos que vienen una vez y ya; otros llegaron porque un amigo les insistió, todavía no saben bien a qué, y a las once de la noche siguen ahí.
+Un viernes cualquiera hay jalá en la mesa, ensaladas, dos que discuten de futbol y alguien acomodando sillas de más. Siempre faltan sillas. Nadie pregunta hace cuánto no pisan una sinagoga. Hay chavos que vienen una vez y ya; otros llegaron porque un amigo les insistió, todavía no saben bien a qué, y a las once de la noche siguen ahí.
 
-Una pushka es la alcancía de tzedaká que hay en toda casa judía. Se echa una moneda antes de salir, antes de Shabat, cuando pasa algo bueno. Esta es la de Jabad en Campus, ahora en tu teléfono.
+Una pushka es la alcancía de tzedaká que hay en toda casa judía. Se echa una moneda antes de salir, y el viernes antes de que entre Shabat. También cuando nace un sobrino o alguien sale bien de una operación.
 
-Funciona igual que la de la cocina. Tocas uno de los montos que ya están puestos y la moneda se va juntando ahí adentro. Todavía no pasa nada. El día que quieres, la vacías y lo que juntaste se dona a Jabad en Campus.
+La de la app funciona igual que la de la cocina. Tocas uno de los montos que ya están puestos, o los cambias por los tuyos, y se va juntando ahí adentro. No se te cobra nada en ese momento. El día que tú decides, vacías la pushka y se hace un solo cargo por el total, que se dona a Jabad en Campus.
 
-Y si te conoces y sabes que se te va a pasar, deja que se vacíe sola: cada semana, cada mes o en Erev Rosh Jodesh, que es cuando muchos ya tienen la costumbre de dar. Si te sirve que te lo recordemos, te lo recordamos.
+Si prefieres no estar pendiente, puedes programar que se vacíe sola cada semana, cada mes o en Erev Rosh Jodesh, que es cuando muchos ya tienen la costumbre de dar. Ahí sí hay un cobro automático a la tarjeta que elijas: te llega el aviso cada vez que pasa, y puedes cambiarlo o apagarlo cuando quieras desde Ajustes. O te mandamos nada más un recordatorio y la vacías tú.
 
-La app lleva la cuenta de los días seguidos que llevas dando. Una meta, si te gusta ponerte metas. Y todo lo que diste queda guardado, por si algún día quieres mirarlo. El Rab lo dice así: en la tzedaká cuenta la constancia, no el monto.
+La app cuenta los días seguidos que llevas dando, y puedes ponerte una meta al mes y ver cuánto te falta. Todo lo que diste queda en el historial, con comprobante por correo de cada donación. El Rab lo dice así: en la tzedaká cuenta la constancia, no el monto.
 
-Adentro hay también segulot y rezos, y un aviso cuando se viene una festividad, por si el calendario hebreo te agarra desprevenido (nos pasa a todos). Está en español, inglés, francés y hebreo, para que cada quien la use en el idioma en que reza.
+Adentro hay también tefilot y segulot para leer, y un aviso cuando se acerca una festividad, por si el calendario hebreo te toma desprevenido. Puedes dar en pesos, dólares, shékels u otras monedas, y pedir huella o reconocimiento facial antes de donar o de vaciar. Está en español, inglés, francés y hebreo, para que cada quien la use en el idioma en que reza.
 
 Por qué la app te pide un código
 
-Porque no es una app abierta a cualquiera. Es de Jabad en Campus y es para la gente de Jabad en Campus. El código de invitación te lo da el Rab; sin él no se entra. Si llegaste hasta aquí y no lo tienes, pídeselo.
+Porque es la pushka de una comunidad, no una app de donaciones abierta al público: lo que entra acá va a Jabad en Campus y a nadie más, y quien da tiene derecho a saber exactamente a dónde va. El código de invitación te lo da el Rab, y es gratis, igual que la app. Si llegaste hasta aquí y no lo tienes, escríbele y te lo pasa.
 
-Los pagos los procesa Stripe. La app nunca guarda los datos de tu tarjeta: si dejas una guardada para no volver a escribirla, queda del lado de Stripe.
+Los pagos los procesa Stripe. Tu tarjeta se escribe en la pantalla de Stripe y queda de su lado: en la app solo se ven la marca y los últimos cuatro dígitos, y puedes borrarla, o borrar tu cuenta entera, cuando quieras.
 
-Lo que se junta entre todos sostiene la comida del viernes y la gasolina de ir a buscar a alguien que no tiene cómo llegar. Y las sillas, que siempre faltan.
+Jabad en Campus es una organización judía sin fines de lucro. Las donaciones son voluntarias y no desbloquean funciones ni contenido dentro de la app. Lo que se junta entre todos ayuda a sostener el trabajo en Ciudad de México: los Shabatot, las comidas del viernes, ir a buscar a quien no tiene cómo llegar. Y las sillas, que siempre faltan.
 ```
 
 ---
 
-# ⚠️ NO ENVIAR ASÍ — tres arreglos de política pendientes
+# Qué se resolvió en este texto
 
-Una revisión adversarial del 2026-09-02 (dos críticos: uno de naturalidad,
-otro haciendo de revisor de Google) encontró **dos motivos de rechazo
-probables** y un tercer riesgo. Ninguno es de estilo. Sobran 1.747 caracteres,
-así que todo entra sin sacrificar nada.
+Una revisión adversarial del 2026-09-02 (un crítico de naturalidad y otro
+haciendo de revisor de Google) encontró dos motivos de rechazo probables. Los
+dos están resueltos arriba.
 
-## 1. Falta decir "sin fines de lucro" y "donaciones voluntarias" — RECHAZO
+## 1. Faltaba "sin fines de lucro" y "donaciones voluntarias" — resuelto
 
-El más importante. La app cobra **por fuera de Google Play Billing** (vía
-Stripe). Lo único que lo permite es la excepción de la política de pagos para
-donaciones a organizaciones sin fines de lucro. El revisor abre la ficha, ve
-que se mueve dinero dentro de la app, no encuentra en ningún lado las palabras
-"sin fines de lucro" ni "donación voluntaria", y clasifica el cobro como venta
-de contenido digital eludiendo Play Billing.
+Era el más grave. La app cobra **por fuera de Google Play Billing** vía Stripe,
+y lo único que lo permite es la excepción de la política de pagos para
+donaciones a organizaciones sin fines de lucro. Sin esas palabras en la ficha,
+el revisor ve que se mueve dinero dentro de la app, no encuentra la excepción, y
+clasifica el cobro como venta de contenido digital eludiendo Play Billing.
 
-Peor todavía si sospecha que el dinero desbloquea algo (metas, rachas,
-segulot, historial): eso es rechazo directo.
+Peor todavía si sospecha que el dinero desbloquea algo (metas, rachas, segulot,
+historial). Por eso el último párrafo dice explícitamente que las donaciones
+**no desbloquean funciones ni contenido**.
 
-Hay que decirlo **en el texto de la ficha**, no solo en el formulario:
+"Sin fines de lucro" es la categoría de la organización, no una afirmación
+fiscal: no promete deducción y no viola la regla 2.
 
-> Jabad en Campus es una organización judía sin fines de lucro. Las donaciones
-> son voluntarias y no desbloquean funciones ni contenido dentro de la app.
+## 2. El auto-vaciado era un cargo recurrente no divulgado — resuelto
 
-"Sin fines de lucro" no es una afirmación fiscal ni promete deducción — es la
-categoría de la organización, que es justo lo que Play necesita ver. No viola
-la regla 2.
+Decía "deja que se vacíe sola" sin mencionar nunca que hay un cobro automático
+a una tarjeta guardada. Play exige que los cargos recurrentes se declaren de
+forma clara y visible; esconderlos detrás de una metáfora entra en "cobros no
+divulgados". Y aparte del rechazo, es el disparador clásico de "me cobraron sin
+avisar" y de contracargos contra la cuenta de Stripe del Rab.
 
-## 2. El auto-vaciado es un cargo recurrente no divulgado — RECHAZO + disputas
+Ahora dice que hay cobro automático, a qué tarjeta, que llega aviso cada vez y
+que se apaga desde Ajustes.
 
-La ficha dice "deja que se vacíe sola" y nunca menciona que eso implica un
-**cobro automático a una tarjeta guardada**, ni que se puede desactivar. Play
-exige que los cargos recurrentes se declaren de forma clara y visible;
-esconderlos detrás de una metáfora entra en "cobros no divulgados".
+### Y salió un bug real de acá
 
-Y aparte del rechazo: es el disparador clásico de "me cobraron sin avisar" y de
-contracargos contra la cuenta de Stripe del Rab.
+Al ir a verificar que el aviso existiera de verdad antes de prometerlo en la
+ficha, apareció que **el vaciado automático no mandaba comprobante por correo**:
+`receipt_email` estaba puesto en el pago manual (`createPaymentIntent`) pero
+nunca en `processPushkaAutoEmpty`. O sea que el cobro off-session —el que el
+usuario no está mirando— aparecía solo en el resumen de la tarjeta. Exactamente
+el escenario que termina en contracargo.
 
-Hay que decir que hay cobro automático, a qué tarjeta, y que se apaga cuando
-uno quiere.
+Arreglado y desplegado en prod y dev el 2026-09-02.
 
-## 3. "La app nunca guarda los datos de tu tarjeta" contradice el Data Safety
+## 3. "Nunca guarda los datos de tu tarjeta" chocaba con el Data Safety — resuelto
 
-En el formulario hay que declarar que la app maneja información de pago: guarda
-marca y últimos cuatro dígitos para poder mostrar la tarjeta en pantalla. Play
-cruza automáticamente la ficha contra el formulario, y una inconsistencia es
-rechazo por *data safety mismatch*.
+Verificado en el código: para el donante las tarjetas **viven en Stripe**, se
+listan en vivo y no se persiste nada en Firestore; solo se muestran marca y
+últimos cuatro dígitos. Pero `docs/play-store-data-safety.md` recomienda
+declarar "Información de pago" como recopilada, porque la hoja de Stripe se
+muestra dentro de la app. Un "nunca" absoluto contra esa declaración es rechazo
+por *data safety mismatch*.
 
-La formulación correcta no es más débil, es más precisa: la app no guarda el
-**número**; la tarjeta vive del lado de Stripe y aquí solo se ven marca y
-últimos cuatro dígitos.
+La redacción actual es precisa y no más débil: la tarjeta se escribe en la
+pantalla de Stripe y queda de su lado.
 
-**Antes de escribirlo hay que verificar en el código qué se guarda
-exactamente.** No copiar esa frase a ciegas.
+## Dos afirmaciones que el Rab tiene que confirmar
 
-## Además, dos cosas que no son rechazo pero conviene arreglar
-
-- **"Porque no es una app abierta a cualquiera"** suena a club cerrado y es lo
-  contrario de la misión. Mejor: es la pushka de una comunidad, no una app de
-  donaciones abierta al público, y el código es gratuito igual que la app.
-- **"sostiene la comida del viernes y la gasolina"** afecta el dinero a
-  partidas concretas que no se pueden garantizar. La regla es siempre *ayuda a
-  sostener*, nunca *financia*.
-
-## Cómo integrarlo — la parte difícil
-
-El crítico de reglas devolvió una versión completa con todo esto adentro
-(3.054 caracteres) **pero reintrodujo los encabezados en mayúscula y las
-viñetas**, que es exactamente lo que Ioel rechazó. Esa versión quedó guardada
-en `docs/play-store-listing-contenido-politica.txt` y sirve como fuente del
-**contenido, no del formato**.
-
-El trabajo de mañana es meter el contenido de política dentro de la prosa
-cálida, sin volver al formato formulario.
-
-## Arreglos de estilo que quedaron sin aplicar
-
-Del crítico de naturalidad, los tres que más delatan:
-
-- **"Nadie los apura y nadie los juzga"** — paralelismo perfecto y emoción
-  declarada en vez de mostrada. Propuesta: *"Nadie pregunta hace cuánto no
-  pisan una sinagoga."*
-- **"Porque no es una app abierta a cualquiera. Es de Jabad en Campus y es para
-  la gente de Jabad en Campus."** — el molde "es de X y es para X" suena a
-  eslogan y no explica la razón real.
-- **"Y las sillas, que siempre faltan"** como cierre — callback textual puesto
-  a redondear; la estructura circular perfecta es sello de prosa generada.
-
-Y dos correcciones de español mexicano: *"se viene una festividad"* → **"se
-acerca"**; *"te agarra desprevenido"* → **"te toma desprevenido"**.
-
-## Funciones que se perdieron en la reescritura
-
-Ninguna es motivo de rechazo, pero son las que convencen al que duda: montos
-rápidos editables, elección de moneda (pesos, dólares, shékels), biometría
-antes de donar o vaciar, y comprobante por correo de cada donación.
-
----
+- **"Nada de eso se cobra"** — asume que los Shabatot y las comidas de Jabad en
+  Campus son gratis para quien va. Es lo habitual en Jabad, pero es un hecho
+  sobre su organización, no mío.
+- **"lo que entra acá va a Jabad en Campus y a nadie más"** — cierto
+  técnicamente (Direct Charges a la cuenta Connect del Rab), pero conviene que
+  lo lea.
 
 ## Datos del formulario
 
@@ -200,13 +165,13 @@ elegir.
 
 ## Antes de enviar
 
-- [ ] Integrar los tres arreglos de política de arriba
-- [ ] Aplicar los arreglos de estilo y las dos correcciones de mexicano
-- [ ] El Rab aprueba el nombre y el texto
+- [ ] El Rab aprueba el nombre, el texto y las dos afirmaciones marcadas arriba
 - [ ] **Play Console → Contenido de la app → Acceso a la app**: cargar mail,
       contraseña **y el código de invitación JYM-770** de
       `play-review@jabadencampus.com`. Sin el código el revisor se estrella
       contra la pantalla de invitación y rechaza sin leer la descripción.
-- [ ] Data Safety completo — `docs/play-store-data-safety.md`
+- [ ] Data Safety completo — `docs/play-store-data-safety.md`. Declarar
+      "Información de pago" como recopilada, para que no choque con la ficha.
+- [ ] Elegir cuál captura principal va, la oscura o la clara
 - [ ] Build de tienda: `flutter build appbundle --flavor prod` **sin**
       `APP_CHECK_PROVIDER=debug` (ver la advertencia en `CLAUDE.md`)
