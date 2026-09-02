@@ -198,6 +198,12 @@ class UserRepository {
         .map((snap) => snap.exists ? snap.data() : null);
   }
 
+  /// Absolute set — use ONLY for reset-to-zero flows where the user
+  /// explicitly wants "make it zero now" (the manual reset from settings).
+  /// Prefer [incrementPushkaAmount] for regular adds — that path uses
+  /// `FieldValue.increment` and is safe under concurrent multi-device
+  /// writes; this one is last-write-wins and silently drops concurrent
+  /// increments (Round-8 audit CRITICAL).
   Future<void> updatePushkaAmount({
     required String uid,
     required String tenantId,
@@ -207,6 +213,25 @@ class UserRepository {
       'uid': uid,
       'tenantId': tenantId,
       'pushkaAmount': amount,
+      'updatedAt': FieldValue.serverTimestamp(),
+    }, SetOptions(merge: true));
+  }
+
+  /// Round-8 audit CRITICAL fix: concurrent-safe increment. Two devices
+  /// (or offline+online) adding to the same pushka each land server-side
+  /// via `FieldValue.increment(delta)` so both deltas accumulate — the
+  /// prior overwrite-based `updatePushkaAmount(base+delta)` collapsed
+  /// concurrent increments to a single delta (last write wins).
+  Future<void> incrementPushkaAmount({
+    required String uid,
+    required String tenantId,
+    required double delta,
+  }) async {
+    if (delta == 0) return;
+    await _tenantState(uid).doc(tenantId).set({
+      'uid': uid,
+      'tenantId': tenantId,
+      'pushkaAmount': FieldValue.increment(delta),
       'updatedAt': FieldValue.serverTimestamp(),
     }, SetOptions(merge: true));
   }
@@ -224,6 +249,11 @@ class UserRepository {
     int? autoEmptyDayOfMonth,
     bool? autoEmptyTopOffEnabled,
     double? autoEmptyTopOffAmount,
+    // Round-4 audit CRITICAL fix: stamp the currency the top-off was
+    // configured in so the server-side cron can refuse to charge if the
+    // user's active currency has since drifted. Falls back to the
+    // caller's active user currency when omitted (typical case).
+    String? autoEmptyTopOffCurrency,
     DateTime? autoEmptyNextRunAt,
     bool autoEmptyClearNextRunAt = false,
     String? autoEmptyPaymentMethodId,
@@ -248,6 +278,9 @@ class UserRepository {
     if (autoEmptyDayOfMonth != null) data['autoEmptyDayOfMonth'] = autoEmptyDayOfMonth;
     if (autoEmptyTopOffEnabled != null) data['autoEmptyTopOffEnabled'] = autoEmptyTopOffEnabled;
     if (autoEmptyTopOffAmount != null) data['autoEmptyTopOffAmount'] = autoEmptyTopOffAmount;
+    if (autoEmptyTopOffCurrency != null) {
+      data['autoEmptyTopOffCurrency'] = autoEmptyTopOffCurrency.toUpperCase();
+    }
     if (autoEmptyNextRunAt != null) {
       data['autoEmptyNextRunAt'] = Timestamp.fromDate(autoEmptyNextRunAt);
     }

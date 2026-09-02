@@ -1,0 +1,1318 @@
+<!DOCTYPE html>
+<html lang="es" dir="ltr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="theme-color" content="#2563EB">
+  <title data-i18n="meta_title">Jabad en Campus — Descargar app</title>
+  <link rel="icon" type="image/png" href="/favicon.png">
+  <link rel="apple-touch-icon" href="/icons/Icon-192.png">
+  <link rel="manifest" href="/manifest.json">
+  <meta name="description" data-i18n-attr="content:meta_description" content="Descargá Jabad en Campus en tu celular. Android e iPhone.">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: linear-gradient(180deg, #1E3A5F 0%, #2563EB 100%);
+      min-height: 100vh;
+      color: #fff;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 24px 20px;
+      -webkit-font-smoothing: antialiased;
+    }
+    /* Hebrew font stack override — kicks in via html[lang="he"]. Apple/Windows
+       have built-in Hebrew fonts; Roboto covers most Android. Keep -apple-system
+       first so iOS uses SF Hebrew. */
+    html[lang="he"] body {
+      font-family: -apple-system, 'SF Hebrew', 'Arial Hebrew', 'David', 'Frank Ruhl Libre', 'Segoe UI', Roboto, sans-serif;
+    }
+    .container { max-width: 420px; width: 100%; text-align: center; }
+    .logos {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 16px;
+      margin: 0 auto 24px;
+    }
+    .logo {
+      width: 96px; height: 96px;
+      background: #fff;
+      border-radius: 24px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.2);
+    }
+    .logo img { width: 72px; height: 72px; object-fit: contain; }
+    h1 { font-size: 28px; font-weight: 800; margin-bottom: 8px; letter-spacing: -0.5px; }
+    .subtitle { font-size: 15px; opacity: 0.85; margin-bottom: 40px; line-height: 1.5; }
+    .btn {
+      display: block;
+      width: 100%;
+      padding: 18px 24px;
+      margin-bottom: 12px;
+      border: none;
+      border-radius: 16px;
+      font-size: 16px;
+      font-weight: 700;
+      cursor: pointer;
+      text-decoration: none;
+      transition: transform 0.15s, box-shadow 0.15s;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+      color: #1E293B;
+      background: #fff;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+    }
+    .btn:active { transform: scale(0.98); }
+    .btn svg { width: 22px; height: 22px; flex-shrink: 0; }
+    .btn-primary { background: #fff; color: #1E3A5F; }
+    .platform-hint {
+      font-size: 13px;
+      opacity: 0.75;
+      margin: 32px 0 12px;
+      font-weight: 500;
+    }
+    .instructions {
+      margin-top: 32px;
+      padding: 20px;
+      background: rgba(255,255,255,0.1);
+      border-radius: 16px;
+      backdrop-filter: blur(10px);
+      text-align: start;
+      font-size: 14px;
+      line-height: 1.6;
+      opacity: 0.9;
+      display: none;
+    }
+    .instructions.active { display: block; }
+    .instructions h3 { font-size: 15px; font-weight: 700; margin-bottom: 10px; }
+    .instructions ol { padding-inline-start: 20px; margin: 0; }
+    .instructions li { margin-bottom: 6px; }
+    .footer {
+      margin-top: 40px;
+      font-size: 12px;
+      opacity: 0.6;
+    }
+    .invite-code-wrap {
+      margin: 20px 0 8px;
+    }
+    .invite-code-label {
+      font-size: 13px;
+      opacity: 0.9;
+      margin-bottom: 8px;
+      font-weight: 500;
+    }
+    .invite-code-block {
+      background: #fff;
+      color: #1E3A5F;
+      font-family: 'SF Mono', Menlo, Consolas, monospace;
+      font-weight: 800;
+      font-size: 28px;
+      letter-spacing: 6px;
+      padding: 18px 16px;
+      border-radius: 16px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.18);
+      text-align: center;
+      cursor: pointer;
+      user-select: all;
+      -webkit-user-select: all;
+      position: relative;
+      transition: transform 0.15s;
+    }
+    .invite-code-block:active { transform: scale(0.98); }
+    .invite-code-copied {
+      position: absolute;
+      top: -10px;
+      inset-inline-end: 10px;
+      background: #16A34A;
+      color: #fff;
+      font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0;
+      padding: 4px 8px;
+      border-radius: 8px;
+      opacity: 0;
+      transition: opacity 0.2s;
+      pointer-events: none;
+    }
+    .invite-code-copied.show { opacity: 1; }
+    .webview-warning {
+      display: none;
+      position: relative;
+      background: #F97316;
+      color: #fff;
+      border-radius: 14px;
+      padding: 16px 40px 16px 16px;
+      margin-bottom: 20px;
+      text-align: start;
+      font-size: 14px;
+      line-height: 1.45;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+    }
+    html[dir="rtl"] .webview-warning { padding: 16px 16px 16px 40px; }
+    .webview-warning.active { display: block; }
+    .webview-warning strong { display: block; font-weight: 800; margin-bottom: 4px; font-size: 15px; }
+    .webview-warning-close {
+      position: absolute;
+      top: 6px;
+      inset-inline-end: 6px;
+      width: 28px;
+      height: 28px;
+      border: none;
+      background: transparent;
+      color: #fff;
+      font-size: 20px;
+      font-weight: 700;
+      line-height: 1;
+      cursor: pointer;
+      opacity: 0.85;
+      border-radius: 50%;
+    }
+    .webview-warning-close:active { opacity: 1; background: rgba(0,0,0,0.15); }
+    .webview-copy-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      margin-top: 10px;
+      background: #fff;
+      color: #C2410C;
+      border: none;
+      padding: 8px 14px;
+      border-radius: 10px;
+      font-weight: 700;
+      font-size: 13px;
+      cursor: pointer;
+    }
+    .webview-copy-btn:active { transform: scale(0.97); }
+    .webview-copy-btn.copied { background: #16A34A; color: #fff; }
+
+    /* ---------- Install modals ---------- */
+    .install-modal-backdrop {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.55);
+      z-index: 100;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+      -webkit-backdrop-filter: blur(4px);
+      backdrop-filter: blur(4px);
+    }
+    .install-modal-backdrop.active { display: flex; }
+    .install-modal {
+      background: #fff;
+      color: #1E293B;
+      border-radius: 20px;
+      padding: 24px 22px;
+      max-width: 340px;
+      width: 100%;
+      text-align: center;
+      box-shadow: 0 20px 40px rgba(0,0,0,0.3);
+      animation: modalIn 0.25s ease-out;
+    }
+    @keyframes modalIn {
+      from { opacity: 0; transform: translateY(20px) scale(0.95); }
+      to { opacity: 1; transform: translateY(0) scale(1); }
+    }
+    .install-modal h3 { font-size: 20px; font-weight: 800; margin-bottom: 8px; }
+    .install-modal p { font-size: 14px; line-height: 1.5; opacity: 0.85; margin-bottom: 16px; }
+    .install-step {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 12px;
+      padding: 12px;
+      background: #F1F5F9;
+      border-radius: 12px;
+      text-align: start;
+    }
+    .install-step-num {
+      flex-shrink: 0;
+      width: 28px;
+      height: 28px;
+      background: #2563EB;
+      color: #fff;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 800;
+      font-size: 13px;
+    }
+    .install-step-icon {
+      flex-shrink: 0;
+      font-size: 22px;
+    }
+    .install-step-text {
+      flex: 1;
+      font-size: 13px;
+      line-height: 1.35;
+    }
+    .install-modal-btn {
+      background: #2563EB;
+      color: #fff;
+      border: none;
+      padding: 12px 20px;
+      border-radius: 12px;
+      font-weight: 700;
+      font-size: 15px;
+      cursor: pointer;
+      width: 100%;
+      margin-top: 6px;
+    }
+    .install-modal-btn:active { transform: scale(0.98); }
+    .install-modal-btn.secondary {
+      background: transparent;
+      color: #64748B;
+      font-weight: 500;
+      margin-top: 4px;
+    }
+    /* iOS Share icon SVG */
+    .share-icon {
+      width: 24px;
+      height: 24px;
+      display: inline-block;
+      vertical-align: middle;
+    }
+    .success-check {
+      width: 64px;
+      height: 64px;
+      background: #16A34A;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin: 0 auto 14px;
+      font-size: 36px;
+      color: #fff;
+      animation: checkPop 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+    }
+    @keyframes checkPop {
+      from { transform: scale(0); }
+      to { transform: scale(1); }
+    }
+
+    /* Installing spinner — simple circular, brand blue */
+    .installing-spinner {
+      width: 56px;
+      height: 56px;
+      margin: 4px auto 18px;
+      border: 5px solid #E2E8F0;
+      border-top-color: #2563EB;
+      border-radius: 50%;
+      animation: spin 0.9s linear infinite;
+    }
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+    .installing-sub {
+      font-size: 12px;
+      color: #94A3B8;
+      margin-top: -6px;
+    }
+
+    /* ---------- Language selector ---------- */
+    .lang-selector {
+      position: relative;
+      display: inline-block;
+      margin-top: 20px;
+    }
+    .lang-selector-btn {
+      background: rgba(255,255,255,0.12);
+      color: #fff;
+      border: 1px solid rgba(255,255,255,0.18);
+      padding: 6px 12px;
+      border-radius: 20px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      backdrop-filter: blur(6px);
+    }
+    .lang-selector-btn:active { transform: scale(0.97); }
+    .lang-selector-btn svg { width: 12px; height: 12px; opacity: 0.7; }
+    .lang-selector-dropdown {
+      display: none;
+      position: absolute;
+      bottom: calc(100% + 6px);
+      left: 50%;
+      transform: translateX(-50%);
+      background: #fff;
+      border-radius: 12px;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.25);
+      overflow: hidden;
+      min-width: 140px;
+      z-index: 90;
+    }
+    .lang-selector.open .lang-selector-dropdown { display: block; }
+    .lang-selector-option {
+      display: block;
+      width: 100%;
+      text-align: start;
+      padding: 10px 14px;
+      background: transparent;
+      border: none;
+      font-size: 13px;
+      font-weight: 500;
+      color: #1E293B;
+      cursor: pointer;
+      font-family: inherit;
+    }
+    .lang-selector-option:hover { background: #F1F5F9; }
+    .lang-selector-option.active { background: #DBEAFE; color: #1E3A5F; font-weight: 700; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="logos">
+      <div class="logo">
+        <img src="/icons/Icon-192.png" data-i18n-attr="alt:logo_alt_pushka" alt="Pushka">
+      </div>
+      <div class="logo">
+        <img src="/get/jabad_campus_logo.png?v=3" data-i18n-attr="alt:logo_alt_jabad" alt="Jabad en Campus">
+      </div>
+    </div>
+    <h1 data-i18n="hero_title">Jabad en Campus</h1>
+    <p class="subtitle" data-i18n-html="hero_subtitle">Tu alcancía de tzedaká digital.<br>Descárgala en tu celular.</p>
+
+    <div class="webview-warning" id="webview-warning" data-dismiss="warning">
+      <button class="webview-warning-close" type="button" data-i18n-attr="aria-label:webview_close_aria" aria-label="Cerrar" data-dismiss="warning">&times;</button>
+      <strong data-i18n="webview_warning_title">Abre este link en tu navegador</strong>
+      <span data-i18n="webview_warning_body">Estás viendo esto dentro de WhatsApp. Para instalar la app, abre este link en Safari (iPhone) o Chrome (Android).</span>
+      <br>
+      <button class="webview-copy-btn" type="button" id="webview-copy-btn">
+        <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M16 1H4a2 2 0 00-2 2v14h2V3h12V1zm3 4H8a2 2 0 00-2 2v14a2 2 0 002 2h11a2 2 0 002-2V7a2 2 0 00-2-2zm0 16H8V7h11v14z"/></svg>
+        <span data-i18n="webview_copy_link_btn">Copiar link</span>
+      </button>
+    </div>
+
+    <a href="/" id="btn-ios" class="btn btn-primary">
+      <svg viewBox="0 0 24 24" fill="currentColor"><path d="M17.5 12.5c0-2.1 1.7-3.1 1.8-3.2-1-1.4-2.5-1.6-3-1.6-1.3-.1-2.5.8-3.2.8-.6 0-1.7-.7-2.8-.7-1.4 0-2.8.8-3.5 2.1-1.5 2.6-.4 6.4 1.1 8.5.7 1 1.5 2.2 2.6 2.1 1-.1 1.5-.7 2.7-.7 1.3 0 1.7.7 2.8.7 1.2 0 1.9-1 2.7-2 .8-1.1 1.1-2.2 1.1-2.3 0 0-2.3-1-2.3-3.7zM15.4 5.8c.5-.6 1-1.6.8-2.5-.8 0-1.9.6-2.4 1.1-.5.6-.9 1.5-.8 2.4.9 0 1.8-.4 2.4-1z"/></svg>
+      <span id="btn-ios-label" data-i18n="btn_install_ios">Instalar en iPhone</span>
+    </a>
+    <a href="/" id="btn-android" class="btn">
+      <svg viewBox="0 0 24 24" fill="currentColor"><path d="M17.523 15.34c-.573 0-1.04-.467-1.04-1.04s.467-1.04 1.04-1.04 1.04.467 1.04 1.04-.467 1.04-1.04 1.04zm-11.046 0c-.573 0-1.04-.467-1.04-1.04s.467-1.04 1.04-1.04 1.04.467 1.04 1.04-.467 1.04-1.04 1.04zM17.897 9.316l2.077-3.594a.435.435 0 00-.755-.435l-2.1 3.638C15.505 8.14 13.803 7.784 12 7.784s-3.505.356-5.12.941l-2.099-3.638a.435.435 0 00-.755.435l2.077 3.594C2.483 11.15.09 14.548 0 18.542h24c-.09-3.994-2.483-7.392-6.103-9.226z"/></svg>
+      <span id="btn-android-label" data-i18n="btn_install_android">Instalar en Android</span>
+    </a>
+
+    <div class="invite-code-wrap">
+      <div class="invite-code-label" data-i18n="invite_code_label">Cuando abras la app, ingresa este código:</div>
+      <div class="invite-code-block" id="invite-code" role="button" tabindex="0" data-i18n-attr="aria-label:invite_code_aria" aria-label="Copiar código JYM770">
+        <span dir="ltr" style="unicode-bidi:isolate">JYM770</span>
+        <span class="invite-code-copied" id="invite-code-copied" data-i18n="invite_code_copied_badge">¡Copiado!</span>
+      </div>
+    </div>
+
+    <div class="platform-hint" id="platform-hint"></div>
+
+    <div class="instructions" id="ios-instructions">
+      <h3 data-i18n="ios_instructions_title">Cómo instalar en iPhone:</h3>
+      <ol>
+        <li data-i18n="ios_instructions_step1">Tocá el botón "Instalar en iPhone" arriba</li>
+        <li data-i18n-html="ios_instructions_step2">En Safari, toca el ícono <b>Compartir</b> (cuadradito con flecha <span dir="ltr">↑</span>)</li>
+        <li data-i18n-html="ios_instructions_step3">Baja y toca <b>"Agregar a pantalla de inicio"</b></li>
+        <li data-i18n="ios_instructions_step4">Confirmá — el ícono queda en tu pantalla</li>
+        <li data-i18n="ios_instructions_step5">Tocá el ícono para abrir la app</li>
+      </ol>
+    </div>
+
+    <div class="instructions" id="android-instructions">
+      <h3 data-i18n="android_instructions_title">Cómo instalar en Android:</h3>
+      <ol>
+        <li data-i18n="android_instructions_step1">Tocá "Instalar en Android" arriba</li>
+        <li data-i18n-html="android_instructions_step2">Chrome te va a ofrecer <b>"Instalar app"</b> — aceptá</li>
+        <li data-i18n-html="android_instructions_step3">Si no aparece el prompt, toca el menú (<span dir="ltr">⋮</span>) → <b>"Instalar app"</b> o <b>"Agregar a pantalla de inicio"</b></li>
+        <li data-i18n="android_instructions_step4">Confirmá — el ícono queda en tu pantalla</li>
+      </ol>
+    </div>
+
+    <p class="footer" data-i18n="footer_text">Jabad en Campus · Ciudad de México</p>
+
+    <div class="lang-selector" id="lang-selector">
+      <button type="button" class="lang-selector-btn" id="lang-selector-btn" aria-haspopup="true" aria-expanded="false">
+        <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2a10 10 0 100 20 10 10 0 000-20zm7.94 9h-2.98a15.36 15.36 0 00-1.36-5.36A8.03 8.03 0 0119.94 11zm-7.94-7c1.34 1.78 2.34 3.94 2.87 5.36 0 0-1.87.64-2.87.64s-2.87-.64-2.87-.64C9.66 7.94 10.66 5.78 12 4zm-3.6 1.64A15.36 15.36 0 007.04 11H4.06a8.03 8.03 0 014.34-5.36zM4.06 13h2.98c.15 1.88.63 3.7 1.36 5.36A8.03 8.03 0 014.06 13zM12 20c-1.34-1.78-2.34-3.94-2.87-5.36 0 0 1.87-.64 2.87-.64s2.87.64 2.87.64C14.34 16.06 13.34 18.22 12 20zm3.6-1.64A15.36 15.36 0 0016.96 13h2.98a8.03 8.03 0 01-4.34 5.36z"/></svg>
+        <span id="lang-selector-current">Español</span>
+        <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M7 10l5 5 5-5H7z"/></svg>
+      </button>
+      <div class="lang-selector-dropdown" role="menu">
+        <button type="button" class="lang-selector-option" data-lang="es" role="menuitem">Español</button>
+        <button type="button" class="lang-selector-option" data-lang="en" role="menuitem">English</button>
+        <button type="button" class="lang-selector-option" data-lang="fr" role="menuitem">Français</button>
+        <button type="button" class="lang-selector-option" data-lang="he" role="menuitem" lang="he">עברית</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== INSTALL MODALS ==================== -->
+
+  <!-- iOS visual install guide — shown after tapping "Instalar en iPhone".
+       iOS Safari does NOT expose a programmatic install API, so all we can
+       do is walk the user through the Share → Add to Home Screen flow with
+       clear visual anchors. -->
+  <div class="install-modal-backdrop" id="ios-install-modal" role="dialog" aria-modal="true">
+    <div class="install-modal">
+      <h3 data-i18n="ios_modal_title">Instalá Jabad en Campus</h3>
+      <p data-i18n="ios_modal_subtitle">Solo 3 pasos. Después la app queda como un ícono en tu pantalla.</p>
+
+      <div class="install-step">
+        <div class="install-step-num">1</div>
+        <div class="install-step-icon">
+          <svg class="share-icon" viewBox="0 0 24 24" fill="none" stroke="#2563EB" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M4 12v8a2 2 0 002 2h12a2 2 0 002-2v-8"/>
+            <polyline points="16 6 12 2 8 6"/>
+            <line x1="12" y1="2" x2="12" y2="15"/>
+          </svg>
+        </div>
+        <div class="install-step-text" data-i18n-html="ios_modal_step1">
+          Tocá el ícono <b>Compartir</b> (cuadradito con flecha <span dir="ltr">↑</span>) abajo en Safari.
+        </div>
+      </div>
+
+      <div class="install-step">
+        <div class="install-step-num">2</div>
+        <div class="install-step-icon">➕</div>
+        <div class="install-step-text" data-i18n-html="ios_modal_step2">
+          Desliza y toca <b>"Agregar a pantalla de inicio"</b>.
+        </div>
+      </div>
+
+      <div class="install-step">
+        <div class="install-step-num">3</div>
+        <div class="install-step-icon">✅</div>
+        <div class="install-step-text" data-i18n-html="ios_modal_step3">
+          Tocá <b>"Agregar"</b>. Listo — el ícono queda en tu pantalla.
+        </div>
+      </div>
+
+      <button class="install-modal-btn" type="button" data-close-modal="ios-install-modal" data-i18n="ios_modal_btn_ok">
+        Entendido
+      </button>
+    </div>
+  </div>
+
+  <!-- Android fallback modal — shown when beforeinstallprompt event NOT
+       available (older Chrome, in-app browser, or user already dismissed
+       the browser's install banner). Title/body/steps are i18n keys that
+       vary by browser detection (Chrome/Samsung/Firefox/Opera) — see the
+       BROWSER_FALLBACKS map in JS. -->
+  <div class="install-modal-backdrop" id="android-fallback-modal" role="dialog" aria-modal="true">
+    <div class="install-modal">
+      <h3 id="android-fallback-title" data-i18n="android_fallback_title">Instalá Jabad en Campus</h3>
+      <p id="android-fallback-subtitle" data-i18n="android_fallback_subtitle">Tu Chrome no ofreció el prompt automático. Es 1 tap desde el menú:</p>
+
+      <div class="install-step">
+        <div class="install-step-num">1</div>
+        <div class="install-step-icon"><span dir="ltr">⋮</span></div>
+        <div class="install-step-text" id="android-fallback-step1" data-i18n="android_fallback_step1">
+          Tocá el menú (⋮) arriba a la derecha en Chrome.
+        </div>
+      </div>
+
+      <div class="install-step">
+        <div class="install-step-num">2</div>
+        <div class="install-step-icon">📱</div>
+        <div class="install-step-text" id="android-fallback-step2" data-i18n-html="android_fallback_step2">
+          Tocá <b>"Instalar app"</b> o <b>"Agregar a pantalla de inicio"</b>.
+        </div>
+      </div>
+
+      <div class="install-step">
+        <div class="install-step-num">3</div>
+        <div class="install-step-icon">✅</div>
+        <div class="install-step-text" id="android-fallback-step3" data-i18n="android_fallback_step3">
+          Confirmá — el ícono queda en tu pantalla.
+        </div>
+      </div>
+
+      <button class="install-modal-btn" type="button" data-close-modal="android-fallback-modal" data-i18n="android_fallback_btn_ok">
+        Entendido
+      </button>
+    </div>
+  </div>
+
+  <!-- Installing progress modal — appears the moment the user confirms
+       "Install" in Chrome's native dialog. Held for a MIN of 2s so the
+       transition to success doesn't flash when Chrome installs in <1s
+       on fast devices, but yields immediately once actual `appinstalled`
+       fires (whichever is later). Fallback timeout at 8s so the modal
+       never gets stuck if `appinstalled` somehow doesn't fire. -->
+  <div class="install-modal-backdrop" id="install-installing-modal" role="dialog" aria-modal="true">
+    <div class="install-modal">
+      <div class="installing-spinner" aria-hidden="true"></div>
+      <h3 data-i18n="installing_title">Instalando tu app...</h3>
+      <p class="installing-sub" data-i18n="installing_sub">Se está agregando a tu pantalla</p>
+    </div>
+  </div>
+
+  <!-- Success modal — fires after the installing modal has shown for
+       min 2s AND `appinstalled` confirmed (or the 8s fallback). CTA
+       primary is "Abrir app" which navigates to /. -->
+  <div class="install-modal-backdrop" id="install-success-modal" role="dialog" aria-modal="true">
+    <div class="install-modal">
+      <div class="success-check">✓</div>
+      <h3 data-i18n="success_title">¡Listo! Ya está instalada</h3>
+      <p data-i18n-html="success_body">Se agregó a tu pantalla de inicio.<br>Ábrela desde el ícono y disfruta.</p>
+      <button class="install-modal-btn" type="button" data-close-modal="install-success-modal" data-i18n="success_btn_close">
+        Entendido
+      </button>
+    </div>
+  </div>
+
+  <script>
+    // ==================== I18N ====================
+    // 4 languages: es (default), en, fr, he (RTL). All user-visible strings
+    // live here. Elements with data-i18n="key" have their textContent replaced;
+    // data-i18n-html="key" preserves inline <b>/<span dir="ltr"> tags in the
+    // translation source; data-i18n-attr="attrName:key" sets an attribute
+    // (used for alt, aria-label, meta content).
+    //
+    // JYM770 stays literal in EVERY language (it's a code). Symbols like ↑, ⋮
+    // are wrapped inline with <span dir="ltr"> so they render correctly in
+    // Hebrew RTL context.
+    const I18N = {
+      es: {
+        meta_title: 'Jabad en Campus — Descargar app',
+        meta_description: 'Descargá Jabad en Campus en tu celular. Android e iPhone.',
+        logo_alt_pushka: 'Pushka',
+        logo_alt_jabad: 'Jabad en Campus',
+        hero_title: 'Jabad en Campus',
+        hero_subtitle: 'Tu alcancía de tzedaká digital.<br>Descárgala en tu celular.',
+        webview_close_aria: 'Cerrar',
+        webview_warning_title: 'Abre este link en tu navegador',
+        webview_warning_body: 'Estás viendo esto dentro de WhatsApp. Para instalar la app, abre este link en Safari (iPhone) o Chrome (Android).',
+        webview_copy_link_btn: 'Copiar link',
+        btn_install_ios: 'Instalar en iPhone',
+        btn_install_android: 'Instalar en Android',
+        invite_code_label: 'Cuando abras la app, ingresa este código:',
+        invite_code_aria: 'Copiar código JYM770',
+        invite_code_copied_badge: '¡Copiado!',
+        ios_instructions_title: 'Cómo instalar en iPhone:',
+        ios_instructions_step1: 'Tocá el botón "Instalar en iPhone" arriba',
+        ios_instructions_step2: 'En Safari, toca el ícono <b>Compartir</b> (cuadradito con flecha <span dir="ltr">↑</span>)',
+        ios_instructions_step3: 'Baja y toca <b>"Agregar a pantalla de inicio"</b>',
+        ios_instructions_step4: 'Confirmá — el ícono queda en tu pantalla',
+        ios_instructions_step5: 'Tocá el ícono para abrir la app',
+        android_instructions_title: 'Cómo instalar en Android:',
+        android_instructions_step1: 'Tocá "Instalar en Android" arriba',
+        android_instructions_step2: 'Chrome te va a ofrecer <b>"Instalar app"</b> — aceptá',
+        android_instructions_step3: 'Si no aparece el prompt, toca el menú (<span dir="ltr">⋮</span>) → <b>"Instalar app"</b> o <b>"Agregar a pantalla de inicio"</b>',
+        android_instructions_step4: 'Confirmá — el ícono queda en tu pantalla',
+        footer_text: 'Jabad en Campus · Ciudad de México',
+        ios_modal_title: 'Instalá Jabad en Campus',
+        ios_modal_subtitle: 'Solo 3 pasos. Después la app queda como un ícono en tu pantalla.',
+        ios_modal_step1: 'Tocá el ícono <b>Compartir</b> (cuadradito con flecha <span dir="ltr">↑</span>) abajo en Safari.',
+        ios_modal_step2: 'Desliza y toca <b>"Agregar a pantalla de inicio"</b>.',
+        ios_modal_step3: 'Tocá <b>"Agregar"</b>. Listo — el ícono queda en tu pantalla.',
+        ios_modal_btn_ok: 'Entendido',
+        android_fallback_title: 'Instalá Jabad en Campus',
+        android_fallback_subtitle: 'Tu Chrome no ofreció el prompt automático. Es 1 tap desde el menú:',
+        android_fallback_step1: 'Tocá el menú (<span dir="ltr">⋮</span>) arriba a la derecha en Chrome.',
+        android_fallback_step2: 'Tocá <b>"Instalar app"</b> o <b>"Agregar a pantalla de inicio"</b>.',
+        android_fallback_step3: 'Confirmá — el ícono queda en tu pantalla.',
+        android_fallback_btn_ok: 'Entendido',
+        installing_title: 'Instalando tu app...',
+        installing_sub: 'Se está agregando a tu pantalla',
+        success_title: '¡Listo! Ya está instalada',
+        success_body: 'Se agregó a tu pantalla de inicio.<br>Ábrela desde el ícono y disfruta.',
+        success_btn_close: 'Entendido',
+        platform_hint_ios: 'Detectamos iPhone — toca el botón blanco',
+        platform_hint_android: 'Detectamos Android — toca el botón blanco',
+        btn_open_app: 'Abrir la app',
+        hint_already_installed: 'Ya tienes la app instalada — toca el ícono en tu pantalla de inicio para abrirla',
+        webview_link_copied_alert_ios: 'Copiamos el link.\n\nAhora abre Safari y pégalo ahí para poder instalar la app.',
+        webview_link_copied_alert_android: 'Copiamos el link.\n\nAhora abre Chrome y pégalo ahí para poder instalar la app.',
+        // Browser-specific fallback copy (used by android-fallback-modal when
+        // beforeinstallprompt is missing). Falls back to android_fallback_* if
+        // browser-specific key isn't present.
+        fb_samsung_subtitle: 'En Samsung Internet: toca el menú (<span dir="ltr">≡</span>) abajo → "Agregar página a" → "Pantalla de inicio".',
+        fb_firefox_android_subtitle: 'En Firefox: toca el menú (<span dir="ltr">⋮</span>) → "Instalar" o "Agregar a la pantalla de inicio".',
+        fb_opera_android_subtitle: 'En Opera: toca el menú Opera abajo → "Agregar a" → "Pantalla de inicio".',
+        fb_firefox_desktop_subtitle: 'Firefox no permite instalar apps web. Abre este link en Chrome, Edge o Safari.',
+        fb_unsupported_subtitle: 'Tu navegador no permite instalación automática. Abre este link en Chrome (Android) o Safari (iPhone).',
+      },
+      en: {
+        meta_title: 'Chabad on Campus — Download the app',
+        meta_description: 'Download Chabad on Campus on your phone. Android and iPhone.',
+        logo_alt_pushka: 'Pushka',
+        logo_alt_jabad: 'Chabad on Campus',
+        hero_title: 'Chabad on Campus',
+        hero_subtitle: 'Your digital tzedakah pushka.<br>Download it on your phone.',
+        webview_close_aria: 'Close',
+        webview_warning_title: 'Open this link in your browser',
+        webview_warning_body: 'You\'re viewing this inside WhatsApp. To install the app, open this link in Safari (iPhone) or Chrome (Android).',
+        webview_copy_link_btn: 'Copy link',
+        btn_install_ios: 'Install on iPhone',
+        btn_install_android: 'Install on Android',
+        invite_code_label: 'When you open the app, enter this code:',
+        invite_code_aria: 'Copy code JYM770',
+        invite_code_copied_badge: 'Copied!',
+        ios_instructions_title: 'How to install on iPhone:',
+        ios_instructions_step1: 'Tap the "Install on iPhone" button above',
+        ios_instructions_step2: 'In Safari, tap the <b>Share</b> icon (square with an up arrow <span dir="ltr">↑</span>)',
+        ios_instructions_step3: 'Scroll down and tap <b>"Add to Home Screen"</b>',
+        ios_instructions_step4: 'Confirm — the icon stays on your screen',
+        ios_instructions_step5: 'Tap the icon to open the app',
+        android_instructions_title: 'How to install on Android:',
+        android_instructions_step1: 'Tap "Install on Android" above',
+        android_instructions_step2: 'Chrome will offer to install the app — accept it',
+        android_instructions_step3: 'If the prompt doesn\'t appear, tap the menu (<span dir="ltr">⋮</span>) → <b>"Install app"</b> or <b>"Add to Home screen"</b>',
+        android_instructions_step4: 'Confirm — the icon stays on your screen',
+        footer_text: 'Chabad on Campus · Mexico City',
+        ios_modal_title: 'Install Chabad on Campus',
+        ios_modal_subtitle: 'Just 3 steps. After that the app stays as an icon on your screen.',
+        ios_modal_step1: 'Tap the <b>Share</b> icon (square with an up arrow <span dir="ltr">↑</span>) at the bottom of Safari.',
+        ios_modal_step2: 'Scroll down and tap <b>"Add to Home Screen"</b>.',
+        ios_modal_step3: 'Tap <b>"Add"</b>. Done — the icon stays on your screen.',
+        ios_modal_btn_ok: 'Got it',
+        android_fallback_title: 'Install Chabad on Campus',
+        android_fallback_subtitle: 'Your Chrome didn\'t show the automatic prompt. It\'s 1 tap from the menu:',
+        android_fallback_step1: 'Tap the menu (<span dir="ltr">⋮</span>) at the top right in Chrome.',
+        android_fallback_step2: 'Tap <b>"Install app"</b> or <b>"Add to Home screen"</b>.',
+        android_fallback_step3: 'Confirm — the icon stays on your screen.',
+        android_fallback_btn_ok: 'Got it',
+        installing_title: 'Installing your app...',
+        installing_sub: 'It\'s being added to your screen',
+        success_title: 'All set! It\'s installed',
+        success_body: 'Added to your home screen.<br>Open it from the icon and enjoy.',
+        success_btn_close: 'Got it',
+        platform_hint_ios: 'iPhone detected — tap the white button',
+        platform_hint_android: 'Android detected — tap the white button',
+        btn_open_app: 'Open the app',
+        hint_already_installed: 'You already have the app installed — tap the icon on your home screen to open it',
+        webview_link_copied_alert_ios: 'We copied the link.\n\nNow open Safari and paste it there to install the app.',
+        webview_link_copied_alert_android: 'We copied the link.\n\nNow open Chrome and paste it there to install the app.',
+        fb_samsung_subtitle: 'In Samsung Internet: tap the menu (<span dir="ltr">≡</span>) at the bottom → "Add page to" → "Home screen".',
+        fb_firefox_android_subtitle: 'In Firefox: tap the menu (<span dir="ltr">⋮</span>) → "Install" or "Add to Home screen".',
+        fb_opera_android_subtitle: 'In Opera: tap the Opera menu at the bottom → "Add to" → "Home screen".',
+        fb_firefox_desktop_subtitle: 'Firefox doesn\'t allow installing web apps. Open this link in Chrome, Edge or Safari.',
+        fb_unsupported_subtitle: 'Your browser doesn\'t allow automatic install. Open this link in Chrome (Android) or Safari (iPhone).',
+      },
+      fr: {
+        meta_title: 'Jabad en Campus — Télécharger l\'app',
+        meta_description: 'Télécharge Jabad en Campus sur ton téléphone. Android et iPhone.',
+        logo_alt_pushka: 'Pushka',
+        logo_alt_jabad: 'Jabad en Campus',
+        hero_title: 'Jabad en Campus',
+        hero_subtitle: 'Ta pushka de tsédaka numérique.<br>Télécharge-la sur ton téléphone.',
+        webview_close_aria: 'Fermer',
+        webview_warning_title: 'Ouvre ce lien dans ton navigateur',
+        webview_warning_body: 'Tu vois ceci dans WhatsApp. Pour installer l\'app, ouvre ce lien dans Safari (iPhone) ou Chrome (Android).',
+        webview_copy_link_btn: 'Copier le lien',
+        btn_install_ios: 'Installer sur iPhone',
+        btn_install_android: 'Installer sur Android',
+        invite_code_label: 'Quand tu ouvres l\'app, saisis ce code :',
+        invite_code_aria: 'Copier le code JYM770',
+        invite_code_copied_badge: 'Copié !',
+        ios_instructions_title: 'Comment installer sur iPhone :',
+        ios_instructions_step1: 'Touche le bouton "Installer sur iPhone" ci-dessus',
+        ios_instructions_step2: 'Dans Safari, touche l\'icône <b>Partager</b> (carré avec flèche <span dir="ltr">↑</span>)',
+        ios_instructions_step3: 'Fais défiler et touche <b>"Sur l\'écran d\'accueil"</b>',
+        ios_instructions_step4: 'Confirme — l\'icône reste sur ton écran',
+        ios_instructions_step5: 'Touche l\'icône pour ouvrir l\'app',
+        android_instructions_title: 'Comment installer sur Android :',
+        android_instructions_step1: 'Touche "Installer sur Android" ci-dessus',
+        android_instructions_step2: 'Chrome va te proposer <b>"Installer l\'application"</b> — accepte',
+        android_instructions_step3: 'Si le prompt n\'apparaît pas, touche le menu (<span dir="ltr">⋮</span>) → <b>"Installer l\'application"</b> ou <b>"Ajouter à l\'écran d\'accueil"</b>',
+        android_instructions_step4: 'Confirme — l\'icône reste sur ton écran',
+        footer_text: 'Jabad en Campus · Mexico',
+        ios_modal_title: 'Installe Jabad en Campus',
+        ios_modal_subtitle: 'Seulement 3 étapes. Ensuite l\'app reste comme une icône sur ton écran.',
+        ios_modal_step1: 'Touche l\'icône <b>Partager</b> (carré avec flèche <span dir="ltr">↑</span>) en bas dans Safari.',
+        ios_modal_step2: 'Fais défiler et touche <b>"Sur l\'écran d\'accueil"</b>.',
+        ios_modal_step3: 'Touche <b>"Ajouter"</b>. C\'est bon — l\'icône reste sur ton écran.',
+        ios_modal_btn_ok: 'Compris',
+        android_fallback_title: 'Installe Jabad en Campus',
+        android_fallback_subtitle: 'Ton Chrome n\'a pas proposé le prompt automatique. C\'est 1 tap depuis le menu :',
+        android_fallback_step1: 'Touche le menu (<span dir="ltr">⋮</span>) en haut à droite dans Chrome.',
+        android_fallback_step2: 'Touche <b>"Installer l\'application"</b> ou <b>"Ajouter à l\'écran d\'accueil"</b>.',
+        android_fallback_step3: 'Confirme — l\'icône reste sur ton écran.',
+        android_fallback_btn_ok: 'Compris',
+        installing_title: 'Installation de ton app...',
+        installing_sub: 'Elle s\'ajoute à ton écran',
+        success_title: 'C\'est bon ! Elle est installée',
+        success_body: 'Ajoutée à ton écran d\'accueil.<br>Ouvre-la depuis l\'icône et profite.',
+        success_btn_close: 'Compris',
+        platform_hint_ios: 'On a détecté iPhone — touche le bouton blanc',
+        platform_hint_android: 'On a détecté Android — touche le bouton blanc',
+        btn_open_app: 'Ouvrir l\'app',
+        hint_already_installed: 'Tu as déjà l\'app installée — touche l\'icône sur ton écran d\'accueil pour l\'ouvrir',
+        webview_link_copied_alert_ios: 'Lien copié.\n\nMaintenant ouvre Safari et colle-le là pour pouvoir installer l\'app.',
+        webview_link_copied_alert_android: 'Lien copié.\n\nMaintenant ouvre Chrome et colle-le là pour pouvoir installer l\'app.',
+        fb_samsung_subtitle: 'Dans Samsung Internet : touche le menu (<span dir="ltr">≡</span>) en bas → "Ajouter la page à" → "Écran d\'accueil".',
+        fb_firefox_android_subtitle: 'Dans Firefox : touche le menu (<span dir="ltr">⋮</span>) → "Installer" ou "Ajouter à l\'écran d\'accueil".',
+        fb_opera_android_subtitle: 'Dans Opera : touche le menu Opera en bas → "Ajouter à" → "Écran d\'accueil".',
+        fb_firefox_desktop_subtitle: 'Firefox ne permet pas d\'installer des apps web. Ouvre ce lien dans Chrome, Edge ou Safari.',
+        fb_unsupported_subtitle: 'Ton navigateur ne permet pas l\'installation automatique. Ouvre ce lien dans Chrome (Android) ou Safari (iPhone).',
+      },
+      he: {
+        meta_title: 'חב״ד בקמפוס — הורדת האפליקציה',
+        meta_description: 'הורד את חב״ד בקמפוס לנייד שלך. אנדרואיד ואייפון.',
+        logo_alt_pushka: 'פושקה',
+        logo_alt_jabad: 'חב״ד בקמפוס',
+        hero_title: 'חב״ד בקמפוס',
+        hero_subtitle: 'פושקת הצדקה הדיגיטלית שלך.<br>הורד אותה לנייד שלך.',
+        webview_close_aria: 'סגור',
+        webview_warning_title: 'פתח את הקישור הזה בדפדפן שלך',
+        webview_warning_body: 'אתה רואה את זה בתוך <span dir="ltr">WhatsApp</span>. כדי להתקין את האפליקציה, פתח את הקישור הזה ב<span dir="ltr">Safari</span> (אייפון) או ב<span dir="ltr">Chrome</span> (אנדרואיד).',
+        webview_copy_link_btn: 'העתק קישור',
+        btn_install_ios: 'התקן באייפון',
+        btn_install_android: 'התקן באנדרואיד',
+        invite_code_label: 'כשתפתח את האפליקציה, הזן את הקוד הזה:',
+        invite_code_aria: 'העתק את הקוד',
+        invite_code_copied_badge: 'הועתק!',
+        ios_instructions_title: 'איך להתקין באייפון:',
+        ios_instructions_step1: 'לחץ על הכפתור "התקן באייפון" למעלה',
+        ios_instructions_step2: 'ב<span dir="ltr">Safari</span>, לחץ על סמל השיתוף (ריבוע עם חץ <span dir="ltr">↑</span>)',
+        ios_instructions_step3: 'גלול ולחץ על <b>"הוסף למסך הבית"</b>',
+        ios_instructions_step4: 'אשר — הסמל יופיע על המסך שלך',
+        ios_instructions_step5: 'לחץ על הסמל כדי לפתוח את האפליקציה',
+        android_instructions_title: 'איך להתקין באנדרואיד:',
+        android_instructions_step1: 'לחץ על "התקן באנדרואיד" למעלה',
+        android_instructions_step2: '<span dir="ltr">Chrome</span> יציע לך <b>"התקן אפליקציה"</b> — אשר',
+        android_instructions_step3: 'אם ההצעה לא מופיעה, לחץ על התפריט (<span dir="ltr">⋮</span>) → <b>"התקן אפליקציה"</b> או <b>"הוסף למסך הבית"</b>',
+        android_instructions_step4: 'אשר — הסמל יופיע על המסך שלך',
+        footer_text: 'חב״ד בקמפוס · מקסיקו סיטי',
+        ios_modal_title: 'התקן את חב״ד בקמפוס',
+        ios_modal_subtitle: 'רק 3 שלבים. אחרי זה האפליקציה נשארת כסמל על המסך שלך.',
+        ios_modal_step1: 'לחץ על סמל <b>השיתוף</b> (ריבוע עם חץ <span dir="ltr">↑</span>) למטה ב<span dir="ltr">Safari</span>.',
+        ios_modal_step2: 'גלול ולחץ על <b>"הוסף למסך הבית"</b>.',
+        ios_modal_step3: 'לחץ על <b>"הוסף"</b>. זהו — הסמל נשאר על המסך שלך.',
+        ios_modal_btn_ok: 'הבנתי',
+        android_fallback_title: 'התקן את חב״ד בקמפוס',
+        android_fallback_subtitle: 'ה<span dir="ltr">Chrome</span> שלך לא הציע את ההתקנה האוטומטית. זה לחיצה אחת מהתפריט:',
+        android_fallback_step1: 'לחץ על התפריט (<span dir="ltr">⋮</span>) למעלה מימין ב<span dir="ltr">Chrome</span>.',
+        android_fallback_step2: 'לחץ על <b>"התקן אפליקציה"</b> או <b>"הוסף למסך הבית"</b>.',
+        android_fallback_step3: 'אשר — הסמל נשאר על המסך שלך.',
+        android_fallback_btn_ok: 'הבנתי',
+        installing_title: 'מתקין את האפליקציה שלך...',
+        installing_sub: 'מתווסף למסך הבית שלך',
+        success_title: 'מוכן! היא הותקנה',
+        success_body: 'נוספה למסך הבית שלך.<br>פתח אותה מהסמל ותהנה.',
+        success_btn_close: 'הבנתי',
+        platform_hint_ios: 'זיהינו אייפון — לחץ על הכפתור הלבן',
+        platform_hint_android: 'זיהינו אנדרואיד — לחץ על הכפתור הלבן',
+        btn_open_app: 'פתח את האפליקציה',
+        hint_already_installed: 'האפליקציה כבר מותקנת אצלך — לחץ על הסמל במסך הבית כדי לפתוח אותה',
+        webview_link_copied_alert_ios: 'העתקנו את הקישור.\n\nעכשיו פתח את Safari והדבק אותו שם כדי להתקין את האפליקציה.',
+        webview_link_copied_alert_android: 'העתקנו את הקישור.\n\nעכשיו פתח את Chrome והדבק אותו שם כדי להתקין את האפליקציה.',
+        fb_samsung_subtitle: 'ב<span dir="ltr">Samsung Internet</span>: לחץ על התפריט (<span dir="ltr">≡</span>) למטה → "הוסף עמוד ל" → "מסך הבית".',
+        fb_firefox_android_subtitle: 'ב<span dir="ltr">Firefox</span>: לחץ על התפריט (<span dir="ltr">⋮</span>) → "התקן" או "הוסף למסך הבית".',
+        fb_opera_android_subtitle: 'ב<span dir="ltr">Opera</span>: לחץ על התפריט של Opera למטה → "הוסף ל" → "מסך הבית".',
+        fb_firefox_desktop_subtitle: '<span dir="ltr">Firefox</span> לא מאפשר להתקין אפליקציות אינטרנט. פתח את הקישור הזה ב<span dir="ltr">Chrome</span>, <span dir="ltr">Edge</span> או <span dir="ltr">Safari</span>.',
+        fb_unsupported_subtitle: 'הדפדפן שלך לא מאפשר התקנה אוטומטית. פתח את הקישור הזה ב<span dir="ltr">Chrome</span> (אנדרואיד) או ב<span dir="ltr">Safari</span> (אייפון).',
+      },
+    };
+
+    const LANG_META = {
+      es: { native: 'Español', dir: 'ltr' },
+      en: { native: 'English', dir: 'ltr' },
+      fr: { native: 'Français', dir: 'ltr' },
+      he: { native: 'עברית', dir: 'rtl' },
+    };
+
+    // Detect language: URL param > localStorage pref > navigator.language > es.
+    function detectLang() {
+      const urlLang = new URLSearchParams(window.location.search).get('lang');
+      if (urlLang && I18N[urlLang]) return urlLang;
+      try {
+        const stored = localStorage.getItem('pushka_landing_lang');
+        if (stored && I18N[stored]) return stored;
+      } catch (e) { /* private mode — no-op */ }
+      const nav = (navigator.language || 'es').toLowerCase();
+      const prefix = nav.split('-')[0];
+      if (I18N[prefix]) return prefix;
+      return 'es';
+    }
+
+    let currentLang = 'es';
+
+    function t(key) {
+      const bundle = I18N[currentLang] || I18N.es;
+      if (bundle[key] != null) return bundle[key];
+      // Fallback to Spanish, then to the key itself so missing strings are
+      // visible during dev rather than silently blank.
+      if (I18N.es[key] != null) return I18N.es[key];
+      return key;
+    }
+
+    function applyLang(lang) {
+      currentLang = (I18N[lang]) ? lang : 'es';
+      const meta = LANG_META[currentLang];
+      document.documentElement.setAttribute('lang', currentLang);
+      document.documentElement.setAttribute('dir', meta.dir);
+      try { localStorage.setItem('pushka_landing_lang', currentLang); } catch (e) {}
+
+      // Elements with data-i18n → textContent (safe from XSS)
+      document.querySelectorAll('[data-i18n]').forEach(function (el) {
+        el.textContent = t(el.getAttribute('data-i18n'));
+      });
+
+      // Elements with data-i18n-html → innerHTML (only for keys with
+      // trusted inline tags like <b>, <br>, <span dir>). Source is our own
+      // I18N bundle — never user input.
+      document.querySelectorAll('[data-i18n-html]').forEach(function (el) {
+        el.innerHTML = t(el.getAttribute('data-i18n-html'));
+      });
+
+      // Elements with data-i18n-attr="attrName:key" → set the attribute
+      document.querySelectorAll('[data-i18n-attr]').forEach(function (el) {
+        const spec = el.getAttribute('data-i18n-attr');
+        const [attr, key] = spec.split(':');
+        if (attr && key) el.setAttribute(attr, t(key));
+      });
+
+      // Update the language-selector button text + active option marker
+      const currentLabel = document.getElementById('lang-selector-current');
+      if (currentLabel) currentLabel.textContent = meta.native;
+      document.querySelectorAll('.lang-selector-option').forEach(function (btn) {
+        btn.classList.toggle('active', btn.getAttribute('data-lang') === currentLang);
+      });
+    }
+
+    // Apply detected language BEFORE the main IIFE runs so all text is
+    // localized on first paint (no visible flash of Spanish for EN users).
+    applyLang(detectLang());
+
+    // ==================== BROWSER MATRIX ====================
+    // Returns { id, method, fallbackKey } for the current browser.
+    //   method: 'auto'    → beforeinstallprompt (Chrome/Edge/Samsung modern)
+    //           'ios'     → visual Share → Add to Home Screen guide (Safari)
+    //           'manual'  → open android-fallback-modal with browser-specific
+    //                       fallbackKey substituting android_fallback_subtitle
+    //           'inapp'   → in-app WebView, no install possible → warn + copy
+    //   fallbackKey: i18n key for the fallback modal subtitle (or null)
+    //
+    // Order matters — Edge on Android is UA-compatible with Chrome, so we
+    // check EdgA first; same for Samsung / Firefox / Opera / DuckDuckGo before
+    // falling through to the generic Chrome detection. Brave uses navigator.brave
+    // feature-detect (its UA is indistinguishable from Chrome).
+    function detectBrowser(uaRaw) {
+      const ua = uaRaw || '';
+      const isAndroid = /Android/.test(ua);
+      const isIOSDevice = /iPhone|iPad|iPod/.test(ua);
+      const isDesktop = !isAndroid && !isIOSDevice;
+
+      // In-app browsers — no install possible.
+      // Fixed the "Line" regex bug (had leading space) and expanded the set.
+      if (/WhatsApp|FBAN|FBAV|Instagram|MicroMessenger|Line\/|Twitter|TikTok|musical_ly|Bytedance|Snapchat|Pinterest|LinkedInApp/i.test(ua)) {
+        return { id: 'inapp', method: 'inapp', fallbackKey: null };
+      }
+      // Generic Android WebView marker
+      if (isAndroid && /; wv\)/.test(ua)) {
+        return { id: 'inapp', method: 'inapp', fallbackKey: null };
+      }
+
+      // Android browsers
+      if (isAndroid) {
+        if (/EdgA\//.test(ua)) return { id: 'edge_android', method: 'auto', fallbackKey: null };
+        if (/SamsungBrowser\//.test(ua)) return { id: 'samsung', method: 'manual', fallbackKey: 'fb_samsung_subtitle' };
+        if (/Firefox\//.test(ua) || /FxiOS/.test(ua)) return { id: 'firefox_android', method: 'manual', fallbackKey: 'fb_firefox_android_subtitle' };
+        if (/OPR\//.test(ua) || /Opera Mini/.test(ua)) return { id: 'opera_android', method: 'manual', fallbackKey: 'fb_opera_android_subtitle' };
+        if (/DuckDuckGo\//.test(ua)) return { id: 'duckduckgo_android', method: 'manual', fallbackKey: 'fb_unsupported_subtitle' };
+        if (/Vivaldi\//.test(ua)) return { id: 'vivaldi_android', method: 'manual', fallbackKey: 'fb_unsupported_subtitle' };
+        // Fall-through: assume Chrome (or Chrome-clone with install support)
+        return { id: 'chrome_android', method: 'auto', fallbackKey: null };
+      }
+
+      // iOS — all browsers use WKWebView; only Safari supports Add-to-Home.
+      // Chrome/Edge/Firefox iOS all route to the ios-install-modal (which
+      // instructs Safari specifically because that's the only install path).
+      if (isIOSDevice) {
+        // If the user is in Chrome iOS / Edge iOS / Firefox iOS, the visual
+        // guide is still Safari-based (they need to reopen in Safari).
+        // Method 'ios' shows the ios-install-modal regardless.
+        return { id: 'safari_ios', method: 'ios', fallbackKey: null };
+      }
+
+      // Desktop
+      if (isDesktop) {
+        if (/Edg\//.test(ua)) return { id: 'edge_desktop', method: 'auto', fallbackKey: null };
+        if (/Firefox\//.test(ua)) return { id: 'firefox_desktop', method: 'manual', fallbackKey: 'fb_firefox_desktop_subtitle' };
+        if (/OPR\//.test(ua)) return { id: 'opera_desktop', method: 'auto', fallbackKey: null };
+        // Safari macOS (has Safari, not Chrome/Edge/Firefox)
+        if (/Safari\//.test(ua) && !/Chrome\//.test(ua)) return { id: 'safari_macos', method: 'ios', fallbackKey: null };
+        // Chrome desktop (fall-through)
+        return { id: 'chrome_desktop', method: 'auto', fallbackKey: null };
+      }
+
+      // Unknown — best-effort: show generic fallback
+      return { id: 'unknown', method: 'manual', fallbackKey: 'fb_unsupported_subtitle' };
+    }
+
+    // ==================== MAIN ====================
+    (function() {
+      const uaRaw = navigator.userAgent || '';
+      const isIOS = /iphone|ipad|ipod/i.test(uaRaw);
+      const isAndroid = /android/i.test(uaRaw);
+      const btnIOS = document.getElementById('btn-ios');
+      const btnAndroid = document.getElementById('btn-android');
+      const hint = document.getElementById('platform-hint');
+
+      const browser = detectBrowser(uaRaw);
+      const inAppBrowser = browser.method === 'inapp';
+
+      // Platform hint text — nudges the user to the correct button.
+      if (isIOS) {
+        hint.textContent = t('platform_hint_ios');
+      } else if (isAndroid) {
+        hint.textContent = t('platform_hint_android');
+      }
+
+      // ==================== INSTALL MODAL PLUMBING ====================
+      function openModal(id) {
+        const m = document.getElementById(id);
+        if (m) m.classList.add('active');
+      }
+      function closeModal(id) {
+        const m = document.getElementById(id);
+        if (m) m.classList.remove('active');
+      }
+
+      // Bind [data-close-modal="id"] buttons to close their modal.
+      document.querySelectorAll('[data-close-modal]').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          closeModal(btn.getAttribute('data-close-modal'));
+        });
+      });
+
+      // Success-modal used to have an "Open app" button that navigated to
+      // '/', but on both Chrome Android and iOS Safari that just loads the
+      // PWA URL in the browser tab — it does NOT launch the installed
+      // standalone PWA (no cross-platform way to do that from JS). The
+      // button was misleading: users tapped it and thought they were in
+      // the app but they were still in the browser. Removed entirely;
+      // the modal now just tells them to tap the home-screen icon.
+
+      // ==================== BEFOREINSTALLPROMPT ====================
+      let deferredInstallPrompt = null;
+      window.addEventListener('beforeinstallprompt', function (e) {
+        e.preventDefault();
+        deferredInstallPrompt = e;
+      });
+
+      // ==================== INSTALL-IN-PROGRESS ====================
+      let installStartTime = 0;
+      let installFallbackTimer = null;
+      let installInProgress = false;
+
+      function finishInstallFlow() {
+        if (!installInProgress) return;
+        installInProgress = false;
+        if (installFallbackTimer) {
+          clearTimeout(installFallbackTimer);
+          installFallbackTimer = null;
+        }
+        const elapsed = Date.now() - installStartTime;
+        const MIN_SPINNER_MS = 5000;
+        const remaining = Math.max(0, MIN_SPINNER_MS - elapsed);
+        setTimeout(function () {
+          closeModal('install-installing-modal');
+          openModal('install-success-modal');
+        }, remaining);
+      }
+
+      // Persist a "PWA installed" flag on this origin so the landing shows
+      // "Abrir la app" on return visits. 30-day rolling TTL — refreshed
+      // whenever the PWA cold-starts (see web/index.html).
+      function markSeenFlag() {
+        try {
+          if (window.localStorage) {
+            window.localStorage.setItem('pushka_pwa_seen', String(Date.now()));
+          }
+        } catch (e) { /* private mode */ }
+      }
+
+      window.addEventListener('appinstalled', function () {
+        deferredInstallPrompt = null;
+        markSeenFlag();
+        if (installInProgress) {
+          finishInstallFlow();
+        } else {
+          openModal('install-success-modal');
+        }
+      });
+
+      // ==================== INSTALLED-DETECTION ====================
+      const isStandalone =
+        (window.matchMedia && (
+          window.matchMedia('(display-mode: standalone)').matches ||
+          window.matchMedia('(display-mode: minimal-ui)').matches ||
+          window.matchMedia('(display-mode: fullscreen)').matches
+        )) ||
+        window.navigator.standalone === true;
+
+      let alreadyDetectedInstalled = false;
+      const PWA_SEEN_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+
+      function readSeenFlagFresh() {
+        try {
+          const raw = window.localStorage && window.localStorage.getItem('pushka_pwa_seen');
+          const ts = raw ? parseInt(raw, 10) : 0;
+          return ts > 0 && (Date.now() - ts) < PWA_SEEN_TTL_MS;
+        } catch (e) {
+          return false;
+        }
+      }
+
+      async function detectPwaInstalledAsync() {
+        if ('getInstalledRelatedApps' in navigator) {
+          try {
+            const apps = await Promise.race([
+              navigator.getInstalledRelatedApps(),
+              new Promise(function (_, reject) {
+                setTimeout(function () { reject(new Error('timeout')); }, 1500);
+              }),
+            ]);
+            if (Array.isArray(apps) && apps.some(function (a) { return a.platform === 'webapp'; })) {
+              return true;
+            }
+          } catch (e) { /* not supported / timed out */ }
+        }
+        return readSeenFlagFresh();
+      }
+
+      function flipToOpenApp() {
+        if (alreadyDetectedInstalled) return;
+        alreadyDetectedInstalled = true;
+        const openText = t('btn_open_app');
+        const iosLabel = document.getElementById('btn-ios-label');
+        const androidLabel = document.getElementById('btn-android-label');
+        if (iosLabel) iosLabel.textContent = openText;
+        if (androidLabel) androidLabel.textContent = openText;
+        const iosInstr = document.getElementById('ios-instructions');
+        const andrInstr = document.getElementById('android-instructions');
+        if (iosInstr) iosInstr.style.display = 'none';
+        if (andrInstr) andrInstr.style.display = 'none';
+        if (hint) hint.textContent = t('hint_already_installed');
+      }
+
+      // ==================== BUTTON HANDLERS ====================
+      function handleAndroidInstall(e) {
+        e.preventDefault();
+        if (alreadyDetectedInstalled) {
+          window.location.href = '/';
+          return;
+        }
+        if (deferredInstallPrompt) {
+          deferredInstallPrompt.prompt();
+          deferredInstallPrompt.userChoice.then(function (choice) {
+            if (choice && choice.outcome === 'accepted') {
+              installStartTime = Date.now();
+              installInProgress = true;
+              openModal('install-installing-modal');
+              installFallbackTimer = setTimeout(function () {
+                if (installInProgress) finishInstallFlow();
+              }, 8000);
+            }
+            deferredInstallPrompt = null;
+          }).catch(function () { /* prompt already used */ });
+        } else {
+          // Fill the android-fallback-modal subtitle with a browser-specific
+          // key (Samsung/Firefox/Opera/etc) if the browser matrix identified
+          // one, otherwise stick with the generic android_fallback_subtitle.
+          const subtitleEl = document.getElementById('android-fallback-subtitle');
+          if (subtitleEl && browser.fallbackKey) {
+            subtitleEl.innerHTML = t(browser.fallbackKey);
+          }
+          openModal('android-fallback-modal');
+        }
+      }
+
+      function handleIOSInstall(e) {
+        e.preventDefault();
+        if (alreadyDetectedInstalled) {
+          window.location.href = '/';
+          return;
+        }
+        openModal('ios-install-modal');
+      }
+
+      // ==================== BUTTON WIRING ====================
+      if (isStandalone) {
+        markSeenFlag();
+        alreadyDetectedInstalled = true;
+        const openText = t('btn_open_app');
+        document.getElementById('btn-ios-label').textContent = openText;
+        document.getElementById('btn-android-label').textContent = openText;
+        btnIOS.addEventListener('click', function (e) {
+          e.preventDefault();
+          window.location.href = '/';
+        });
+        btnAndroid.addEventListener('click', function (e) {
+          e.preventDefault();
+          window.location.href = '/';
+        });
+      } else if (inAppBrowser) {
+        const warning = document.getElementById('webview-warning');
+        warning.classList.add('active');
+        const interceptInAppClick = function (e) {
+          e.preventDefault();
+          e.stopPropagation();
+          const url = window.location.href;
+          const finish = function () {
+            const msg = isIOS ? t('webview_link_copied_alert_ios') : t('webview_link_copied_alert_android');
+            alert(msg);
+          };
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(url).then(finish).catch(function () {
+              fallbackCopy(url, finish);
+            });
+          } else {
+            fallbackCopy(url, finish);
+          }
+        };
+        btnIOS.addEventListener('click', interceptInAppClick);
+        btnAndroid.addEventListener('click', interceptInAppClick);
+        btnIOS.style.opacity = '0.6';
+        btnAndroid.style.opacity = '0.6';
+      } else {
+        btnAndroid.addEventListener('click', handleAndroidInstall);
+        btnIOS.addEventListener('click', handleIOSInstall);
+
+        // Sync-fast optimistic detection → prevents flash of "Instalar"
+        if (readSeenFlagFresh()) {
+          flipToOpenApp();
+        }
+
+        detectPwaInstalledAsync().then(function (installed) {
+          if (installed) flipToOpenApp();
+        }).catch(function () { /* fine */ });
+
+        // Register the Flutter service worker on this landing page too, so
+        // Chrome accumulates installability signals from the first visit.
+        if ('serviceWorker' in navigator) {
+          window.addEventListener('load', function () {
+            navigator.serviceWorker.register('/flutter_service_worker.js', { scope: '/' })
+              .catch(function () { /* already registered */ });
+          });
+        }
+      }
+
+      // ==================== WEBVIEW WARNING DISMISS ====================
+      document.querySelectorAll('[data-dismiss="warning"]').forEach(function (el) {
+        if (el.id === 'webview-warning') return;
+        el.addEventListener('click', function (e) {
+          e.stopPropagation();
+          const w = document.getElementById('webview-warning');
+          if (w) w.classList.remove('active');
+        });
+      });
+
+      // ==================== COPY LINK (webview warning) ====================
+      const copyBtn = document.getElementById('webview-copy-btn');
+      if (copyBtn) {
+        copyBtn.addEventListener('click', function (e) {
+          e.stopPropagation();
+          const url = window.location.href;
+          const onDone = function () {
+            copyBtn.classList.add('copied');
+            const originalHTML = copyBtn.innerHTML;
+            copyBtn.textContent = t('webview_copied_btn_state') || t('invite_code_copied_badge');
+            setTimeout(function () {
+              copyBtn.classList.remove('copied');
+              copyBtn.innerHTML = originalHTML;
+            }, 1800);
+          };
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(url).then(onDone).catch(function () { fallbackCopy(url, onDone); });
+          } else {
+            fallbackCopy(url, onDone);
+          }
+        });
+      }
+
+      // ==================== COPY INVITE CODE ====================
+      const codeBlock = document.getElementById('invite-code');
+      const copiedBadge = document.getElementById('invite-code-copied');
+      if (codeBlock) {
+        const doCopyCode = function () {
+          const code = 'JYM770';
+          const showBadge = function () {
+            if (!copiedBadge) return;
+            copiedBadge.classList.add('show');
+            setTimeout(function () { copiedBadge.classList.remove('show'); }, 1500);
+          };
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(code).then(showBadge).catch(function () { fallbackCopy(code, showBadge); });
+          } else {
+            fallbackCopy(code, showBadge);
+          }
+        };
+        codeBlock.addEventListener('click', doCopyCode);
+        codeBlock.addEventListener('keydown', function (e) {
+          if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); doCopyCode(); }
+        });
+      }
+
+      function fallbackCopy(text, cb) {
+        try {
+          const ta = document.createElement('textarea');
+          ta.value = text;
+          ta.style.position = 'fixed';
+          ta.style.opacity = '0';
+          document.body.appendChild(ta);
+          ta.select();
+          document.execCommand('copy');
+          document.body.removeChild(ta);
+          if (cb) cb();
+        } catch (_) { /* no-op */ }
+      }
+
+      // ==================== LANGUAGE SELECTOR ====================
+      const langSelector = document.getElementById('lang-selector');
+      const langSelectorBtn = document.getElementById('lang-selector-btn');
+      if (langSelectorBtn && langSelector) {
+        langSelectorBtn.addEventListener('click', function (e) {
+          e.stopPropagation();
+          const isOpen = langSelector.classList.toggle('open');
+          langSelectorBtn.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
+        });
+        // Click outside to close.
+        document.addEventListener('click', function (e) {
+          if (!langSelector.contains(e.target)) {
+            langSelector.classList.remove('open');
+            langSelectorBtn.setAttribute('aria-expanded', 'false');
+          }
+        });
+        document.querySelectorAll('.lang-selector-option').forEach(function (btn) {
+          btn.addEventListener('click', function () {
+            const nextLang = btn.getAttribute('data-lang');
+            applyLang(nextLang);
+            // Update platform hint + dynamic strings that depend on state
+            if (alreadyDetectedInstalled) {
+              flipToOpenApp = function () {}; // noop, already flipped
+              const openText = t('btn_open_app');
+              const iosLabel = document.getElementById('btn-ios-label');
+              const androidLabel = document.getElementById('btn-android-label');
+              if (iosLabel) iosLabel.textContent = openText;
+              if (androidLabel) androidLabel.textContent = openText;
+              if (hint) hint.textContent = t('hint_already_installed');
+            } else if (isIOS) {
+              hint.textContent = t('platform_hint_ios');
+            } else if (isAndroid) {
+              hint.textContent = t('platform_hint_android');
+            }
+            // Update android-fallback-subtitle if a browser-specific key applies
+            const subtitleEl = document.getElementById('android-fallback-subtitle');
+            if (subtitleEl && browser.fallbackKey) {
+              subtitleEl.innerHTML = t(browser.fallbackKey);
+            }
+            langSelector.classList.remove('open');
+            langSelectorBtn.setAttribute('aria-expanded', 'false');
+          });
+        });
+      }
+    })();
+  </script>
+</body>
+</html>

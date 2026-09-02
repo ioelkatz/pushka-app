@@ -1,5 +1,6 @@
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:cloud_functions/cloud_functions.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -7,8 +8,10 @@ import 'package:go_router/go_router.dart';
 import '../../../app/router.dart';
 import '../../../app/theme/app_tokens.dart';
 import '../../../core/l10n/s.dart';
+import '../../users/presentation/user_profile_provider.dart';
 import '../data/tenant_repository.dart';
 import '../domain/tenant_config.dart';
+import 'tenant_switch_reset.dart';
 
 class JoinViaLinkScreen extends ConsumerStatefulWidget {
   const JoinViaLinkScreen({super.key, required this.slug});
@@ -50,24 +53,51 @@ class _JoinViaLinkScreenState extends ConsumerState<JoinViaLinkScreen> {
 
   Future<void> _join(TenantConfig config) async {
     final tr = S.of(context);
+    // Snapshot BEFORE the first await so we don't cross a BuildContext over
+    // an async gap. ProviderContainer is owned by the root ProviderScope and
+    // survives even if this widget disposes mid-flow.
+    final container = ProviderScope.containerOf(context);
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    final outgoingTenantId = container
+        .read(userProfileProvider)
+        .valueOrNull?['tenantId'] as String?;
     setState(() => _state = const _Joining());
+    // Round-9 regression fix (LOW #3): split join vs switch so a
+    // switchTenant failure after a successful joinTenant doesn't leave
+    // the user membership-in-limbo (joined but still pointing at the old
+    // active tenant, with no snackbar hint that switching failed).
+    final repo = ref.read(tenantRepositoryProvider);
     try {
-      final repo = ref.read(tenantRepositoryProvider);
       await repo.joinTenant(config.tenantId);
-      try {
-        await repo.switchTenant(config.tenantId);
-      } catch (_) {}
-      ref.invalidate(tenantConfigProvider);
-      ref.invalidate(tenantStateProvider);
-      ref.invalidate(userTenantSummariesProvider);
-      invalidateTenantCache();
-      if (!mounted) return;
-      context.go('/');
     } catch (_) {
       if (!mounted) return;
       setState(() => _state = _Preview(config));
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(tr.tenantJoinFailed)),
+      );
+      return;
+    }
+    try {
+      await repo.switchTenant(config.tenantId);
+      // Round-2 audit fix: shared reset — invalidates userProfile / history /
+      // transactions providers too so the History tab doesn't briefly show
+      // the previous tenant's rows after the redirect to "/".
+      await resetTenantScopedState(
+        container,
+        uid: uid,
+        outgoingTenantId: outgoingTenantId,
+      );
+      invalidateTenantCache();
+      if (!mounted) return;
+      context.go('/');
+    } catch (_) {
+      // Join succeeded, switch failed. Membership is persisted server-side
+      // so the user can activate it later from the account switcher —
+      // don't roll back the join, just tell them clearly and go home.
+      if (!mounted) return;
+      setState(() => _state = _Preview(config));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(tr.tenantJoinedSwitchFailed)),
       );
     }
   }

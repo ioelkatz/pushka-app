@@ -1,0 +1,23 @@
+[
+  {
+    "origin": [
+      "https://pushka-pwa.web.app",
+      "https://pushka-app-ioel.web.app",
+      "https://pushka-app-ioel-test.web.app",
+      "https://pushkapp.cc",
+      "https://www.pushkapp.cc",
+      "https://app.pushkapp.cc",
+      "http://localhost:*"
+    ],
+    "method": ["GET", "HEAD"],
+    "maxAgeSeconds": 3600,
+    "responseHeader": [
+      "Content-Type",
+      "Content-Length",
+      "Content-Encoding",
+      "Cache-Control",
+      "Content-Disposition",
+      "X-Goog-Meta-*"
+    ]
+  }
+]

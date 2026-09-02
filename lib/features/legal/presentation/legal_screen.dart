@@ -76,11 +76,15 @@ class _LegalScreenState extends ConsumerState<LegalScreen> {
       tenantContactEmail: tenantConfig?.contactEmail,
     );
 
+    // Round-6 audit HIGH fix: hardcoded Icons.arrow_back points left even
+    // in RTL (HE), suggesting "forward" to a Hebrew reader. Use the
+    // directional icon like the rest of the app AppBars do.
+    final isRtl = Directionality.of(context) == TextDirection.rtl;
     return Scaffold(
       appBar: AppBar(
         title: Text(tr.legalTitle),
         leading: IconButton(
-          icon: const Icon(Icons.arrow_back),
+          icon: Icon(isRtl ? Icons.arrow_forward : Icons.arrow_back),
           onPressed: () => Navigator.of(context).maybePop(),
           tooltip: MaterialLocalizations.of(context).backButtonTooltip,
         ),

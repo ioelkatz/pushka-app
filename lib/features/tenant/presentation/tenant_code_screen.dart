@@ -1,16 +1,49 @@
 import 'package:cloud_functions/cloud_functions.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../../app/router.dart';
 import '../../../app/theme/app_tokens.dart';
+import '../../../core/l10n/s.dart';
+import '../../users/presentation/user_profile_provider.dart';
 import '../data/tenant_repository.dart';
-// Join code: "770-JYM". 6 OTP boxes split [7][7][0]–[J][Y][M].
-// Dash is a fixed visual separator. One-tap flow: validate → auto-join.
+import 'tenant_switch_reset.dart';
+// Codigo de invitacion del primer tenant: "JYM-770".
+// 6 celdas OTP repartidas [J][Y][M]–[7][7][0]. El guion es un separador
+// visual fijo, no se escribe. Flujo de un toque: validar -> unirse.
+//
+// OJO: este comentario decia "770-JYM" con las celdas [7][7][0]-[J][Y][M], y
+// estaba al reves. _fullCode concatena las celdas EN ORDEN y pasa a
+// minusculas, y el slug del tenant es `jym770` (ver hostname_tenant_map.dart),
+// asi que hay que tipear J Y M 7 7 0. Con 770-JYM la CF responde "codigo no
+// encontrado".
 
 const _kRed = Color(0xFFf82c4a);
+
+/// Mail al que escribe el donante que perdió su código de invitación.
+///
+/// Es el del Rab (Jabad en Campus), no el del super_admin de la plataforma:
+/// quien reparte los códigos y conoce a los donantes es él.
+const _kSupportEmail = 'jymmexico@gmail.com';
+
+/// Cuanto se sube el caracter dentro de su celda OTP, como fraccion del
+/// fontSize. Se aplica DIRECTO con un Transform.translate, sin intermediarios.
+///
+/// Flutter centra la *line box* de la fuente (ascent + descent), no el glifo.
+/// El codigo de invitacion es solo mayusculas y digitos, que no tienen
+/// descendentes, asi que el hueco reservado bajo la linea base queda vacio y
+/// la letra se ve caida. Con el strut forzado a height 1.0 la caja mide
+/// exactamente fontSize: en Roboto la linea base queda a ~0.79em, dejando
+/// ~0.08em libres arriba contra ~0.21em abajo. Hay que subir la mitad de esa
+/// diferencia, ~0.065em, para que el centrado caiga sobre la banda del glifo.
+///
+/// Es el unico numero a tocar si el caracter queda alto o bajo: subirlo lo
+/// sube, bajarlo lo baja. A fontSize ~23 px, 0.01 equivale a ~0.23 px.
+const double _kGlyphLift = 0.07;
 
 class TenantCodeScreen extends ConsumerStatefulWidget {
   const TenantCodeScreen({super.key});
@@ -93,16 +126,32 @@ class _TenantCodeScreenState extends ConsumerState<TenantCodeScreen> {
       _loading = true;
       _error = null;
     });
+    // Snapshot container + uid + outgoing tenantId BEFORE the first await
+    // so we don't cross a BuildContext over async gaps. ProviderContainer is
+    // owned by the root ProviderScope and survives even if this widget
+    // disposes mid-flow. outgoingTenantId may be null on first onboarding.
+    final container = ProviderScope.containerOf(context);
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    final outgoingTenantId =
+        container.read(userProfileProvider).valueOrNull?['tenantId'] as String?;
     try {
       final repo = ref.read(tenantRepositoryProvider);
       final config = await repo.validateSlug(_fullCode);
       await repo.joinTenant(config.tenantId);
-      try {
-        await repo.switchTenant(config.tenantId);
-      } catch (_) {}
-      ref.invalidate(tenantConfigProvider);
-      ref.invalidate(tenantStateProvider);
-      ref.invalidate(userTenantSummariesProvider);
+      // Round-7 regression fix: switchTenant errors used to be swallowed
+      // silently — the flow would continue as if the switch succeeded
+      // (invalidating providers, redirecting home) while the user's
+      // active tenantId stayed at the old value. Now surface the failure
+      // so the user knows to retry.
+      await repo.switchTenant(config.tenantId);
+      // Round-2 audit fix: use the shared helper so this flow invalidates
+      // the same providers as account_switcher_sheet — otherwise the
+      // History tab briefly shows the old tenant's transactions.
+      await resetTenantScopedState(
+        container,
+        uid: uid,
+        outgoingTenantId: outgoingTenantId,
+      );
       invalidateTenantCache();
       if (mounted) {
         context.go('/');
@@ -111,17 +160,51 @@ class _TenantCodeScreenState extends ConsumerState<TenantCodeScreen> {
       if (mounted) {
         setState(() {
           _loading = false;
-          _error = _humanError(e);
+          _error = _humanError(e, S.of(context));
         });
       }
     } catch (_) {
       if (mounted) {
         setState(() {
           _loading = false;
-          _error = 'Error al unirse. Intentá de nuevo.';
+          _error = S.of(context).tenantCodeErrorGeneric;
         });
       }
     }
+  }
+
+  // Fallback para usuarios que perdieron el código: abre un mail al Rab, que
+  // es quien reparte los códigos de invitación y puede guiarlos. Antes iba a
+  // ioelkatz@gmail.com (super_admin), pero el donante no tiene por qué
+  // escribirle al desarrollador de la plataforma.
+  //
+  // Hardcoded a propósito: esta pantalla es pre-tenant-join, no hay tenantId
+  // todavía, así que no se puede leer `contactEmail` del TenantConfig. Cuando
+  // haya un segundo tenant esto necesita otra solución — el mail correcto
+  // depende de a qué organización quiere entrar el usuario, que es
+  // justamente lo que aún no sabemos.
+  Future<void> _contactSupport() async {
+    final tr = S.of(context);
+    final uri = Uri(
+      scheme: 'mailto',
+      path: _kSupportEmail,
+      queryParameters: {'subject': tr.tenantCodeMailSubject},
+    );
+    try {
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+    } catch (_) {
+      if (mounted) {
+        setState(() => _error = tr.tenantCodeMailOpenFailed);
+      }
+    }
+  }
+
+  // Escape hatch: user firmado pero sin código válido puede salir y volver.
+  // El router (authStateChanges listener) redirige a /login automáticamente.
+  Future<void> _signOut() async {
+    try {
+      await FirebaseAuth.instance.signOut();
+    } catch (_) {}
   }
 
   // Mensajes específicos por código de error. Antes el catch mostraba
@@ -130,181 +213,242 @@ class _TenantCodeScreenState extends ConsumerState<TenantCodeScreen> {
   // engañando al usuario ("el código está bien, ¿por qué dice eso?").
   // Idem `resource-exhausted` mostraba "Error al validar" sin pista de
   // que era rate limit.
-  String _humanError(FirebaseFunctionsException e) {
+  String _humanError(FirebaseFunctionsException e, S tr) {
     switch (e.code) {
       case 'not-found':
-        return 'Código no encontrado. Verificá que sea correcto.';
+        return tr.tenantCodeErrorNotFound;
       case 'resource-exhausted':
         final match = RegExp(r'(\d+)\s*segundos').firstMatch(e.message ?? '');
         if (match != null) {
           final secs = int.tryParse(match.group(1) ?? '') ?? 0;
           final mins = (secs / 60).ceil();
-          if (mins <= 1) return 'Demasiados intentos. Esperá 1 minuto.';
-          return 'Demasiados intentos. Esperá $mins minutos.';
+          if (mins <= 1) return tr.tenantCodeErrorRateLimitOne;
+          return tr.tenantCodeErrorRateLimitMins(mins);
         }
-        return 'Demasiados intentos. Esperá unos minutos.';
+        return tr.tenantCodeErrorRateLimitGeneric;
       case 'unauthenticated':
-        return 'Tu sesión expiró. Cerrá sesión y volvé a entrar.';
+        return tr.tenantCodeErrorSessionExpired;
       case 'failed-precondition':
-        return 'Esta organización no está disponible.';
+        return tr.tenantCodeErrorUnavailable;
       default:
-        return 'Error al unirse. Intentá de nuevo.';
+        return tr.tenantCodeErrorGeneric;
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    final tr = S.of(context);
+    // Esta pantalla es SIEMPRE clara, sin importar el tema del sistema.
+    //
+    // El Round-5 audit la hizo seguir el brillo del sistema, pero solo cambio
+    // el color de fondo: todos los textos de abajo estan hardcodeados en
+    // oscuro (0xFF1E293B titulo, 0xFF64748B subtitulo, 0xFF94A3B8 cerrar
+    // sesion) igual que las cajas OTP y la imagen del edificio. Resultado:
+    // un usuario con el celular en modo oscuro veia fondo #0F172A con texto
+    // #1E293B encima — ilegible. Reportado por el cliente en prod.
+    //
+    // Si algun dia se quiere soportar dark aca, no alcanza con tocar el
+    // Scaffold: hay que tematizar tambien los textos, los _OtpBox (fondo
+    // Colors.white fijo) y el asset del edificio.
     return Theme(
-      data: ThemeData.light(useMaterial3: true).copyWith(
+      data: ThemeData.light().copyWith(
         colorScheme: ColorScheme.fromSeed(
           seedColor: _kRed,
           brightness: Brightness.light,
         ),
       ),
-      child: Scaffold(
-        backgroundColor: Colors.white,
-        body: Stack(
-          children: [
-            // Building image: hidden when keyboard is open to avoid layout jump
-            if (MediaQuery.of(context).viewInsets.bottom == 0)
-              Align(
-                alignment: Alignment.bottomCenter,
-                child: Image.asset(
-                  'assets/images/jabad_campus_building.png',
-                  height: MediaQuery.of(context).size.height * 0.30,
-                  fit: BoxFit.fitHeight,
+      // Fondo claro forzado => la status bar necesita iconos oscuros, si no
+      // el usuario en modo oscuro los ve blancos sobre blanco.
+      child: AnnotatedRegion<SystemUiOverlayStyle>(
+        value: SystemUiOverlayStyle.dark.copyWith(
+          statusBarColor: Colors.transparent,
+          statusBarIconBrightness: Brightness.dark,
+          statusBarBrightness: Brightness.light,
+        ),
+        child: Scaffold(
+          backgroundColor: Colors.white,
+          body: Stack(
+            children: [
+              // Building image: hidden when keyboard is open to avoid layout jump
+              if (MediaQuery.of(context).viewInsets.bottom == 0)
+                Align(
+                  alignment: Alignment.bottomCenter,
+                  child: Image.asset(
+                    'assets/images/jabad_campus_building.png',
+                    height: MediaQuery.of(context).size.height * 0.30,
+                    fit: BoxFit.fitHeight,
+                  ),
                 ),
-              ),
-            // Main content
-            SafeArea(
-              child: Center(
-                child: SingleChildScrollView(
-                  padding:
-                      const EdgeInsets.fromLTRB(28, 34, 28, 24),
-                  child: LayoutBuilder(
-                    builder: (context, constraints) {
-                      final availableWidth = constraints.maxWidth;
-                      // Same formula as _OtpRow to compute box width
-                      final boxWidth =
-                          ((availableWidth - 5 * 8 - 44) / 6).clamp(36.0, 52.0);
-                      // Approximate OTP row visual width:
-                      // 6 boxes + 4 small gaps (×0.18) + 2 wide gaps (×0.3) + dash (~×0.45)
-                      final otpRowWidth = boxWidth * 7.62;
+              // Main content
+              SafeArea(
+                child: Center(
+                  child: SingleChildScrollView(
+                    padding: const EdgeInsets.fromLTRB(28, 34, 28, 24),
+                    child: LayoutBuilder(
+                      builder: (context, constraints) {
+                        final availableWidth = constraints.maxWidth;
+                        // Same formula as _OtpRow to compute box width
+                        final boxWidth = ((availableWidth - 5 * 8 - 44) / 6)
+                            .clamp(36.0, 52.0);
+                        // Approximate OTP row visual width:
+                        // 6 boxes + 4 small gaps (×0.18) + 2 wide gaps (×0.3) + dash (~×0.45)
+                        final otpRowWidth = boxWidth * 7.62;
 
-                      return Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          // BUG-063 fix: this screen is pre-tenant-join (no
-                          // tenantConfig available yet), so we show the
-                          // generic Pushka brand instead of hardcoding the
-                          // first launch tenant ("Jabad en Campus"). Any
-                          // donor of any future tenant lands here when
-                          // entering an invite code.
-                          const Text(
-                            'Pushka',
-                            style: TextStyle(
-                              fontSize: 26,
-                              fontWeight: FontWeight.w800,
-                              color: Color(0xFF1E293B),
-                              letterSpacing: -0.4,
+                        return Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            // BUG-063 fix: this screen is pre-tenant-join (no
+                            // tenantConfig available yet), so we show the
+                            // generic Pushka brand instead of hardcoding the
+                            // first launch tenant ("Jabad en Campus"). Any
+                            // donor of any future tenant lands here when
+                            // entering an invite code.
+                            const Text(
+                              'Pushka',
+                              style: TextStyle(
+                                fontSize: 26,
+                                fontWeight: FontWeight.w800,
+                                color: Color(0xFF1E293B),
+                                letterSpacing: -0.4,
+                              ),
                             ),
-                          ),
-                          const SizedBox(height: 20),
-                          Image.asset(
-                            'assets/images/logo.png',
-                            width: 90,
-                            height: 90,
-                            fit: BoxFit.contain,
-                          ),
-                          const SizedBox(height: 32),
-                          const Text(
-                            'Ingresá el código de invitación',
-                            style: TextStyle(
-                              fontSize: 15,
-                              fontWeight: FontWeight.w600,
-                              color: Color(0xFF1E293B),
+                            const SizedBox(height: 20),
+                            Image.asset(
+                              'assets/images/logo.png',
+                              width: 90,
+                              height: 90,
+                              fit: BoxFit.contain,
                             ),
-                          ),
-                          const SizedBox(height: 6),
-                          const Text(
-                            'Tu rab te lo compartió por mensaje.',
-                            textAlign: TextAlign.center,
-                            style: TextStyle(
-                              fontSize: 13,
-                              color: Color(0xFF64748B),
-                              height: 1.45,
-                            ),
-                          ),
-                          const SizedBox(height: 28),
-                          _OtpRow(
-                            controllers: _controllers,
-                            focusNodes: _focusNodes,
-                            onCharInput: _onCharInput,
-                            onPaste: _onPaste,
-                            hasError: _error != null,
-                            availableWidth: availableWidth,
-                          ),
-                          if (_error != null) ...[
-                            const SizedBox(height: 10),
+                            const SizedBox(height: 32),
                             Text(
-                              _error!,
+                              tr.tenantCodeTitle,
                               textAlign: TextAlign.center,
                               style: const TextStyle(
-                                fontSize: 13,
-                                color: _kRed,
+                                fontSize: 15,
+                                fontWeight: FontWeight.w600,
+                                color: Color(0xFF1E293B),
                               ),
                             ),
-                          ],
-                          const SizedBox(height: 24),
-                          // Button aligned to OTP row width
-                          SizedBox(
-                            width: otpRowWidth,
-                            height: 52,
-                            child: ElevatedButton(
-                              onPressed: (_loading || !_allFilled)
-                                  ? null
-                                  : _joinWithCode,
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: _kRed,
-                                foregroundColor: Colors.white,
-                                disabledBackgroundColor:
-                                    _kRed.withValues(alpha: 0.4),
-                                disabledForegroundColor: Colors.white70,
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(
-                                      AppTokens.radiusMd),
+                            // El subtitulo "Tu rab te lo compartio por mensaje"
+                            // se saco por pedido del cliente.
+                            const SizedBox(height: 28),
+                            _OtpRow(
+                              controllers: _controllers,
+                              focusNodes: _focusNodes,
+                              onCharInput: _onCharInput,
+                              onPaste: _onPaste,
+                              hasError: _error != null,
+                              availableWidth: availableWidth,
+                            ),
+                            if (_error != null) ...[
+                              const SizedBox(height: 10),
+                              Text(
+                                _error!,
+                                textAlign: TextAlign.center,
+                                style: const TextStyle(
+                                  fontSize: 13,
+                                  color: _kRed,
                                 ),
-                                elevation: 6,
-                                shadowColor: _kRed.withValues(alpha: 0.45),
                               ),
-                              child: _loading
-                                  ? const SizedBox(
-                                      width: 22,
-                                      height: 22,
-                                      child: CircularProgressIndicator(
-                                        strokeWidth: 2.5,
-                                        color: Colors.white,
-                                      ),
-                                    )
-                                  : const Text(
-                                      'Unirse',
-                                      style: TextStyle(
-                                        fontSize: 16,
-                                        fontWeight: FontWeight.w600,
-                                      ),
+                            ],
+                            const SizedBox(height: 24),
+                            // Button aligned to OTP row width
+                            SizedBox(
+                              width: otpRowWidth,
+                              height: 52,
+                              child: ElevatedButton(
+                                onPressed: (_loading || !_allFilled)
+                                    ? null
+                                    : _joinWithCode,
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: _kRed,
+                                  foregroundColor: Colors.white,
+                                  disabledBackgroundColor: _kRed.withValues(
+                                    alpha: 0.4,
+                                  ),
+                                  disabledForegroundColor: Colors.white70,
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(
+                                      AppTokens.radiusMd,
                                     ),
+                                  ),
+                                  elevation: 6,
+                                  shadowColor: _kRed.withValues(alpha: 0.45),
+                                ),
+                                child: _loading
+                                    ? const SizedBox(
+                                        width: 22,
+                                        height: 22,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2.5,
+                                          color: Colors.white,
+                                        ),
+                                      )
+                                    : Text(
+                                        tr.tenantCodeJoinButton,
+                                        style: const TextStyle(
+                                          fontSize: 16,
+                                          fontWeight: FontWeight.w600,
+                                        ),
+                                      ),
+                              ),
                             ),
-                          ),
-                          // Reserve space so building image doesn't overlap content
-                          const SizedBox(height: 220),
-                        ],
-                      );
-                    },
+                            const SizedBox(height: 18),
+                            // Fallback discreto: usuario que perdió el código
+                            // puede contactar soporte o cerrar sesión sin
+                            // quedar bloqueado en esta pantalla.
+                            TextButton(
+                              onPressed: _contactSupport,
+                              style: TextButton.styleFrom(
+                                foregroundColor: const Color(0xFF64748B),
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 12,
+                                  vertical: 6,
+                                ),
+                                minimumSize: Size.zero,
+                                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                              ),
+                              child: Text(
+                                tr.tenantCodeLostCode,
+                                textAlign: TextAlign.center,
+                                style: const TextStyle(
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(height: 2),
+                            TextButton(
+                              onPressed: _signOut,
+                              style: TextButton.styleFrom(
+                                foregroundColor: const Color(0xFF94A3B8),
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 12,
+                                  vertical: 6,
+                                ),
+                                minimumSize: Size.zero,
+                                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                              ),
+                              child: Text(
+                                tr.tenantCodeSignOut,
+                                textAlign: TextAlign.center,
+                                style: const TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w400,
+                                ),
+                              ),
+                            ),
+                            // Reserve space so building image doesn't overlap content
+                            const SizedBox(height: 220),
+                          ],
+                        );
+                      },
+                    ),
                   ),
                 ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
@@ -466,14 +610,15 @@ class _OtpBoxState extends State<_OtpBox> {
   Widget build(BuildContext context) {
     final filled = widget.controller.text.isNotEmpty;
     final focused = widget.focusNode.hasFocus;
+    final fontSize = widget.width * 0.44;
 
     final borderColor = widget.hasError
         ? _kRed
         : focused
-            ? _kRed
-            : filled
-                ? _kRed
-                : const Color(0xFFE2E8F0);
+        ? _kRed
+        : filled
+        ? _kRed
+        : const Color(0xFFE2E8F0);
 
     final borderWidth = focused ? 2.0 : 1.5;
 
@@ -481,17 +626,13 @@ class _OtpBoxState extends State<_OtpBox> {
       width: widget.width,
       height: widget.height,
       decoration: BoxDecoration(
-        color: filled ? _kRed.withValues(alpha: 0.06) : Colors.white,
+        // La celda queda SIEMPRE blanca y plana, vacia o llena. Antes el
+        // relleno rosado al 6% mas un boxShadow negro al 18% hacian que,
+        // apenas escribias, la casilla se viera gris y hundida. Lo unico
+        // que cambia al escribir es el borde (gris -> rojo) y la letra.
+        color: Colors.white,
         borderRadius: BorderRadius.circular(12),
         border: Border.all(color: borderColor, width: borderWidth),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.18),
-            blurRadius: 6,
-            spreadRadius: 0,
-            offset: const Offset(0, 3),
-          ),
-        ],
       ),
       child: KeyboardListener(
         focusNode: FocusNode(),
@@ -503,39 +644,78 @@ class _OtpBoxState extends State<_OtpBox> {
             widget.onCharInput(widget.index, '');
           }
         },
-        child: TextField(
-          controller: widget.controller,
-          focusNode: widget.focusNode,
-          textAlign: TextAlign.center,
-          maxLength: 1,
-          keyboardType: TextInputType.visiblePassword,
-          textCapitalization: TextCapitalization.characters,
-          autocorrect: false,
-          enableSuggestions: false,
-          inputFormatters: [
-            FilteringTextInputFormatter.allow(RegExp(r'[a-zA-Z0-9]')),
+        child: Stack(
+          alignment: Alignment.center,
+          children: [
+            // El caracter se pinta aparte del TextField y se posiciona a mano.
+            //
+            // Dejarselo al InputDecorator no funciono: centra la line box de
+            // la fuente, y el contentPadding con el que se intento compensar
+            // solo corre la mitad de lo que se le pasa, ademas de pasar por
+            // el layout interno del decorator. Pintando el glifo nosotros el
+            // desplazamiento es exacto y hay un solo numero que lo gobierna.
+            Transform.translate(
+              offset: Offset(0, -fontSize * _kGlyphLift),
+              child: Text(
+                widget.controller.text,
+                textAlign: TextAlign.center,
+                strutStyle: StrutStyle(
+                  fontSize: fontSize,
+                  height: 1.0,
+                  forceStrutHeight: true,
+                  leading: 0,
+                ),
+                style: TextStyle(
+                  fontSize: fontSize,
+                  height: 1.0,
+                  fontWeight: FontWeight.w700,
+                  color: const Color(0xFF1E293B),
+                ),
+              ),
+            ),
+            // El TextField real ocupa toda la celda: conserva el area tactil
+            // y todo el manejo de teclado, foco, backspace y pegado. Solo se
+            // le apaga lo visual (texto transparente y sin cursor), porque de
+            // eso se encarga el Text de arriba. El foco ya se comunica con el
+            // borde rojo de 2 px.
+            Positioned.fill(
+              child: TextField(
+                controller: widget.controller,
+                focusNode: widget.focusNode,
+                textAlign: TextAlign.center,
+                showCursor: false,
+                maxLength: 1,
+                keyboardType: TextInputType.visiblePassword,
+                textCapitalization: TextCapitalization.characters,
+                autocorrect: false,
+                enableSuggestions: false,
+                inputFormatters: [
+                  FilteringTextInputFormatter.allow(RegExp(r'[a-zA-Z0-9]')),
+                ],
+                style: TextStyle(
+                  fontSize: fontSize,
+                  fontWeight: FontWeight.w700,
+                  color: Colors.transparent,
+                ),
+                decoration: const InputDecoration(
+                  counterText: '',
+                  border: InputBorder.none,
+                  enabledBorder: InputBorder.none,
+                  focusedBorder: InputBorder.none,
+                  errorBorder: InputBorder.none,
+                  filled: false,
+                  contentPadding: EdgeInsets.zero,
+                ),
+                onChanged: (value) {
+                  if (value.length > 1) {
+                    widget.onPaste(value);
+                    return;
+                  }
+                  widget.onCharInput(widget.index, value);
+                },
+              ),
+            ),
           ],
-          style: TextStyle(
-            fontSize: widget.width * 0.44,
-            fontWeight: FontWeight.w700,
-            color: const Color(0xFF1E293B),
-          ),
-          decoration: const InputDecoration(
-            counterText: '',
-            border: InputBorder.none,
-            enabledBorder: InputBorder.none,
-            focusedBorder: InputBorder.none,
-            errorBorder: InputBorder.none,
-            filled: false,
-            contentPadding: EdgeInsets.zero,
-          ),
-          onChanged: (value) {
-            if (value.length > 1) {
-              widget.onPaste(value);
-              return;
-            }
-            widget.onCharInput(widget.index, value);
-          },
         ),
       ),
     );

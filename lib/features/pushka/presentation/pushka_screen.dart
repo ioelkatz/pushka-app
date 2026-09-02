@@ -1,4 +1,4 @@
-﻿import 'dart:async';
+import 'dart:async';
 import '../../../core/hive_cache.dart';
 import 'jewish_confetti.dart';
 import '../../../core/format_utils.dart';
@@ -9,12 +9,15 @@ import 'building_770_widget.dart';
 import 'bill_fall_animation.dart';
 import '../../../core/pushka_style_provider.dart';
 import '../../../core/l10n/s.dart';
+import '../../../core/network_status_provider.dart';
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_crashlytics/firebase_crashlytics.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../analytics/analytics_service.dart';
 import '../../auth/biometric_service.dart';
@@ -67,6 +70,12 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
   // window. Using DateTime.now() makes a system clock change (manual or NTP)
   // mis-classify a stale snapshot as recent (or vice versa).
   final Stopwatch _localWriteStopwatch = Stopwatch();
+  // Round-7 regression fix: tag the recent-write with its tenantId so a
+  // switch to a different tenant does NOT let the guard block the new
+  // tenant's first sync. Previously the un-scoped stopwatch would still
+  // report `recentWrite=true` up to 4s after donating in A, silently
+  // dropping the incoming pushkaAmount for B.
+  String? _localWriteTenantId;
   // Fingerprint of the relevant fields from the last tenantState snapshot
   // we synced to local state. Compared as a value so two snapshots with
   // the same numbers but different Map identity (Riverpod re-emits new map
@@ -74,7 +83,13 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
   // field touches) don't re-enqueue a useless post-frame callback. The
   // earlier `identical()` check missed those, scheduling work on every
   // tick even though nothing about pushka had actually changed.
+  //
+  // Round-7 regression fix (HIGH #1): also tag with the tenantId. If two
+  // tenants share the same fingerprint values (both freshly onboarded,
+  // both at defaults), the fingerprint match used to block the sync when
+  // switching between them.
   String? _lastSyncedTenantStateFingerprint;
+  String? _lastSyncedFingerprintTenantId;
   String? _lastLoadedCacheTenantId;
 
   // Reference to OUR callback so dispose can compare-and-clear instead of
@@ -100,7 +115,8 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
     // Show locally-cached amount immediately — no spinner on open
     final uid = ref.read(currentUserProvider)?.uid;
     if (uid == null) return;
-    final tenantId = ref.read(userProfileProvider).valueOrNull?['tenantId'] as String?;
+    final tenantId =
+        ref.read(userProfileProvider).valueOrNull?['tenantId'] as String?;
     if (tenantId == null || tenantId.isEmpty) return;
     _loadFromCacheFor(uid, tenantId);
   }
@@ -129,7 +145,14 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
       // otherwise we'd inherit the previous tenant's values until the
       // network catches up.
       pushkaAmount = cached ?? 0;
-      pushkaGoal = cachedGoal ?? 3600;
+      // Currency-aware fallback (was hardcoded 3600 which is way too high
+      // for USD/EUR — showed an unreachable "$3,600 goal" out of the box —
+      // and way too low for ARS/CLP/COP where 3600 barely covers a bus fare).
+      // Uses the same calibrated table as UserRepository.defaultGoalForCurrency
+      // (mirrored server-side in functions/index.js::defaultGoalForCurrency).
+      pushkaGoal =
+          cachedGoal ??
+          UserRepository.defaultGoalForCurrency(_currencyCodeFromProfile());
     });
   }
 
@@ -161,7 +184,8 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
   // surface in production Crashlytics with uid/tenantId context.
   void _reportError(Object error, StackTrace st, {required String op}) {
     final uid = ref.read(currentUserProvider)?.uid;
-    final tenantId = ref.read(userProfileProvider).valueOrNull?['tenantId'] as String?;
+    final tenantId =
+        ref.read(userProfileProvider).valueOrNull?['tenantId'] as String?;
     try {
       FirebaseCrashlytics.instance.recordError(
         error,
@@ -200,12 +224,14 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
       if (lastDay == today) return;
 
       DateTime prevWeekday = today.subtract(const Duration(days: 1));
-      while (prevWeekday.weekday == DateTime.saturday || prevWeekday.weekday == DateTime.sunday) {
+      while (prevWeekday.weekday == DateTime.saturday ||
+          prevWeekday.weekday == DateTime.sunday) {
         prevWeekday = prevWeekday.subtract(const Duration(days: 1));
       }
 
       if (lastDay == prevWeekday || lastDay.isAfter(prevWeekday)) {
-        final authoritative = (tenantState['streakCount'] as num?)?.toInt() ?? _streakCount;
+        final authoritative =
+            (tenantState['streakCount'] as num?)?.toInt() ?? _streakCount;
         _streakCount = (authoritative > 0 ? authoritative : 1) + 1;
       } else {
         _streakCount = 1;
@@ -216,21 +242,29 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
 
     if (mounted) setState(() {});
     try {
-      await ref.read(userRepositoryProvider).updateTenantState(
-        uid: user.uid,
-        tenantId: tenantId,
-        streakCount: _streakCount,
-        lastStreakDate: today,
-      );
+      await ref
+          .read(userRepositoryProvider)
+          .updateTenantState(
+            uid: user.uid,
+            tenantId: tenantId,
+            streakCount: _streakCount,
+            lastStreakDate: today,
+          );
     } catch (e, st) {
       _reportError(e, st, op: 'updateStreak');
     }
   }
-  Future<void> addAmount(double amount, {bool skipBillAnimation = false}) async {
+
+  Future<void> addAmount(
+    double amount, {
+    bool skipBillAnimation = false,
+  }) async {
     // Prevent adding to a full pushka (already reached goal).
     if (pushkaGoal > 0 && pushkaAmount >= pushkaGoal) return;
     // Clamp so we never exceed the goal.
-    final headroom = pushkaGoal > 0 ? (pushkaGoal - pushkaAmount) : double.infinity;
+    final headroom = pushkaGoal > 0
+        ? (pushkaGoal - pushkaAmount)
+        : double.infinity;
     final clamped = pushkaGoal > 0 ? amount.clamp(0.0, headroom) : amount;
     if (clamped <= 0) return;
 
@@ -243,17 +277,86 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
     } else if (!skipBillAnimation) {
       _launchFallingAnimation();
     }
+    // Round-8 audit CRITICAL fix: persist the DELTA via FieldValue.increment
+    // instead of writing the local absolute total. Two devices adding
+    // concurrently used to silently lose one of the increments because
+    // both wrote `base + delta` from the same base snapshot.
     try {
-      await _persistPushkaAmount();
+      await _persistPushkaDelta(clamped);
     } catch (_) {
-      // Persistence failure is non-critical: the local state is updated and
-      // Hive will be retried next time. Swallow to avoid unhandled exceptions.
+      // Persistence failure is non-critical: local state is updated and
+      // the next tenantState snapshot reconciles.
     }
     _updateStreak();
   }
-  
+
+  Future<void> _persistPushkaDelta(double delta) async {
+    final user = ref.read(currentUserProvider);
+    if (user == null) return;
+    final tenantId =
+        ref.read(userProfileProvider).valueOrNull?['tenantId'] as String?;
+    if (tenantId == null || tenantId.isEmpty) return;
+    _localWriteTenantId = tenantId;
+    _localWriteStopwatch
+      ..reset()
+      ..start();
+    await Future.wait([
+      ref
+          .read(userRepositoryProvider)
+          .incrementPushkaAmount(
+            uid: user.uid,
+            tenantId: tenantId,
+            delta: delta,
+          ),
+      HiveCache.instance.savePushkaAmount(user.uid, tenantId, pushkaAmount),
+    ]);
+  }
+
+  /// Reads the tenant's default PM from tenantState (Direct Charges model)
+  /// and returns a DefaultCardInfo the StripeService can use to render the
+  /// express-checkout confirmation sheet BEFORE opening the full PaymentSheet
+  /// picker. Returns null when the user has no default cached — pay() then
+  /// falls through to the picker directly.
+  DefaultCardInfo? _readDefaultCard() {
+    final ts = ref.read(tenantStateProvider).valueOrNull;
+    if (ts == null) return null;
+    final id = ts['stripeConnectDefaultPaymentMethodId'] as String?;
+    final brand = ts['stripeConnectDefaultPaymentMethodBrand'] as String?;
+    final last4 = ts['stripeConnectDefaultPaymentMethodLast4'] as String?;
+    if (id == null ||
+        id.isEmpty ||
+        brand == null ||
+        brand.isEmpty ||
+        last4 == null ||
+        last4.isEmpty) {
+      return null;
+    }
+    return DefaultCardInfo(id: id, brand: brand, last4: last4);
+  }
+
   Future<void> emptyPushka() async {
-    if (pushkaAmount <= 0 || _isProcessing) return;
+    if (_isProcessing) return;
+    // Warm empty-state hint instead of silent no-op: previously tapping
+    // "Vaciar Pushka" with amount=0 did nothing (early return), which looked
+    // broken. Show a friendly snackbar so the donor knows to add coins first.
+    if (pushkaAmount <= 0) {
+      if (!mounted) return;
+      final tr = S.of(context);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(tr.pushkaEmptyHint),
+          behavior: SnackBarBehavior.floating,
+          duration: const Duration(seconds: 3),
+        ),
+      );
+      return;
+    }
+    // Offline gate: payments require a live CF call. Bail with a friendly
+    // dialog instead of firing a callable that will fail with a scary
+    // network error. Firestore-cached data (pushka amount, history) keeps
+    // working while offline — only the checkout / auto-empty path is gated.
+    if (!await _ensureOnlineForPayment()) return;
+    if (!mounted) return;
     final tr = S.of(context);
     // Hold _isProcessing true for the ENTIRE flow including blocking dialogs.
     // Previously we set it false before showing the partial-payment / confirm
@@ -275,10 +378,16 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
       final currency = _currencyCodeFromProfile();
       final amountCents = amountToStripeUnits(amountToEmpty, currency);
       final minCents = _minAmountCentsForCurrency(currency);
+      final maxCents = _maxAmountCentsForCurrency(currency);
 
       if (amountCents < minCents) {
         if (!mounted) return;
         _showMinAmountDialog(currency, minCents, amountToEmpty);
+        return;
+      }
+      if (amountCents > maxCents) {
+        if (!mounted) return;
+        _showMaxAmountDialog(currency, maxCents, amountToEmpty);
         return;
       }
 
@@ -302,16 +411,28 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
       // succeeded and the webhook never fired, money was charged with no
       // txn record AND pushka shown as empty. The webhook is now the
       // single owner of this write.
-      final remaining = (pushkaAmount - amountToEmpty).clamp(0.0, double.infinity);
+      final remaining = (pushkaAmount - amountToEmpty).clamp(
+        0.0,
+        double.infinity,
+      );
 
+      // Pass the active tenantId so the pushka-empty lock release (on
+      // cancel/failure) scopes to the same tenant the CF locked — multi-
+      // tenant donors would otherwise release the wrong lock.
+      final activeTenantId =
+          ref.read(userProfileProvider).valueOrNull?['tenantId'] as String?;
       await StripeService.instance.pay(
         amountCents: amountCents,
         currency: currency,
         customerEmail: ref.read(currentUserProvider)?.email,
         purpose: 'pushka_empty',
-        merchantDisplayName: ref.read(tenantConfigProvider).valueOrNull?.appName ?? 'Pushka',
+        merchantDisplayName:
+            ref.read(tenantConfigProvider).valueOrNull?.appName ?? 'Pushka',
         donorMessage: details.message.isEmpty ? null : details.message,
         pushkaAmountAfter: remaining,
+        tenantId: activeTenantId,
+        sheetContext: context,
+        defaultCard: _readDefaultCard(),
       );
 
       await AnalyticsService.instance.logPushkaEmpty(amountToEmpty);
@@ -324,20 +445,34 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
       FeedbackService.instance.vibratePushkaEmpty();
       FeedbackService.instance.playSuccess();
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(
-          remaining > 0
-              ? tr.paymentProcessedRemaining(formatMoney(remaining))
-              : tr.pushkaEmptied,
-        )),
+        SnackBar(
+          content: Text(
+            remaining > 0
+                ? tr.paymentProcessedRemaining(
+                    formatCurrencyAmount(remaining, _currencyCodeFromProfile()),
+                  )
+                : tr.pushkaEmptied,
+          ),
+        ),
       );
     } catch (error, st) {
       // User-canceled flows aren't bugs — don't pollute Crashlytics with them.
-      final isUserCancel = error is StripeServiceException && error.code == 'canceled';
+      final isUserCancel =
+          error is StripeServiceException && error.code == 'canceled';
       if (!isUserCancel) {
         _reportError(error, st, op: 'emptyPushka');
       }
       if (!mounted) return;
-      _showError(_donationErrorMessage(error, tr));
+      final reason = _donationErrorMessage(error, tr);
+      if (isUserCancel) {
+        // Cancels are not payment failures — keep the lightweight SnackBar
+        // so users who dismissed the sheet don't get a scary alert.
+        _showError(reason);
+      } else {
+        _showDonationErrorDialog(reason, () {
+          if (mounted) emptyPushka();
+        });
+      }
     } finally {
       if (mounted) setState(() => _isProcessing = false);
     }
@@ -345,265 +480,449 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
 
   Future<void> _donateNow() async {
     if (_isProcessing) return;
-    final tr = S.of(context);
-    // Prefer the tenant's custom donationReasons; fall back to the locale's
-    // default list only when the tenant hasn't configured one. Pre-fix this
-    // ignored the tenant config entirely, so admin-web changes to the
-    // designation list never showed up on the donor screen.
-    final tenantReasons = ref.read(tenantConfigProvider).valueOrNull?.donationReasons ?? const <String>[];
-    final reasons = tenantReasons.isNotEmpty ? tenantReasons : tr.defaultDonationReasons;
-    // The amount controller must be disposed when the sheet closes —
-    // keeping it alive in function scope without dispose() is a memory
-    // leak the Flutter framework will warn about in debug. try/finally below.
-    final amountCtrl = TextEditingController();
-    final messageCtrl = TextEditingController();
-    Map<String, dynamic>? result;
-    String? error;
-    bool monthly = false;
-    bool dedicateOn = false;
-    // Inline picker state — defaults to the tenant's first reason so the
-    // donor isn't forced to opt in to a destination. They can still choose
-    // "Sin designación" from the picker if they want to opt out.
-    String? selectedReason = reasons.isNotEmpty ? reasons.first : null;
-    try {
-    result = await showKeyboardSafeSheet<Map<String, dynamic>>(
-      context: context,
-      builder: (ctx, setDialogState) => Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-                      Center(child: Container(width: 36, height: 4, margin: const EdgeInsets.only(bottom: 12), decoration: BoxDecoration(color: Colors.grey.shade300, borderRadius: BorderRadius.circular(2)))),
-                      Center(
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            const _SecureShieldIcon(size: 26),
-                            const SizedBox(width: 8),
-                            Text(tr.donateNowTitle, style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w700)),
-                          ],
-                        ),
-                      ),
-                      const SizedBox(height: 16),
-                      Row(children: [
-                        Expanded(
-                          child: _FrequencyChip(
-                            label: tr.donateOnce,
-                            selected: !monthly,
-                            onTap: () => setDialogState(() => monthly = false),
-                          ),
-                        ),
-                        const SizedBox(width: 10),
-                        Expanded(
-                          child: _FrequencyChip(
-                            label: tr.donateMonthly,
-                            selected: monthly,
-                            icon: Icons.favorite,
-                            iconColor: const Color(0xFFCC2936),
-                            onTap: () => setDialogState(() => monthly = true),
-                          ),
-                        ),
-                      ]),
-                      const SizedBox(height: 14),
-                      TextField(
-                        controller: amountCtrl,
-                        keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                        decoration: InputDecoration(
-                          labelText: tr.amount,
-                          floatingLabelStyle: TextStyle(color: Theme.of(ctx).colorScheme.onSurfaceVariant),
-                          hintText: '0',
-                          prefixText: '${_shortSymbol(_currencyCodeFromProfile())} ',
-                          suffixText: _currencyCodeFromProfile().toUpperCase(),
-                          errorText: error,
-                          filled: true,
-                          fillColor: Theme.of(ctx).colorScheme.surface,
-                          enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide(color: Theme.of(ctx).colorScheme.outline)),
-                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide(color: Theme.of(ctx).colorScheme.outline)),
-                          focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: AppTokens.primaryBlue, width: 1.6)),
-                        ),
-                        onChanged: (_) { if (error != null) setDialogState(() => error = null); },
-                      ),
-                      // Inline designación picker — only when the tenant has
-                      // reasons configured. Tap-to-open row that mirrors the
-                      // amount TextField styling (OutlineInputBorder, labelText).
-                      // Opens a bottom sheet styled like the History filter so
-                      // donor picks a destino without losing the donation flow.
-                      if (reasons.isNotEmpty) ...[
-                        const SizedBox(height: 14),
-                        InkWell(
-                          borderRadius: BorderRadius.circular(12),
-                          onTap: () async {
-                            final picked = await showDonationReasonPicker(
-                              context: ctx,
-                              reasons: reasons,
-                              currentSelection: selectedReason,
-                            );
-                            if (picked is DonationReasonSelected) {
-                              setDialogState(() => selectedReason = picked.reason);
-                            }
-                          },
-                          child: InputDecorator(
-                            decoration: InputDecoration(
-                              labelText: tr.donationReasonTitle,
-                              filled: true,
-                              fillColor: Theme.of(ctx).colorScheme.surface,
-                              enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide(color: Theme.of(ctx).colorScheme.outline)),
-                              border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide(color: Theme.of(ctx).colorScheme.outline)),
-                            ),
-                            child: Row(children: [
-                              Expanded(
-                                child: Text(
-                                  selectedReason ?? tr.donationReasonNone,
-                                  style: TextStyle(
-                                    fontSize: 16,
-                                    color: selectedReason == null
-                                        ? Theme.of(ctx).colorScheme.onSurfaceVariant
-                                        : Theme.of(ctx).colorScheme.onSurface,
-                                  ),
-                                ),
-                              ),
-                              Icon(Icons.keyboard_arrow_down_rounded, color: Theme.of(ctx).colorScheme.onSurfaceVariant),
-                            ]),
-                          ),
-                        ),
-                      ],
-                      const SizedBox(height: 12),
-                      InkWell(
-                        borderRadius: BorderRadius.circular(8),
-                        onTap: () => setDialogState(() => dedicateOn = !dedicateOn),
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(vertical: 4),
-                          child: Row(children: [
-                            SizedBox(
-                              width: 22,
-                              height: 22,
-                              child: Checkbox(
-                                value: dedicateOn,
-                                onChanged: (v) => setDialogState(() => dedicateOn = v ?? false),
-                                activeColor: AppTokens.primaryBlue,
-                                materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                                visualDensity: VisualDensity.compact,
-                              ),
-                            ),
-                            const SizedBox(width: 10),
-                            Text(
-                              tr.dedicateDonation,
-                              style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w500),
-                            ),
-                          ]),
-                        ),
-                      ),
-                      if (dedicateOn) ...[
-                        const SizedBox(height: 10),
-                        TextField(
-                          controller: messageCtrl,
-                          textCapitalization: TextCapitalization.sentences,
-                          maxLength: 240,
-                          decoration: InputDecoration(
-                            labelText: tr.donationMessageLabel,
-                            floatingLabelStyle: TextStyle(color: Theme.of(ctx).colorScheme.onSurfaceVariant),
-                            hintText: tr.donationMessageHint,
-                            filled: true,
-                            fillColor: Theme.of(ctx).colorScheme.surface,
-                            enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide(color: Theme.of(ctx).colorScheme.outline)),
-                            border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide(color: Theme.of(ctx).colorScheme.outline)),
-                            focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: AppTokens.primaryBlue, width: 1.6)),
-                          ),
-                        ),
-                      ],
-                      const SizedBox(height: 14),
-                      SizedBox(width: double.infinity, height: 48, child: ElevatedButton(
-                        style: ElevatedButton.styleFrom(backgroundColor: AppTokens.primaryBlue, foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
-                        onPressed: () {
-                          final value = double.tryParse(amountCtrl.text.trim().replaceAll(',', '.'));
-                          if (value == null || value <= 0) { setDialogState(() => error = tr.enterValidAmount); return; }
-                          final msg = dedicateOn ? messageCtrl.text.trim() : '';
-                          Navigator.pop(ctx, {'amount': value, 'reason': selectedReason, 'message': msg, 'monthly': monthly});
-                        },
-                        child: Text(monthly ? tr.donateMonthlyBtn : tr.donate, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 16)),
-                      )),
-                    ]),
-    );
-    } finally {
-      // Defer ~400ms: showModalBottomSheet returns at pop-time, NOT at
-      // animation-end. Disposing immediately fires a notification that
-      // hits the still-rebuilding TextField mid-exit-animation →
-      // "TextEditingController was used after being disposed".
-      Future.delayed(const Duration(milliseconds: 400), () {
-        amountCtrl.dispose();
-        messageCtrl.dispose();
-      });
-    }
-    if (result == null || !mounted) return;
-    final donationAmount = result['amount'] as double;
-    final donationMessage = (result['message'] as String?)?.trim() ?? '';
-    final donationReason = (result['reason'] as String?)?.trim();
-    final isMonthly = result['monthly'] == true;
-
+    // Set _isProcessing IMMEDIATELY to block re-entrant triggers (banner tap,
+    // deep link, notification tap) while the amount sheet is still open. The
+    // previous code set the flag AFTER the sheet closed (line 574) leaving a
+    // multi-second window where a second _donateNow could open a parallel
+    // sheet → 2 createPaymentIntent calls → 2 charges (MF2 adversarial).
+    // The old _isProcessing=true on line 574 is now redundant (removed).
     setState(() => _isProcessing = true);
     try {
-      if (_biometricEnabled()) {
-        final authenticated = await BiometricService.instance.authenticate(
-          reason: tr.biometricReasonDonate,
+      if (!await _ensureOnlineForPayment()) return;
+      if (!mounted) return;
+      final tr = S.of(context);
+      // Prefer the tenant's custom donationReasons; fall back to the locale's
+      // default list only when the tenant hasn't configured one. Pre-fix this
+      // ignored the tenant config entirely, so admin-web changes to the
+      // designation list never showed up on the donor screen.
+      final tenantReasons =
+          ref.read(tenantConfigProvider).valueOrNull?.donationReasons ??
+          const <String>[];
+      final reasons = tenantReasons.isNotEmpty
+          ? tenantReasons
+          : tr.defaultDonationReasons;
+      // The amount controller must be disposed when the sheet closes —
+      // keeping it alive in function scope without dispose() is a memory
+      // leak the Flutter framework will warn about in debug. try/finally below.
+      final amountCtrl = TextEditingController();
+      final messageCtrl = TextEditingController();
+      Map<String, dynamic>? result;
+      String? error;
+      bool monthly = false;
+      bool dedicateOn = false;
+      // Inline picker state — defaults to the tenant's first reason so the
+      // donor isn't forced to opt in to a destination. They can still choose
+      // "Sin designación" from the picker if they want to opt out.
+      String? selectedReason = reasons.isNotEmpty ? reasons.first : null;
+      try {
+        result = await showKeyboardSafeSheet<Map<String, dynamic>>(
+          context: context,
+          builder: (ctx, setDialogState) => Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Center(
+                child: Container(
+                  width: 36,
+                  height: 4,
+                  margin: const EdgeInsets.only(bottom: 12),
+                  decoration: BoxDecoration(
+                    color: Colors.grey.shade300,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+              ),
+              Center(
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const _SecureShieldIcon(size: 26),
+                    const SizedBox(width: 8),
+                    Text(
+                      tr.donateNowTitle,
+                      style: const TextStyle(
+                        fontSize: 22,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 16),
+              // Monthly (recurring) chip: enabled on web too in
+              // Stage 6 — StripeService.subscribe() now routes to
+              // the Elements inline sheet on web via
+              // showWebDonationSheet(recurringInterval: 'month').
+              Row(
+                children: [
+                  Expanded(
+                    child: _FrequencyChip(
+                      label: tr.donateOnce,
+                      selected: !monthly,
+                      onTap: () => setDialogState(() => monthly = false),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: _FrequencyChip(
+                      label: tr.donateMonthly,
+                      selected: monthly,
+                      icon: Icons.favorite,
+                      iconColor: const Color(0xFFCC2936),
+                      onTap: () => setDialogState(() => monthly = true),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 14),
+              TextField(
+                controller: amountCtrl,
+                keyboardType: const TextInputType.numberWithOptions(
+                  decimal: true,
+                ),
+                decoration: InputDecoration(
+                  labelText: tr.amount,
+                  floatingLabelStyle: TextStyle(
+                    color: Theme.of(ctx).colorScheme.onSurfaceVariant,
+                  ),
+                  hintText: '0',
+                  // Round-10 audit fix (LOW #1): no trailing space —
+                  // shortCurrencySymbol already appends one for
+                  // unknown codes ('PEN '), producing double-spaces.
+                  prefixText: _shortSymbol(_currencyCodeFromProfile()),
+                  suffixText: _currencyCodeFromProfile().toUpperCase(),
+                  errorText: error,
+                  filled: true,
+                  fillColor: Theme.of(ctx).colorScheme.surface,
+                  enabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: BorderSide(
+                      color: Theme.of(ctx).colorScheme.outline,
+                    ),
+                  ),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: BorderSide(
+                      color: Theme.of(ctx).colorScheme.outline,
+                    ),
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: const BorderSide(
+                      color: AppTokens.primaryBlue,
+                      width: 1.6,
+                    ),
+                  ),
+                ),
+                onChanged: (_) {
+                  if (error != null) setDialogState(() => error = null);
+                },
+              ),
+              // Inline designación picker — only when the tenant has
+              // reasons configured. Tap-to-open row that mirrors the
+              // amount TextField styling (OutlineInputBorder, labelText).
+              // Opens a bottom sheet styled like the History filter so
+              // donor picks a destino without losing the donation flow.
+              if (reasons.isNotEmpty) ...[
+                const SizedBox(height: 14),
+                InkWell(
+                  borderRadius: BorderRadius.circular(12),
+                  onTap: () async {
+                    final picked = await showDonationReasonPicker(
+                      context: ctx,
+                      reasons: reasons,
+                      currentSelection: selectedReason,
+                    );
+                    if (picked is DonationReasonSelected) {
+                      setDialogState(() => selectedReason = picked.reason);
+                    }
+                  },
+                  child: InputDecorator(
+                    decoration: InputDecoration(
+                      labelText: tr.donationReasonTitle,
+                      filled: true,
+                      fillColor: Theme.of(ctx).colorScheme.surface,
+                      enabledBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: BorderSide(
+                          color: Theme.of(ctx).colorScheme.outline,
+                        ),
+                      ),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: BorderSide(
+                          color: Theme.of(ctx).colorScheme.outline,
+                        ),
+                      ),
+                    ),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            selectedReason ?? tr.donationReasonNone,
+                            style: TextStyle(
+                              fontSize: 16,
+                              color: selectedReason == null
+                                  ? Theme.of(ctx).colorScheme.onSurfaceVariant
+                                  : Theme.of(ctx).colorScheme.onSurface,
+                            ),
+                          ),
+                        ),
+                        Icon(
+                          Icons.keyboard_arrow_down_rounded,
+                          color: Theme.of(ctx).colorScheme.onSurfaceVariant,
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+              const SizedBox(height: 12),
+              InkWell(
+                borderRadius: BorderRadius.circular(8),
+                onTap: () => setDialogState(() => dedicateOn = !dedicateOn),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 4),
+                  child: Row(
+                    children: [
+                      SizedBox(
+                        width: 22,
+                        height: 22,
+                        child: Checkbox(
+                          value: dedicateOn,
+                          onChanged: (v) =>
+                              setDialogState(() => dedicateOn = v ?? false),
+                          activeColor: AppTokens.primaryBlue,
+                          materialTapTargetSize:
+                              MaterialTapTargetSize.shrinkWrap,
+                          visualDensity: VisualDensity.compact,
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Text(
+                        tr.dedicateDonation,
+                        style: const TextStyle(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              if (dedicateOn) ...[
+                const SizedBox(height: 10),
+                TextField(
+                  controller: messageCtrl,
+                  textCapitalization: TextCapitalization.sentences,
+                  maxLength: 240,
+                  decoration: InputDecoration(
+                    labelText: tr.donationMessageLabel,
+                    floatingLabelStyle: TextStyle(
+                      color: Theme.of(ctx).colorScheme.onSurfaceVariant,
+                    ),
+                    hintText: tr.donationMessageHint,
+                    filled: true,
+                    fillColor: Theme.of(ctx).colorScheme.surface,
+                    enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: BorderSide(
+                        color: Theme.of(ctx).colorScheme.outline,
+                      ),
+                    ),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: BorderSide(
+                        color: Theme.of(ctx).colorScheme.outline,
+                      ),
+                    ),
+                    focusedBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: const BorderSide(
+                        color: AppTokens.primaryBlue,
+                        width: 1.6,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+              const SizedBox(height: 14),
+              SizedBox(
+                width: double.infinity,
+                height: 48,
+                child: ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppTokens.primaryBlue,
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                  onPressed: () {
+                    final value = double.tryParse(
+                      amountCtrl.text.trim().replaceAll(',', '.'),
+                    );
+                    if (value == null || value <= 0) {
+                      setDialogState(() => error = tr.enterValidAmount);
+                      return;
+                    }
+                    final msg = dedicateOn ? messageCtrl.text.trim() : '';
+                    Navigator.pop(ctx, {
+                      'amount': value,
+                      'reason': selectedReason,
+                      'message': msg,
+                      'monthly': monthly,
+                    });
+                  },
+                  child: Text(
+                    monthly ? tr.donateMonthlyBtn : tr.donate,
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w700,
+                      fontSize: 16,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
         );
-        if (!authenticated) {
-          _showError(tr.authRequiredDonate);
+      } finally {
+        // Defer ~400ms: showModalBottomSheet returns at pop-time, NOT at
+        // animation-end. Disposing immediately fires a notification that
+        // hits the still-rebuilding TextField mid-exit-animation →
+        // "TextEditingController was used after being disposed".
+        Future.delayed(const Duration(milliseconds: 400), () {
+          amountCtrl.dispose();
+          messageCtrl.dispose();
+        });
+      }
+      if (result == null || !mounted) return;
+      final donationAmount = result['amount'] as double;
+      final donationMessage = (result['message'] as String?)?.trim() ?? '';
+      final donationReason = (result['reason'] as String?)?.trim();
+      final isMonthly = result['monthly'] == true;
+
+      // Note: _isProcessing was already set at the top of _donateNow (MF2
+      // fix — blocks re-entry BEFORE the amount sheet opens). No re-set here.
+      try {
+        if (_biometricEnabled()) {
+          final authenticated = await BiometricService.instance.authenticate(
+            reason: tr.biometricReasonDonate,
+          );
+          if (!authenticated) {
+            _showError(tr.authRequiredDonate);
+            return;
+          }
+        }
+        if (!mounted) return;
+
+        if (StripeConfig.publishableKey.isEmpty) {
+          throw Exception(tr.stripeNotConfigured);
+        }
+
+        final currency = _currencyCodeFromProfile();
+        final amountCents = amountToStripeUnits(donationAmount, currency);
+        final minCents = _minAmountCentsForCurrency(currency);
+        final maxCents = _maxAmountCentsForCurrency(currency);
+        if (amountCents < minCents) {
+          if (!mounted) return;
+          _showMinAmountDialog(currency, minCents, donationAmount);
           return;
         }
-      }
-      if (!mounted) return;
+        if (amountCents > maxCents) {
+          if (!mounted) return;
+          _showMaxAmountDialog(currency, maxCents, donationAmount);
+          return;
+        }
 
-      if (StripeConfig.publishableKey.isEmpty) {
-        throw Exception(tr.stripeNotConfigured);
-      }
+        // Note: donation reason already collected inline in the donate-now
+        // sheet (see `result['reason']` above) — no separate picker step.
 
-      final currency = _currencyCodeFromProfile();
-      final amountCents = amountToStripeUnits(donationAmount, currency);
-      final minCents = _minAmountCentsForCurrency(currency);
-      if (amountCents < minCents) {
+        if (isMonthly) {
+          await StripeService.instance.subscribe(
+            amountCents: amountCents,
+            currency: currency,
+            interval: 'month',
+            donorMessage: donationMessage.isEmpty ? null : donationMessage,
+            donationReason: (donationReason == null || donationReason.isEmpty)
+                ? null
+                : donationReason,
+            merchantDisplayName:
+                ref.read(tenantConfigProvider).valueOrNull?.appName ?? 'Pushka',
+            sheetContext: context,
+          );
+        } else {
+          await StripeService.instance.pay(
+            amountCents: amountCents,
+            currency: currency,
+            customerEmail: ref.read(currentUserProvider)?.email,
+            purpose: 'donation',
+            merchantDisplayName:
+                ref.read(tenantConfigProvider).valueOrNull?.appName ?? 'Pushka',
+            donorMessage: donationMessage.isEmpty ? null : donationMessage,
+            donationReason: (donationReason == null || donationReason.isEmpty)
+                ? null
+                : donationReason,
+            sheetContext: context,
+            defaultCard: _readDefaultCard(),
+          );
+        }
+
+        await AnalyticsService.instance.logDonation(donationAmount, currency);
+        // Transaction is written server-side by the Stripe webhook (payment_intent.succeeded).
+
+        FeedbackService.instance.playSuccess();
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                S
+                    .of(context)
+                    .donationProcessed(
+                      formatCurrencyAmount(
+                        donationAmount,
+                        _currencyCodeFromProfile(),
+                      ),
+                    ),
+              ),
+            ),
+          );
+        }
+      } catch (error, st) {
+        final isUserCancel =
+            error is StripeServiceException && error.code == 'canceled';
+        if (!isUserCancel) {
+          _reportError(error, st, op: 'donateNow');
+        }
         if (!mounted) return;
-        _showMinAmountDialog(currency, minCents, donationAmount);
-        return;
+        final reason = _donationErrorMessage(error, S.of(context));
+        if (isUserCancel) {
+          _showError(reason);
+        } else {
+          // Retry re-opens the donate-now sheet from scratch. We do NOT
+          // stash the previous amount/reason/message — a failed payment
+          // often means the donor picked the wrong card or amount, so
+          // letting them start fresh is friendlier than auto-resubmitting.
+          _showDonationErrorDialog(reason, () {
+            if (mounted) _donateNow();
+          });
+        }
       }
-
-      // Note: donation reason already collected inline in the donate-now
-      // sheet (see `result['reason']` above) — no separate picker step.
-
-      if (isMonthly) {
-        await StripeService.instance.subscribe(
-          amountCents: amountCents,
-          currency: currency,
-          interval: 'month',
-          donorMessage: donationMessage.isEmpty ? null : donationMessage,
-          donationReason: (donationReason == null || donationReason.isEmpty) ? null : donationReason,
-          merchantDisplayName: ref.read(tenantConfigProvider).valueOrNull?.appName ?? 'Pushka',
-        );
-      } else {
-        await StripeService.instance.pay(
-          amountCents: amountCents,
-          currency: currency,
-          customerEmail: ref.read(currentUserProvider)?.email,
-          purpose: 'donation',
-          merchantDisplayName: ref.read(tenantConfigProvider).valueOrNull?.appName ?? 'Pushka',
-          donorMessage: donationMessage.isEmpty ? null : donationMessage,
-          donationReason: (donationReason == null || donationReason.isEmpty) ? null : donationReason,
-        );
-      }
-
-      await AnalyticsService.instance.logDonation(donationAmount, currency);
-      // Transaction is written server-side by the Stripe webhook (payment_intent.succeeded).
-
-      FeedbackService.instance.playSuccess();
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(S.of(context).donationProcessed(formatMoney(donationAmount)))),
-        );
-      }
-    } catch (error) {
-      if (!mounted) return;
-      _showError(_donationErrorMessage(error, S.of(context)));
     } finally {
+      // Outer try opened at top of _donateNow (MF2). Resets _isProcessing
+      // even if the amount sheet was dismissed early, biometric failed, or
+      // an unexpected exception escaped the inner try/catch above.
       if (mounted) setState(() => _isProcessing = false);
     }
   }
 
-  Future<void> _processCardPayment(double donationAmount, {String? donorMessage, String? donationReason}) async {
+  Future<void> _processCardPayment(
+    double donationAmount, {
+    String? donorMessage,
+    String? donationReason,
+  }) async {
+    if (!mounted) return;
+    if (!await _ensureOnlineForPayment()) return;
     if (!mounted) return;
     final tr = S.of(context);
     setState(() => _isProcessing = true);
@@ -615,9 +934,15 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
       final currency = _currencyCodeFromProfile();
       final amountCents = amountToStripeUnits(donationAmount, currency);
       final minCents = _minAmountCentsForCurrency(currency);
+      final maxCents = _maxAmountCentsForCurrency(currency);
       if (amountCents < minCents) {
         if (!mounted) return;
         _showMinAmountDialog(currency, minCents, donationAmount);
+        return;
+      }
+      if (amountCents > maxCents) {
+        if (!mounted) return;
+        _showMaxAmountDialog(currency, maxCents, donationAmount);
         return;
       }
       // Si el caller ya nos pasó una razón (flujo de festividad → "Pesaj",
@@ -635,16 +960,30 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
         currency: currency,
         customerEmail: ref.read(currentUserProvider)?.email,
         purpose: 'donation',
-        merchantDisplayName: ref.read(tenantConfigProvider).valueOrNull?.appName ?? 'Pushka',
+        merchantDisplayName:
+            ref.read(tenantConfigProvider).valueOrNull?.appName ?? 'Pushka',
         donorMessage: donorMessage,
         donationReason: finalReason,
+        sheetContext: context,
+        defaultCard: _readDefaultCard(),
       );
 
       await AnalyticsService.instance.logDonation(donationAmount, currency);
       // Transaction is written server-side by the Stripe webhook (payment_intent.succeeded).
-      final remaining = (pushkaAmount - donationAmount).clamp(0.0, double.infinity);
-      // Persist FIRST then update local — same race fix as the other paths.
-      await _persistPushkaAmount(overrideAmount: remaining);
+      final remaining = (pushkaAmount - donationAmount).clamp(
+        0.0,
+        double.infinity,
+      );
+      // MF4: on web, DON'T write pushkaAmount from the client — the webhook
+      // is the single writer via processed_events + Firestore transaction.
+      // Double-writing here can clobber a webhook that already ran (e.g. a
+      // fast 3DS-less card whose success arrived before this line). The
+      // tenantState listener reconciles the UI within seconds. On native
+      // the client is still the primary writer for the donation path
+      // (webhook writes only for pushka_empty), so keep the sync there.
+      if (!kIsWeb) {
+        await _persistPushkaAmount(overrideAmount: remaining);
+      }
       if (!mounted) return;
       setState(() => pushkaAmount = remaining);
 
@@ -653,20 +992,44 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
         SnackBar(
           content: Text(
             remaining > 0
-                ? tr.paymentProcessedRemaining(formatMoney(remaining))
+                ? tr.paymentProcessedRemaining(
+                    formatCurrencyAmount(remaining, _currencyCodeFromProfile()),
+                  )
                 : tr.paymentProcessedHistory,
           ),
         ),
       );
-    } catch (error) {
+    } catch (error, st) {
+      final isUserCancel =
+          error is StripeServiceException && error.code == 'canceled';
+      if (!isUserCancel) {
+        _reportError(error, st, op: 'processCardPayment');
+      }
       if (!mounted) return;
-      _showError(_donationErrorMessage(error, tr));
+      final reason = _donationErrorMessage(error, tr);
+      if (isUserCancel) {
+        _showError(reason);
+      } else {
+        _showDonationErrorDialog(reason, () {
+          if (mounted) {
+            _processCardPayment(
+              donationAmount,
+              donorMessage: donorMessage,
+              donationReason: donationReason,
+            );
+          }
+        });
+      }
     } finally {
       if (mounted) setState(() => _isProcessing = false);
     }
   }
 
-  Future<void> _processDirectDonation(double amount, {String? donorMessage, String? donationReason}) async {
+  Future<void> _processDirectDonation(
+    double amount, {
+    String? donorMessage,
+    String? donationReason,
+  }) async {
     if (amount <= 0 || _isProcessing) return;
     final tr = S.of(context);
 
@@ -681,14 +1044,18 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
     }
     if (!mounted) return;
 
-    await _processCardPayment(amount, donorMessage: donorMessage, donationReason: donationReason);
+    await _processCardPayment(
+      amount,
+      donorMessage: donorMessage,
+      donationReason: donationReason,
+    );
   }
-    double get fillPercentage {
+
+  double get fillPercentage {
     if (pushkaGoal <= 0) return 0;
     final percentage = (pushkaAmount / pushkaGoal).clamp(0.0, 1.0);
     return percentage;
   }
-
 
   @override
   Widget build(BuildContext context) {
@@ -706,10 +1073,35 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
     // account_switcher_sheet → switchTenant), repaint from the new
     // tenant's local cache so we don't display the previous tenant's
     // pushka amount + goal during the network refresh window.
-    ref.listen<AsyncValue<Map<String, dynamic>?>>(userProfileProvider, (prev, next) {
+    ref.listen<AsyncValue<Map<String, dynamic>?>>(userProfileProvider, (
+      prev,
+      next,
+    ) {
       final newTenantId = next.valueOrNull?['tenantId'] as String?;
       final uid = ref.read(currentUserProvider)?.uid;
       if (uid != null && newTenantId != null && newTenantId.isNotEmpty) {
+        // Round-7 regression fix: when the tenant actually changes, drop
+        // any in-flight recent-write guard and clear the sync fingerprint
+        // so the incoming tenantState for the new tenant always applies
+        // (even if its numeric fingerprint coincidentally matches the old
+        // one). Belt-and-suspenders together with the per-tenant tagging
+        // added to the fingerprint/stopwatch checks.
+        if (_lastLoadedCacheTenantId != newTenantId) {
+          _localWriteStopwatch.reset();
+          _localWriteTenantId = null;
+          _lastSyncedTenantStateFingerprint = null;
+          _lastSyncedFingerprintTenantId = null;
+          // Round-9 regression fix: streakCount is gated behind
+          // `if (!_loadedRemote)` in the fingerprint sync block, which
+          // makes it a one-shot on first snapshot per screen instance.
+          // Without resetting `_loadedRemote` here, the streak banner
+          // keeps painting the previous tenant's streakCount until the
+          // user donates (which re-reads via _updateStreak) or the
+          // screen is remounted. Clear `_streakCount` too so we don't
+          // flash the old value before the incoming snapshot lands.
+          _loadedRemote = false;
+          setState(() => _streakCount = 0);
+        }
         _loadFromCacheFor(uid, newTenantId);
       }
     });
@@ -725,13 +1117,22 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
     // Build a value-fingerprint of the fields we actually consume. Two
     // snapshots with the same fingerprint produce no observable change on
     // this screen, so we skip the post-frame entirely.
+    //
+    // Round-7 regression fix (HIGH #1): scope by tenantId so two tenants
+    // with identical values (both fresh-onboarded at defaults) don't fool
+    // the fingerprint check into skipping the very first sync of the new
+    // tenant after a switch.
     final tenantStateFingerprint = tenantState == null
         ? null
         : '${tenantState['pushkaAmount']}|${tenantState['pushkaGoal']}|'
-          '${tenantState['streakCount']}|'
-          '${(tenantState['presetAmounts'] as List?)?.join(",") ?? ""}';
-    if (tenantState != null && tenantStateFingerprint != _lastSyncedTenantStateFingerprint) {
+              '${tenantState['streakCount']}|'
+              '${(tenantState['presetAmounts'] as List?)?.join(",") ?? ""}';
+    final fingerprintMatches =
+        tenantStateFingerprint == _lastSyncedTenantStateFingerprint &&
+        tenantId == _lastSyncedFingerprintTenantId;
+    if (tenantState != null && !fingerprintMatches) {
       _lastSyncedTenantStateFingerprint = tenantStateFingerprint;
+      _lastSyncedFingerprintTenantId = tenantId;
       final uid = ref.read(currentUserProvider)?.uid;
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
@@ -741,10 +1142,17 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
         // pre-date our own write would otherwise revert the optimistic
         // setState. 4-second window comfortably outlasts write+echo.
         // Stopwatch is monotonic (no system-clock-jump risk).
+        //
+        // Round-7 regression fix (CRITICAL): honor the recentWrite guard
+        // ONLY when the incoming snapshot belongs to the same tenant the
+        // write was for. Otherwise a donation in A blocked B's first
+        // pushkaAmount sync for up to 4s after switching.
         if (remoteAmount is num) {
           final remote = remoteAmount.toDouble();
-          final recentWrite = _localWriteStopwatch.isRunning &&
-              _localWriteStopwatch.elapsed.inSeconds < 4;
+          final recentWrite =
+              _localWriteStopwatch.isRunning &&
+              _localWriteStopwatch.elapsed.inSeconds < 4 &&
+              _localWriteTenantId == tenantId;
           if (!recentWrite && remote != pushkaAmount) {
             pushkaAmount = remote;
             changed = true;
@@ -765,9 +1173,16 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
         }
         if (remotePresets is List) {
           try {
-            final parsed = remotePresets.whereType<num>().map((e) => e.toDouble()).toList();
-            final newPresets = (parsed.length == 3 && parsed.every((v) => v > 0)) ? parsed : <double>[];
-            if (newPresets.length != _presetAmounts.length || !newPresets.every((v) => _presetAmounts.contains(v))) {
+            final parsed = remotePresets
+                .whereType<num>()
+                .map((e) => e.toDouble())
+                .toList();
+            final newPresets =
+                (parsed.length == 3 && parsed.every((v) => v > 0))
+                ? parsed
+                : <double>[];
+            if (newPresets.length != _presetAmounts.length ||
+                !newPresets.every((v) => _presetAmounts.contains(v))) {
               _presetAmounts = newPresets;
               changed = true;
             }
@@ -809,7 +1224,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
             final titleBottomGap = isCompact ? 2.0 : 4.0;
             final actionsTopGap = isCompact ? 2.0 : 4.0;
 
-                        final activeHoliday = _HolidayInfo.getActiveHoliday();
+            final activeHoliday = _HolidayInfo.getActiveHoliday();
             final bool isFull = pushkaGoal > 0 && pushkaAmount >= pushkaGoal;
 
             final int bannerStreak = _streakCount;
@@ -818,190 +1233,239 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
             final content = Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-            _buildCombinedBanner(bannerStreak, bannerHoliday),
+                _buildCombinedBanner(bannerStreak, bannerHoliday),
 
-            SizedBox(height: topGap),
+                SizedBox(height: topGap),
 
-            // Title / subtitle / progress vary by full vs filling state.
-            if (isFull) ...[
-              Text(
-                tr.pushkaFull,
-                style: TextStyle(
-                  fontSize: titleSize,
-                  fontWeight: FontWeight.w700,
-                  color: cs.onSurface,
-                ),
-                textAlign: TextAlign.center,
-              ),
-              const SizedBox(height: 6),
-              Text(
-                tr.donationGoalReached,
-                style: TextStyle(
-                  color: isDark ? cs.onSurfaceVariant : AppTokens.mutedText,
-                  fontSize: subtitleSize,
-                ),
-                textAlign: TextAlign.center,
-              ),
-            ] else ...[
-              Text(
-                key: _fillItTitleKey,
-                tr.fillIt,
-                style: TextStyle(
-                  fontSize: titleSize,
-                  fontWeight: FontWeight.w700,
-                  color: cs.onSurface,
-                ),
-              ),
-              const SizedBox(height: 6),
-              // En RTL Flutter no reordena tokens latinos (MX$..., números),
-              // los pinta en el orden literal del string. Invertimos a mano
-              // así el monto actual queda a la derecha (lado de partida del
-              // ojo en hebreo) y la meta a la izquierda, espejando el LTR.
-              Builder(builder: (ctx) {
-                final symbol = _currencySymbol(_currencyCodeFromProfile());
-                final amountStr = '$symbol${formatAmount(pushkaAmount)}';
-                final goalStr = '$symbol${formatAmount(pushkaGoal)}';
-                final isRtl = Directionality.of(ctx) == TextDirection.rtl;
-                final str = isRtl
-                    ? '$goalStr / $amountStr'
-                    : '$amountStr / $goalStr';
-                return Text(
-                  str,
-                  style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w500,
-                    color: cs.onSurfaceVariant,
+                // Title / subtitle / progress vary by full vs filling state.
+                if (isFull) ...[
+                  Text(
+                    tr.pushkaFull,
+                    style: TextStyle(
+                      fontSize: titleSize,
+                      fontWeight: FontWeight.w700,
+                      color: cs.onSurface,
+                    ),
+                    textAlign: TextAlign.center,
                   ),
-                );
-              }),
-              const SizedBox(height: 8),
-              Padding(
-                padding: EdgeInsets.symmetric(horizontal: constraints.maxWidth * 0.09),
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(2),
-                  child: LinearProgressIndicator(
-                    value: fillPercentage,
-                    minHeight: 4,
-                    backgroundColor: cs.surfaceContainerHighest,
-                    valueColor: AlwaysStoppedAnimation<Color>(isDark ? Colors.white : AppTokens.primaryBlue),
+                  const SizedBox(height: 6),
+                  Text(
+                    tr.donationGoalReached,
+                    style: TextStyle(
+                      color: isDark ? cs.onSurfaceVariant : AppTokens.mutedText,
+                      fontSize: subtitleSize,
+                    ),
+                    textAlign: TextAlign.center,
                   ),
-                ),
-              ),
-            ],
-            SizedBox(height: titleBottomGap),
-
-            // Single Pushka3DWidget instance — keyed once at this position so
-            // the AnimationControllers (wave/fill/coin) survive isFull flips
-            // without GlobalKey duplication. Previously the same _pushkaKey was
-            // attached to two widgets in different branches of an if/else,
-            // which is a Flutter footgun: any moment both branches mount
-            // (animated transitions, hot-reload races, debug overlays) crashes
-            // with "Multiple widgets used the same GlobalKey".
-            RepaintBoundary(
-              child: SizedBox(
-                height: imageHeight,
-                child: pushkaStyle == PushkaStyle.building770
-                    ? Building770Widget(fillFraction: fillPercentage)
-                    : Pushka3DWidget(
-                        key: _pushkaKey,
-                        fillPercentage: fillPercentage,
-                        goal: pushkaGoal,
-                        amount: pushkaAmount,
-                        currencySymbol: _currencySymbol(_currencyCodeFromProfile()),
-                      ),
-              ),
-            ),
-
-            SizedBox(height: actionsTopGap),
-
-            // Action buttons differ by state.
-            if (isFull) ...[
-              SizedBox(
-                width: double.infinity,
-                height: 50,
-                child: ElevatedButton(
-                  onPressed: emptyPushka,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AppTokens.primaryBlue,
-                    foregroundColor: Colors.white,
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                ] else ...[
+                  Text(
+                    key: _fillItTitleKey,
+                    tr.fillIt,
+                    style: TextStyle(
+                      fontSize: titleSize,
+                      fontWeight: FontWeight.w700,
+                      color: cs.onSurface,
+                    ),
                   ),
-                  child: Text(tr.emptyPushkaBtn, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 16)),
-                ),
-              ),
-              const SizedBox(height: 10),
-              TextButton(
-                onPressed: _showTzedakahSettingsDialog,
-                child: Text(
-                  tr.changePushkaGoal,
-                  style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15),
-                ),
-              ),
-            ] else ...[
-              Row(
-                children: [
-                  _moneyBtn(_formatQuickAmount(quickAmounts[0]), () => addAmount(quickAmounts[0])),
-                  const SizedBox(width: 10),
-                  _moneyBtn(_formatQuickAmount(quickAmounts[1]), () => addAmount(quickAmounts[1])),
-                  const SizedBox(width: 10),
-                  _moneyBtn(_formatQuickAmount(quickAmounts[2]), () => addAmount(quickAmounts[2])),
-                  const SizedBox(width: 10),
-                  _moneyBtn(tr.otherAmount, _otherAmount),
-                ],
-              ),
-
-              const SizedBox(height: 14),
-
-              Row(children: [
-                Expanded(
-                  child: SizedBox(
-                    height: 50,
-                    child: OutlinedButton(
-                      onPressed: _donateNow,
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: isDark ? Colors.white : AppTokens.primaryBlue,
-                        side: BorderSide(color: isDark ? Colors.white : AppTokens.primaryBlue, width: 1.6),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
+                  const SizedBox(height: 6),
+                  // En RTL Flutter no reordena tokens latinos (MX$..., números),
+                  // los pinta en el orden literal del string. Invertimos a mano
+                  // así el monto actual queda a la derecha (lado de partida del
+                  // ojo en hebreo) y la meta a la izquierda, espejando el LTR.
+                  Builder(
+                    builder: (ctx) {
+                      final symbol = _currencySymbol(
+                        _currencyCodeFromProfile(),
+                      );
+                      final amountStr = '$symbol${formatAmount(pushkaAmount)}';
+                      final goalStr = '$symbol${formatAmount(pushkaGoal)}';
+                      final isRtl = Directionality.of(ctx) == TextDirection.rtl;
+                      final str = isRtl
+                          ? '$goalStr / $amountStr'
+                          : '$amountStr / $goalStr';
+                      return Text(
+                        str,
+                        style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w500,
+                          color: cs.onSurfaceVariant,
                         ),
-                      ),
-                      child: FittedBox(
-                        fit: BoxFit.scaleDown,
-                        child: Text(
-                          tr.donateNowBtn,
-                          maxLines: 1,
-                          style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15),
+                      );
+                    },
+                  ),
+                  const SizedBox(height: 8),
+                  Padding(
+                    padding: EdgeInsets.symmetric(
+                      horizontal: constraints.maxWidth * 0.09,
+                    ),
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(2),
+                      child: LinearProgressIndicator(
+                        value: fillPercentage,
+                        minHeight: 4,
+                        backgroundColor: cs.surfaceContainerHighest,
+                        valueColor: AlwaysStoppedAnimation<Color>(
+                          isDark ? Colors.white : AppTokens.primaryBlue,
                         ),
                       ),
                     ),
                   ),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
+                ],
+                SizedBox(height: titleBottomGap),
+
+                // Single Pushka3DWidget instance — keyed once at this position so
+                // the AnimationControllers (wave/fill/coin) survive isFull flips
+                // without GlobalKey duplication. Previously the same _pushkaKey was
+                // attached to two widgets in different branches of an if/else,
+                // which is a Flutter footgun: any moment both branches mount
+                // (animated transitions, hot-reload races, debug overlays) crashes
+                // with "Multiple widgets used the same GlobalKey".
+                RepaintBoundary(
                   child: SizedBox(
+                    height: imageHeight,
+                    child: pushkaStyle == PushkaStyle.building770
+                        ? Building770Widget(fillFraction: fillPercentage)
+                        : Pushka3DWidget(
+                            key: _pushkaKey,
+                            fillPercentage: fillPercentage,
+                            goal: pushkaGoal,
+                            amount: pushkaAmount,
+                            currencySymbol: _currencySymbol(
+                              _currencyCodeFromProfile(),
+                            ),
+                          ),
+                  ),
+                ),
+
+                SizedBox(height: actionsTopGap),
+
+                // Action buttons differ by state.
+                if (isFull) ...[
+                  SizedBox(
+                    width: double.infinity,
                     height: 50,
                     child: ElevatedButton(
                       onPressed: emptyPushka,
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: isDark ? Colors.white : AppTokens.primaryBlue,
-                        foregroundColor: isDark ? cs.surface : Colors.white,
+                        backgroundColor: AppTokens.primaryBlue,
+                        foregroundColor: Colors.white,
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(12),
                         ),
                       ),
-                      child: FittedBox(
-                        fit: BoxFit.scaleDown,
-                        child: Text(
-                          tr.emptyPushkaBtn,
-                          maxLines: 1,
-                          style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15),
+                      child: Text(
+                        tr.emptyPushkaBtn,
+                        style: const TextStyle(
+                          fontWeight: FontWeight.w700,
+                          fontSize: 16,
                         ),
                       ),
                     ),
                   ),
-                ),
-              ]),
-            ],
+                  const SizedBox(height: 10),
+                  TextButton(
+                    onPressed: _showTzedakahSettingsDialog,
+                    child: Text(
+                      tr.changePushkaGoal,
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w700,
+                        fontSize: 15,
+                      ),
+                    ),
+                  ),
+                ] else ...[
+                  Row(
+                    children: [
+                      _moneyBtn(
+                        _formatQuickAmount(quickAmounts[0]),
+                        () => addAmount(quickAmounts[0]),
+                      ),
+                      const SizedBox(width: 10),
+                      _moneyBtn(
+                        _formatQuickAmount(quickAmounts[1]),
+                        () => addAmount(quickAmounts[1]),
+                      ),
+                      const SizedBox(width: 10),
+                      _moneyBtn(
+                        _formatQuickAmount(quickAmounts[2]),
+                        () => addAmount(quickAmounts[2]),
+                      ),
+                      const SizedBox(width: 10),
+                      _moneyBtn(tr.otherAmount, _otherAmount),
+                    ],
+                  ),
+
+                  const SizedBox(height: 14),
+
+                  Row(
+                    children: [
+                      Expanded(
+                        child: SizedBox(
+                          height: 50,
+                          child: OutlinedButton(
+                            onPressed: _donateNow,
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: isDark
+                                  ? Colors.white
+                                  : AppTokens.primaryBlue,
+                              side: BorderSide(
+                                color: isDark
+                                    ? Colors.white
+                                    : AppTokens.primaryBlue,
+                                width: 1.6,
+                              ),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                            ),
+                            child: FittedBox(
+                              fit: BoxFit.scaleDown,
+                              child: Text(
+                                tr.donateNowBtn,
+                                maxLines: 1,
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.w700,
+                                  fontSize: 15,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: SizedBox(
+                          height: 50,
+                          child: ElevatedButton(
+                            onPressed: emptyPushka,
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: isDark
+                                  ? Colors.white
+                                  : AppTokens.primaryBlue,
+                              foregroundColor: isDark
+                                  ? cs.surface
+                                  : Colors.white,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                            ),
+                            child: FittedBox(
+                              fit: BoxFit.scaleDown,
+                              child: Text(
+                                tr.emptyPushkaBtn,
+                                maxLines: 1,
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.w700,
+                                  fontSize: 15,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
               ],
             );
             return Stack(
@@ -1016,7 +1480,9 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                 // evenly (top + bottom) so the layout looks balanced.
                 SingleChildScrollView(
                   child: ConstrainedBox(
-                    constraints: BoxConstraints(minHeight: constraints.maxHeight),
+                    constraints: BoxConstraints(
+                      minHeight: constraints.maxHeight,
+                    ),
                     child: Column(
                       mainAxisAlignment: MainAxisAlignment.center,
                       mainAxisSize: MainAxisSize.max,
@@ -1033,7 +1499,9 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                       child: BillFallAnimation(
                         key: ValueKey(_billKey),
                         startY: _billStartY,
-                        onDone: () { if (mounted) setState(() => _showBill = false); },
+                        onDone: () {
+                          if (mounted) setState(() => _showBill = false);
+                        },
                       ),
                     ),
                   ),
@@ -1044,7 +1512,9 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                         key: ValueKey(_coinKey),
                         startY: _coinStartY,
                         targetY: _coinTargetY,
-                        onDone: () { if (mounted) setState(() => _showCoin = false); },
+                        onDone: () {
+                          if (mounted) setState(() => _showCoin = false);
+                        },
                       ),
                     ),
                   ),
@@ -1068,7 +1538,15 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
     const double badgeSize = 34.0;
     final double pillW = MediaQuery.of(context).size.width - 32;
     final bool isEn = Localizations.localeOf(context).languageCode == 'en';
-    final double streakW = pillW - (holiday?.key == 'roshHashana' ? (isEn ? 142 : 137) : holiday?.key == 'januca' && isEn ? 142 : holiday?.key == 'yomKippur' ? 147 : 132);
+    final double streakW =
+        pillW -
+        (holiday?.key == 'roshHashana'
+            ? (isEn ? 142 : 137)
+            : holiday?.key == 'januca' && isEn
+            ? 142
+            : holiday?.key == 'yomKippur'
+            ? 147
+            : 132);
     const double holidayW = 168.0;
 
     // Both together: full pill. Solo: the individual width, centered.
@@ -1078,9 +1556,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
     final pill = SizedBox(
       width: containerW,
       child: Container(
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(h / 2),
-        ),
+        decoration: BoxDecoration(borderRadius: BorderRadius.circular(h / 2)),
         child: ClipRRect(
           borderRadius: BorderRadius.circular(h / 2),
           child: SizedBox(
@@ -1091,13 +1567,19 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                 if (hasHoliday)
                   Positioned.fill(
                     child: GestureDetector(
-                      onTap: () { if (_isProcessing) return; _showHolidayDonationDialog(holiday); },
+                      onTap: () {
+                        if (_isProcessing) return;
+                        _showHolidayDonationDialog(holiday);
+                      },
                       child: Container(
                         decoration: BoxDecoration(
                           gradient: LinearGradient(
                             colors: holiday.key == 'sucot'
                                 ? const [Color(0xFFFEEDD8), Color(0xFFFCAB64)]
-                                : holiday.key == 'roshHashana' || holiday.key == 'purim' || holiday.key == 'januca' || holiday.key == 'yomKippur'
+                                : holiday.key == 'roshHashana' ||
+                                      holiday.key == 'purim' ||
+                                      holiday.key == 'januca' ||
+                                      holiday.key == 'yomKippur'
                                 ? const [Color(0xFF222222), Color(0xFF000000)]
                                 : const [Color(0xFF6B3800), Color(0xFF3A1A00)],
                             begin: Alignment.centerLeft,
@@ -1108,7 +1590,10 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                         // Alone: content centered within the 120px pill.
                         padding: both
                             ? EdgeInsetsDirectional.fromSTEB(streakW, 0, 12, 0)
-                            : EdgeInsets.only(left: holiday.key == 'sucot' ? 8.0 : 0.0, right: 8),
+                            : EdgeInsets.only(
+                                left: holiday.key == 'sucot' ? 8.0 : 0.0,
+                                right: 8,
+                              ),
                         alignment: Alignment.center,
                         child: Row(
                           mainAxisSize: MainAxisSize.min,
@@ -1119,7 +1604,12 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                               holiday.localizedBannerName(S.of(context)),
                               style: TextStyle(
                                 color: Colors.white,
-                                fontSize: (holiday.key == 'roshHashana' || holiday.key == 'yomKippur') && both ? 13.0 : 15.0,
+                                fontSize:
+                                    (holiday.key == 'roshHashana' ||
+                                            holiday.key == 'yomKippur') &&
+                                        both
+                                    ? 13.0
+                                    : 15.0,
                                 fontWeight: FontWeight.w800,
                                 shadows: const [
                                   Shadow(
@@ -1144,13 +1634,20 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                   // hacia la izquierda. El badge usa PositionedDirectional
                   // también, así queda junto a la pill en ambos idiomas.
                   PositionedDirectional(
-                    start: 0, top: 0, bottom: 0,
+                    start: 0,
+                    top: 0,
+                    bottom: 0,
                     child: SizedBox(
                       width: both ? streakW : containerW,
                       child: Container(
                         padding: holiday?.key == 'yomKippur' && both
                             ? const EdgeInsetsDirectional.fromSTEB(36, 0, 8, 0)
-                            : const EdgeInsetsDirectional.fromSTEB(38, 0, 12, 0),
+                            : const EdgeInsetsDirectional.fromSTEB(
+                                38,
+                                0,
+                                12,
+                                0,
+                              ),
                         decoration: BoxDecoration(
                           gradient: LinearGradient(
                             colors: [sc.$1, sc.$2],
@@ -1178,28 +1675,32 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                                   ),
                                 ],
                               ),
-                                  ),
-                                  const SizedBox(width: 6),
-                                  const Icon(Icons.local_fire_department, color: Colors.white, size: 18),
-                                ],
-                              ),
                             ),
-                          ),
-                        ),
-                      // Glass sheen over everything
-                      Positioned.fill(
-                        child: IgnorePointer(
-                          child: DecoratedBox(
-                            decoration: BoxDecoration(
-                              gradient: LinearGradient(
-                                begin: Alignment.topCenter,
-                                end: const Alignment(0, 0.5),
-                                colors: const [Color(0x55FFFFFF), Color(0x00FFFFFF)],
-                              ),
+                            const SizedBox(width: 6),
+                            const Icon(
+                              Icons.local_fire_department,
+                              color: Colors.white,
+                              size: 18,
                             ),
-                          ),
+                          ],
                         ),
                       ),
+                    ),
+                  ),
+                // Glass sheen over everything
+                Positioned.fill(
+                  child: IgnorePointer(
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment.topCenter,
+                          end: const Alignment(0, 0.5),
+                          colors: const [Color(0x55FFFFFF), Color(0x00FFFFFF)],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
               ],
             ),
           ),
@@ -1215,7 +1716,11 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
           PositionedDirectional(
             start: 4,
             top: -(badgeSize - h) / 2,
-            child: _HexBadge(count: streakCount, color1: _hexColor1(streakCount), color2: _hexColor2(streakCount)),
+            child: _HexBadge(
+              count: streakCount,
+              color1: _hexColor1(streakCount),
+              color2: _hexColor2(streakCount),
+            ),
           ),
       ],
     );
@@ -1260,19 +1765,26 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
   // qué falta. En release devuelve un SizedBox vacío para no crashear.
   Widget _holidayIcon(String key, {double size = 28}) {
     final asset = switch (key) {
-      'pesaj'       => 'assets/icons/pesaj.png',
-      'shavuot'     => 'assets/icons/shavuot.png',
+      'pesaj' => 'assets/icons/pesaj.png',
+      'shavuot' => 'assets/icons/shavuot.png',
       'roshHashana' => 'assets/icons/rosh_hashana.png',
-      'yomKippur'   => 'assets/icons/yom_kipur.png',
-      'sucot'       => 'assets/icons/sucot.png',
-      'januca'      => 'assets/icons/januca.png',
-      'purim'       => 'assets/icons/purim.png',
+      'yomKippur' => 'assets/icons/yom_kipur.png',
+      'sucot' => 'assets/icons/sucot.png',
+      'januca' => 'assets/icons/januca.png',
+      'purim' => 'assets/icons/purim.png',
       _ => null,
     };
-    assert(asset != null,
-        'Missing icon for holiday key: $key — agregalo a _holidayIcon.');
+    assert(
+      asset != null,
+      'Missing icon for holiday key: $key — agregalo a _holidayIcon.',
+    );
     if (asset == null) return SizedBox(width: size, height: size);
-    final img = Image.asset(asset, width: size, height: size, fit: BoxFit.contain);
+    final img = Image.asset(
+      asset,
+      width: size,
+      height: size,
+      fit: BoxFit.contain,
+    );
     // El Book-of-Life de Yom Kippur tiene una baseline visual distinta
     // a los demás íconos, lo bajamos 4 px para que quede alineado.
     if (key == 'yomKippur') {
@@ -1280,6 +1792,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
     }
     return img;
   }
+
   Future<void> _showHolidayDonationDialog(_HolidayInfo holiday) async {
     final amountCtrl = TextEditingController();
     final messageCtrl = TextEditingController();
@@ -1292,14 +1805,27 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
         builder: (ctx, setDialogState) {
           final cs = Theme.of(ctx).colorScheme;
           double currentAmount() {
-            final parsed = double.tryParse(amountCtrl.text.trim().replaceAll(',', '.'));
+            final parsed = double.tryParse(
+              amountCtrl.text.trim().replaceAll(',', '.'),
+            );
             return parsed ?? 0;
           }
+
           return Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Center(child: Container(width: 36, height: 4, margin: const EdgeInsets.only(bottom: 12), decoration: BoxDecoration(color: Colors.grey.shade300, borderRadius: BorderRadius.circular(2)))),
+              Center(
+                child: Container(
+                  width: 36,
+                  height: 4,
+                  margin: const EdgeInsets.only(bottom: 12),
+                  decoration: BoxDecoration(
+                    color: Colors.grey.shade300,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+              ),
               Center(
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
@@ -1308,7 +1834,10 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                     const SizedBox(width: 8),
                     Text(
                       holiday.localizedName(S.of(context)),
-                      style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w700),
+                      style: const TextStyle(
+                        fontSize: 22,
+                        fontWeight: FontWeight.w700,
+                      ),
                     ),
                   ],
                 ),
@@ -1323,18 +1852,33 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
               // Amount field — same shape as the donate-now sheet.
               TextField(
                 controller: amountCtrl,
-                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                keyboardType: const TextInputType.numberWithOptions(
+                  decimal: true,
+                ),
                 decoration: InputDecoration(
                   labelText: S.of(context).amount,
                   floatingLabelStyle: TextStyle(color: cs.onSurfaceVariant),
                   hintText: '0',
-                  prefixText: '${_shortSymbol(_currencyCodeFromProfile())} ',
+                  // Round-10 audit fix (LOW #1): no trailing space.
+                  prefixText: _shortSymbol(_currencyCodeFromProfile()),
                   errorText: error,
                   filled: true,
                   fillColor: cs.surface,
-                  enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide(color: cs.outline)),
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide(color: cs.outline)),
-                  focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: AppTokens.primaryBlue, width: 1.6)),
+                  enabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: BorderSide(color: cs.outline),
+                  ),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: BorderSide(color: cs.outline),
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: const BorderSide(
+                      color: AppTokens.primaryBlue,
+                      width: 1.6,
+                    ),
+                  ),
                 ),
                 onChanged: (_) {
                   if (error != null) setDialogState(() => error = null);
@@ -1346,22 +1890,31 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                 onTap: () => setDialogState(() => dedicateOn = !dedicateOn),
                 child: Padding(
                   padding: const EdgeInsets.symmetric(vertical: 4),
-                  child: Row(children: [
-                    SizedBox(
-                      width: 22,
-                      height: 22,
-                      child: Checkbox(
-                        value: dedicateOn,
-                        onChanged: (v) => setDialogState(() => dedicateOn = v ?? false),
-                        activeColor: AppTokens.primaryBlue,
-                        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                        visualDensity: VisualDensity.compact,
+                  child: Row(
+                    children: [
+                      SizedBox(
+                        width: 22,
+                        height: 22,
+                        child: Checkbox(
+                          value: dedicateOn,
+                          onChanged: (v) =>
+                              setDialogState(() => dedicateOn = v ?? false),
+                          activeColor: AppTokens.primaryBlue,
+                          materialTapTargetSize:
+                              MaterialTapTargetSize.shrinkWrap,
+                          visualDensity: VisualDensity.compact,
+                        ),
                       ),
-                    ),
-                    const SizedBox(width: 10),
-                    Text(S.of(context).dedicateDonation,
-                        style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w500)),
-                  ]),
+                      const SizedBox(width: 10),
+                      Text(
+                        S.of(context).dedicateDonation,
+                        style: const TextStyle(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ),
               if (dedicateOn) ...[
@@ -1376,9 +1929,21 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                     hintText: S.of(context).donationMessageHint,
                     filled: true,
                     fillColor: cs.surface,
-                    enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide(color: cs.outline)),
-                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide(color: cs.outline)),
-                    focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: AppTokens.primaryBlue, width: 1.6)),
+                    enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: BorderSide(color: cs.outline),
+                    ),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: BorderSide(color: cs.outline),
+                    ),
+                    focusedBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: const BorderSide(
+                        color: AppTokens.primaryBlue,
+                        width: 1.6,
+                      ),
+                    ),
                   ),
                 ),
               ],
@@ -1390,7 +1955,9 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                   onPressed: () {
                     final amt = currentAmount();
                     if (amt <= 0) {
-                      setDialogState(() => error = S.of(context).enterValidAmount);
+                      setDialogState(
+                        () => error = S.of(context).enterValidAmount,
+                      );
                       return;
                     }
                     Navigator.pop(ctx, (
@@ -1401,9 +1968,17 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                   style: ElevatedButton.styleFrom(
                     backgroundColor: AppTokens.primaryBlue,
                     foregroundColor: Colors.white,
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
                   ),
-                  child: Text(S.of(context).donateNowBtn, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 16)),
+                  child: Text(
+                    S.of(context).donateNowBtn,
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w700,
+                      fontSize: 16,
+                    ),
+                  ),
                 ),
               ),
             ],
@@ -1435,17 +2010,18 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
         child: OutlinedButton(
           onPressed: onTap,
           style: OutlinedButton.styleFrom(
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-            textStyle: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(10),
+            ),
+            textStyle: const TextStyle(
+              fontWeight: FontWeight.w700,
+              fontSize: 14,
+            ),
             padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
           ),
           child: FittedBox(
             fit: BoxFit.scaleDown,
-            child: Text(
-              label,
-              maxLines: 1,
-              softWrap: false,
-            ),
+            child: Text(label, maxLines: 1, softWrap: false),
           ),
         ),
       ),
@@ -1457,52 +2033,108 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
     String? error;
     double? result;
     try {
-    result = await showKeyboardSafeSheet<double>(
-      context: context,
-      builder: (ctx, setDialogState) => Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
-                      Center(child: Container(width: 36, height: 4, margin: const EdgeInsets.only(bottom: 12), decoration: BoxDecoration(color: Colors.grey.shade300, borderRadius: BorderRadius.circular(2)))),
-                      Text(S.of(context).otherAmountTitle, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
-                      const SizedBox(height: 14),
-                      TextField(
-                        controller: controller,
-                        keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                        textInputAction: TextInputAction.done,
-                        onSubmitted: (_) {
-                          final value = double.tryParse(controller.text.trim().replaceAll(',', '.'));
-                          if (value != null && value > 0) {
-                            FocusScope.of(ctx).unfocus();
-                            Navigator.pop(ctx, value);
-                          }
-                        },
-                        decoration: InputDecoration(
-                          labelText: S.of(context).amount,
-                          floatingLabelStyle: TextStyle(color: Theme.of(ctx).colorScheme.onSurfaceVariant),
-                          hintText: S.of(context).amountHint, prefixText: '\$ ', errorText: error,
-                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                          focusedBorder: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(12),
-                            borderSide: const BorderSide(color: AppTokens.primaryBlue, width: 2),
-                          ),
-                        ),
-                        onChanged: (_) { if (error != null) setDialogState(() => error = null); },
-                      ),
-                      const SizedBox(height: 16),
-                      SizedBox(width: double.infinity, height: 48, child: ElevatedButton(
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: AppTokens.primaryBlue,
-                          foregroundColor: Colors.white,
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                        ),
-                        onPressed: () {
-                          final value = double.tryParse(controller.text.trim().replaceAll(',', '.'));
-                          if (value == null || value <= 0) { setDialogState(() => error = S.of(context).enterValidAmount); return; }
-                          FocusScope.of(ctx).unfocus();
-                          Navigator.pop(ctx, value);
-                        },
-                        child: Text(S.of(context).add, style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
-                      )),
-                    ]),
-    );
+      result = await showKeyboardSafeSheet<double>(
+        context: context,
+        builder: (ctx, setDialogState) => Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Center(
+              child: Container(
+                width: 36,
+                height: 4,
+                margin: const EdgeInsets.only(bottom: 12),
+                decoration: BoxDecoration(
+                  color: Colors.grey.shade300,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+            ),
+            Text(
+              S.of(context).otherAmountTitle,
+              style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
+            ),
+            const SizedBox(height: 14),
+            TextField(
+              controller: controller,
+              keyboardType: const TextInputType.numberWithOptions(
+                decimal: true,
+              ),
+              textInputAction: TextInputAction.done,
+              onSubmitted: (_) {
+                final value = double.tryParse(
+                  controller.text.trim().replaceAll(',', '.'),
+                );
+                if (value != null && value > 0) {
+                  FocusScope.of(ctx).unfocus();
+                  Navigator.pop(ctx, value);
+                }
+              },
+              decoration: InputDecoration(
+                labelText: S.of(context).amount,
+                floatingLabelStyle: TextStyle(
+                  color: Theme.of(ctx).colorScheme.onSurfaceVariant,
+                ),
+                // Round-5 audit HIGH fix: prefix matches active
+                // currency instead of hardcoded `$` (misleading
+                // for MXN/ARS/EUR/ILS/JPY donors).
+                hintText: S.of(context).amountHint,
+                // Round-10 audit fix (LOW #1): shortCurrencySymbol
+                // now returns 'PEN ' (trailing space) for unknown
+                // codes, so appending our own ' ' produced 'PEN  '.
+                // Use the raw symbol; unknown codes still visually
+                // separate from the digits via the built-in gap.
+                prefixText: shortCurrencySymbol(_currencyCodeFromProfile()),
+                errorText: error,
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: const BorderSide(
+                    color: AppTokens.primaryBlue,
+                    width: 2,
+                  ),
+                ),
+              ),
+              onChanged: (_) {
+                if (error != null) setDialogState(() => error = null);
+              },
+            ),
+            const SizedBox(height: 16),
+            SizedBox(
+              width: double.infinity,
+              height: 48,
+              child: ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppTokens.primaryBlue,
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+                onPressed: () {
+                  final value = double.tryParse(
+                    controller.text.trim().replaceAll(',', '.'),
+                  );
+                  if (value == null || value <= 0) {
+                    setDialogState(
+                      () => error = S.of(context).enterValidAmount,
+                    );
+                    return;
+                  }
+                  FocusScope.of(ctx).unfocus();
+                  Navigator.pop(ctx, value);
+                },
+                child: Text(
+                  S.of(context).add,
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
     } finally {
       Future.delayed(const Duration(milliseconds: 400), controller.dispose);
     }
@@ -1529,13 +2161,19 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
   // toggles sonido off.
   void _launchFallingAnimation() {
     final stackBox = _stackKey.currentContext?.findRenderObject() as RenderBox?;
-    final titleBox = _fillItTitleKey.currentContext?.findRenderObject() as RenderBox?;
+    final titleBox =
+        _fillItTitleKey.currentContext?.findRenderObject() as RenderBox?;
     if (stackBox == null) return;
 
     // startY: bottom of the "¡Llénala!" title + 8 px ≈ where the progress
     // bar sits (title → amount text → bar are stacked tightly below).
     final startY = titleBox != null
-        ? stackBox.globalToLocal(titleBox.localToGlobal(Offset(0, titleBox.size.height))).dy + 8
+        ? stackBox
+                  .globalToLocal(
+                    titleBox.localToGlobal(Offset(0, titleBox.size.height)),
+                  )
+                  .dy +
+              8
         : -90.0;
 
     final style = ref.read(pushkaStyleProvider);
@@ -1548,7 +2186,8 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
       // ~10% from the image top → 18% of the widget's height. If the
       // RenderBox isn't available (first paint race), we fall back to
       // a mid-screen target which still looks acceptable.
-      final pushkaBox = _pushkaKey.currentContext?.findRenderObject() as RenderBox?;
+      final pushkaBox =
+          _pushkaKey.currentContext?.findRenderObject() as RenderBox?;
       double targetY;
       if (pushkaBox != null) {
         final pushkaTopGlobal = pushkaBox.localToGlobal(Offset.zero).dy;
@@ -1568,11 +2207,13 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
       });
     } else {
       FeedbackService.instance.playBillFall();
-      setState(() { _showBill = true; _billKey++; _billStartY = startY; });
+      setState(() {
+        _showBill = true;
+        _billKey++;
+        _billStartY = startY;
+      });
     }
   }
-
-
 
   Future<void> _persistPushkaAmount({
     bool resetToZero = false,
@@ -1583,8 +2224,13 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
       _showError(S.of(context).signInToContinue);
       return;
     }
-    final tenantId = ref.read(userProfileProvider).valueOrNull?['tenantId'] as String?;
+    final tenantId =
+        ref.read(userProfileProvider).valueOrNull?['tenantId'] as String?;
     if (tenantId == null || tenantId.isEmpty) return;
+    // Round-7 regression fix: tag the recent-write with the tenant it
+    // belongs to. The recentWrite guard downstream only honors this
+    // stopwatch when the incoming snapshot is for the SAME tenant.
+    _localWriteTenantId = tenantId;
     _localWriteStopwatch
       ..reset()
       ..start();
@@ -1595,30 +2241,322 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
     // with the old value while the user thinks the donation registered.
     final amount = overrideAmount ?? (resetToZero ? 0.0 : pushkaAmount);
     await Future.wait([
-      ref.read(userRepositoryProvider).updatePushkaAmount(
-        uid: user.uid,
-        tenantId: tenantId,
-        amount: amount,
-      ),
+      ref
+          .read(userRepositoryProvider)
+          .updatePushkaAmount(
+            uid: user.uid,
+            tenantId: tenantId,
+            amount: amount,
+          ),
       HiveCache.instance.savePushkaAmount(user.uid, tenantId, amount),
     ]);
   }
 
   void _showError(String message) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(message)),
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  /// Offline gate for payment flows. Payments require network — Firestore
+  /// persistence is fine for browsing but Stripe callables MUST reach the
+  /// server. If we've confirmed offline (opportunistic detection via
+  /// [networkStatusProvider]), show a friendly modal instead of firing a
+  /// callable that will fail with a scary error. Returns true if online (or
+  /// unknown — trust that state until proven otherwise).
+  Future<bool> _ensureOnlineForPayment() async {
+    if (!ref.read(isOfflineProvider)) return true;
+    if (!mounted) return false;
+    final tr = S.of(context);
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      backgroundColor: Theme.of(context).colorScheme.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
+      ),
+      builder: (ctx) => SafeArea(
+        top: false,
+        child: Padding(
+          padding: EdgeInsets.only(
+            bottom: MediaQuery.of(ctx).viewInsets.bottom,
+          ),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Center(
+                  child: Container(
+                    width: 36,
+                    height: 4,
+                    margin: const EdgeInsets.only(bottom: 16),
+                    decoration: BoxDecoration(
+                      color: Theme.of(ctx).colorScheme.outlineVariant,
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                ),
+                Text(
+                  tr.offlineDialogTitle,
+                  style: const TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.w700,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 14),
+                Text(
+                  tr.offlineDonationBlocked,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 14,
+                    color: Theme.of(ctx).colorScheme.onSurfaceVariant,
+                    height: 1.4,
+                  ),
+                ),
+                const SizedBox(height: 20),
+                SizedBox(
+                  width: double.infinity,
+                  height: 48,
+                  child: ElevatedButton(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppTokens.primaryBlue,
+                      foregroundColor: Colors.white,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                    onPressed: () => Navigator.of(ctx).pop(),
+                    child: Text(
+                      tr.commonUnderstood,
+                      style: const TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+    return false;
+  }
+
+  /// Persistent error alert for donation failures. Replaces the previous
+  /// SnackBar-based UX (auto-dismissed in ~4s, easy to miss, no next-step).
+  ///
+  /// - `reason` is the sanitized failure message (from `_donationErrorMessage`).
+  /// - `onRetry` is invoked after the dialog closes; pass a closure that
+  ///   re-triggers the same donation flow the user just attempted.
+  ///
+  /// The dialog is `barrierDismissible: false` so users must explicitly pick
+  /// Retry / Contact / Close — a critical payment error should not vanish
+  /// on an accidental tap-outside.
+  Future<void> _showDonationErrorDialog(
+    String reason,
+    VoidCallback? onRetry,
+  ) async {
+    if (!mounted) return;
+    final tr = S.of(context);
+    // Prefer the active tenant's contactEmail; fall back to the app-wide
+    // support address so the "Contact rab" action never dead-ends when a
+    // tenant has no contact configured.
+    final tenantContact = ref
+        .read(tenantConfigProvider)
+        .valueOrNull
+        ?.contactEmail;
+    final supportEmail =
+        (tenantContact != null && tenantContact.trim().isNotEmpty)
+        ? tenantContact.trim()
+        : 'support@pushkaapp.com';
+
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      // Force explicit dismissal — payment failure is critical, tap-outside
+      // must not silently close the alert.
+      isDismissible: false,
+      enableDrag: false,
+      backgroundColor: Theme.of(context).colorScheme.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
+      ),
+      builder: (ctx) => PopScope(
+        canPop: false,
+        child: SafeArea(
+          top: false,
+          child: Padding(
+            padding: EdgeInsets.only(
+              bottom: MediaQuery.of(ctx).viewInsets.bottom,
+            ),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Center(
+                    child: Container(
+                      width: 36,
+                      height: 4,
+                      margin: const EdgeInsets.only(bottom: 16),
+                      decoration: BoxDecoration(
+                        color: Theme.of(ctx).colorScheme.outlineVariant,
+                        borderRadius: BorderRadius.circular(2),
+                      ),
+                    ),
+                  ),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Container(
+                        width: 36,
+                        height: 36,
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFFFE5E5),
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: const Icon(
+                          Icons.error_outline_rounded,
+                          color: Color(0xFFCC2936),
+                          size: 22,
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Flexible(
+                        child: Text(
+                          tr.donationFailedTitle,
+                          style: const TextStyle(
+                            fontSize: 20,
+                            fontWeight: FontWeight.w700,
+                          ),
+                          textAlign: TextAlign.center,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 14),
+                  Text(
+                    tr.donationFailedBody(reason),
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      fontSize: 14,
+                      color: Theme.of(ctx).colorScheme.onSurfaceVariant,
+                      height: 1.4,
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+                  if (onRetry != null) ...[
+                    SizedBox(
+                      width: double.infinity,
+                      height: 48,
+                      child: ElevatedButton(
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: AppTokens.primaryBlue,
+                          foregroundColor: Colors.white,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                        ),
+                        onPressed: () {
+                          Navigator.of(ctx).pop();
+                          onRetry();
+                        },
+                        child: Text(
+                          tr.donationRetryBtn,
+                          style: const TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                  ],
+                  SizedBox(
+                    width: double.infinity,
+                    height: 44,
+                    child: TextButton(
+                      onPressed: () async {
+                        Navigator.of(ctx).pop();
+                        // Build a mailto: with a pre-filled subject + body that
+                        // includes the failure detail — saves the donor typing and
+                        // gives the rab enough context to triage.
+                        final uri = Uri(
+                          scheme: 'mailto',
+                          path: supportEmail,
+                          query: _encodeMailtoQuery({
+                            'subject': tr.donationEmailSubject,
+                            'body': tr.donationEmailBody(reason),
+                          }),
+                        );
+                        try {
+                          await launchUrl(
+                            uri,
+                            mode: LaunchMode.externalApplication,
+                          );
+                        } catch (_) {
+                          // launchUrl can throw on platforms without a mail handler;
+                          // swallow — sheet already closed, user can try again.
+                        }
+                      },
+                      child: Text(
+                        tr.donationContactRabBtn,
+                        style: TextStyle(
+                          color: Theme.of(ctx).colorScheme.onSurfaceVariant,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ),
+                  ),
+                  SizedBox(
+                    width: double.infinity,
+                    height: 44,
+                    child: TextButton(
+                      onPressed: () => Navigator.of(ctx).pop(),
+                      child: Text(
+                        tr.donationCloseBtn,
+                        style: TextStyle(
+                          color: Theme.of(ctx).colorScheme.onSurfaceVariant,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
     );
   }
 
-  String _currencySymbol(String code) {
-    const symbols = {
-      'usd': 'US\$', 'eur': '€', 'gbp': '£', 'cad': 'CA\$',
-      'mxn': 'MX\$', 'ars': 'ARS\$', 'brl': 'R\$', 'ils': '₪',
-      'clp': 'CL\$', 'cop': 'CO\$',
-    };
-    return symbols[code.toLowerCase()] ?? '\$';
-  }
+  /// `Uri(queryParameters: ...)` percent-encodes spaces as `+`, which some
+  /// mail clients render literally in the subject/body. Encode manually with
+  /// `%20` so the email opens clean on both Gmail and Apple Mail.
+  String _encodeMailtoQuery(Map<String, String> params) => params.entries
+      .map(
+        (e) =>
+            '${Uri.encodeComponent(e.key)}=${Uri.encodeQueryComponent(e.value).replaceAll('+', '%20')}',
+      )
+      .join('&');
+
+  // Round-9 regression fix: was a local map that shadowed shortCurrencySymbol
+  // — covered only 10 codes, used 'ARS$' (vs canonical 'AR$'), and fell
+  // back to plain '$' for anything unknown (JPY/AUD/CHF/etc.). Header,
+  // min/max dialogs called this, so a JPY user saw '$1000' as goal +
+  // 'the minimum amount is $50 JPY' in the min dialog. Now delegates
+  // to the shared canonical.
+  String _currencySymbol(String code) => shortCurrencySymbol(code);
 
   void _showMinAmountDialog(String currency, int minCents, double attempted) {
     final tr = S.of(context);
@@ -1633,48 +2571,155 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
         insetPadding: const EdgeInsets.symmetric(horizontal: 28),
         child: Padding(
           padding: const EdgeInsets.fromLTRB(24, 24, 24, 20),
-          child: Column(mainAxisSize: MainAxisSize.min, children: [
-            Container(
-              width: 56, height: 56,
-              decoration: BoxDecoration(
-                color: const Color(0xFFFFF3E0),
-                borderRadius: BorderRadius.circular(16),
-              ),
-              child: const Icon(Icons.info_outline_rounded, color: Color(0xFFFF9500), size: 30),
-            ),
-            const SizedBox(height: 16),
-            Text(
-              tr.minAmountTitle,
-              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
-            ),
-            const SizedBox(height: 10),
-            Text(
-              tr.minAmountBody(code, symbol, minAmount),
-              textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 14, color: Theme.of(context).colorScheme.onSurface, height: 1.4),
-            ),
-            const SizedBox(height: 6),
-            Text(
-              tr.minAmountHint,
-              textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 13, color: Theme.of(context).colorScheme.onSurfaceVariant, height: 1.4),
-            ),
-            const SizedBox(height: 20),
-            SizedBox(
-              width: double.infinity,
-              height: 46,
-              child: ElevatedButton(
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppTokens.primaryBlue,
-                  foregroundColor: Colors.white,
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                  elevation: 0,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 56,
+                height: 56,
+                decoration: BoxDecoration(
+                  color: const Color(0xFFFFF3E0),
+                  borderRadius: BorderRadius.circular(16),
                 ),
-                onPressed: () => Navigator.pop(ctx),
-                child: Text(tr.understood, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
+                child: const Icon(
+                  Icons.info_outline_rounded,
+                  color: Color(0xFFFF9500),
+                  size: 30,
+                ),
               ),
-            ),
-          ]),
+              const SizedBox(height: 16),
+              Text(
+                tr.minAmountTitle,
+                style: const TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(height: 10),
+              Text(
+                tr.minAmountBody(code, symbol, minAmount),
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: 14,
+                  color: Theme.of(context).colorScheme.onSurface,
+                  height: 1.4,
+                ),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                tr.minAmountHint,
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: 13,
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  height: 1.4,
+                ),
+              ),
+              const SizedBox(height: 20),
+              SizedBox(
+                width: double.infinity,
+                height: 46,
+                child: ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppTokens.primaryBlue,
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    elevation: 0,
+                  ),
+                  onPressed: () => Navigator.pop(ctx),
+                  child: Text(
+                    tr.understood,
+                    style: const TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  // Round-4 audit HIGH residual: symmetric max-amount dialog. Fires client-
+  // side before hitting the CF so donors see an actionable message
+  // ("máximo por transacción: $X") instead of a generic backend rejection.
+  void _showMaxAmountDialog(String currency, int maxCents, double attempted) {
+    final tr = S.of(context);
+    final symbol = _currencySymbol(currency);
+    final maxAmount = _formatAmountFromCents(maxCents, currency: currency);
+    final code = currency.toUpperCase();
+
+    showDialog(
+      context: context,
+      builder: (ctx) => Dialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        insetPadding: const EdgeInsets.symmetric(horizontal: 28),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(24, 24, 24, 20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 56,
+                height: 56,
+                decoration: BoxDecoration(
+                  color: const Color(0xFFFFF3E0),
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: const Icon(
+                  Icons.info_outline_rounded,
+                  color: Color(0xFFFF9500),
+                  size: 30,
+                ),
+              ),
+              const SizedBox(height: 16),
+              Text(
+                tr.maxAmountTitle,
+                style: const TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(height: 10),
+              Text(
+                tr.maxAmountBody(code, symbol, maxAmount),
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: 14,
+                  color: Theme.of(context).colorScheme.onSurface,
+                  height: 1.4,
+                ),
+              ),
+              const SizedBox(height: 20),
+              SizedBox(
+                width: double.infinity,
+                height: 46,
+                child: ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppTokens.primaryBlue,
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    elevation: 0,
+                  ),
+                  onPressed: () => Navigator.pop(ctx),
+                  child: Text(
+                    tr.understood,
+                    style: const TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -1682,22 +2727,40 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
 
   String _donationErrorMessage(Object error, S tr) {
     if (error is FirebaseFunctionsException) {
-      return switch (error.code) {
-        'unauthenticated' =>
-          tr.errorSessionInvalid,
-        'failed-precondition' =>
-          tr.errorSecurityCheck,
-        'permission-denied' =>
-          tr.errorAccessDenied,
-        'internal' =>
-          tr.errorPaymentServer,
-        'unavailable' =>
-          tr.errorServerUnavailable,
-        // Unknown codes: surface the message but sanitize first — backend
-        // could in theory throw `HttpsError("foo", err.stack)` which would
-        // dump a multi-line trace into a SnackBar otherwise.
-        _ => _sanitizeUserFacingError(error.message) ?? tr.couldNotStartPayment,
-      };
+      // For codes where the backend intentionally forwards a user-facing
+      // message (business-rule violations, tenant-not-ready reasons, Stripe
+      // decline reasons), prefer the sanitized backend text over the generic
+      // fallback so donors see the actionable detail (e.g. "El monto excede
+      // el límite permitido" instead of "Verificación de seguridad fallida").
+      switch (error.code) {
+        case 'unauthenticated':
+          return tr.errorSessionInvalid;
+        case 'failed-precondition':
+          final backendMsg = _sanitizeUserFacingError(error.message);
+          if (backendMsg != null) return backendMsg;
+          return tr.errorSecurityCheck;
+        case 'permission-denied':
+          final backendMsg = _sanitizeUserFacingError(error.message);
+          if (backendMsg != null) return backendMsg;
+          return tr.errorAccessDenied;
+        case 'internal':
+          // Stripe decline reasons are forwarded via HttpsError('internal', ...).
+          // Translate the common decline codes/messages into user-friendly
+          // Spanish so the donor knows whether to retry, use another card,
+          // or complete 3-D Secure. Fall back to the generic server error
+          // when the message doesn't look like a decline.
+          final declineMsg = _translateStripeDeclineReason(error.message);
+          if (declineMsg != null) return declineMsg;
+          return tr.errorPaymentServer;
+        case 'unavailable':
+          return tr.errorServerUnavailable;
+        default:
+          // Unknown codes: surface the message but sanitize first — backend
+          // could in theory throw `HttpsError("foo", err.stack)` which would
+          // dump a multi-line trace into a SnackBar otherwise.
+          return _sanitizeUserFacingError(error.message) ??
+              tr.couldNotStartPayment;
+      }
     }
     if (error is StripeServiceException) {
       if (error.code == 'canceled') return tr.paymentCanceled;
@@ -1717,16 +2780,73 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
   /// "package:" path markers) so the caller falls back to a generic message.
   String? _sanitizeUserFacingError(String? raw) {
     if (raw == null) return null;
-    final stripped = raw
-        .replaceAll(RegExp(r'[\x00-\x1F\x7F]'), ' ')
-        .trim();
+    final stripped = raw.replaceAll(RegExp(r'[\x00-\x1F\x7F]'), ' ').trim();
     if (stripped.isEmpty || stripped == 'null') return null;
-    final looksLikeStack = stripped.contains('/home/') ||
+    final looksLikeStack =
+        stripped.contains('/home/') ||
         stripped.contains('node_modules') ||
         stripped.contains('package:') ||
         stripped.length > 400;
     if (looksLikeStack) return null;
     return stripped.length > 200 ? '${stripped.substring(0, 200)}…' : stripped;
+  }
+
+  /// Maps a Stripe decline reason (either a decline code like
+  /// `card_declined` / `insufficient_funds` or a human-readable message
+  /// containing them) into a short user-facing Spanish string.
+  ///
+  /// Returns `null` when the input doesn't look like a payment decline —
+  /// the caller then falls back to the generic payment-server error.
+  ///
+  /// The `error.message` string from a Cloud Function `HttpsError('internal',
+  /// ...)` is the raw Stripe error message the CF forwarded, which may be
+  /// either the machine code or the English description.
+  String? _translateStripeDeclineReason(String? raw) {
+    if (raw == null) return null;
+    final msg = raw.trim();
+    if (msg.isEmpty) return null;
+    final lower = msg.toLowerCase();
+
+    // Match by decline code / keyword — order matters (specific → generic).
+    if (lower.contains('insufficient_funds') ||
+        lower.contains('insufficient funds')) {
+      return 'Fondos insuficientes en la tarjeta.';
+    }
+    if (lower.contains('expired_card') || lower.contains('expired card')) {
+      return 'La tarjeta expiró. Probá con otra.';
+    }
+    if (lower.contains('incorrect_cvc') ||
+        lower.contains('cvc') && lower.contains('incorrect')) {
+      return 'Código CVC incorrecto.';
+    }
+    if (lower.contains('incorrect_number') ||
+        (lower.contains('card number') && lower.contains('incorrect'))) {
+      return 'Número de tarjeta incorrecto.';
+    }
+    if (lower.contains('authentication_required') ||
+        lower.contains('authentication required')) {
+      return 'La tarjeta requiere autenticación adicional. Intenta de nuevo.';
+    }
+    if (lower.contains('do_not_honor') || lower.contains('generic_decline')) {
+      return 'La tarjeta fue rechazada por el banco. Probá con otra.';
+    }
+    if (lower.contains('lost_card') || lower.contains('stolen_card')) {
+      return 'La tarjeta fue rechazada por el banco. Probá con otra.';
+    }
+    if (lower.contains('processing_error')) {
+      return 'Error procesando la tarjeta. Intenta de nuevo en unos minutos.';
+    }
+    if (lower.contains('card_declined') || lower.contains('card declined')) {
+      return 'La tarjeta fue rechazada. Probá con otra tarjeta.';
+    }
+    // Generic "declin..." catch-all — surface the original message so the
+    // donor at least sees the specific reason.
+    if (lower.contains('declin')) {
+      final sanitized = _sanitizeUserFacingError(msg);
+      if (sanitized != null) return 'Tarjeta rechazada: $sanitized';
+      return 'La tarjeta fue rechazada. Probá con otra tarjeta.';
+    }
+    return null;
   }
 
   String _currencyCodeFromProfile() {
@@ -1744,6 +2864,14 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
   }
 
   bool _biometricEnabled() {
+    // Web (PWA) no soporta biometría — el package `local_auth` solo
+    // tiene implementación en Android/iOS/macOS/Windows. Si un user
+    // heredó `biometricAuthenticationEnabled: true` de una sesión
+    // nativa (APK anterior) y ahora abre la PWA, sin este short-circuit
+    // cada donación / vaciado dispara "Autenticación requerida" y
+    // bloquea el flow. Retornar false en web hace que ni siquiera se
+    // intente autenticar.
+    if (kIsWeb) return false;
     final profile = ref.read(userProfileProvider).valueOrNull;
     return (profile?['biometricAuthenticationEnabled'] as bool?) ?? false;
   }
@@ -1753,7 +2881,9 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
   /// nothing is sent to Stripe metadata or written to Firestore.
   Future<(bool proceed, String? reason)> _resolveDonationReason() async {
     // Same tenant-first fallback as _donateNow above.
-    final tenantReasons = ref.read(tenantConfigProvider).valueOrNull?.donationReasons ?? const <String>[];
+    final tenantReasons =
+        ref.read(tenantConfigProvider).valueOrNull?.donationReasons ??
+        const <String>[];
     final reasons = tenantReasons.isNotEmpty
         ? tenantReasons
         : S.of(context).defaultDonationReasons;
@@ -1771,13 +2901,16 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
   /// is chosen it surfaces designación + optional dedication.
   ///
   /// Returns null if the user dismissed the sheet → caller aborts.
-  Future<({String? reason, String message, bool auto, double amount})?> _showEmptyPushkaSheet({
-    required double amount,
-  }) async {
+  Future<({String? reason, String message, bool auto, double amount})?>
+  _showEmptyPushkaSheet({required double amount}) async {
     final tr = S.of(context);
     // Same tenant-first fallback as _donateNow above.
-    final tenantReasons = ref.read(tenantConfigProvider).valueOrNull?.donationReasons ?? const <String>[];
-    final reasons = tenantReasons.isNotEmpty ? tenantReasons : tr.defaultDonationReasons;
+    final tenantReasons =
+        ref.read(tenantConfigProvider).valueOrNull?.donationReasons ??
+        const <String>[];
+    final reasons = tenantReasons.isNotEmpty
+        ? tenantReasons
+        : tr.defaultDonationReasons;
     final messageCtrl = TextEditingController();
     String? selectedReason = reasons.first;
     bool dedicateOn = false;
@@ -1791,7 +2924,8 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
     // auto-empty schedule active — re-asking on every Vaciar tap is noisy.
     final tenantState = ref.read(tenantStateProvider).valueOrNull;
     final activeAutoFreq = tenantState?['autoEmptyFrequency'] as String?;
-    final autoEmptyAlreadyActive = activeAutoFreq != null &&
+    final autoEmptyAlreadyActive =
+        activeAutoFreq != null &&
         activeAutoFreq.isNotEmpty &&
         activeAutoFreq != 'manual';
     ({String? reason, String message, bool auto, double amount})? result;
@@ -1799,258 +2933,321 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
     Color outline(BuildContext c) => Theme.of(c).colorScheme.outline;
     Color surface(BuildContext c) => Theme.of(c).colorScheme.surface;
     OutlineInputBorder defaultBorder(BuildContext c) => OutlineInputBorder(
-          borderRadius: BorderRadius.circular(12),
-          borderSide: BorderSide(color: outline(c)),
-        );
+      borderRadius: BorderRadius.circular(12),
+      borderSide: BorderSide(color: outline(c)),
+    );
     OutlineInputBorder focusedBorder() => OutlineInputBorder(
-          borderRadius: BorderRadius.circular(12),
-          borderSide: const BorderSide(color: AppTokens.primaryBlue, width: 1.6),
-        );
+      borderRadius: BorderRadius.circular(12),
+      borderSide: const BorderSide(color: AppTokens.primaryBlue, width: 1.6),
+    );
 
     try {
-      result = await showKeyboardSafeSheet<({String? reason, String message, bool auto, double amount})>(
-        context: context,
-        builder: (ctx, setDialogState) => Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Center(
-              child: Container(
-                width: 36,
-                height: 4,
-                margin: const EdgeInsets.only(bottom: 12),
-                decoration: BoxDecoration(
-                  color: Colors.grey.shade300,
-                  borderRadius: BorderRadius.circular(2),
+      result =
+          await showKeyboardSafeSheet<
+            ({String? reason, String message, bool auto, double amount})
+          >(
+            context: context,
+            builder: (ctx, setDialogState) => Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Center(
+                  child: Container(
+                    width: 36,
+                    height: 4,
+                    margin: const EdgeInsets.only(bottom: 12),
+                    decoration: BoxDecoration(
+                      color: Colors.grey.shade300,
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
                 ),
-              ),
-            ),
-            Center(
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const _SecureShieldIcon(size: 26),
-                  const SizedBox(width: 8),
-                  Text(tr.donateNowTitle,
-                      style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w700)),
+                Center(
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const _SecureShieldIcon(size: 26),
+                      const SizedBox(width: 8),
+                      Text(
+                        tr.donateNowTitle,
+                        style: const TextStyle(
+                          fontSize: 22,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 16),
+                if (!autoEmptyAlreadyActive) ...[
+                  Row(
+                    children: [
+                      Expanded(
+                        child: _FrequencyChip(
+                          label: tr.emptyOnce,
+                          selected: !auto,
+                          onTap: () => setDialogState(() => auto = false),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: _FrequencyChip(
+                          label: tr.emptyAuto,
+                          selected: auto,
+                          icon: Icons.autorenew_rounded,
+                          iconColor: AppTokens.primaryBlue,
+                          onTap: () => setDialogState(() => auto = true),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 14),
                 ],
-              ),
-            ),
-            const SizedBox(height: 16),
-            if (!autoEmptyAlreadyActive) ...[
-              Row(children: [
-                Expanded(
-                  child: _FrequencyChip(
-                    label: tr.emptyOnce,
-                    selected: !auto,
-                    onTap: () => setDialogState(() => auto = false),
-                  ),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: _FrequencyChip(
-                    label: tr.emptyAuto,
-                    selected: auto,
-                    icon: Icons.autorenew_rounded,
-                    iconColor: AppTokens.primaryBlue,
-                    onTap: () => setDialogState(() => auto = true),
-                  ),
-                ),
-              ]),
-              const SizedBox(height: 14),
-            ],
-            if (partialEnabled && !auto) ...[
-              Row(
-                children: [25, 50, 75, 100].map((p) {
-                  final isSelected = selectedPercent == p;
-                  final idx = [25, 50, 75, 100].indexOf(p);
-                  return Expanded(
-                    child: Padding(
-                      padding: EdgeInsetsDirectional.only(start: idx == 0 ? 0 : 6),
-                      child: InkWell(
-                        borderRadius: BorderRadius.circular(12),
-                        onTap: () => setDialogState(() {
-                          selectedPercent = p;
-                          currentAmount = amount * p / 100.0;
-                        }),
-                        child: Container(
-                          height: 44,
-                          alignment: Alignment.center,
-                          decoration: BoxDecoration(
-                            color: isSelected
-                                ? AppTokens.primaryBlue.withValues(alpha: 0.12)
-                                : surface(ctx),
-                            border: Border.all(
-                              color: isSelected ? AppTokens.primaryBlue : outline(ctx),
-                              width: isSelected ? 1.6 : 1,
-                            ),
+                if (partialEnabled && !auto) ...[
+                  Row(
+                    children: [25, 50, 75, 100].map((p) {
+                      final isSelected = selectedPercent == p;
+                      final idx = [25, 50, 75, 100].indexOf(p);
+                      return Expanded(
+                        child: Padding(
+                          padding: EdgeInsetsDirectional.only(
+                            start: idx == 0 ? 0 : 6,
+                          ),
+                          child: InkWell(
                             borderRadius: BorderRadius.circular(12),
-                          ),
-                          child: Text(
-                            '$p%',
-                            style: TextStyle(
-                              fontSize: 14,
-                              fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
-                              color: Theme.of(ctx).colorScheme.onSurface,
+                            onTap: () => setDialogState(() {
+                              selectedPercent = p;
+                              currentAmount = amount * p / 100.0;
+                            }),
+                            child: Container(
+                              height: 44,
+                              alignment: Alignment.center,
+                              decoration: BoxDecoration(
+                                color: isSelected
+                                    ? AppTokens.primaryBlue.withValues(
+                                        alpha: 0.12,
+                                      )
+                                    : surface(ctx),
+                                border: Border.all(
+                                  color: isSelected
+                                      ? AppTokens.primaryBlue
+                                      : outline(ctx),
+                                  width: isSelected ? 1.6 : 1,
+                                ),
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              child: Text(
+                                '$p%',
+                                style: TextStyle(
+                                  fontSize: 14,
+                                  fontWeight: isSelected
+                                      ? FontWeight.w700
+                                      : FontWeight.w500,
+                                  color: Theme.of(ctx).colorScheme.onSurface,
+                                ),
+                              ),
                             ),
                           ),
                         ),
-                      ),
-                    ),
-                  );
-                }).toList(),
-              ),
-              const SizedBox(height: 12),
-            ],
-            // Amount preview — read-only header line.
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-              decoration: BoxDecoration(
-                color: surface(ctx),
-                border: Border.all(color: outline(ctx)),
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Row(children: [
-                Expanded(
-                  child: Text(
-                    formatMoney(currentAmount),
-                    style: TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.w600,
-                      color: Theme.of(ctx).colorScheme.onSurface,
-                    ),
+                      );
+                    }).toList(),
                   ),
-                ),
-                Text(
-                  _currencyCodeFromProfile().toUpperCase(),
-                  style: TextStyle(
-                    fontSize: 14,
-                    color: Theme.of(ctx).colorScheme.onSurfaceVariant,
+                  const SizedBox(height: 12),
+                ],
+                // Amount preview — read-only header line.
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 14,
                   ),
-                ),
-              ]),
-            ),
-            if (!auto) ...[
-              const SizedBox(height: 14),
-              InkWell(
-                borderRadius: BorderRadius.circular(12),
-                onTap: () async {
-                  final picked = await showDonationReasonPicker(
-                    context: ctx,
-                    reasons: reasons,
-                    currentSelection: selectedReason,
-                  );
-                  if (picked is DonationReasonSelected) {
-                    setDialogState(() => selectedReason = picked.reason);
-                  }
-                },
-                child: InputDecorator(
-                  decoration: InputDecoration(
-                    labelText: tr.donationReasonTitle,
-                    filled: true,
-                    fillColor: surface(ctx),
-                    enabledBorder: defaultBorder(ctx),
-                    border: defaultBorder(ctx),
+                  decoration: BoxDecoration(
+                    color: surface(ctx),
+                    border: Border.all(color: outline(ctx)),
+                    borderRadius: BorderRadius.circular(12),
                   ),
-                  child: Row(children: [
-                    Expanded(
-                      child: Text(
-                        selectedReason ?? tr.donationReasonNone,
-                        style: TextStyle(
-                          fontSize: 16,
-                          color: selectedReason == null
-                              ? Theme.of(ctx).colorScheme.onSurfaceVariant
-                              : Theme.of(ctx).colorScheme.onSurface,
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          // Symbol matches the active currency — `formatMoney` alone
+                          // renders `$` unconditionally which lied about EUR/JPY/ILS.
+                          // Round-7 regression fix: shortCurrencySymbol keeps
+                          // the LatAm prefixes (MX$/AR$/CL$/CO$/US$) unambiguous
+                          // instead of the plain '$' currencySymbol() falls back
+                          // to. The ISO code trails on the next Text so we don't
+                          // want the full "X SYMB $10 USD" repetition either.
+                          //
+                          // Round-9 regression fix (LOW #4): use currency-aware
+                          // formatter so CLP/JPY/KRW render as integers and BHD/JOD
+                          // get three decimals. formatMoney was locked to
+                          // two-decimal-max — a CLP 10 000 preview came out as
+                          // "$10,000.00" which reads as ten thousand cents.
+                          formatCurrencyAmountWithSymbol(
+                            currentAmount,
+                            _currencyCodeFromProfile(),
+                            symbol: shortCurrencySymbol(
+                              _currencyCodeFromProfile(),
+                            ),
+                          ),
+                          style: TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.w600,
+                            color: Theme.of(ctx).colorScheme.onSurface,
+                          ),
                         ),
                       ),
-                    ),
-                    Icon(Icons.keyboard_arrow_down_rounded,
-                        color: Theme.of(ctx).colorScheme.onSurfaceVariant),
-                  ]),
+                      Text(
+                        _currencyCodeFromProfile().toUpperCase(),
+                        style: TextStyle(
+                          fontSize: 14,
+                          color: Theme.of(ctx).colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
-              ),
-              const SizedBox(height: 12),
-              InkWell(
-                borderRadius: BorderRadius.circular(8),
-                onTap: () => setDialogState(() => dedicateOn = !dedicateOn),
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 4),
-                  child: Row(children: [
-                    SizedBox(
-                      width: 22,
-                      height: 22,
-                      child: Checkbox(
-                        value: dedicateOn,
-                        onChanged: (v) => setDialogState(() => dedicateOn = v ?? false),
-                        activeColor: AppTokens.primaryBlue,
-                        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                        visualDensity: VisualDensity.compact,
+                if (!auto) ...[
+                  const SizedBox(height: 14),
+                  InkWell(
+                    borderRadius: BorderRadius.circular(12),
+                    onTap: () async {
+                      final picked = await showDonationReasonPicker(
+                        context: ctx,
+                        reasons: reasons,
+                        currentSelection: selectedReason,
+                      );
+                      if (picked is DonationReasonSelected) {
+                        setDialogState(() => selectedReason = picked.reason);
+                      }
+                    },
+                    child: InputDecorator(
+                      decoration: InputDecoration(
+                        labelText: tr.donationReasonTitle,
+                        filled: true,
+                        fillColor: surface(ctx),
+                        enabledBorder: defaultBorder(ctx),
+                        border: defaultBorder(ctx),
+                      ),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              selectedReason ?? tr.donationReasonNone,
+                              style: TextStyle(
+                                fontSize: 16,
+                                color: selectedReason == null
+                                    ? Theme.of(ctx).colorScheme.onSurfaceVariant
+                                    : Theme.of(ctx).colorScheme.onSurface,
+                              ),
+                            ),
+                          ),
+                          Icon(
+                            Icons.keyboard_arrow_down_rounded,
+                            color: Theme.of(ctx).colorScheme.onSurfaceVariant,
+                          ),
+                        ],
                       ),
                     ),
-                    const SizedBox(width: 10),
-                    Text(tr.dedicateDonation,
-                        style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w500)),
-                  ]),
-                ),
-              ),
-              if (dedicateOn) ...[
-                const SizedBox(height: 10),
-                TextField(
-                  controller: messageCtrl,
-                  textCapitalization: TextCapitalization.sentences,
-                  maxLength: 240,
-                  decoration: InputDecoration(
-                    labelText: tr.donationMessageLabel,
-                    floatingLabelStyle: TextStyle(color: Theme.of(ctx).colorScheme.onSurfaceVariant),
-                    hintText: tr.donationMessageHint,
-                    filled: true,
-                    fillColor: surface(ctx),
-                    enabledBorder: defaultBorder(ctx),
-                    border: defaultBorder(ctx),
-                    focusedBorder: focusedBorder(),
+                  ),
+                  const SizedBox(height: 12),
+                  InkWell(
+                    borderRadius: BorderRadius.circular(8),
+                    onTap: () => setDialogState(() => dedicateOn = !dedicateOn),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 4),
+                      child: Row(
+                        children: [
+                          SizedBox(
+                            width: 22,
+                            height: 22,
+                            child: Checkbox(
+                              value: dedicateOn,
+                              onChanged: (v) =>
+                                  setDialogState(() => dedicateOn = v ?? false),
+                              activeColor: AppTokens.primaryBlue,
+                              materialTapTargetSize:
+                                  MaterialTapTargetSize.shrinkWrap,
+                              visualDensity: VisualDensity.compact,
+                            ),
+                          ),
+                          const SizedBox(width: 10),
+                          Text(
+                            tr.dedicateDonation,
+                            style: const TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  if (dedicateOn) ...[
+                    const SizedBox(height: 10),
+                    TextField(
+                      controller: messageCtrl,
+                      textCapitalization: TextCapitalization.sentences,
+                      maxLength: 240,
+                      decoration: InputDecoration(
+                        labelText: tr.donationMessageLabel,
+                        floatingLabelStyle: TextStyle(
+                          color: Theme.of(ctx).colorScheme.onSurfaceVariant,
+                        ),
+                        hintText: tr.donationMessageHint,
+                        filled: true,
+                        fillColor: surface(ctx),
+                        enabledBorder: defaultBorder(ctx),
+                        border: defaultBorder(ctx),
+                        focusedBorder: focusedBorder(),
+                      ),
+                    ),
+                  ],
+                ],
+                const SizedBox(height: 14),
+                SizedBox(
+                  width: double.infinity,
+                  height: 48,
+                  child: ElevatedButton(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppTokens.primaryBlue,
+                      foregroundColor: Colors.white,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                    onPressed: () {
+                      if (auto) {
+                        // Push AutoEmptyScreen ON TOP so back returns to the
+                        // still-open sheet. popExtra=true makes save dismiss
+                        // both AutoEmpty AND this sheet, dropping the user
+                        // back on Mi Pushka.
+                        Navigator.of(ctx, rootNavigator: true).push(
+                          MaterialPageRoute(
+                            builder: (_) =>
+                                const AutoEmptyScreen(popExtra: true),
+                          ),
+                        );
+                        return;
+                      }
+                      Navigator.pop(ctx, (
+                        reason: selectedReason,
+                        message: dedicateOn ? messageCtrl.text.trim() : '',
+                        auto: false,
+                        amount: currentAmount,
+                      ));
+                    },
+                    child: Text(
+                      auto ? tr.emptyAutoBtn : tr.emptyPushkaBtn,
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w700,
+                        fontSize: 16,
+                      ),
+                    ),
                   ),
                 ),
               ],
-            ],
-            const SizedBox(height: 14),
-            SizedBox(
-              width: double.infinity,
-              height: 48,
-              child: ElevatedButton(
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppTokens.primaryBlue,
-                  foregroundColor: Colors.white,
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                ),
-                onPressed: () {
-                  if (auto) {
-                    // Push AutoEmptyScreen ON TOP so back returns to the
-                    // still-open sheet. popExtra=true makes save dismiss
-                    // both AutoEmpty AND this sheet, dropping the user
-                    // back on Mi Pushka.
-                    Navigator.of(ctx, rootNavigator: true).push(
-                      MaterialPageRoute(
-                        builder: (_) => const AutoEmptyScreen(popExtra: true),
-                      ),
-                    );
-                    return;
-                  }
-                  Navigator.pop(ctx, (
-                    reason: selectedReason,
-                    message: dedicateOn ? messageCtrl.text.trim() : '',
-                    auto: false,
-                    amount: currentAmount,
-                  ));
-                },
-                child: Text(
-                  auto ? tr.emptyAutoBtn : tr.emptyPushkaBtn,
-                  style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 16),
-                ),
-              ),
             ),
-          ],
-        ),
-      );
+          );
     } finally {
       Future.delayed(const Duration(milliseconds: 400), messageCtrl.dispose);
     }
@@ -2066,7 +3263,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
       case 'brl':
         return 100; // 1.00 BRL (~$0.20 USD)
       case 'clp':
-        return 50000; // 500 CLP (~$0.55 USD, zero-decimal)
+        return 500; // 500 CLP (~$0.55 USD, zero-decimal — value == amount).
       case 'cop':
         return 200000; // 2000 COP (~$0.50 USD)
       case 'ils':
@@ -2079,6 +3276,37 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
         return 50; // 0.50
       default:
         return 100; // 1.00 safe default
+    }
+  }
+
+  // Round-4 audit HIGH residual: client-side max amount validation so the
+  // user sees an actionable error BEFORE hitting the CF (which rejects
+  // with a generic "amount exceeds cap" HttpsError). Values MUST stay
+  // aligned with functions/index.js:CURRENCY_MAX_AMOUNTS.
+  int _maxAmountCentsForCurrency(String currency) {
+    switch (currency.toLowerCase()) {
+      case 'usd':
+        return 100000; // $1000
+      case 'eur':
+        return 100000; // €1000
+      case 'gbp':
+        return 80000; // £800
+      case 'cad':
+        return 130000; // C$1300
+      case 'ils':
+        return 350000; // ₪3500
+      case 'mxn':
+        return 2000000; // MX$20000
+      case 'brl':
+        return 500000; // R$5000
+      case 'ars':
+        return 100000000; // AR$1M
+      case 'clp':
+        return 900000; // CLP $900k (zero-decimal)
+      case 'cop':
+        return 400000000; // COP $4M
+      default:
+        return 100000; // safe default matching USD
     }
   }
 
@@ -2131,14 +3359,10 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
     }
   }
 
-  String _shortSymbol(String code) {
-    const symbols = {
-      'usd': '\$', 'eur': '€', 'gbp': '£', 'cad': 'C\$',
-      'mxn': '\$', 'ars': '\$', 'brl': 'R\$', 'ils': '₪',
-      'clp': '\$', 'cop': '\$',
-    };
-    return symbols[code.toLowerCase()] ?? '\$';
-  }
+  // Kept as a thin wrapper for source-compat with existing prefixText calls.
+  // Uses the central shortCurrencySymbol() from format_utils (which returns
+  // MX$ / AR$ / CL$ / CO$ instead of ambiguous $ for LatAm currencies).
+  String _shortSymbol(String code) => shortCurrencySymbol(code);
 
   String _formatPresetValue(double amount) {
     if (amount == amount.roundToDouble()) return amount.toInt().toString();
@@ -2146,12 +3370,17 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
   }
 
   String _formatQuickAmount(double amount) {
+    // Round-9 regression fix (LOW #5): delegate to the currency-aware
+    // formatter so zero-decimal currencies (CLP/JPY/KRW) round to whole
+    // units and three-decimal (BHD/JOD) get the right precision.
+    // Previously toStringAsFixed(2) forced a decimal tail on integer-only
+    // currencies — CLP 5000 preview became "5000.00" which is nonsense.
     final currency = _currencyCodeFromProfile();
-    final symbol = _shortSymbol(currency);
-    if (amount == amount.roundToDouble()) {
-      return '$symbol${amount.toInt()}';
-    }
-    return '$symbol${amount.toStringAsFixed(2)}';
+    return formatCurrencyAmountWithSymbol(
+      amount,
+      currency,
+      symbol: _shortSymbol(currency),
+    );
   }
 
   List<double> _buildQuickAmounts() {
@@ -2167,7 +3396,8 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
     required double goal,
     required List<double> presets,
   }) async {
-    final tenantId = ref.read(userProfileProvider).valueOrNull?['tenantId'] as String?;
+    final tenantId =
+        ref.read(userProfileProvider).valueOrNull?['tenantId'] as String?;
     if (tenantId == null || tenantId.isEmpty) return;
     try {
       await ref
@@ -2204,7 +3434,8 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
 
     final currency = _currencyCodeFromProfile();
     final defaults = _presetsForCurrency(currency);
-    final currentPresets = (_presetAmounts.length == 3 && _presetAmounts.every((v) => v > 0))
+    final currentPresets =
+        (_presetAmounts.length == 3 && _presetAmounts.every((v) => v > 0))
         ? _presetAmounts
         : defaults;
     final symbol = _shortSymbol(currency);
@@ -2213,272 +3444,332 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
     double displayedAmount = pushkaAmount;
     bool isSaving = false;
 
-    final ctrl1 = TextEditingController(text: _formatPresetValue(currentPresets[0]));
-    final ctrl2 = TextEditingController(text: _formatPresetValue(currentPresets[1]));
-    final ctrl3 = TextEditingController(text: _formatPresetValue(currentPresets[2]));
+    final ctrl1 = TextEditingController(
+      text: _formatPresetValue(currentPresets[0]),
+    );
+    final ctrl2 = TextEditingController(
+      text: _formatPresetValue(currentPresets[1]),
+    );
+    final ctrl3 = TextEditingController(
+      text: _formatPresetValue(currentPresets[2]),
+    );
     // Inline TextField for monto acumulado (replaced the prior tap-to-edit
     // dialog) so the user can edit it the same way as the presets.
-    final amountAccCtrl = TextEditingController(text: _formatPresetValue(displayedAmount));
+    final amountAccCtrl = TextEditingController(
+      text: _formatPresetValue(displayedAmount),
+    );
     // Inline TextField for the pushka goal — replaced the prior tap-to-open
     // bottom-sheet picker. The user prefers a single editable field over
     // a list of preset goals; "Otro" is no longer needed because every
     // value is freely typable.
-    final goalCtrl = TextEditingController(text: _formatPresetValue(selectedGoal));
+    final goalCtrl = TextEditingController(
+      text: _formatPresetValue(selectedGoal),
+    );
     bool? saved;
     try {
-    saved = await showKeyboardSafeSheet<bool>(
-      context: context,
-      builder: (ctx, setDialogState) {
-        final cs = Theme.of(ctx).colorScheme;
-        return Column(
-                      mainAxisSize: MainAxisSize.min,
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Center(child: Container(width: 36, height: 4, margin: const EdgeInsets.only(bottom: 12), decoration: BoxDecoration(color: cs.outlineVariant, borderRadius: BorderRadius.circular(2)))),
-                  Center(
-                    child: Text(
-                      S.of(context).tzedakahSettings,
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        fontSize: 28,
-                        fontWeight: FontWeight.w800,
-                        letterSpacing: -0.3,
-                        color: cs.onSurface,
-                      ),
+      saved = await showKeyboardSafeSheet<bool>(
+        context: context,
+        builder: (ctx, setDialogState) {
+          final cs = Theme.of(ctx).colorScheme;
+          return Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Center(
+                child: Container(
+                  width: 36,
+                  height: 4,
+                  margin: const EdgeInsets.only(bottom: 12),
+                  decoration: BoxDecoration(
+                    color: cs.outlineVariant,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+              ),
+              Center(
+                child: Text(
+                  S.of(context).tzedakahSettings,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 28,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: -0.3,
+                    color: cs.onSurface,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 18),
+              Text(
+                S.of(context).pushkaGoalLabel,
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w700,
+                  color: cs.onSurfaceVariant,
+                  letterSpacing: 0.8,
+                ),
+              ),
+              const SizedBox(height: 8),
+              TextField(
+                controller: goalCtrl,
+                keyboardType: const TextInputType.numberWithOptions(
+                  decimal: true,
+                ),
+                style: const TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w500,
+                ),
+                decoration: InputDecoration(
+                  prefixText: '$symbol ',
+                  prefixStyle: TextStyle(
+                    fontSize: 16,
+                    color: cs.onSurfaceVariant,
+                    fontWeight: FontWeight.w500,
+                  ),
+                  filled: true,
+                  fillColor: cs.surface,
+                  contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 14,
+                  ),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: BorderSide(color: cs.outline),
+                  ),
+                  enabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: BorderSide(color: cs.outline),
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: BorderSide(
+                      color: AppTokens.primaryBlue,
+                      width: 2,
                     ),
                   ),
-                  const SizedBox(height: 18),
-                  Text(
-                    S.of(context).pushkaGoalLabel,
-                    style: TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w700,
-                      color: cs.onSurfaceVariant,
-                      letterSpacing: 0.8,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  TextField(
-                    controller: goalCtrl,
-                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                    style: const TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w500,
-                    ),
-                    decoration: InputDecoration(
-                      prefixText: '$symbol ',
-                      prefixStyle: TextStyle(
-                        fontSize: 16,
-                        color: cs.onSurfaceVariant,
-                        fontWeight: FontWeight.w500,
-                      ),
-                      filled: true,
-                      fillColor: cs.surface,
-                      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12),
-                        borderSide: BorderSide(color: cs.outline),
-                      ),
-                      enabledBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12),
-                        borderSide: BorderSide(color: cs.outline),
-                      ),
-                      focusedBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12),
-                        borderSide: BorderSide(color: AppTokens.primaryBlue, width: 2),
-                      ),
-                    ),
-                    onChanged: (value) {
-                      final parsed = double.tryParse(value.replaceAll(',', '.'));
-                      if (parsed != null && parsed > 0) {
-                        selectedGoal = parsed;
-                      }
-                    },
-                  ),
+                ),
+                onChanged: (value) {
+                  final parsed = double.tryParse(value.replaceAll(',', '.'));
+                  if (parsed != null && parsed > 0) {
+                    selectedGoal = parsed;
+                  }
+                },
+              ),
 
-                  // ── Monto acumulado ──────────────────────────────────
-                  // Inline TextField (mismo patrón que los presets) en
-                  // lugar del antiguo tap-to-open dialog. Los cambios se
-                  // confirman al tocar Guardar abajo, junto con presets +
-                  // meta. El estilo coincide con Settings (filled surface
-                  // + cs.outline + 12 radius + 16/14 padding).
-                  const SizedBox(height: 18),
-                  Text(
-                    S.of(context).correctAmountLabel,
-                    style: TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w700,
-                      color: cs.onSurfaceVariant,
-                      letterSpacing: 0.8,
+              // ── Monto acumulado ──────────────────────────────────
+              // Inline TextField (mismo patrón que los presets) en
+              // lugar del antiguo tap-to-open dialog. Los cambios se
+              // confirman al tocar Guardar abajo, junto con presets +
+              // meta. El estilo coincide con Settings (filled surface
+              // + cs.outline + 12 radius + 16/14 padding).
+              const SizedBox(height: 18),
+              Text(
+                S.of(context).correctAmountLabel,
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w700,
+                  color: cs.onSurfaceVariant,
+                  letterSpacing: 0.8,
+                ),
+              ),
+              const SizedBox(height: 8),
+              TextField(
+                controller: amountAccCtrl,
+                keyboardType: const TextInputType.numberWithOptions(
+                  decimal: true,
+                ),
+                style: const TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w500,
+                ),
+                decoration: InputDecoration(
+                  prefixText: '$symbol ',
+                  prefixStyle: TextStyle(
+                    fontSize: 16,
+                    color: cs.onSurfaceVariant,
+                    fontWeight: FontWeight.w500,
+                  ),
+                  filled: true,
+                  fillColor: cs.surface,
+                  contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 14,
+                  ),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: BorderSide(color: cs.outline),
+                  ),
+                  enabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: BorderSide(color: cs.outline),
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: BorderSide(
+                      color: AppTokens.primaryBlue,
+                      width: 2,
                     ),
                   ),
-                  const SizedBox(height: 8),
-                  TextField(
-                    controller: amountAccCtrl,
-                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                    style: const TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w500,
-                    ),
-                    decoration: InputDecoration(
-                      prefixText: '$symbol ',
-                      prefixStyle: TextStyle(
-                        fontSize: 16,
-                        color: cs.onSurfaceVariant,
-                        fontWeight: FontWeight.w500,
-                      ),
-                      filled: true,
-                      fillColor: cs.surface,
-                      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12),
-                        borderSide: BorderSide(color: cs.outline),
-                      ),
-                      enabledBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12),
-                        borderSide: BorderSide(color: cs.outline),
-                      ),
-                      focusedBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12),
-                        borderSide: BorderSide(color: AppTokens.primaryBlue, width: 2),
-                      ),
-                    ),
-                    onChanged: (value) {
-                      final parsed = double.tryParse(value.replaceAll(',', '.'));
-                      if (parsed != null && parsed >= 0) {
-                        final capped = pushkaGoal > 0
-                            ? parsed.clamp(0.0, pushkaGoal)
-                            : parsed.clamp(0.0, 100000.0);
-                        displayedAmount = capped;
-                      }
-                    },
-                  ),
+                ),
+                onChanged: (value) {
+                  final parsed = double.tryParse(value.replaceAll(',', '.'));
+                  if (parsed != null && parsed >= 0) {
+                    final capped = pushkaGoal > 0
+                        ? parsed.clamp(0.0, pushkaGoal)
+                        : parsed.clamp(0.0, 100000.0);
+                    displayedAmount = capped;
+                  }
+                },
+              ),
 
-                  const SizedBox(height: 18),
-                  Text(
-                    S.of(context).presetAmountsLabel,
-                    style: TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w700,
-                      color: cs.onSurfaceVariant,
-                      letterSpacing: 0.8,
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    S.of(context).editQuickAmountHint,
-                    style: TextStyle(fontSize: 12, color: cs.onSurfaceVariant),
-                  ),
-                  const SizedBox(height: 10),
-                  Row(
-                    children: [ctrl1, ctrl2, ctrl3].asMap().entries.map((entry) {
-                      final idx = entry.key;
-                      final ctrl = entry.value;
-                      return Expanded(
-                        child: Padding(
-                          padding: EdgeInsetsDirectional.only(end: idx < 2 ? 8 : 0),
-                          child: TextField(
-                            controller: ctrl,
-                            keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                            textAlign: TextAlign.center,
-                            style: const TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.w500,
-                            ),
-                            decoration: InputDecoration(
-                              prefixText: symbol,
-                              prefixStyle: TextStyle(
-                                fontSize: 15,
-                                color: cs.onSurfaceVariant,
-                                fontWeight: FontWeight.w500,
-                              ),
-                              filled: true,
-                              fillColor: cs.surface,
-                              contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 14),
-                              border: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(12),
-                                borderSide: BorderSide(color: cs.outline),
-                              ),
-                              enabledBorder: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(12),
-                                borderSide: BorderSide(color: cs.outline),
-                              ),
-                              focusedBorder: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(12),
-                                borderSide: BorderSide(color: AppTokens.primaryBlue, width: 2),
-                              ),
+              const SizedBox(height: 18),
+              Text(
+                S.of(context).presetAmountsLabel,
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w700,
+                  color: cs.onSurfaceVariant,
+                  letterSpacing: 0.8,
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                S.of(context).editQuickAmountHint,
+                style: TextStyle(fontSize: 12, color: cs.onSurfaceVariant),
+              ),
+              const SizedBox(height: 10),
+              Row(
+                children: [ctrl1, ctrl2, ctrl3].asMap().entries.map((entry) {
+                  final idx = entry.key;
+                  final ctrl = entry.value;
+                  return Expanded(
+                    child: Padding(
+                      padding: EdgeInsetsDirectional.only(end: idx < 2 ? 8 : 0),
+                      child: TextField(
+                        controller: ctrl,
+                        keyboardType: const TextInputType.numberWithOptions(
+                          decimal: true,
+                        ),
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w500,
+                        ),
+                        decoration: InputDecoration(
+                          prefixText: symbol,
+                          prefixStyle: TextStyle(
+                            fontSize: 15,
+                            color: cs.onSurfaceVariant,
+                            fontWeight: FontWeight.w500,
+                          ),
+                          filled: true,
+                          fillColor: cs.surface,
+                          contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 14,
+                          ),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(12),
+                            borderSide: BorderSide(color: cs.outline),
+                          ),
+                          enabledBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(12),
+                            borderSide: BorderSide(color: cs.outline),
+                          ),
+                          focusedBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(12),
+                            borderSide: BorderSide(
+                              color: AppTokens.primaryBlue,
+                              width: 2,
                             ),
                           ),
                         ),
-                      );
-                    }).toList(),
-                  ),
-                  const SizedBox(height: 22),
-                  SizedBox(
-                    width: double.infinity,
-                    child: ElevatedButton(
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: AppTokens.primaryBlue,
-                        foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(vertical: 14),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
                       ),
-                      onPressed: isSaving
-                          ? null
-                          : () async {
-                              final p1 = double.tryParse(ctrl1.text.replaceAll(',', '.')) ?? 0;
-                              final p2 = double.tryParse(ctrl2.text.replaceAll(',', '.')) ?? 0;
-                              final p3 = double.tryParse(ctrl3.text.replaceAll(',', '.')) ?? 0;
-                              if (p1 <= 0 || p2 <= 0 || p3 <= 0) {
-                                _showError(S.of(context).allAmountsMustBePositive);
-                                return;
-                              }
-                              final newPresets = [p1, p2, p3];
-                              setDialogState(() => isSaving = true);
-                              if (ctx.mounted) {
-                                Navigator.of(ctx).pop(true);
-                              }
-                              if (!mounted) return;
-                              setState(() {
-                                pushkaGoal = selectedGoal;
-                                _presetAmounts = newPresets;
-                                pushkaAmount = displayedAmount;
-                              });
-                              unawaited(
-                                _syncTzedakahSettings(
-                                  uid: user.uid,
-                                  goal: selectedGoal,
-                                  presets: newPresets,
-                                ),
-                              );
-                              unawaited(
-                                _persistPushkaAmount(resetToZero: displayedAmount <= 0),
-                              );
-                            },
-                      child: isSaving
-                          ? const SizedBox(
-                              height: 18,
-                              width: 18,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2.4,
-                                valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
-                              ),
-                            )
-                          : Text(
-                              S.of(context).saveBtn,
-                              style: const TextStyle(fontWeight: FontWeight.w700),
-                            ),
+                    ),
+                  );
+                }).toList(),
+              ),
+              const SizedBox(height: 22),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppTokens.primaryBlue,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
                     ),
                   ),
-                  // Cancelar button removed by request — the user can
-                  // dismiss the sheet by swiping down or tapping the
-                  // dim barrier, so the explicit button was redundant.
-                      ],
-                    );
-      },
-    );
+                  onPressed: isSaving
+                      ? null
+                      : () async {
+                          final p1 =
+                              double.tryParse(
+                                ctrl1.text.replaceAll(',', '.'),
+                              ) ??
+                              0;
+                          final p2 =
+                              double.tryParse(
+                                ctrl2.text.replaceAll(',', '.'),
+                              ) ??
+                              0;
+                          final p3 =
+                              double.tryParse(
+                                ctrl3.text.replaceAll(',', '.'),
+                              ) ??
+                              0;
+                          if (p1 <= 0 || p2 <= 0 || p3 <= 0) {
+                            _showError(S.of(context).allAmountsMustBePositive);
+                            return;
+                          }
+                          final newPresets = [p1, p2, p3];
+                          setDialogState(() => isSaving = true);
+                          if (ctx.mounted) {
+                            Navigator.of(ctx).pop(true);
+                          }
+                          if (!mounted) return;
+                          setState(() {
+                            pushkaGoal = selectedGoal;
+                            _presetAmounts = newPresets;
+                            pushkaAmount = displayedAmount;
+                          });
+                          unawaited(
+                            _syncTzedakahSettings(
+                              uid: user.uid,
+                              goal: selectedGoal,
+                              presets: newPresets,
+                            ),
+                          );
+                          unawaited(
+                            _persistPushkaAmount(
+                              resetToZero: displayedAmount <= 0,
+                            ),
+                          );
+                        },
+                  child: isSaving
+                      ? const SizedBox(
+                          height: 18,
+                          width: 18,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2.4,
+                            valueColor: AlwaysStoppedAnimation<Color>(
+                              Colors.white,
+                            ),
+                          ),
+                        )
+                      : Text(
+                          S.of(context).saveBtn,
+                          style: const TextStyle(fontWeight: FontWeight.w700),
+                        ),
+                ),
+              ),
+              // Cancelar button removed by request — the user can
+              // dismiss the sheet by swiping down or tapping the
+              // dim barrier, so the explicit button was redundant.
+            ],
+          );
+        },
+      );
     } finally {
       Future.delayed(const Duration(milliseconds: 400), () {
         ctrl1.dispose();
@@ -2490,15 +3781,12 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
     }
 
     if (saved == true && mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(S.of(context).settingsApplied)),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(S.of(context).settingsApplied)));
     }
   }
-
 }
-
-
 
 class _HolidayInfo {
   final String nameEs;
@@ -2559,31 +3847,36 @@ class _HolidayInfo {
     return null;
   }
 
+  // Calendario de festividades del banner de la pantalla principal.
+  //
+  // GENERADA CON hebcal, NO SE EDITA A MANO. Cada `startDate` es el PRIMER DÍA
+  // de la festividad (Pesach I, Sukkot I, 1ª vela de Janucá…), y el banner se
+  // muestra desde `showDaysBefore` días antes hasta `startDate + durationDays`.
+  //
+  // ⚠️ ESTA LISTA CADUCA: llega hasta diciembre de 2031. Cuando se agote,
+  // getActiveHoliday() devuelve null en silencio y el banner desaparece para
+  // siempre sin ningún aviso. La versión anterior terminaba en Pesaj de abril
+  // 2027 — se habría apagado sola en 8 meses sin que nadie lo notara.
+  // Regenerar antes de 2031.
+  //
+  // Se corrigió de paso Janucá 2026: decía 5 de diciembre y la primera vela es
+  // el 4.
+  //
+  // Para regenerar (desde functions/). El TZ=UTC no es opcional: hebcal lee los
+  // componentes LOCALES de la fecha, y generarla desde otro huso corre toda la
+  // tabla un día — ver la misma advertencia en _computeNextErevRoshChodesh.
+  //   TZ=UTC node -e "(async()=>{const {HebrewCalendar}=await import('@hebcal/core');
+  //     const ev=HebrewCalendar.calendar({start:new Date(Date.UTC(2026,7,1)),
+  //       end:new Date(Date.UTC(2031,11,31)),il:false});
+  //     for(const e of ev){const d=e.getDate().greg();
+  //       if(/^(Pesach I|Shavuot I|Rosh Hashana \d+|Yom Kippur|Sukkot I|Chanukah: 1 Candle|Purim)$/.test(e.getDesc()))
+  //         console.log(d.toISOString().slice(0,10), e.getDesc());}})()"
   static final List<_HolidayInfo> _holidays = [
-    // 5786 (2025-2026)
-    _HolidayInfo(
-      key: 'pesaj',
-      nameEs: 'Pesaj',
-      descriptionEs: 'Celebramos la salida de Egipto. Dona tzedak\u00e1 para una seuda de P\u00e9saj',
-      presetAmounts: [54, 180, 1800],
-      startDate: DateTime(2026, 4, 2),
-      showDaysBefore: 14,
-      durationDays: 8,
-    ),
-    _HolidayInfo(
-      key: 'shavuot',
-      nameEs: 'Shavuot',
-      descriptionEs: 'Celebramos la entrega de la Tor\u00e1. Dona tzedak\u00e1 en honor a esta festividad',
-      presetAmounts: [18, 36, 180],
-      startDate: DateTime(2026, 5, 22),
-      showDaysBefore: 14,
-      durationDays: 2,
-    ),
-    // 5787 (2026-2027)
     _HolidayInfo(
       key: 'roshHashana',
-      nameEs: 'Rosh Hashan\u00e1',
-      descriptionEs: 'A\u00f1o Nuevo jud\u00edo. Comienza el a\u00f1o con tzedak\u00e1 y buenas acciones',
+      nameEs: 'Rosh Hashaná',
+      descriptionEs:
+          'Año Nuevo judío. Comienza el año con tzedaká y buenas acciones',
       presetAmounts: [36, 180, 360],
       startDate: DateTime(2026, 9, 12),
       showDaysBefore: 14,
@@ -2592,15 +3885,18 @@ class _HolidayInfo {
     _HolidayInfo(
       key: 'yomKippur',
       nameEs: 'Yom Kippur',
-      descriptionEs: 'D\u00eda de la Expiaci\u00f3n. La tzedak\u00e1 es un m\u00e9rito especial antes de Yom Kippur',
+      descriptionEs:
+          'Día de la Expiación. La tzedaká es un mérito especial antes de Yom Kippur',
       presetAmounts: [36, 180, 360],
       startDate: DateTime(2026, 9, 21),
       showDaysBefore: 14,
+      durationDays: 1,
     ),
     _HolidayInfo(
       key: 'sucot',
       nameEs: 'Sucot',
-      descriptionEs: 'Fiesta de las Caba\u00f1as. Comparte alegr\u00eda con quienes m\u00e1s lo necesitan',
+      descriptionEs:
+          'Fiesta de las Cabañas. Comparte alegría con quienes más lo necesitan',
       presetAmounts: [18, 54, 180],
       startDate: DateTime(2026, 9, 26),
       showDaysBefore: 14,
@@ -2608,27 +3904,361 @@ class _HolidayInfo {
     ),
     _HolidayInfo(
       key: 'januca',
-      nameEs: 'Januc\u00e1',
-      descriptionEs: 'Festival de las Luces. Ilumina vidas con tu donaci\u00f3n de tzedak\u00e1',
+      nameEs: 'Janucá',
+      descriptionEs:
+          'Festival de las Luces. Ilumina vidas con tu donación de tzedaká',
       presetAmounts: [18, 54, 180],
-      startDate: DateTime(2026, 12, 5),
+      startDate: DateTime(2026, 12, 4),
       showDaysBefore: 14,
       durationDays: 8,
     ),
     _HolidayInfo(
       key: 'purim',
       nameEs: 'Purim',
-      descriptionEs: "Matanot la'Evionim: regalos a los necesitados, una mitzv\u00e1 central de Purim",
+      descriptionEs:
+          "Matanot la'Evionim: regalos a los necesitados, una mitzvá central de Purim",
       presetAmounts: [18, 54, 180],
       startDate: DateTime(2027, 3, 23),
       showDaysBefore: 14,
+      durationDays: 1,
     ),
     _HolidayInfo(
       key: 'pesaj',
       nameEs: 'Pesaj',
-      descriptionEs: 'Celebramos la salida de Egipto. Dona tzedak\u00e1 para una seuda de P\u00e9saj',
+      descriptionEs:
+          'Celebramos la salida de Egipto. Dona tzedaká para una seuda de Pésaj',
       presetAmounts: [54, 180, 1800],
       startDate: DateTime(2027, 4, 22),
+      showDaysBefore: 14,
+      durationDays: 8,
+    ),
+    _HolidayInfo(
+      key: 'shavuot',
+      nameEs: 'Shavuot',
+      descriptionEs:
+          'Celebramos la entrega de la Torá. Dona tzedaká en honor a esta festividad',
+      presetAmounts: [18, 36, 180],
+      startDate: DateTime(2027, 6, 11),
+      showDaysBefore: 14,
+      durationDays: 2,
+    ),
+    _HolidayInfo(
+      key: 'roshHashana',
+      nameEs: 'Rosh Hashaná',
+      descriptionEs:
+          'Año Nuevo judío. Comienza el año con tzedaká y buenas acciones',
+      presetAmounts: [36, 180, 360],
+      startDate: DateTime(2027, 10, 2),
+      showDaysBefore: 14,
+      durationDays: 2,
+    ),
+    _HolidayInfo(
+      key: 'yomKippur',
+      nameEs: 'Yom Kippur',
+      descriptionEs:
+          'Día de la Expiación. La tzedaká es un mérito especial antes de Yom Kippur',
+      presetAmounts: [36, 180, 360],
+      startDate: DateTime(2027, 10, 11),
+      showDaysBefore: 14,
+      durationDays: 1,
+    ),
+    _HolidayInfo(
+      key: 'sucot',
+      nameEs: 'Sucot',
+      descriptionEs:
+          'Fiesta de las Cabañas. Comparte alegría con quienes más lo necesitan',
+      presetAmounts: [18, 54, 180],
+      startDate: DateTime(2027, 10, 16),
+      showDaysBefore: 14,
+      durationDays: 7,
+    ),
+    _HolidayInfo(
+      key: 'januca',
+      nameEs: 'Janucá',
+      descriptionEs:
+          'Festival de las Luces. Ilumina vidas con tu donación de tzedaká',
+      presetAmounts: [18, 54, 180],
+      startDate: DateTime(2027, 12, 24),
+      showDaysBefore: 14,
+      durationDays: 8,
+    ),
+    _HolidayInfo(
+      key: 'purim',
+      nameEs: 'Purim',
+      descriptionEs:
+          "Matanot la'Evionim: regalos a los necesitados, una mitzvá central de Purim",
+      presetAmounts: [18, 54, 180],
+      startDate: DateTime(2028, 3, 12),
+      showDaysBefore: 14,
+      durationDays: 1,
+    ),
+    _HolidayInfo(
+      key: 'pesaj',
+      nameEs: 'Pesaj',
+      descriptionEs:
+          'Celebramos la salida de Egipto. Dona tzedaká para una seuda de Pésaj',
+      presetAmounts: [54, 180, 1800],
+      startDate: DateTime(2028, 4, 11),
+      showDaysBefore: 14,
+      durationDays: 8,
+    ),
+    _HolidayInfo(
+      key: 'shavuot',
+      nameEs: 'Shavuot',
+      descriptionEs:
+          'Celebramos la entrega de la Torá. Dona tzedaká en honor a esta festividad',
+      presetAmounts: [18, 36, 180],
+      startDate: DateTime(2028, 5, 31),
+      showDaysBefore: 14,
+      durationDays: 2,
+    ),
+    _HolidayInfo(
+      key: 'roshHashana',
+      nameEs: 'Rosh Hashaná',
+      descriptionEs:
+          'Año Nuevo judío. Comienza el año con tzedaká y buenas acciones',
+      presetAmounts: [36, 180, 360],
+      startDate: DateTime(2028, 9, 21),
+      showDaysBefore: 14,
+      durationDays: 2,
+    ),
+    _HolidayInfo(
+      key: 'yomKippur',
+      nameEs: 'Yom Kippur',
+      descriptionEs:
+          'Día de la Expiación. La tzedaká es un mérito especial antes de Yom Kippur',
+      presetAmounts: [36, 180, 360],
+      startDate: DateTime(2028, 9, 30),
+      showDaysBefore: 14,
+      durationDays: 1,
+    ),
+    _HolidayInfo(
+      key: 'sucot',
+      nameEs: 'Sucot',
+      descriptionEs:
+          'Fiesta de las Cabañas. Comparte alegría con quienes más lo necesitan',
+      presetAmounts: [18, 54, 180],
+      startDate: DateTime(2028, 10, 5),
+      showDaysBefore: 14,
+      durationDays: 7,
+    ),
+    _HolidayInfo(
+      key: 'januca',
+      nameEs: 'Janucá',
+      descriptionEs:
+          'Festival de las Luces. Ilumina vidas con tu donación de tzedaká',
+      presetAmounts: [18, 54, 180],
+      startDate: DateTime(2028, 12, 12),
+      showDaysBefore: 14,
+      durationDays: 8,
+    ),
+    _HolidayInfo(
+      key: 'purim',
+      nameEs: 'Purim',
+      descriptionEs:
+          "Matanot la'Evionim: regalos a los necesitados, una mitzvá central de Purim",
+      presetAmounts: [18, 54, 180],
+      startDate: DateTime(2029, 3, 1),
+      showDaysBefore: 14,
+      durationDays: 1,
+    ),
+    _HolidayInfo(
+      key: 'pesaj',
+      nameEs: 'Pesaj',
+      descriptionEs:
+          'Celebramos la salida de Egipto. Dona tzedaká para una seuda de Pésaj',
+      presetAmounts: [54, 180, 1800],
+      startDate: DateTime(2029, 3, 31),
+      showDaysBefore: 14,
+      durationDays: 8,
+    ),
+    _HolidayInfo(
+      key: 'shavuot',
+      nameEs: 'Shavuot',
+      descriptionEs:
+          'Celebramos la entrega de la Torá. Dona tzedaká en honor a esta festividad',
+      presetAmounts: [18, 36, 180],
+      startDate: DateTime(2029, 5, 20),
+      showDaysBefore: 14,
+      durationDays: 2,
+    ),
+    _HolidayInfo(
+      key: 'roshHashana',
+      nameEs: 'Rosh Hashaná',
+      descriptionEs:
+          'Año Nuevo judío. Comienza el año con tzedaká y buenas acciones',
+      presetAmounts: [36, 180, 360],
+      startDate: DateTime(2029, 9, 10),
+      showDaysBefore: 14,
+      durationDays: 2,
+    ),
+    _HolidayInfo(
+      key: 'yomKippur',
+      nameEs: 'Yom Kippur',
+      descriptionEs:
+          'Día de la Expiación. La tzedaká es un mérito especial antes de Yom Kippur',
+      presetAmounts: [36, 180, 360],
+      startDate: DateTime(2029, 9, 19),
+      showDaysBefore: 14,
+      durationDays: 1,
+    ),
+    _HolidayInfo(
+      key: 'sucot',
+      nameEs: 'Sucot',
+      descriptionEs:
+          'Fiesta de las Cabañas. Comparte alegría con quienes más lo necesitan',
+      presetAmounts: [18, 54, 180],
+      startDate: DateTime(2029, 9, 24),
+      showDaysBefore: 14,
+      durationDays: 7,
+    ),
+    _HolidayInfo(
+      key: 'januca',
+      nameEs: 'Janucá',
+      descriptionEs:
+          'Festival de las Luces. Ilumina vidas con tu donación de tzedaká',
+      presetAmounts: [18, 54, 180],
+      startDate: DateTime(2029, 12, 1),
+      showDaysBefore: 14,
+      durationDays: 8,
+    ),
+    _HolidayInfo(
+      key: 'purim',
+      nameEs: 'Purim',
+      descriptionEs:
+          "Matanot la'Evionim: regalos a los necesitados, una mitzvá central de Purim",
+      presetAmounts: [18, 54, 180],
+      startDate: DateTime(2030, 3, 19),
+      showDaysBefore: 14,
+      durationDays: 1,
+    ),
+    _HolidayInfo(
+      key: 'pesaj',
+      nameEs: 'Pesaj',
+      descriptionEs:
+          'Celebramos la salida de Egipto. Dona tzedaká para una seuda de Pésaj',
+      presetAmounts: [54, 180, 1800],
+      startDate: DateTime(2030, 4, 18),
+      showDaysBefore: 14,
+      durationDays: 8,
+    ),
+    _HolidayInfo(
+      key: 'shavuot',
+      nameEs: 'Shavuot',
+      descriptionEs:
+          'Celebramos la entrega de la Torá. Dona tzedaká en honor a esta festividad',
+      presetAmounts: [18, 36, 180],
+      startDate: DateTime(2030, 6, 7),
+      showDaysBefore: 14,
+      durationDays: 2,
+    ),
+    _HolidayInfo(
+      key: 'roshHashana',
+      nameEs: 'Rosh Hashaná',
+      descriptionEs:
+          'Año Nuevo judío. Comienza el año con tzedaká y buenas acciones',
+      presetAmounts: [36, 180, 360],
+      startDate: DateTime(2030, 9, 28),
+      showDaysBefore: 14,
+      durationDays: 2,
+    ),
+    _HolidayInfo(
+      key: 'yomKippur',
+      nameEs: 'Yom Kippur',
+      descriptionEs:
+          'Día de la Expiación. La tzedaká es un mérito especial antes de Yom Kippur',
+      presetAmounts: [36, 180, 360],
+      startDate: DateTime(2030, 10, 7),
+      showDaysBefore: 14,
+      durationDays: 1,
+    ),
+    _HolidayInfo(
+      key: 'sucot',
+      nameEs: 'Sucot',
+      descriptionEs:
+          'Fiesta de las Cabañas. Comparte alegría con quienes más lo necesitan',
+      presetAmounts: [18, 54, 180],
+      startDate: DateTime(2030, 10, 12),
+      showDaysBefore: 14,
+      durationDays: 7,
+    ),
+    _HolidayInfo(
+      key: 'januca',
+      nameEs: 'Janucá',
+      descriptionEs:
+          'Festival de las Luces. Ilumina vidas con tu donación de tzedaká',
+      presetAmounts: [18, 54, 180],
+      startDate: DateTime(2030, 12, 20),
+      showDaysBefore: 14,
+      durationDays: 8,
+    ),
+    _HolidayInfo(
+      key: 'purim',
+      nameEs: 'Purim',
+      descriptionEs:
+          "Matanot la'Evionim: regalos a los necesitados, una mitzvá central de Purim",
+      presetAmounts: [18, 54, 180],
+      startDate: DateTime(2031, 3, 9),
+      showDaysBefore: 14,
+      durationDays: 1,
+    ),
+    _HolidayInfo(
+      key: 'pesaj',
+      nameEs: 'Pesaj',
+      descriptionEs:
+          'Celebramos la salida de Egipto. Dona tzedaká para una seuda de Pésaj',
+      presetAmounts: [54, 180, 1800],
+      startDate: DateTime(2031, 4, 8),
+      showDaysBefore: 14,
+      durationDays: 8,
+    ),
+    _HolidayInfo(
+      key: 'shavuot',
+      nameEs: 'Shavuot',
+      descriptionEs:
+          'Celebramos la entrega de la Torá. Dona tzedaká en honor a esta festividad',
+      presetAmounts: [18, 36, 180],
+      startDate: DateTime(2031, 5, 28),
+      showDaysBefore: 14,
+      durationDays: 2,
+    ),
+    _HolidayInfo(
+      key: 'roshHashana',
+      nameEs: 'Rosh Hashaná',
+      descriptionEs:
+          'Año Nuevo judío. Comienza el año con tzedaká y buenas acciones',
+      presetAmounts: [36, 180, 360],
+      startDate: DateTime(2031, 9, 18),
+      showDaysBefore: 14,
+      durationDays: 2,
+    ),
+    _HolidayInfo(
+      key: 'yomKippur',
+      nameEs: 'Yom Kippur',
+      descriptionEs:
+          'Día de la Expiación. La tzedaká es un mérito especial antes de Yom Kippur',
+      presetAmounts: [36, 180, 360],
+      startDate: DateTime(2031, 9, 27),
+      showDaysBefore: 14,
+      durationDays: 1,
+    ),
+    _HolidayInfo(
+      key: 'sucot',
+      nameEs: 'Sucot',
+      descriptionEs:
+          'Fiesta de las Cabañas. Comparte alegría con quienes más lo necesitan',
+      presetAmounts: [18, 54, 180],
+      startDate: DateTime(2031, 10, 2),
+      showDaysBefore: 14,
+      durationDays: 7,
+    ),
+    _HolidayInfo(
+      key: 'januca',
+      nameEs: 'Janucá',
+      descriptionEs:
+          'Festival de las Luces. Ilumina vidas con tu donación de tzedaká',
+      presetAmounts: [18, 54, 180],
+      startDate: DateTime(2031, 12, 9),
       showDaysBefore: 14,
       durationDays: 8,
     ),
@@ -2636,7 +4266,11 @@ class _HolidayInfo {
 }
 
 class _HexBadge extends StatelessWidget {
-  const _HexBadge({required this.count, required this.color1, required this.color2});
+  const _HexBadge({
+    required this.count,
+    required this.color1,
+    required this.color2,
+  });
   final int count;
   final Color color1;
   final Color color2;
@@ -2659,10 +4293,26 @@ class _HexBadge extends StatelessWidget {
             ).createShader(bounds),
             child: ColorFiltered(
               colorFilter: const ColorFilter.matrix([
-                0.2126, 0.7152, 0.0722, 0, 0,
-                0.2126, 0.7152, 0.0722, 0, 0,
-                0.2126, 0.7152, 0.0722, 0, 0,
-                0,      0,      0,      1, 0,
+                0.2126,
+                0.7152,
+                0.0722,
+                0,
+                0,
+                0.2126,
+                0.7152,
+                0.0722,
+                0,
+                0,
+                0.2126,
+                0.7152,
+                0.0722,
+                0,
+                0,
+                0,
+                0,
+                0,
+                1,
+                0,
               ]),
               child: Image.asset(
                 'assets/icons/gem_badge.png',
@@ -2682,7 +4332,11 @@ class _HexBadge extends StatelessWidget {
                 color: Colors.white,
                 height: 1,
                 shadows: [
-                  Shadow(color: Color(0x99000000), blurRadius: 6, offset: Offset(0, 2)),
+                  Shadow(
+                    color: Color(0x99000000),
+                    blurRadius: 6,
+                    offset: Offset(0, 2),
+                  ),
                 ],
               ),
             ),
@@ -2738,7 +4392,9 @@ class _FrequencyChip extends StatelessWidget {
         height: 46,
         alignment: Alignment.center,
         decoration: BoxDecoration(
-          color: selected ? AppTokens.primaryBlue.withValues(alpha: 0.08) : cs.surface,
+          color: selected
+              ? AppTokens.primaryBlue.withValues(alpha: 0.08)
+              : cs.surface,
           border: Border.all(
             color: selected ? AppTokens.primaryBlue : cs.outline,
             width: selected ? 1.6 : 1,
@@ -2767,4 +4423,3 @@ class _FrequencyChip extends StatelessWidget {
     );
   }
 }
-

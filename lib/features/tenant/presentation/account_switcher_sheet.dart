@@ -7,10 +7,10 @@ import 'package:cached_network_image/cached_network_image.dart';
 import '../../../app/theme/app_tokens.dart';
 import '../../../core/hive_cache.dart';
 import '../../../core/l10n/s.dart';
-import '../../history/providers/transactions_provider.dart';
 import '../../users/presentation/user_profile_provider.dart';
 import '../data/tenant_repository.dart';
 import '../domain/tenant_summary.dart';
+import 'tenant_switch_reset.dart';
 
 // Public helper so the sheet can be opened from any screen (Settings,
 // future drawer entry, etc.). Previously this lived inside
@@ -101,32 +101,39 @@ class AccountSwitcherSheet extends ConsumerWidget {
     final uid = container.read(currentUserProvider)?.uid;
     Navigator.of(context).pop();
     try {
-      // Clear the local cache first so any provider re-read while the
-      // network call is in flight doesn't serve stale data from the old
-      // tenant.
+      // Round-9 regression fix: clear ONLY Hive first (no provider
+      // invalidate) — Hive-cached branding of the outgoing tenant must
+      // not reach the pushka screen while the switch is in flight.
+      // Providers still hold the current state so nothing else races.
+      // Round-10 audit fix (LOW #2): clearTenantConfig + clearSubscriptions
+      // must run even when outgoingTenantId is null (first activation via
+      // switcher after leaveTenant, cold-start with no active tenant, etc.);
+      // otherwise stale sub/config cache from a prior session leaks in.
       if (uid != null) {
         if (outgoingTenantId != null && outgoingTenantId.isNotEmpty) {
           await HiveCache.instance.clearTenant(uid, outgoingTenantId);
+          // Round-9 regression fix (LOW #2): scope to outgoing tenant so
+          // the next tenant's cached cards can paint immediately.
+          await HiveCache.instance.clearSavedCards(uid, tenantId: outgoingTenantId);
         }
-        await HiveCache.instance.clearSavedCards(uid);
+        await HiveCache.instance.clearTenantConfig(uid);
+        await HiveCache.instance.clearSubscriptions(uid);
       }
+
+      // Do the switch. After this returns, users/{uid}.tenantId points at
+      // the new tenant server-side.
       await container.read(tenantRepositoryProvider).switchTenant(tenantId);
-      container.invalidate(userProfileProvider);
-      container.invalidate(tenantConfigProvider);
-      container.invalidate(tenantStateProvider);
-      // History stream is keyed by the OLD tenantId — without invalidation
-      // the user briefly sees the previous tenant's transactions on the
-      // History tab while the userProfileProvider re-emit propagates.
-      // Reset the pagination cursor too so the new tenant starts fresh
-      // at one page (otherwise the bigger limit carries over and reads
-      // more than needed for an empty/small new tenant).
-      container.invalidate(historyLimitProvider);
-      container.invalidate(userTransactionsProvider);
-      // Membership list (org switcher itself) — refresh so any newly
-      // joined/removed memberships show without a manual restart.
-      container.invalidate(userTenantSummariesProvider);
-      // tenantThemeProvider auto-derives from tenantConfigProvider via
-      // ref.watch(...select(...)) — no explicit invalidation needed.
+
+      // NOW invalidate providers — they resubscribe with the new tenantId
+      // and fetch fresh config for it. Hive is already clean so the
+      // "yield cached first" branch of tenantConfigProvider serves nothing
+      // stale.
+      await resetTenantScopedState(
+        container,
+        uid: uid,
+        outgoingTenantId: null,
+        clearHiveCaches: false,
+      );
     } catch (e) {
       debugPrint('switchTenant failed: $e');
       messenger.showSnackBar(SnackBar(content: Text('Error: $e')));
@@ -161,7 +168,10 @@ class _OrgTile extends StatelessWidget {
         ),
         child: Row(
           children: [
-            _OrgAvatar(name: summary.name, logoUrl: summary.logoUrl),
+            // Round-11 audit MEDIO fix: use cacheBustedLogoUrl so a
+            // re-uploaded logo (same URL, new bytes) actually updates
+            // instead of showing the cached copy indefinitely.
+            _OrgAvatar(name: summary.name, logoUrl: summary.cacheBustedLogoUrl),
             const SizedBox(width: 12),
             Expanded(
               child: Text(

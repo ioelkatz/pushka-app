@@ -1,9 +1,14 @@
 import 'package:cloud_functions/cloud_functions.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+// Hide TextDirection from intl — it collides with Flutter's dart:ui
+// TextDirection used elsewhere in this file (line 571 rtl check).
+import 'package:intl/intl.dart' hide TextDirection;
 
 import '../../../app/theme/app_tokens.dart';
 import '../../../core/format_utils.dart';
+import '../../../core/hive_cache.dart';
 import '../../../core/keyboard_safe_sheet.dart';
 import '../../../core/l10n/s.dart';
 import '../../auth/biometric_service.dart';
@@ -31,14 +36,29 @@ class _DonationSubscriptionsScreenState
   @override
   void initState() {
     super.initState();
-    _load();
+    // Hive cache: paint the last-known subs immediately so the screen
+    // opens with content instead of a spinner. The CF refresh happens
+    // silently in the background and swaps in fresh data when it lands.
+    // TTL is informational — even a "stale" cache is a better first
+    // frame than an empty spinner. If the user creates/cancels a sub
+    // we invalidate immediately by rewriting the cache with the fresh
+    // list after the CF call.
+    final uid = ref.read(currentUserProvider)?.uid;
+    final cached = uid == null ? null : HiveCache.instance.loadSubscriptions(uid);
+    if (cached != null) {
+      _subs = cached.subs;
+      _loading = false;
+    }
+    _load(silent: cached != null);
   }
 
-  Future<void> _load() async {
-    setState(() {
-      _loading = true;
-      _error = null;
-    });
+  Future<void> _load({bool silent = false}) async {
+    if (!silent) {
+      setState(() {
+        _loading = true;
+        _error = null;
+      });
+    }
     final callable =
         FirebaseFunctions.instance.httpsCallable('listDonationSubscriptions');
     Object? lastError;
@@ -48,10 +68,31 @@ class _DonationSubscriptionsScreenState
         if (!mounted) return;
         final data = result.data as Map<dynamic, dynamic>;
         final raw = data['subscriptions'] as List<dynamic>? ?? [];
+        final serverSubs = raw.map((s) => Map<String, dynamic>.from(s as Map)).toList();
+        // Round-10 audit fix (MEDIUM #1): merge server list with any
+        // still-pending optimistic entries so a create's optimistic tile
+        // doesn't disappear when Stripe list-subs (eventually consistent)
+        // returns without it. Drop optimistic entries once the server
+        // reports a real sub matching amount+currency+interval (best-effort
+        // dedup — real subs don't carry _optimistic:true).
+        final optimisticPending = _subs
+            .where((s) => s['_optimistic'] == true)
+            .where((opt) => !serverSubs.any((sv) =>
+                (sv['amount'] as num?)?.toDouble() == (opt['amount'] as num?)?.toDouble() &&
+                sv['currency'] == opt['currency'] &&
+                sv['interval'] == opt['interval']))
+            .toList();
+        final subs = [...serverSubs, ...optimisticPending];
         setState(() {
-          _subs = raw.map((s) => Map<String, dynamic>.from(s as Map)).toList();
+          _subs = subs;
           _loading = false;
+          _error = null;
         });
+        // Persist to Hive so the next open of this screen paints instantly.
+        final uid = ref.read(currentUserProvider)?.uid;
+        if (uid != null) {
+          await HiveCache.instance.saveSubscriptions(uid: uid, subs: subs);
+        }
         return;
       } catch (e) {
         lastError = e;
@@ -61,6 +102,10 @@ class _DonationSubscriptionsScreenState
       }
     }
     if (!mounted) return;
+    // Silent refresh failures keep whatever's already on screen — same UX
+    // pattern as saved_cards_screen: better to leave the cached list up
+    // than wipe it because a background retry hiccuped.
+    if (silent) return;
     setState(() {
       _subs = [];
       _error = lastError?.toString();
@@ -71,26 +116,98 @@ class _DonationSubscriptionsScreenState
   Future<void> _confirmAndCancel(Map<String, dynamic> sub) async {
     if (_processingId) return;
     final tr = S.of(context);
-    final confirmed = await showDialog<bool>(
+    // Round-4 audit MEDIUM fix: dialog was fully generic — user had no
+    // idea which sub they were canceling. Now shows tenant + amount +
+    // currency + interval so a user with multiple subs (multi-tenant or
+    // multiple recurring donations) can cancel with confidence.
+    final subCurrency = (sub['currency'] as String? ?? 'usd');
+    final amountUnits = (sub['amount'] as num?)?.toInt() ?? 0;
+    final subInterval = sub['interval'] as String? ?? 'month';
+    final subTenantAppName = (sub['tenantAppName'] as String?)?.trim();
+    final subTenantName = (sub['tenantName'] as String?)?.trim();
+    final subTenantLabel = (subTenantAppName != null && subTenantAppName.isNotEmpty)
+        ? subTenantAppName
+        : (subTenantName != null && subTenantName.isNotEmpty ? subTenantName : '');
+    final amountLabel = formatStripeUnits(amountUnits, subCurrency);
+    final intervalLabel = subInterval == 'week' ? tr.weekly : tr.monthly;
+    final details = subTenantLabel.isNotEmpty
+        ? '$subTenantLabel — $amountLabel · $intervalLabel'
+        : '$amountLabel · $intervalLabel';
+    final confirmed = await showModalBottomSheet<bool>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(tr.cancelSubscriptionConfirmTitle),
-        content: Text(tr.cancelSubscriptionConfirmBody),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(true),
-            style: TextButton.styleFrom(
-              foregroundColor: AppTokens.primaryBlue,
-            ),
-            child: Text(
-              tr.confirm,
-              style: const TextStyle(
-                fontWeight: FontWeight.w700,
-                color: AppTokens.primaryBlue,
-              ),
+      isScrollControlled: true,
+      useSafeArea: true,
+      backgroundColor: Theme.of(context).colorScheme.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
+      ),
+      builder: (ctx) => SafeArea(
+        top: false,
+        child: Padding(
+          padding: EdgeInsets.only(bottom: MediaQuery.of(ctx).viewInsets.bottom),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Center(
+                  child: Container(
+                    width: 36,
+                    height: 4,
+                    margin: const EdgeInsets.only(bottom: 16),
+                    decoration: BoxDecoration(
+                      color: Theme.of(ctx).colorScheme.outlineVariant,
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                ),
+                Text(
+                  tr.cancelSubscriptionConfirmTitle,
+                  style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 14),
+                Text(details,
+                    style: const TextStyle(fontWeight: FontWeight.w600),
+                    textAlign: TextAlign.center),
+                const SizedBox(height: 8),
+                Text(
+                  tr.cancelSubscriptionConfirmBody,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 14,
+                    color: Theme.of(ctx).colorScheme.onSurfaceVariant,
+                    height: 1.4,
+                  ),
+                ),
+                const SizedBox(height: 20),
+                SizedBox(
+                  width: double.infinity,
+                  height: 48,
+                  child: ElevatedButton(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Theme.of(ctx).colorScheme.error,
+                      foregroundColor: Colors.white,
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    ),
+                    onPressed: () => Navigator.of(ctx).pop(true),
+                    child: Text(tr.confirm, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                SizedBox(
+                  width: double.infinity,
+                  height: 44,
+                  child: TextButton(
+                    onPressed: () => Navigator.of(ctx).pop(false),
+                    child: Text(tr.cancel, style: TextStyle(color: Theme.of(ctx).colorScheme.onSurfaceVariant, fontWeight: FontWeight.w500)),
+                  ),
+                ),
+              ],
             ),
           ),
-        ],
+        ),
       ),
     );
     if (confirmed != true || !mounted) return;
@@ -107,7 +224,23 @@ class _DonationSubscriptionsScreenState
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(tr.subscriptionCanceled)),
       );
-      await _load();
+      // Round-7 regression fix: optimistically remove the canceled sub
+      // from local + Hive cache BEFORE the silent reload. If the reload
+      // fails (network hiccup post-cancel) the user shouldn't see the
+      // just-canceled sub as active on next screen open.
+      final canceledId = sub['id'] as String?;
+      if (canceledId != null) {
+        final newList = _subs.where((s) => s['id'] != canceledId).toList();
+        setState(() => _subs = newList);
+        final uid = ref.read(currentUserProvider)?.uid;
+        if (uid != null) {
+          await HiveCache.instance.saveSubscriptions(uid: uid, subs: newList);
+        }
+      }
+      // Silent refresh — the current list already shows the correct state
+      // optimistically (cancel: sub removed / create: waiting for stream)
+      // so there's no reason to flash a full-page spinner.
+      await _load(silent: true);
     } catch (_) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -124,28 +257,23 @@ class _DonationSubscriptionsScreenState
   }
 
   bool _biometricEnabled() {
+    // Web (PWA) no soporta biometría — retornar false evita el bloqueo
+    // "Autenticación requerida" heredado de sesiones nativas.
+    if (kIsWeb) return false;
     final profile = ref.read(userProfileProvider).valueOrNull;
     return (profile?['biometricAuthenticationEnabled'] as bool?) ?? false;
   }
 
-  String _currencySymbol(String code) {
-    const symbols = {
-      'usd': 'US\$', 'eur': '€', 'gbp': '£', 'cad': 'CA\$',
-      'mxn': 'MX\$', 'ars': 'ARS\$', 'brl': 'R\$', 'ils': '₪',
-      'clp': 'CL\$', 'cop': 'CO\$',
-    };
-    return symbols[code.toLowerCase()] ?? '\$';
-  }
+  // Removed — use `currencySymbol(code)` from format_utils.dart (single source
+  // of truth, covers all Stripe-supported currencies incl. JPY/KRW/CHF/BHD).
 
   String _formatDate(int millis) {
     final d = DateTime.fromMillisecondsSinceEpoch(millis);
-    final lang = Localizations.localeOf(context).languageCode;
-    final months = lang == 'en'
-        ? const ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
-        : lang == 'fr'
-          ? const ['janv.','févr.','mars','avr.','mai','juin','juil.','août','sept.','oct.','nov.','déc.']
-          : const ['ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic'];
-    return '${d.day} ${months[d.month - 1]} ${d.year}';
+    // Hardcoded ES/EN/FR month tables previously fell through to Spanish for
+    // Hebrew and any other locale. DateFormat.yMMMd handles all four app
+    // languages (ES/EN/FR/HE) plus any future locale correctly.
+    final locale = Localizations.localeOf(context).toString();
+    return DateFormat.yMMMd(locale).format(d);
   }
 
   @override
@@ -226,9 +354,100 @@ class _DonationSubscriptionsScreenState
         ((profile?['currencyCode'] as String?)?.trim().isNotEmpty ?? false)
             ? (profile!['currencyCode'] as String)
             : 'usd';
-    final symbol = _currencySymbol(currency);
+    // Round-7 regression fix: shortCurrencySymbol renders unambiguous
+    // MX$/AR$/CL$/CO$/US$ prefixes (matches settings_screen / pushka_screen /
+    // auto_empty_screen). The generic currencySymbol() falls back to '$'
+    // for MXN/ARS/CLP/COP which the donor could mistake for USD.
+    final symbol = shortCurrencySymbol(currency);
     final tenantConfig = ref.read(tenantConfigProvider).valueOrNull;
     final merchantDisplayName = tenantConfig?.appName ?? 'Pushka';
+    final activeTenantId = profile?['tenantId'] as String?;
+
+    // Round-4 audit MEDIUM fix: warn if the user already has an active
+    // sub in this tenant — otherwise they'd end up double-billed and
+    // wondering why. They can still proceed if intentional.
+    final existingSubHere = activeTenantId == null
+        ? null
+        : _subs.cast<Map<String, dynamic>?>().firstWhere(
+              (s) => s?['tenantId'] == activeTenantId,
+              orElse: () => null,
+            );
+    if (existingSubHere != null && mounted) {
+      final proceed = await showModalBottomSheet<bool>(
+        context: context,
+        isScrollControlled: true,
+        useSafeArea: true,
+        backgroundColor: Theme.of(context).colorScheme.surface,
+        shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
+        ),
+        builder: (ctx) => SafeArea(
+          top: false,
+          child: Padding(
+            padding: EdgeInsets.only(bottom: MediaQuery.of(ctx).viewInsets.bottom),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Center(
+                    child: Container(
+                      width: 36,
+                      height: 4,
+                      margin: const EdgeInsets.only(bottom: 16),
+                      decoration: BoxDecoration(
+                        color: Theme.of(ctx).colorScheme.outlineVariant,
+                        borderRadius: BorderRadius.circular(2),
+                      ),
+                    ),
+                  ),
+                  Text(
+                    tr.recurringAlreadyActiveTitle,
+                    style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 14),
+                  Text(
+                    tr.recurringAlreadyActiveBody,
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      fontSize: 14,
+                      color: Theme.of(ctx).colorScheme.onSurfaceVariant,
+                      height: 1.4,
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+                  SizedBox(
+                    width: double.infinity,
+                    height: 48,
+                    child: ElevatedButton(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppTokens.primaryBlue,
+                        foregroundColor: Colors.white,
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      ),
+                      onPressed: () => Navigator.pop(ctx, true),
+                      child: Text(tr.continueLabel, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  SizedBox(
+                    width: double.infinity,
+                    height: 44,
+                    child: TextButton(
+                      onPressed: () => Navigator.pop(ctx, false),
+                      child: Text(tr.cancel, style: TextStyle(color: Theme.of(ctx).colorScheme.onSurfaceVariant, fontWeight: FontWeight.w500)),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+      if (proceed != true || !mounted) return;
+    }
     // Tenant-configured donation destinations (e.g. "Familias necesitadas",
     // "Estudio de Torá"). Falls back to the in-app default Chabad list when
     // the tenant hasn't customized any. Empty list => skip the picker.
@@ -448,10 +667,42 @@ class _DonationSubscriptionsScreenState
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(tr.donationProcessed(formatMoney(donationAmount))),
+          // Round-4 audit fix: symbol matches the sub currency, not $ default.
+          content: Text(tr.donationProcessed(formatCurrencyAmount(donationAmount, currency))),
         ),
       );
-      await _load();
+      // Round-9 regression fix (LOW #8): optimistically append the new sub
+      // so the tile shows up immediately. Stripe list-subs is eventually
+      // consistent — the _load(silent) below can miss the just-created sub
+      // for a few seconds, leaving the donor thinking their action didn't
+      // register. Matches the cancel path's optimistic removal.
+      final uidOptimistic = ref.read(currentUserProvider)?.uid;
+      final optimisticSub = <String, dynamic>{
+        'id': 'optimistic_${DateTime.now().millisecondsSinceEpoch}',
+        'amount': donationAmount,
+        'currency': currency,
+        'interval': chosenInterval,
+        'donationReason': (donationReason == null || donationReason.isEmpty) ? null : donationReason,
+        'status': 'active',
+        '_optimistic': true,
+      };
+      final newList = [..._subs, optimisticSub];
+      setState(() => _subs = newList);
+      if (uidOptimistic != null) {
+        await HiveCache.instance.saveSubscriptions(uid: uidOptimistic, subs: newList);
+      }
+      // Silent refresh — the current list already shows the correct state
+      // optimistically (cancel: sub removed / create: appended above) so
+      // there's no reason to flash a full-page spinner.
+      await _load(silent: true);
+      // Round-7 regression fix: a transient network hiccup between create
+      // and reload leaves Hive at the pre-create list. A delayed retry
+      // covers that case — even if the first reload succeeded, a second
+      // pass 3s later is cheap and idempotent, and Stripe list-subs
+      // eventual-consistency benefits from a slightly-later read too.
+      Future.delayed(const Duration(seconds: 3), () {
+        if (mounted) _load(silent: true);
+      });
     } on FirebaseFunctionsException catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -460,8 +711,21 @@ class _DonationSubscriptionsScreenState
     } on StripeServiceException catch (e) {
       if (e.code == 'canceled') return;
       if (!mounted) return;
+      // Surface specific known codes with actionable copy instead of the
+      // generic "Error" that leaves the user staring at a red snackbar
+      // with no hint what to do next.
+      // Note: 'web_payment_sheet_not_supported' would show the recurring copy
+      // by mistake (this screen only ever fires the recurring flow, but the
+      // shared StripeService can throw it from any pay() path). Prefer the
+      // more accurate 'errorPaymentServer' if that specific code sneaks in.
+      final message = switch (e.code) {
+        'web_recurring_not_available' => tr.recurringNotSupportedOnWeb,
+        'web_payment_sheet_not_supported' => tr.errorPaymentServer,
+        'network-error' => tr.errorPaymentServer,
+        _ => tr.error,
+      };
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(tr.error)),
+        SnackBar(content: Text(message)),
       );
     } catch (_) {
       if (!mounted) return;
@@ -552,8 +816,9 @@ class _DonationSubscriptionsScreenState
     final periodEnd = (sub['currentPeriodEnd'] as num?)?.toInt();
 
     final amount = stripeUnitsToAmount(amountUnits, currency);
-    final symbol = _currencySymbol(currency);
-    final amountStr = formatMoney(amount, symbol: symbol);
+    // Round-4 audit fix: use central formatter — was missing JPY/KRW/CHF/BHD
+    // and falling back to `$` for those. Now correct symbol + code appended.
+    final amountStr = formatCurrencyAmount(amount, currency);
     final intervalRaw = interval == 'week' ? tr.weekly : tr.monthly;
     final intervalLabel = intervalRaw.isEmpty
         ? intervalRaw

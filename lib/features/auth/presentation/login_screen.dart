@@ -4,7 +4,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:flutter/services.dart';
+import 'package:sign_in_with_apple/sign_in_with_apple.dart'
+    show SignInWithAppleAuthorizationException, AuthorizationErrorCode;
 
+import '../../../app/theme/app_tokens.dart';
 import '../../../core/l10n/s.dart';
 import '../providers/auth_controller.dart';
 
@@ -76,10 +79,19 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                       textInputAction: TextInputAction.done,
                       validator: _validatePassword,
                       suffixIcon: IconButton(
+                        // Round-5 audit HIGH fix: TalkBack/VoiceOver used to
+                        // announce just "Botón" — tooltip + semantic label
+                        // now describe the action per current state.
+                        tooltip: _obscurePassword
+                            ? _tr.showPassword
+                            : _tr.hidePassword,
                         icon: Icon(
                           _obscurePassword
                               ? Icons.visibility
                               : Icons.visibility_off,
+                          semanticLabel: _obscurePassword
+                              ? _tr.showPassword
+                              : _tr.hidePassword,
                         ),
                         onPressed: () => setState(
                           () => _obscurePassword = !_obscurePassword,
@@ -251,22 +263,159 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     try {
       await ref.read(authControllerProvider).signInWithGoogle();
     } on FirebaseAuthException catch (e) {
-      if (mounted) _showMessage(_mapGoogleAuthError(e.code));
+      if (mounted) {
+        // 'sign_in_canceled' is legit (user tapped back) — silent SnackBar.
+        // Anything else is a real error — show a DIALOG with the raw code
+        // + message so the user (and support) can see what actually failed.
+        // Previously we mapped every non-canceled code to a generic message
+        // that often didn't render (SnackBar auto-dismiss + async gap made
+        // it easy to miss), and the user saw "chooser → nothing" with no
+        // hint what went wrong — S25 Google Sign-In loop was invisible.
+        if (e.code == 'sign_in_canceled' || e.code == 'sign_in_cancelled') {
+          _showMessage(_mapGoogleAuthError(e.code));
+        } else {
+          _showAuthErrorDialog(
+            code: e.code,
+            message: e.message ?? '(sin mensaje)',
+            source: 'FirebaseAuthException',
+          );
+        }
+      }
     } on PlatformException catch (e) {
-      if (mounted) _showMessage(_mapGoogleAuthError(e.code));
+      if (mounted) {
+        _showAuthErrorDialog(
+          code: e.code,
+          message: '${e.message ?? '(sin mensaje)'} | details=${e.details}',
+          source: 'PlatformException',
+        );
+      }
     } on Exception catch (e) {
-      if (mounted) _showMessage(_tr.googleError('$e'));
+      if (mounted) {
+        _showAuthErrorDialog(
+          code: 'unknown',
+          message: e.toString(),
+          source: 'Exception',
+        );
+      }
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
+  }
+
+  Future<void> _showAuthErrorDialog({
+    required String code,
+    required String message,
+    required String source,
+  }) async {
+    if (!mounted) return;
+    final tr = S.of(context);
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      backgroundColor: Theme.of(context).colorScheme.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
+      ),
+      builder: (ctx) => SafeArea(
+        top: false,
+        child: Padding(
+          padding: EdgeInsets.only(bottom: MediaQuery.of(ctx).viewInsets.bottom),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Center(
+                  child: Container(
+                    width: 36,
+                    height: 4,
+                    margin: const EdgeInsets.only(bottom: 16),
+                    decoration: BoxDecoration(
+                      color: Theme.of(ctx).colorScheme.outlineVariant,
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                ),
+                Text(
+                  tr.authErrorTitle,
+                  style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 14),
+                Flexible(
+                  child: SingleChildScrollView(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(tr.authErrorIntro, style: const TextStyle(fontSize: 13)),
+                        const SizedBox(height: 8),
+                        SelectableText('Source: $source',
+                            style: const TextStyle(fontFamily: 'monospace', fontSize: 11)),
+                        SelectableText('Code:   $code',
+                            style: const TextStyle(fontFamily: 'monospace', fontSize: 11)),
+                        const SizedBox(height: 6),
+                        const Text('Message:', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
+                        SelectableText(message,
+                            style: const TextStyle(fontFamily: 'monospace', fontSize: 11)),
+                        const SizedBox(height: 12),
+                        Text(
+                          tr.authErrorCopyHint,
+                          style: const TextStyle(fontSize: 12, color: Colors.grey),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 20),
+                SizedBox(
+                  width: double.infinity,
+                  height: 48,
+                  child: ElevatedButton(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppTokens.primaryBlue,
+                      foregroundColor: Colors.white,
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    ),
+                    onPressed: () => Navigator.of(ctx).pop(),
+                    child: Text(tr.close, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
   }
 
   Future<void> _signInWithApple() async {
     setState(() => _isLoading = true);
     try {
       await ref.read(authControllerProvider).signInWithApple();
+    } on SignInWithAppleAuthorizationException catch (e) {
+      // Apple's typed error for the whole authorization pipeline. Cancel
+      // must be silent (matches Google's sign_in_canceled path); every
+      // other code is a real failure worth surfacing.
+      if (!mounted) return;
+      if (e.code == AuthorizationErrorCode.canceled) {
+        _showMessage(_tr.signInCanceled);
+      } else {
+        _showMessage(_tr.appleError('${e.code.name}: ${e.message}'));
+      }
     } on FirebaseAuthException catch (e) {
-      if (mounted) _showMessage(_mapAuthError(e.code));
+      if (mounted) {
+        // 'apple_no_identity_token' carries a rich Spanish explanation from
+        // the controller — surface e.message directly instead of collapsing
+        // to the generic _mapAuthError bucket.
+        if (e.code == 'apple_no_identity_token') {
+          _showMessage(e.message ?? _mapAuthError(e.code));
+        } else {
+          _showMessage(_mapAuthError(e.code));
+        }
+      }
     } on Exception catch (e) {
       if (mounted) _showMessage(_tr.appleError('$e'));
     } finally {

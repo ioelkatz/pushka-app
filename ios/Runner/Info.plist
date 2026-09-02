@@ -72,6 +72,17 @@
 		<string>Pushka uses Face ID to confirm donations securely.</string>
 		<key>NSPhotoLibraryUsageDescription</key>
 		<string>Pushka uses your photo library when you choose a profile picture.</string>
+		<!-- Round-6 audit HIGH fix: image_picker links Camera + Microphone
+		     symbols in the framework even when the app only calls
+		     pickImage(source: gallery). Missing these strings triggers a
+		     runtime crash on iOS 15+ if any code path ever calls camera
+		     capture — and Apple flags the missing declarations during
+		     static review of the binary. Descriptions are honest even
+		     though we don't use these APIs today. -->
+		<key>NSCameraUsageDescription</key>
+		<string>Pushka may use the camera if you take a new profile picture from within the app.</string>
+		<key>NSMicrophoneUsageDescription</key>
+		<string>Pushka does not record audio. This declaration is present because a bundled framework requires it — no microphone data is captured.</string>
 		<!-- App Tracking Transparency: required by Apple for any SDK that may
 		     use IDFA / IDFV-equivalents (Firebase Analytics, Crashlytics user
 		     identifiers, etc). String is shown verbatim in the system prompt

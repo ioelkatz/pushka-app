@@ -18,6 +18,7 @@ import '../features/tenant/presentation/tenant_code_screen.dart';
 import '../features/tenant/presentation/tenant_suspended_screen.dart';
 import '../features/tenant/presentation/join_via_link_screen.dart';
 import '../core/deep_link_handler.dart';
+import '../core/hostname_tenant_map.dart';
 
 import '../features/pushka/presentation/pushka_screen.dart';
 import '../features/wallet/presentation/wallet_screen.dart';
@@ -78,7 +79,28 @@ final router = GoRouter(
     }
     // Cold-start deep link: user tapped pushka.app/join/{slug} while logged in.
     // Consume the pending slug and redirect to the join screen.
+    //
+    // Round-5 audit HIGH fix: new user joining via deep link used to bypass
+    // /onboarding entirely — they never got to pick language/currency/presets
+    // and landed inside a tenant with app defaults (Spanish / USD / [1,5,10]).
+    // Now we prioritize onboarding: if onboardingCompleted != true, keep the
+    // pendingJoinSlug for AFTER onboarding and send the user through the
+    // welcome flow first. The slug is consumed on the next pass once
+    // onboarding is done.
     if (loggedIn && pendingJoinSlug != null && !loc.startsWith('/join/')) {
+      final uid = _auth.currentUser?.uid;
+      if (uid != null) {
+        try {
+          final snap = await _firestore.collection('users').doc(uid).get();
+          if (_auth.currentUser?.uid != uid) return '/login';
+          final onboardingDone = snap.data()?['onboardingCompleted'] as bool? ?? false;
+          if (!onboardingDone && loc != '/onboarding') {
+            // Keep the slug pending — /onboarding completion re-enters this
+            // redirect and the branch below will consume it.
+            return '/onboarding';
+          }
+        } catch (_) { /* fall through to consume slug */ }
+      }
       final slug = pendingJoinSlug!;
       pendingJoinSlug = null;
       return '/join/$slug';
@@ -135,7 +157,19 @@ final router = GoRouter(
           _cachedTenantCheckUid = uid;
           _cachedHasTenant = tenantId != null && tenantId.isNotEmpty;
         }
-        if (_cachedHasTenant == false) return '/tenant-setup';
+        if (_cachedHasTenant == false) {
+          // If the user landed on a hostname that's mapped to a specific
+          // tenant (e.g. app.jabadencampus.com → jabadencampus), skip the
+          // code-entry screen and drop them straight into the join flow.
+          // Zero friction for donors who arrive via a tenant-branded URL.
+          // Falls back to /tenant-setup when no mapping matches (mobile
+          // installs, generic hosts, unmapped tenants).
+          final hostSlug = tenantSlugFromHostname();
+          if (hostSlug != null && !loc.startsWith('/join/')) {
+            return '/join/$hostSlug';
+          }
+          return '/tenant-setup';
+        }
       }
     }
     return null;
@@ -207,7 +241,10 @@ final router = GoRouter(
             ),
           ],
         ),
-        GoRoute(path: '/reminders', pageBuilder: (context, state) => _slidePage(state, const RemindersScreen())),
+        GoRoute(
+          path: '/reminders',
+          pageBuilder: (context, state) => _slidePage(state, const RemindersScreen()),
+        ),
         GoRoute(path: '/history', pageBuilder: (context, state) => _slidePage(state, const HistoryScreen())),
         GoRoute(
           path: '/settings',
@@ -265,6 +302,9 @@ class _TenantMainAppBar extends ConsumerWidget implements PreferredSizeWidget {
       centerTitle: true,
       actions: [
         IconButton(
+          // Round-5 audit fix: TalkBack/VoiceOver need tooltip on
+          // icon-only buttons — was announced as just "Botón".
+          tooltip: tr.settings,
           icon: const Icon(Icons.settings),
           onPressed: onSettingsTap,
         ),
@@ -285,6 +325,8 @@ PreferredSizeWidget? _buildAppBar(BuildContext context, String location) {
       title: Text(tr.savedCards),
       centerTitle: true,
       leading: IconButton(
+        // Round-5 audit fix: back arrow needs tooltip for a11y.
+        tooltip: tr.back,
         icon: Icon(isRtl ? Icons.arrow_forward : Icons.arrow_back),
         onPressed: () {
           final shellNav = shellNavigatorKey.currentState;
@@ -302,19 +344,28 @@ PreferredSizeWidget? _buildAppBar(BuildContext context, String location) {
     return AppBar(title: Text(tr.navHistory), centerTitle: true);
   } else if (location == '/settings') {
     return AppBar(title: Text(tr.navSettings), centerTitle: true);
-  } else if (location == '/settings/donation-subs') {
+  } else if (location == '/settings/donation-subs' ||
+      location == '/wallet/donation-subs') {
+    // Same screen mounted under both /settings and /wallet — user reported
+    // navbar disappearing when navigating from Wallet because this branch
+    // only matched /settings/... The back button target depends on the
+    // parent so the user returns to whichever screen they came from.
     final isRtl = Directionality.of(context) == TextDirection.rtl;
+    final backTarget =
+        location.startsWith('/wallet') ? '/wallet' : '/settings';
     return AppBar(
       title: Text(tr.mySubscriptions),
       centerTitle: true,
       leading: IconButton(
+        // Round-5 audit fix: back arrow needs tooltip for a11y.
+        tooltip: tr.back,
         icon: Icon(isRtl ? Icons.arrow_forward : Icons.arrow_back),
         onPressed: () {
           final shellNav = shellNavigatorKey.currentState;
           if (shellNav != null && shellNav.canPop()) {
             shellNav.pop();
           } else {
-            context.go('/settings');
+            context.go(backTarget);
           }
         },
       ),
@@ -325,6 +376,8 @@ PreferredSizeWidget? _buildAppBar(BuildContext context, String location) {
       title: Text(tr.savedCards),
       centerTitle: true,
       leading: IconButton(
+        // Round-5 audit fix: back arrow needs tooltip for a11y.
+        tooltip: tr.back,
         icon: Icon(isRtl ? Icons.arrow_forward : Icons.arrow_back),
         onPressed: () {
           // If a nested screen is pushed on top of Métodos de pago (e.g.

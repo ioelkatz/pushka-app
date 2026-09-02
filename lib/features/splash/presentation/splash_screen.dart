@@ -130,6 +130,10 @@ class _SplashScreenState extends State<SplashScreen>
     setState(() => _showBill = true);
     _billCtrl.forward();
     Future.delayed(700.ms, () {
+      // On web/PWA Chrome usually allows this via Media Engagement Index
+      // (installed PWAs + prior visits score high enough that cold-start
+      // autoplay is permitted). If MEI is too low (fresh install, private
+      // tab), the .catchError swallows the NotAllowedError silently.
       if (mounted) {
         unawaited(
           _billAudio.play(AssetSource('sounds/bill_flutter.wav')).catchError((_) {}),

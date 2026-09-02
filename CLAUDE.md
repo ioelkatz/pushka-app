@@ -39,9 +39,25 @@ flutter run --flavor prod \
 # Test/staging (signed with debug key by default — change if needed)
 flutter build apk --flavor dev --dart-define=ENV=dev --dart-define=STRIPE_PUBLISHABLE_KEY=pk_test_...
 
-# Production
+# Production — PLAY STORE (.aab). NO lleva APP_CHECK_PROVIDER: el default es
+# Play Integrity, que es la atestación real que exige una app publicada.
 flutter build appbundle --flavor prod --dart-define=STRIPE_PUBLISHABLE_KEY=pk_live_...
+
+# Production — SIDELOAD (APK que se baja de pushka-landing.web.app/instalar).
+# APP_CHECK_PROVIDER=debug es OBLIGATORIO: Play Integrity no puede attestar una
+# app que no vino de Play Store, así que sin este flag falla en TODOS los
+# usuarios. Ver la nota de _appCheckProvider en lib/app/app_initializer.dart.
+flutter build apk --flavor prod --split-per-abi \
+  --dart-define=APP_CHECK_PROVIDER=debug \
+  --dart-define=STRIPE_PUBLISHABLE_KEY=pk_live_... \
+  --dart-define=RECAPTCHA_SITE_KEY=...
 ```
+
+> ⚠️ **El default del proveedor de App Check es el estricto a propósito.** De
+> los dos errores posibles, el caro es publicar en la tienda con el proveedor
+> de debug: queda una app pública sin atestación real y sin ninguna señal
+> visible. Olvidar el flag en un build de sideload se nota enseguida y no
+> expone nada.
 
 ## Git workflow
 

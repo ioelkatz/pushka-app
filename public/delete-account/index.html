@@ -1,0 +1,378 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="theme-color" content="#2563EB">
+  <title>Eliminar cuenta — Pushka</title>
+  <link rel="icon" type="image/png" href="/favicon.png">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #f8fafc;
+      min-height: 100vh;
+      color: #0f172a;
+      -webkit-font-smoothing: antialiased;
+      padding: 24px 16px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    @media (prefers-color-scheme: dark) {
+      body { background: #0f172a; color: #e2e8f0; }
+      .card { background: #1e293b; }
+      input, select, textarea { background: #0f172a; color: #e2e8f0; border-color: #334155; }
+      .muted { color: #94a3b8; }
+    }
+    .card {
+      background: #fff;
+      border-radius: 20px;
+      max-width: 480px;
+      width: 100%;
+      padding: 32px 28px;
+      box-shadow: 0 10px 40px rgba(0,0,0,0.06);
+    }
+    h1 { font-size: 24px; font-weight: 800; margin-bottom: 8px; letter-spacing: -0.4px; }
+    .subtitle { font-size: 14px; color: #64748b; line-height: 1.5; margin-bottom: 24px; }
+    .muted { color: #64748b; font-size: 13px; line-height: 1.5; }
+    label { display: block; font-size: 13px; font-weight: 600; margin-bottom: 6px; margin-top: 16px; }
+    input, select, textarea {
+      width: 100%;
+      padding: 12px 14px;
+      border-radius: 10px;
+      border: 1px solid #cbd5e1;
+      font-size: 15px;
+      font-family: inherit;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+    input:focus, textarea:focus { border-color: #2563EB; }
+    textarea { resize: vertical; min-height: 80px; }
+    .btn {
+      display: block;
+      width: 100%;
+      padding: 14px 24px;
+      border: none;
+      border-radius: 12px;
+      font-size: 15px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: transform 0.1s, opacity 0.15s;
+      margin-top: 20px;
+    }
+    .btn:active { transform: scale(0.98); }
+    .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    .btn-primary { background: #DC2626; color: #fff; }
+    .btn-primary:hover:not(:disabled) { background: #B91C1C; }
+    .btn-google, .btn-apple {
+      background: #fff;
+      color: #0f172a;
+      border: 1px solid #cbd5e1;
+      margin-top: 10px;
+    }
+    @media (prefers-color-scheme: dark) {
+      .btn-google, .btn-apple { background: #0f172a; color: #e2e8f0; }
+    }
+    .btn-google:hover, .btn-apple:hover { background: #f1f5f9; }
+    .divider { display: flex; align-items: center; gap: 12px; margin: 20px 0 12px; color: #94a3b8; font-size: 12px; }
+    .divider::before, .divider::after { content: ''; flex: 1; height: 1px; background: #e2e8f0; }
+    .warning {
+      background: #FEF2F2;
+      border: 1px solid #FECACA;
+      border-radius: 10px;
+      padding: 14px;
+      font-size: 13px;
+      color: #991B1B;
+      margin: 16px 0;
+      line-height: 1.5;
+    }
+    @media (prefers-color-scheme: dark) {
+      .warning { background: #431917; border-color: #7F1D1D; color: #FCA5A5; }
+    }
+    .success {
+      background: #F0FDF4;
+      border: 1px solid #BBF7D0;
+      border-radius: 10px;
+      padding: 16px;
+      color: #14532D;
+      margin: 16px 0;
+      line-height: 1.5;
+      font-size: 14px;
+    }
+    @media (prefers-color-scheme: dark) {
+      .success { background: #052E1E; border-color: #14532D; color: #86EFAC; }
+    }
+    .error {
+      background: #FEF2F2;
+      border: 1px solid #FECACA;
+      color: #991B1B;
+      border-radius: 10px;
+      padding: 12px 14px;
+      font-size: 13px;
+      margin-top: 12px;
+    }
+    @media (prefers-color-scheme: dark) {
+      .error { background: #431917; border-color: #7F1D1D; color: #FCA5A5; }
+    }
+    .lang { text-align: right; margin-bottom: 12px; font-size: 12px; }
+    .lang a { color: #64748b; text-decoration: none; margin-left: 8px; }
+    .lang a.active { color: #2563EB; font-weight: 600; }
+    .hidden { display: none !important; }
+    .spinner {
+      display: inline-block;
+      width: 14px;
+      height: 14px;
+      border: 2px solid rgba(255,255,255,0.3);
+      border-top-color: #fff;
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+      vertical-align: middle;
+      margin-right: 8px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .footer { text-align: center; margin-top: 24px; font-size: 12px; color: #94a3b8; }
+    .footer a { color: #2563EB; text-decoration: none; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="lang">
+      <a href="#es" class="active" data-lang="es">ES</a>
+      <a href="#en" data-lang="en">EN</a>
+    </div>
+
+    <h1 data-i18n="title">Eliminar tu cuenta</h1>
+    <p class="subtitle" data-i18n="subtitle">Esta acción es irreversible. Todos tus datos personales, transacciones e historial de donaciones serán eliminados permanentemente.</p>
+
+    <div class="warning">
+      <strong data-i18n="warningTitle">¿Qué se elimina?</strong>
+      <ul style="margin-top: 8px; padding-left: 20px;">
+        <li data-i18n="warning1">Tu perfil, email y datos personales</li>
+        <li data-i18n="warning2">Tu historial de donaciones</li>
+        <li data-i18n="warning3">Tus tarjetas guardadas y suscripciones activas (se cancelan automáticamente)</li>
+        <li data-i18n="warning4">Todos tus recordatorios y configuraciones</li>
+      </ul>
+    </div>
+
+    <!-- Sign-in stage -->
+    <div id="stage-signin">
+      <p class="muted" data-i18n="signinIntro">Iniciá sesión con la cuenta que querés eliminar:</p>
+
+      <label for="email" data-i18n="emailLabel">Email</label>
+      <input type="email" id="email" autocomplete="email" placeholder="tu@email.com">
+
+      <label for="password" data-i18n="passwordLabel">Contraseña</label>
+      <input type="password" id="password" autocomplete="current-password" placeholder="••••••••">
+
+      <button class="btn btn-primary" id="btn-signin-email">
+        <span data-i18n="signinBtn">Iniciar sesión y continuar</span>
+      </button>
+
+      <div class="divider" data-i18n="orDivider">o iniciar sesión con</div>
+
+      <button class="btn btn-google" id="btn-signin-google">Google</button>
+      <button class="btn btn-apple hidden" id="btn-signin-apple">Apple</button>
+
+      <div id="signin-error" class="error hidden"></div>
+    </div>
+
+    <!-- Confirm stage -->
+    <div id="stage-confirm" class="hidden">
+      <p class="muted"><span data-i18n="confirmIntro">Sesión iniciada como:</span> <strong id="user-email"></strong></p>
+
+      <label for="reason" data-i18n="reasonLabel">Motivo de eliminación (opcional)</label>
+      <textarea id="reason" placeholder="Contanos por qué te vas — nos ayuda a mejorar."></textarea>
+
+      <label for="confirm-text" data-i18n="confirmTextLabel">Para confirmar, escribí ELIMINAR</label>
+      <input type="text" id="confirm-text" autocomplete="off" spellcheck="false" placeholder="ELIMINAR">
+
+      <button class="btn btn-primary" id="btn-delete" disabled>
+        <span data-i18n="deleteBtn">Eliminar mi cuenta permanentemente</span>
+      </button>
+
+      <div id="delete-error" class="error hidden"></div>
+    </div>
+
+    <!-- Success stage -->
+    <div id="stage-success" class="hidden">
+      <div class="success">
+        <strong data-i18n="successTitle">Tu cuenta fue eliminada.</strong>
+        <p style="margin-top: 8px;" data-i18n="successBody">Todos tus datos personales fueron eliminados. Las suscripciones activas fueron canceladas. Si querés volver a usar Pushka, tendrás que crear una cuenta nueva.</p>
+      </div>
+    </div>
+
+    <div class="footer">
+      <a href="/privacy/es.html" data-i18n="privacyLink">Política de privacidad</a>
+    </div>
+  </div>
+
+  <script type="module">
+    import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js';
+    import { getAuth, signInWithEmailAndPassword, GoogleAuthProvider, OAuthProvider, signInWithPopup, signOut } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js';
+    import { getFunctions, httpsCallable } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-functions.js';
+
+    const app = initializeApp({
+      apiKey: 'AIzaSyCGA1Tq3uN2pzj_U2IfJn_KoE3Ry3VEQnw',
+      appId: '1:846580817724:web:018bd4b58b1d837d98c839',
+      messagingSenderId: '846580817724',
+      projectId: 'pushka-app-ioel',
+      authDomain: 'pushka-app-ioel.firebaseapp.com',
+      storageBucket: 'pushka-app-ioel.firebasestorage.app',
+    });
+    const auth = getAuth(app);
+    const functions = getFunctions(app, 'us-central1');
+
+    // ---- i18n minimal ----
+    const strings = {
+      es: {
+        title: 'Eliminar tu cuenta',
+        subtitle: 'Esta acción es irreversible. Todos tus datos personales, transacciones e historial de donaciones serán eliminados permanentemente.',
+        warningTitle: '¿Qué se elimina?',
+        warning1: 'Tu perfil, email y datos personales',
+        warning2: 'Tu historial de donaciones',
+        warning3: 'Tus tarjetas guardadas y suscripciones activas (se cancelan automáticamente)',
+        warning4: 'Todos tus recordatorios y configuraciones',
+        signinIntro: 'Iniciá sesión con la cuenta que querés eliminar:',
+        emailLabel: 'Email',
+        passwordLabel: 'Contraseña',
+        signinBtn: 'Iniciar sesión y continuar',
+        orDivider: 'o iniciar sesión con',
+        confirmIntro: 'Sesión iniciada como:',
+        reasonLabel: 'Motivo de eliminación (opcional)',
+        confirmTextLabel: 'Para confirmar, escribí ELIMINAR',
+        deleteBtn: 'Eliminar mi cuenta permanentemente',
+        successTitle: 'Tu cuenta fue eliminada.',
+        successBody: 'Todos tus datos personales fueron eliminados. Las suscripciones activas fueron canceladas. Si querés volver a usar Pushka, tendrás que crear una cuenta nueva.',
+        privacyLink: 'Política de privacidad',
+        confirmWord: 'ELIMINAR',
+        errorSignin: 'No pudimos iniciar sesión. Verificá el email y la contraseña.',
+        errorReauth: 'Por seguridad, cerrá sesión y volvé a iniciar sesión antes de eliminar la cuenta.',
+        errorDelete: 'Hubo un problema al eliminar la cuenta. Intentá de nuevo o escribinos.',
+      },
+      en: {
+        title: 'Delete your account',
+        subtitle: 'This action is irreversible. All your personal data, transactions, and donation history will be permanently deleted.',
+        warningTitle: 'What gets deleted?',
+        warning1: 'Your profile, email, and personal data',
+        warning2: 'Your donation history',
+        warning3: 'Your saved cards and active subscriptions (auto-cancelled)',
+        warning4: 'All your reminders and settings',
+        signinIntro: 'Sign in with the account you want to delete:',
+        emailLabel: 'Email',
+        passwordLabel: 'Password',
+        signinBtn: 'Sign in and continue',
+        orDivider: 'or sign in with',
+        confirmIntro: 'Signed in as:',
+        reasonLabel: 'Reason for deletion (optional)',
+        confirmTextLabel: 'To confirm, type DELETE',
+        deleteBtn: 'Permanently delete my account',
+        successTitle: 'Your account has been deleted.',
+        successBody: 'All your personal data has been removed. Active subscriptions were cancelled. To use Pushka again, you will need to create a new account.',
+        privacyLink: 'Privacy Policy',
+        confirmWord: 'DELETE',
+        errorSignin: 'Sign-in failed. Please check your email and password.',
+        errorReauth: 'For security, please sign out and sign back in before deleting the account.',
+        errorDelete: 'There was a problem deleting the account. Please try again or contact us.',
+      },
+    };
+    let currentLang = 'es';
+    function applyI18n(lang) {
+      currentLang = lang;
+      document.documentElement.lang = lang;
+      document.title = strings[lang].title + ' — Pushka';
+      document.querySelectorAll('[data-i18n]').forEach((el) => {
+        const key = el.getAttribute('data-i18n');
+        if (strings[lang][key]) el.textContent = strings[lang][key];
+      });
+      document.querySelectorAll('.lang a').forEach((a) => a.classList.toggle('active', a.dataset.lang === lang));
+    }
+    document.querySelectorAll('.lang a').forEach((a) => {
+      a.addEventListener('click', (e) => { e.preventDefault(); applyI18n(a.dataset.lang); });
+    });
+    applyI18n((navigator.language || 'es').startsWith('en') ? 'en' : 'es');
+
+    // ---- Stage helpers ----
+    const stages = ['signin', 'confirm', 'success'];
+    function showStage(name) {
+      stages.forEach((s) => document.getElementById('stage-' + s).classList.toggle('hidden', s !== name));
+    }
+    function showError(id, msg) {
+      const el = document.getElementById(id);
+      el.textContent = msg;
+      el.classList.remove('hidden');
+    }
+    function hideError(id) {
+      document.getElementById(id).classList.add('hidden');
+    }
+    function setLoading(btnId, loading, labelKey) {
+      const btn = document.getElementById(btnId);
+      btn.disabled = loading;
+      btn.innerHTML = loading
+        ? '<span class="spinner"></span>' + strings[currentLang][labelKey]
+        : '<span data-i18n="' + labelKey + '">' + strings[currentLang][labelKey] + '</span>';
+    }
+
+    // ---- Sign-in handlers ----
+    document.getElementById('btn-signin-email').addEventListener('click', async () => {
+      hideError('signin-error');
+      const email = document.getElementById('email').value.trim();
+      const password = document.getElementById('password').value;
+      if (!email || !password) return;
+      setLoading('btn-signin-email', true, 'signinBtn');
+      try {
+        await signInWithEmailAndPassword(auth, email, password);
+        onSignedIn();
+      } catch (err) {
+        showError('signin-error', strings[currentLang].errorSignin);
+      } finally {
+        setLoading('btn-signin-email', false, 'signinBtn');
+      }
+    });
+    document.getElementById('btn-signin-google').addEventListener('click', async () => {
+      hideError('signin-error');
+      try {
+        await signInWithPopup(auth, new GoogleAuthProvider());
+        onSignedIn();
+      } catch (err) {
+        showError('signin-error', strings[currentLang].errorSignin);
+      }
+    });
+
+    function onSignedIn() {
+      document.getElementById('user-email').textContent = auth.currentUser?.email || '(unknown)';
+      showStage('confirm');
+    }
+
+    // ---- Confirm handlers ----
+    const confirmInput = document.getElementById('confirm-text');
+    const deleteBtn = document.getElementById('btn-delete');
+    confirmInput.addEventListener('input', () => {
+      deleteBtn.disabled = confirmInput.value.trim().toUpperCase() !== strings[currentLang].confirmWord;
+    });
+
+    deleteBtn.addEventListener('click', async () => {
+      hideError('delete-error');
+      const reason = document.getElementById('reason').value.trim();
+      setLoading('btn-delete', true, 'deleteBtn');
+      try {
+        const call = httpsCallable(functions, 'deleteAccount');
+        await call({ reason: reason || null, source: 'public-web' });
+        await signOut(auth).catch(() => {});
+        showStage('success');
+      } catch (err) {
+        const code = err?.code || '';
+        if (code === 'functions/failed-precondition') {
+          // The 5-min recent-auth gate can trip on Google popup users if the
+          // popup handshake ran a while ago — direct them to re-auth.
+          showError('delete-error', strings[currentLang].errorReauth);
+        } else {
+          showError('delete-error', (err?.message || strings[currentLang].errorDelete));
+        }
+      } finally {
+        setLoading('btn-delete', false, 'deleteBtn');
+      }
+    });
+  </script>
+</body>
+</html>

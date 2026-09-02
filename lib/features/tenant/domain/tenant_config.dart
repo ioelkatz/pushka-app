@@ -17,6 +17,7 @@ class TenantConfig {
     this.city,
     this.country,
     this.donationReasons = const [],
+    this.stripeConnectAccountId,
   });
 
   final String tenantId;
@@ -34,15 +35,25 @@ class TenantConfig {
   final String? contactEmail;
   final String? contactPhone;
   final String? privacyPolicyUrl;
+
   /// BUG-005 fix (Audit Round 4 Phase 1): the org's physical location.
   /// Surfaced on the support screen so donors know where the organization
   /// is based. Pre-fix the admin web wrote these fields but the Flutter
   /// app discarded them.
   final String? city;
   final String? country;
+
   /// Optional per-tenant list of donation reasons ("designaciones") shown
   /// to the donor at payment time. Empty list = picker is hidden.
   final List<String> donationReasons;
+
+  /// Cuenta conectada de Stripe del tenant (`acct_...`). La usa el bootstrap
+  /// de WebStripe en la PWA para inicializar Stripe.js con la cuenta correcta
+  /// ANTES de que se monte cualquier PaymentElement. Llega por getTenantConfig
+  /// (TENANT_MEMBER_FIELDS) en lugar de leerse directo de `tenants/{id}`: esa
+  /// lectura daba permission-denied a todo donante sin claim de rol, que es
+  /// justo quien va a pagar.
+  final String? stripeConnectAccountId;
 
   factory TenantConfig.fromMap(String tenantId, Map<String, dynamic> data) {
     return TenantConfig(
@@ -62,6 +73,9 @@ class TenantConfig {
       city: _nonEmpty(data['city'] as String?),
       country: _nonEmpty(data['country'] as String?),
       donationReasons: _stringList(data['donationReasons']),
+      stripeConnectAccountId: _nonEmpty(
+        data['stripeConnectAccountId'] as String?,
+      ),
     );
   }
 
@@ -84,6 +98,8 @@ class TenantConfig {
       if (city != null) 'city': city,
       if (country != null) 'country': country,
       if (donationReasons.isNotEmpty) 'donationReasons': donationReasons,
+      if (stripeConnectAccountId != null)
+        'stripeConnectAccountId': stripeConnectAccountId,
     };
   }
 
@@ -144,6 +160,7 @@ class TenantConfig {
           privacyPolicyUrl == other.privacyPolicyUrl &&
           city == other.city &&
           country == other.country &&
+          stripeConnectAccountId == other.stripeConnectAccountId &&
           _listEquals(donationReasons, other.donationReasons);
 
   static bool _listEquals(List<String> a, List<String> b) {
@@ -156,11 +173,21 @@ class TenantConfig {
 
   @override
   int get hashCode => Object.hash(
-        tenantId, name, appName, welcomeText,
-        primaryColor, logoUrl,
-        defaultLanguage, defaultCurrency, defaultCountry,
-        contactEmail, contactPhone, privacyPolicyUrl,
-        city, country,
-        Object.hashAll(donationReasons),
-      );
+    tenantId,
+    name,
+    appName,
+    welcomeText,
+    primaryColor,
+    logoUrl,
+    defaultLanguage,
+    defaultCurrency,
+    defaultCountry,
+    contactEmail,
+    contactPhone,
+    privacyPolicyUrl,
+    city,
+    country,
+    stripeConnectAccountId,
+    Object.hashAll(donationReasons),
+  );
 }

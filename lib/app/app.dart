@@ -1,5 +1,7 @@
 import 'dart:async';
 
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -12,6 +14,8 @@ import '../features/tenant/presentation/tenant_theme_provider.dart';
 import '../features/tenant/data/tenant_repository.dart';
 import '../features/auth/providers/auth_controller.dart';
 import '../features/auth/providers/auth_state_provider.dart';
+import '../features/payments/stripe_web_bootstrap.dart';
+import '../features/users/data/user_repository.dart';
 import 'router.dart';
 
 class PushkaApp extends ConsumerStatefulWidget {
@@ -21,7 +25,8 @@ class PushkaApp extends ConsumerStatefulWidget {
   ConsumerState<PushkaApp> createState() => _PushkaAppState();
 }
 
-class _PushkaAppState extends ConsumerState<PushkaApp> with WidgetsBindingObserver {
+class _PushkaAppState extends ConsumerState<PushkaApp>
+    with WidgetsBindingObserver {
   Timer? _tenantStatusTimer;
 
   @override
@@ -29,14 +34,22 @@ class _PushkaAppState extends ConsumerState<PushkaApp> with WidgetsBindingObserv
     super.initState();
     WidgetsBinding.instance.addObserver(this);
 
-    // Poll tenant status every 60s while the app is in the foreground. The
+    // Poll tenant status while the app is in the foreground. The
     // existing `ref.listen(tenantConfigProvider)` already redirects to
     // /suspended when the loadConfig() throws TenantSuspendedException — but
     // the FutureProvider only re-fires when invalidated. Without this poll an
     // active user keeps using the app after their tenant is suspended until
-    // they restart. 60s is the latency vs. cost trade-off: each tick is one
-    // Cloud Function call.
-    _tenantStatusTimer = Timer.periodic(const Duration(seconds: 60), (_) {
+    // they restart.
+    //
+    // Round-8 audit HIGH fix: raised from 60s to 5min. The old 60s cadence
+    // also re-ran WebStripe.initialise (via ref.listen(tenantConfigProvider)
+    // downstream) with a Firestore .get() and a Stripe SDK re-bootstrap
+    // fetch every minute for every foreground user forever — real quota
+    // waste for a check that only matters when the Rab manually flips
+    // status to suspended (a rare event). 5min gives worst-case ~5min
+    // suspension latency, which is acceptable for a status change that
+    // typically comes with an out-of-band communication anyway.
+    _tenantStatusTimer = Timer.periodic(const Duration(minutes: 5), (_) {
       if (!mounted) return;
       // Only refresh if the user is signed in — otherwise we'd hit auth-required
       // errors with no useful effect.
@@ -80,8 +93,13 @@ class _PushkaAppState extends ConsumerState<PushkaApp> with WidgetsBindingObserv
     // syncFromRemote itself respects a Hive-saved manual preference, so users
     // who already chose a language won't be overridden.
     final userLang = profile['language'] as String?;
-    final tenantLang = ref.read(tenantConfigProvider).valueOrNull?.defaultLanguage;
-    final effectiveLang = (userLang != null && userLang.isNotEmpty) ? userLang : tenantLang;
+    final tenantLang = ref
+        .read(tenantConfigProvider)
+        .valueOrNull
+        ?.defaultLanguage;
+    final effectiveLang = (userLang != null && userLang.isNotEmpty)
+        ? userLang
+        : tenantLang;
     if (effectiveLang != null && effectiveLang.isNotEmpty) {
       ref.read(localeProvider.notifier).syncFromRemote(effectiveLang);
     }
@@ -116,8 +134,13 @@ class _PushkaAppState extends ConsumerState<PushkaApp> with WidgetsBindingObserv
 
       // Same tenant fallback as _applyProfilePreferences above.
       final userLang = profile['language'] as String?;
-      final tenantLang = ref.read(tenantConfigProvider).valueOrNull?.defaultLanguage;
-      final effectiveLang = (userLang != null && userLang.isNotEmpty) ? userLang : tenantLang;
+      final tenantLang = ref
+          .read(tenantConfigProvider)
+          .valueOrNull
+          ?.defaultLanguage;
+      final effectiveLang = (userLang != null && userLang.isNotEmpty)
+          ? userLang
+          : tenantLang;
       if (effectiveLang != null && effectiveLang.isNotEmpty) {
         ref.read(localeProvider.notifier).syncFromRemote(effectiveLang);
       }
@@ -126,6 +149,33 @@ class _PushkaAppState extends ConsumerState<PushkaApp> with WidgetsBindingObserv
         sound: (profile['soundEnabled'] as bool?) ?? true,
         vibration: (profile['vibrationEnabled'] as bool?) ?? true,
       );
+    });
+
+    // Ensure a users/{uid} Firestore doc exists whenever the auth state
+    // flips to a signed-in user. Covers auth paths that bypass
+    // AuthController.signInWith* — most importantly Google via
+    // signInWithRedirect on iOS PWA (Firebase auto-detects the redirect
+    // credential on page load and fires authStateChanges without going
+    // through our signInWithGoogle method). ensureUserDocument is
+    // idempotent (checks existence + set-with-merge), so calling on every
+    // auth transition is safe — just wastes one Firestore read per login.
+    ref.listen(authStateChangesProvider, (prev, next) {
+      final user = next.valueOrNull;
+      if (user == null) return;
+      // Fire and forget — but explicitly swallow errors. Previously an
+      // unhandled Firestore permission-denied here (e.g. rules deny a
+      // brand-new user's first write before onCreate runs) could crash
+      // the auth flow on web / freeze the redirect return handoff.
+      Future(() async {
+        try {
+          await UserRepository(
+            FirebaseFirestore.instance,
+          ).ensureUserDocument(user: user, displayName: user.displayName);
+        } catch (e) {
+          // ignore: avoid_print
+          debugPrint('ensureUserDocument listener error (non-fatal): $e');
+        }
+      });
     });
 
     // Navigate to /suspended if the tenant gets suspended while the app is open
@@ -143,6 +193,32 @@ class _PushkaAppState extends ConsumerState<PushkaApp> with WidgetsBindingObserv
       if (prevHadTenant && next.hasValue && next.valueOrNull == null) {
         invalidateTenantCache();
         router.go('/tenant-setup');
+      }
+
+      // DIRECT CHARGES web bootstrap: re-init WebStripe with the tenant's
+      // stripeConnectAccountId BEFORE the user reaches any payment sheet.
+      // Doing this early (right after tenant is known) avoids the
+      // flutter_stripe_web 7.6.0 gotcha where re-initialising after
+      // PaymentElement is mounted leaves the widget bound to the stale
+      // Stripe.js instance → sheet hangs at "No se pudo iniciar el pago".
+      // See stripe_web_bootstrap_web.dart for the coalescing + idempotency
+      // logic. No-op on native.
+      // Solo web: en native `initWebStripeForTenant` es un stub no-op
+      // (stripe_web_bootstrap_stub.dart) porque flutter_stripe resuelve la
+      // cuenta conectada en el propio flujo de pago via Stripe.stripeAccountId.
+      // Antes esto corria en todas las plataformas y disparaba una lectura a
+      // Firestore por cada emision del tenant para no hacer nada.
+      final tenant = next.valueOrNull;
+      if (kIsWeb && tenant != null) {
+        // El accountId ahora viaja dentro del propio TenantConfig, servido por
+        // getTenantConfig. Antes se leia directo de `tenants/{id}` con la
+        // premisa de que la regla lo permitia a cualquier miembro — falso: la
+        // regla exige isTenantMember(), que es tenant_admin o
+        // tenant_collaborator. Un donante comun no tiene claim de rol, asi que
+        // recibia permission-denied en cada arranque y el pre-warm no ocurria
+        // nunca justo para quien va a pagar. Quedaba tapado por el bootstrap
+        // de red que showWebDonationSheet hace como safety net.
+        unawaited(initWebStripeForTenant(tenant.stripeConnectAccountId));
       }
     });
 

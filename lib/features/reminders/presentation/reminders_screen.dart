@@ -1,3 +1,6 @@
+import 'dart:async';
+
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../app/theme/app_tokens.dart';
@@ -20,12 +23,108 @@ class RemindersScreen extends ConsumerStatefulWidget {
   ConsumerState<RemindersScreen> createState() => _RemindersScreenState();
 }
 
-class _RemindersScreenState extends ConsumerState<RemindersScreen> {
+class _RemindersScreenState extends ConsumerState<RemindersScreen>
+    with WidgetsBindingObserver {
+  /// Per-reminder in-flight future — used as a serial mutex so two fast taps
+  /// on the same reminder's Switch don't fire two update+schedule pipelines
+  /// whose completion order is undefined. Second-tap awaits the first.
+  final Map<String, Future<void>> _toggleInFlight = {};
+
+  /// Optimistic UI overlay for the per-reminder Switch.
+  ///
+  /// Round-12 fix: the Material Switch is fully controlled by the `value`
+  /// prop, and that prop was bound straight to `reminder.isEnabled` (from
+  /// the Firestore stream). When `_runToggle` aborted early — e.g. the user
+  /// declined the notification permission — we never wrote the new value,
+  /// the stream re-emitted the OLD value, and the switch snapped back to
+  /// its previous position with NO feedback. User's read: "el toggle no me
+  /// deja". Now the switch renders `_pendingSwitchValue[id] ?? isEnabled`,
+  /// we set the pending value BEFORE any await, and we clear it after the
+  /// write succeeds (stream will re-emit) OR revert it on failure while
+  /// also showing a snackbar so the failure is visible.
+  final Map<String, bool> _pendingSwitchValue = {};
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state != AppLifecycleState.resumed) return;
+    // User is back in the app — possibly from OS Settings where they may
+    // have (a) granted the notification permission we asked for and (b)
+    // granted SCHEDULE_EXACT_ALARM. `hasNotificationPermission()` reads
+    // real-time state on next tap, so we don't need to force-refresh here.
+    // But we DO clear stale pending switch values — if the user backgrounded
+    // the app while the permission prompt was open, `_runToggle` may have
+    // been suspended and never got to clear its pending entry. Force a
+    // rebuild so the Switch matches the provider's isEnabled value.
+    if (_pendingSwitchValue.isNotEmpty && mounted) {
+      setState(_pendingSwitchValue.clear);
+    }
+  }
+
+  /// Locale-aware copy for the "reminders don't fire in the browser" banner.
+  /// The S delegate has no key for it (owned elsewhere) so we inline the four
+  /// languages here.
+  String _webBannerText(BuildContext context) {
+    final code = Localizations.localeOf(context).languageCode;
+    return switch (code) {
+      'en' => 'Reminders only fire in the installed Android app. On web/iPhone '
+          'they are saved but do not notify.',
+      'fr' => 'Les rappels ne se déclenchent que dans l\'application Android '
+          'installée. Sur le web/iPhone ils sont enregistrés mais ne notifient pas.',
+      'he' => 'תזכורות פועלות רק באפליקציה המותקנת של אנדרואיד. באינטרנט/אייפון '
+          'הן נשמרות אך אינן מתריעות.',
+      _ => 'Los recordatorios funcionan solo en la app instalada de Android. '
+          'En web/iPhone se guardan pero no notifican.',
+    };
+  }
+
+  Widget _buildWebBanner(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return Container(
+      margin: const EdgeInsets.fromLTRB(20, 12, 20, 0),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: cs.surfaceContainerHighest,
+        border: Border.all(color: cs.outline),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(Icons.info_outline, size: 20, color: cs.onSurfaceVariant),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              _webBannerText(context),
+              style: TextStyle(
+                fontSize: 13,
+                height: 1.35,
+                color: cs.onSurfaceVariant,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final tr = S.of(context);
     return Column(
       children: [
+        if (kIsWeb) _buildWebBanner(context),
         Expanded(
           child: ref.watch(userRemindersProvider).when(
                 data: (reminders) {
@@ -113,6 +212,11 @@ class _RemindersScreenState extends ConsumerState<RemindersScreen> {
             ),
           );
         }).valueOrNull ??
+        // Initial fetch (or error) fallback: the AsyncValue has no data yet,
+        // so we cannot enforce the client-side kMaxReminders cap. Keep the
+        // button visible for layout stability but disabled — otherwise a
+        // fast-tapping user could bypass the limit check by adding a reminder
+        // during the first-load window.
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
           child: SafeArea(
@@ -120,7 +224,7 @@ class _RemindersScreenState extends ConsumerState<RemindersScreen> {
               width: double.infinity,
               height: AppTokens.buttonHeight,
               child: OutlinedButton(
-                onPressed: _showAddReminderDialog,
+                onPressed: null,
                 style: OutlinedButton.styleFrom(
                   shape: RoundedRectangleBorder(
                     borderRadius:
@@ -205,7 +309,12 @@ class _RemindersScreenState extends ConsumerState<RemindersScreen> {
                 ),
               ),
               Switch(
-                value: reminder.isEnabled,
+                // Optimistic overlay: while a toggle write is in flight (or
+                // an aborted attempt is being reverted), show the pending
+                // value so the switch never appears "stuck" on the previous
+                // state. Cleared once the Firestore stream re-emits or the
+                // attempt is definitively rolled back — see `_pendingSwitchValue`.
+                value: _pendingSwitchValue[reminder.id] ?? reminder.isEnabled,
                 onChanged: onToggle,
               ),
             ],
@@ -217,26 +326,102 @@ class _RemindersScreenState extends ConsumerState<RemindersScreen> {
 
   Future<bool?> _confirmDelete(Reminder reminder) {
     final tr = S.of(context);
-    return showDialog<bool>(
+    return showModalBottomSheet<bool>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(tr.deleteReminderTitle),
-        content: Text(tr.deleteReminderConfirm(reminder.title)),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: Text(tr.cancel),
+      isScrollControlled: true,
+      useSafeArea: true,
+      backgroundColor: Theme.of(context).colorScheme.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
+      ),
+      builder: (ctx) => SafeArea(
+        top: false,
+        child: Padding(
+          padding: EdgeInsets.only(bottom: MediaQuery.of(ctx).viewInsets.bottom),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Center(
+                  child: Container(
+                    width: 36,
+                    height: 4,
+                    margin: const EdgeInsets.only(bottom: 16),
+                    decoration: BoxDecoration(
+                      color: Theme.of(ctx).colorScheme.outlineVariant,
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                ),
+                Text(
+                  tr.deleteReminderTitle,
+                  style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 14),
+                Text(
+                  tr.deleteReminderConfirm(reminder.title),
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 14,
+                    color: Theme.of(ctx).colorScheme.onSurfaceVariant,
+                    height: 1.4,
+                  ),
+                ),
+                const SizedBox(height: 20),
+                SizedBox(
+                  width: double.infinity,
+                  height: 48,
+                  child: ElevatedButton(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Theme.of(ctx).colorScheme.error,
+                      foregroundColor: Colors.white,
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    ),
+                    onPressed: () => Navigator.pop(ctx, true),
+                    child: Text(tr.delete, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                SizedBox(
+                  width: double.infinity,
+                  height: 44,
+                  child: TextButton(
+                    onPressed: () => Navigator.pop(ctx, false),
+                    child: Text(tr.cancel, style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant, fontWeight: FontWeight.w500)),
+                  ),
+                ),
+              ],
+            ),
           ),
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: Text(tr.delete, style: const TextStyle(color: Colors.red)),
-          ),
-        ],
+        ),
       ),
     );
   }
 
   Future<void> _showAddReminderDialog() async {
+    // Round-13 fix: unified permission gate. If the permission is already
+    // granted (or we're on web where the reminders form itself is the gate)
+    // we jump straight to the form. Otherwise we ALWAYS show the "Activar
+    // notificaciones" bottom sheet — the previous flow showed a snackbar
+    // when Android's second denial silently returned false from
+    // requestPermission, and the user (correctly) read that as "toggle
+    // doesn't work". Now the sheet's Activar button routes through
+    // ensureNotificationPermission and, on permanentlyDenied, opens OS
+    // Settings via openAppSettings() so the user has a clear path forward.
+    if (!kIsWeb) {
+      final ns = NotificationService.instance;
+      final hasPerm = await ns.hasNotificationPermission();
+      if (!mounted) return;
+      if (!hasPerm) {
+        final granted = await _requestNotificationPermissionWithSheet();
+        if (!mounted) return;
+        if (!granted) return; // user declined or opened Settings — no dialog.
+      }
+    }
+
     final result = await Navigator.of(context, rootNavigator: true)
         .push<ReminderDraft>(
       MaterialPageRoute(builder: (_) => const _ReminderFormPage()),
@@ -290,6 +475,10 @@ class _RemindersScreenState extends ConsumerState<RemindersScreen> {
       secondTime: draft.secondTime,
       secondDays: draft.secondDays,
       secondIsHoliday: draft.secondIsHoliday,
+      // Stage 3: persist to Firestore alongside the existing Hive write
+      // (kept as backup for 2 releases per adversarial R-5). The server-side
+      // scheduler (processDueReminders CF) reads oneShotDate from Firestore.
+      oneShotDate: draft.oneShotDate,
     );
 
     if (existingId == null) {
@@ -301,6 +490,18 @@ class _RemindersScreenState extends ConsumerState<RemindersScreen> {
       }
       try {
         final id = await repo.addReminder(user.uid, reminder);
+        // Persist the one-shot date BEFORE scheduling so scheduleReminder
+        // reads it back and emits a non-recurring alarm. Without this the
+        // chooseDate reminder gets treated as "weekly on this weekday" and
+        // fires on the wrong date + every week thereafter.
+        if (draft.oneShotDate != null) {
+          try {
+            await NotificationService.instance
+                .setOneShotDate(id, draft.oneShotDate!);
+          } catch (e) {
+            debugPrint('setOneShotDate failed: $e');
+          }
+        }
         try {
           await NotificationService.instance.scheduleReminder(
             reminder.copyWith(id: id),
@@ -328,6 +529,19 @@ class _RemindersScreenState extends ConsumerState<RemindersScreen> {
       try {
         await repo.updateReminder(
             user.uid, reminder.copyWith(id: existingId));
+        // Toggling between chooseDate and any other repeat option needs the
+        // one-shot Hive entry to be written OR cleared — otherwise editing a
+        // one-shot into a recurring keeps firing on the picked date only.
+        try {
+          if (draft.oneShotDate != null) {
+            await NotificationService.instance
+                .setOneShotDate(existingId, draft.oneShotDate!);
+          } else {
+            await NotificationService.instance.clearOneShotDate(existingId);
+          }
+        } catch (e) {
+          debugPrint('one-shot date persist failed: $e');
+        }
         try {
           await NotificationService.instance.scheduleReminder(
             reminder.copyWith(id: existingId),
@@ -347,24 +561,241 @@ class _RemindersScreenState extends ConsumerState<RemindersScreen> {
   }
 
   Future<void> _toggleReminder(Reminder reminder, bool value) async {
+    // Serialize per-reminder writes: two rapid taps on the same Switch used
+    // to fire two update+schedule pipelines whose completion order was not
+    // guaranteed, so the OS alarm could end up matching the STALE isEnabled
+    // value while Firestore held the new one. Queue behind any in-flight
+    // operation for this id, then run.
+    final previous = _toggleInFlight[reminder.id];
+    final completer = Completer<void>();
+    _toggleInFlight[reminder.id] = completer.future;
+    try {
+      if (previous != null) {
+        try { await previous; } catch (_) {}
+      }
+      await _runToggle(reminder, value);
+    } finally {
+      completer.complete();
+      // Only clear the map entry when it still points at our completer —
+      // a later tap may have replaced it while we were awaiting.
+      if (identical(_toggleInFlight[reminder.id], completer.future)) {
+        _toggleInFlight.remove(reminder.id);
+      }
+    }
+  }
+
+  Future<void> _runToggle(Reminder reminder, bool value) async {
     final tr = S.of(context);
     final user = ref.read(currentUserProvider);
     if (user == null) {
       _showMessage(tr.signInToModify);
       return;
     }
+
+    // Optimistic UI: paint the switch in the desired position BEFORE any
+    // await. Without this, the switch appears "stuck" during the async
+    // permission dance and — worse — an aborted attempt (user denied
+    // permission) leaves no visible trace, so the user reads it as a bug.
+    // The pending entry is cleared either by the Firestore stream re-emit
+    // (success path) or by the failure branch below with a snackbar.
+    if (mounted) {
+      setState(() {
+        _pendingSwitchValue[reminder.id] = value;
+      });
+    }
+
+    // Round-13 fix: al ACTIVAR el switch (value == true), verificar
+    // permiso de notificaciones. Si ya está concedido → seguir directo.
+    // Si NO → SIEMPRE mostrar el bottom sheet con "Activar / Ahora no"
+    // (no snackbars). El botón "Activar" dispara el flujo real:
+    // - primer o segundo intento → prompt del OS
+    // - permanentlyDenied → abre OS Settings via openAppSettings()
+    // Cualquier rechazo revierte el switch a OFF SIN snackbar — el user
+    // ya vio la sheet, no hace falta insistir. Skip en kIsWeb: el web
+    // push tiene su propio opt-in en Settings.
+    if (value && !kIsWeb) {
+      final ns = NotificationService.instance;
+      final hasPerm = await ns.hasNotificationPermission();
+      if (!mounted) return;
+      if (!hasPerm) {
+        final granted = await _requestNotificationPermissionWithSheet();
+        if (!mounted) return;
+        if (!granted) {
+          // Revert optimistic switch value silently. No snackbar — the sheet
+          // already communicated intent, either the user declined or was
+          // taken to Settings; noise here would just add friction.
+          setState(() => _pendingSwitchValue.remove(reminder.id));
+          return;
+        }
+      }
+    }
+
     final repo = ref.read(reminderRepositoryProvider);
     final updated = reminder.copyWith(isEnabled: value);
     try {
       await repo.updateReminder(user.uid, updated);
     } catch (_) {
-      if (mounted) _showMessage(tr.couldNotUpdateReminder);
+      if (mounted) {
+        setState(() => _pendingSwitchValue.remove(reminder.id));
+        _showMessage(tr.couldNotUpdateReminder);
+      }
       return;
     }
     try {
       await NotificationService.instance.scheduleReminder(updated, tr: tr);
     } catch (e) {
       debugPrint('scheduleReminder failed: $e');
+      // scheduleReminder failure is NOT fatal — the Firestore write
+      // succeeded, and the server-side scheduler will still fire based
+      // on the persisted reminder. Do NOT revert the switch.
+    }
+    // Success: the Firestore write happened. Once the stream re-emits
+    // with isEnabled=value, the fallback (reminder.isEnabled) already
+    // matches the pending value, so we can drop the optimistic entry
+    // without visual jitter. Guarded by mounted since scheduleReminder
+    // awaits platform channels that can outlast the widget.
+    if (mounted) {
+      setState(() => _pendingSwitchValue.remove(reminder.id));
+    } else {
+      _pendingSwitchValue.remove(reminder.id);
+    }
+  }
+
+  /// Shows a bottom sheet with "Activar" / "Ahora no" buttons and drives the
+  /// permission dance. Returns `true` only if the OS ended up granting.
+  ///
+  /// The sheet ALWAYS appears when the caller detects the permission is not
+  /// granted — that's the whole point of the round-13 rewrite. Before this,
+  /// once Android hit its two-strike prompt limit our `requestPermission`
+  /// silently returned false without any UI, and users read the toggle as
+  /// broken. Now:
+  ///   - Activar → `ensureNotificationPermission()`:
+  ///       - granted            → true, caller proceeds
+  ///       - deniedByUser       → false, no snackbar (sheet was the message)
+  ///       - permanentlyDenied  → open OS Settings, return false; the user
+  ///                              flips notifications on themselves and next
+  ///                              tap of the toggle will short-circuit past
+  ///                              the sheet because hasNotificationPermission
+  ///                              will be true.
+  ///   - Ahora no             → false, no snackbar.
+  ///
+  /// The same helper is reused by the "add reminder" button so both entry
+  /// points behave identically.
+  Future<bool> _requestNotificationPermissionWithSheet() async {
+    if (!mounted) return false;
+    final tr = S.of(context);
+    final cs = Theme.of(context).colorScheme;
+    final choice = await showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      backgroundColor: cs.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
+      ),
+      builder: (ctx) => SafeArea(
+        top: false,
+        child: Padding(
+          padding: EdgeInsets.only(bottom: MediaQuery.of(ctx).viewInsets.bottom),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Center(
+                  child: Container(
+                    width: 36,
+                    height: 4,
+                    margin: const EdgeInsets.only(bottom: 16),
+                    decoration: BoxDecoration(
+                      color: Theme.of(ctx).colorScheme.outlineVariant,
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                ),
+                Text(
+                  tr.enableNotificationsTitle,
+                  style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 14),
+                Text(
+                  tr.enableNotificationsBody,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 14,
+                    color: Theme.of(ctx).colorScheme.onSurfaceVariant,
+                    height: 1.4,
+                  ),
+                ),
+                const SizedBox(height: 20),
+                SizedBox(
+                  width: double.infinity,
+                  height: 48,
+                  child: ElevatedButton(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppTokens.primaryBlue,
+                      foregroundColor: Colors.white,
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12)),
+                    ),
+                    onPressed: () => Navigator.pop(ctx, true),
+                    child: Text(
+                      tr.enableNotificationsPrimary,
+                      style: const TextStyle(
+                          fontSize: 16, fontWeight: FontWeight.w700),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                SizedBox(
+                  width: double.infinity,
+                  height: 44,
+                  child: TextButton(
+                    onPressed: () => Navigator.pop(ctx, false),
+                    child: Text(
+                      tr.enableNotificationsSecondary,
+                      style: TextStyle(
+                        color: Theme.of(ctx).colorScheme.onSurfaceVariant,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+
+    if (!mounted) return false;
+    // User dismissed by swipe / backdrop tap / back gesture → treat as "Ahora no".
+    if (choice != true) return false;
+
+    final ns = NotificationService.instance;
+    final result = await ns.ensureNotificationPermission();
+    if (!mounted) return false;
+
+    switch (result) {
+      case NotificationPermissionResult.granted:
+        return true;
+      case NotificationPermissionResult.deniedByUser:
+        // Prompt was shown, user hit Don't allow. Silent — the sheet already
+        // told them what we needed, no follow-up snackbar.
+        return false;
+      case NotificationPermissionResult.permanentlyDenied:
+        // Android has burned its two-strike budget (or "Don't ask again" was
+        // ticked). Requesting again would be a no-op that returns denied
+        // without UI, which is exactly the trap that made users think the
+        // toggle was broken. Send them straight to OS Settings so they can
+        // flip the switch themselves; when they come back, the next tap
+        // short-circuits past this helper because hasNotificationPermission
+        // will now be true. didChangeAppLifecycleState clears any leftover
+        // optimistic state on resume.
+        await openNotificationSettings();
+        return false;
     }
   }
 
@@ -382,10 +813,17 @@ class _RemindersScreenState extends ConsumerState<RemindersScreen> {
       if (mounted) _showMessage(tr.couldNotDelete);
       return;
     }
+    // Drop any lingering optimistic-toggle entry for the deleted reminder so
+    // the map doesn't leak keys across a rapid delete-recreate-with-same-id
+    // cycle (Firestore ids are unique in practice, but the tidy-up is free).
+    _pendingSwitchValue.remove(reminder.id);
     try {
-      await NotificationService.instance.cancelReminder(reminder);
+      // forgetReminder = cancelReminder + clearOneShotDate; keeps the
+      // reminders_meta Hive box from leaking stale one-shot entries pointing
+      // at reminders that no longer exist server-side.
+      await NotificationService.instance.forgetReminder(reminder);
     } catch (e) {
-      debugPrint('cancelReminder failed: $e');
+      debugPrint('forgetReminder failed: $e');
     }
     try { await AnalyticsService.instance.logReminderDeleted(); } catch (_) {}
   }
@@ -452,7 +890,17 @@ class _ReminderFormPageState extends State<_ReminderFormPage> {
       _secondTime = r.secondTime;
       _secondDays = r.secondDays.toSet();
       _secondIsHoliday = r.secondIsHoliday;
-      _repeatOption = _inferRepeatOption(r.days, r.isHoliday);
+      // If the device has a persisted chooseDate for this reminder (Hive box
+      // reminders_meta / os:<id>), that's the source of truth — override the
+      // days-based inference so re-editing a one-shot preserves the picker.
+      final oneShot =
+          NotificationService.instance.readOneShotDateForReminder(r.id);
+      if (oneShot != null) {
+        _repeatOption = _RepeatOption.chooseDate;
+        _selectedDate = oneShot;
+      } else {
+        _repeatOption = _inferRepeatOption(r.days, r.isHoliday);
+      }
     } else {
       _titleController = TextEditingController();
       _selectedTime = const TimeOfDay(hour: 12, minute: 0);
@@ -1025,6 +1473,9 @@ class _ReminderFormPageState extends State<_ReminderFormPage> {
         secondTime: _hasSecondTime ? _secondTime : null,
         secondDays: _hasSecondTime ? _secondDays.toList() : <int>[],
         secondIsHoliday: _hasSecondTime ? _secondIsHoliday : false,
+        oneShotDate: _repeatOption == _RepeatOption.chooseDate
+            ? _selectedDate
+            : null,
       ),
     );
   }
@@ -1139,6 +1590,7 @@ class ReminderDraft {
     required this.secondTime,
     required this.secondDays,
     required this.secondIsHoliday,
+    this.oneShotDate,
   });
 
   final String title;
@@ -1150,4 +1602,10 @@ class ReminderDraft {
   final TimeOfDay? secondTime;
   final List<int> secondDays;
   final bool secondIsHoliday;
+
+  /// Non-null only when the user picked _RepeatOption.chooseDate — represents
+  /// the specific one-shot date. Stored device-locally in the reminders_meta
+  /// Hive box (Firestore schema is owned by another agent), so cold-start
+  /// resync can distinguish a one-shot from a weekly-recurring custom day.
+  final DateTime? oneShotDate;
 }

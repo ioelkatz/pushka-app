@@ -2,6 +2,20 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:pushka_app/features/reminders/domain/reminder.dart';
 
+/// Normaliza los espacios "raros" de Unicode a un espacio común.
+///
+/// `intl` formatea la hora separando el AM/PM con un NARROW NO-BREAK SPACE
+/// (U+202F), no con un espacio normal. A la vista son idénticos, pero
+/// `contains('3:30 PM')` falla contra `'3:30 PM'` — y el mensaje de error
+/// es desconcertante, porque muestra las dos cadenas iguales.
+///
+/// Se normaliza en vez de escribir el U+202F literal en el test: el separador
+/// exacto depende de la versión de los datos ICU y ya cambió una vez. Lo que
+/// nos importa verificar es la hora, no qué byte usa la librería para el
+/// espacio.
+String _normalizeSpaces(String? s) =>
+    (s ?? '').replaceAll(RegExp(r'[   ]'), ' ');
+
 void main() {
   group('Reminder model', () {
     test('basic construction', () {
@@ -130,7 +144,7 @@ void main() {
         time: const TimeOfDay(hour: 15, minute: 30),
         days: [1],
       );
-      expect(r.subtitle, contains('3:30 PM'));
+      expect(_normalizeSpaces(r.subtitle), contains('3:30 PM'));
     });
   });
 
@@ -146,7 +160,7 @@ void main() {
         secondDays: [6, 7],
       );
       expect(r.subtitleSecondary, isNotNull);
-      expect(r.subtitleSecondary, contains('7:00 PM'));
+      expect(_normalizeSpaces(r.subtitleSecondary), contains('7:00 PM'));
     });
 
     test('returns holiday label for secondary', () {

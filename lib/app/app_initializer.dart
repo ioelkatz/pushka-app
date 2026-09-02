@@ -1,14 +1,17 @@
 import 'dart:io' show Platform;
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/widgets.dart' show WidgetsBinding;
 import 'package:app_tracking_transparency/app_tracking_transparency.dart';
 import 'package:firebase_analytics/firebase_analytics.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_app_check/firebase_app_check.dart';
 import 'package:firebase_crashlytics/firebase_crashlytics.dart';
 import 'package:flutter_stripe/flutter_stripe.dart';
+import 'package:google_sign_in/google_sign_in.dart';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter_timezone/flutter_timezone.dart';
 
 import '../features/notifications/notification_service.dart';
 import '../features/reminders/data/reminder_repository.dart';
@@ -17,6 +20,29 @@ import '../config/stripe_config.dart';
 import '../features/feedback/feedback_service.dart';
 import '../core/deep_link_handler.dart';
 import 'router.dart' show initNotificationNavigation, router;
+
+/// Qué proveedor de App Check usa este binario: `'playintegrity'` o `'debug'`.
+///
+/// El default es DELIBERADAMENTE el estricto. De los dos errores posibles, el
+/// caro es publicar en la tienda con el proveedor de debug: sería una app
+/// pública sin atestación real y sin ninguna señal visible de que algo está
+/// mal. Olvidarse el flag en un build de sideload, en cambio, se nota enseguida
+/// y no expone nada.
+///
+/// Por eso los builds de sideload tienen que pedirlo EXPLÍCITAMENTE:
+///
+///   flutter build apk --flavor prod --split-per-abi \
+///     --dart-define=APP_CHECK_PROVIDER=debug \
+///     --dart-define=STRIPE_PUBLISHABLE_KEY=pk_live_...
+///
+/// Y el build de tienda no lleva el flag:
+///
+///   flutter build appbundle --flavor prod \
+///     --dart-define=STRIPE_PUBLISHABLE_KEY=pk_live_...
+const _appCheckProvider = String.fromEnvironment(
+  'APP_CHECK_PROVIDER',
+  defaultValue: 'playintegrity',
+);
 
 /// Deferred initialization future — started in main(), awaited in splash.
 late final Future<void> appDeferredInit;
@@ -38,64 +64,80 @@ void scheduleDeferredInit() {
 /// the auto-default Play Integrity provider would attestation-fail on debug.
 Future<void> activateAppCheck() async {
   if (kIsWeb) {
-    await FirebaseAppCheck.instance.activate(
-      providerWeb: ReCaptchaV3Provider(
-        const String.fromEnvironment('RECAPTCHA_SITE_KEY', defaultValue: ''),
-      ),
+    // Web: usa reCAPTCHA v3 si el site key está configurado. Si no,
+    // skip activation completa (con siteKey vacío el provider tira
+    // errores internos que Firebase Auth propaga como
+    // 'auth/network-request-failed' en signup/login).
+    const siteKey = String.fromEnvironment(
+      'RECAPTCHA_SITE_KEY',
+      defaultValue: '',
     );
-  } else if (kReleaseMode) {
-    await FirebaseAppCheck.instance.activate(
-      providerAndroid: AndroidPlayIntegrityProvider(),
-      providerApple: AppleDeviceCheckProvider(),
-    );
-  } else {
-    // Debug builds: backend enforces App Check, so we need the debug provider
-    // here too. The token is printed to logcat on first launch — register it
-    // at Firebase Console → App Check → <app> → Manage debug tokens.
+    if (siteKey.isNotEmpty) {
+      await FirebaseAppCheck.instance.activate(
+        providerWeb: ReCaptchaV3Provider(siteKey),
+      );
+    }
+    return;
+  }
+
+  // Android/iOS: el proveedor depende de CÓMO se distribuye este binario.
+  //
+  //   Sideload (APK directo)  → DebugProvider. Play Integrity no puede
+  //                             attestar una app que no vino de Play Store:
+  //                             fallaría en todos los usuarios.
+  //   Play Store / App Store  → PlayIntegrity / DeviceCheck. Es la
+  //                             atestación real; sin ella App Check no
+  //                             protege nada.
+  //
+  // En debug SIEMPRE va el DebugProvider, sin importar el flag: Play
+  // Integrity tampoco puede attestar un build de debug, y si se deja el
+  // proveedor estricto falla la atestación, quema el presupuesto de
+  // reintentos y aparece "verificación de seguridad fallida" en pantalla.
+  if (kDebugMode || _appCheckProvider == 'debug') {
+    // El primer arranque imprime en logcat un token que hay que registrar en
+    // Firebase Console → App Check → Manage debug tokens para que las CFs con
+    // enforcement acepten requests desde este dispositivo.
     await FirebaseAppCheck.instance.activate(
       providerAndroid: AndroidDebugProvider(),
       providerApple: AppleDebugProvider(),
     );
+    return;
   }
+
+  await FirebaseAppCheck.instance.activate(
+    providerAndroid: const AndroidPlayIntegrityProvider(),
+    // App Attest con caída a DeviceCheck: App Attest es más fuerte pero
+    // requiere iOS 14+, y el fallback cubre los dispositivos viejos sin
+    // dejarlos afuera.
+    providerApple: const AppleAppAttestWithDeviceCheckFallbackProvider(),
+  );
 }
 
 Future<void> _performDeferredInit() async {
-  if (!kIsWeb) {
-    await NotificationService.instance.initialize();
-    final user = FirebaseAuth.instance.currentUser;
-    if (user != null) {
-      await NotificationService.instance.syncFcmToken(user.uid);
-      NotificationService.instance.listenForTokenRefresh(user.uid);
-      // Re-arm OS-level alarms for any reminder saved in Firestore. The
-      // plugin persists its own AlarmManager schedule across reboots, but
-      // an uninstall (or clear-data) wipes those — leaving Firestore
-      // reminders orphaned (visible in the UI but never firing). This
-      // resync is idempotent: scheduleReminder calls cancelReminder first.
-      try {
-        final repo = ReminderRepository(FirebaseFirestore.instance);
-        final reminders = await repo.fetchAll(user.uid);
-        // Fan out per-reminder scheduling — each scheduleReminder is itself
-        // a parallelized batch of cancel + zonedSchedule calls. Across many
-        // reminders the outer for-await previously serialized everything
-        // and pushed ~hundreds of milliseconds onto cold start.
-        await Future.wait(
-          reminders.map(NotificationService.instance.scheduleReminder),
-        );
-      } catch (e) {
-        debugPrint('appDeferredInit: reminder resync failed: $e');
-      }
-    }
-  }
-
-  if (!kIsWeb && StripeConfig.publishableKey.isNotEmpty) {
-    Stripe.publishableKey = StripeConfig.publishableKey;
-    if (StripeConfig.merchantIdentifier.isNotEmpty) {
-      Stripe.merchantIdentifier = StripeConfig.merchantIdentifier;
-    }
-    await Stripe.instance.applySettings();
-  }
-
-  await FeedbackService.instance.init();
+  // Parallelize independent init tasks — before this refactor every await
+  // was serial, adding up to 2-3s on cold start of the APK. Sound wouldn't
+  // work until FCM / Stripe / reminders resync finished. Now each task
+  // runs concurrently, cutting perceived boot time to the SLOWEST single
+  // task (usually FCM token sync ~500ms).
+  //
+  // Each helper wraps its own try/catch — one failing task must NOT prevent
+  // the others from completing. Future.wait with eagerError:false lets all
+  // futures settle even if one rejects.
+  await Future.wait<void>([
+    if (!kIsWeb) _initGoogleSignIn(),
+    // Notifications chain: cross-platform since Stage 2. On web it opens
+    // the Hive box, registers FCM listeners (onMessage / opened / initial),
+    // and silent-refreshes the FCM token if the user previously opted in.
+    _initNotificationsChain(),
+    // Cross-platform: syncs the user's IANA timezone to Firestore so the
+    // server-side reminder scheduler fires at the right local moment.
+    _syncUserTimezone(),
+    // Stripe: publishableKey needs to be set on ALL platforms — Stage 4 uses
+    // Stripe Elements inline on web (flutter_stripe_web PaymentElement widget)
+    // and it will fail to mount without it.
+    _initStripe(),
+    _initFeedback(),
+  ], eagerError: false);
 
   // App Tracking Transparency (iOS only). Apple rejects apps that ship with
   // any IDFA-equivalent SDK (Firebase Analytics counts) without prompting
@@ -111,16 +153,23 @@ Future<void> _performDeferredInit() async {
   // doesn't race the splash teardown.
   if (!kIsWeb && Platform.isIOS) {
     try {
-      // Block-style: prompt → await user's choice → propagate.
-      await Future<void>.delayed(const Duration(milliseconds: 600));
-      final status = await AppTrackingTransparency.requestTrackingAuthorization();
+      // Round-8 audit MEDIUM fix: wait for the FIRST FRAME to render (not
+      // a hardcoded 600ms wall-clock) — the delay was avoiding a race
+      // where the ATT prompt appeared during splash teardown. Waiting on
+      // the actual frame is deterministic and typically much faster than
+      // 600ms on modern devices; on slow devices it gives extra margin.
+      await WidgetsBinding.instance.endOfFrame;
+      final status =
+          await AppTrackingTransparency.requestTrackingAuthorization();
       final granted = status == TrackingStatus.authorized;
       // Disable both analytics + crashlytics auto-collection when not
       // granted. Crash REPORTING still works (manual recordError calls)
       // but won't auto-attach device identifiers across sessions.
       try {
         await FirebaseAnalytics.instance.setAnalyticsCollectionEnabled(granted);
-        await FirebaseCrashlytics.instance.setCrashlyticsCollectionEnabled(granted);
+        await FirebaseCrashlytics.instance.setCrashlyticsCollectionEnabled(
+          granted,
+        );
       } catch (e) {
         debugPrint('appDeferredInit: ATT analytics gate apply failed: $e');
       }
@@ -152,7 +201,135 @@ Future<void> _performDeferredInit() async {
     }
     initNotificationNavigation();
     startDeepLinkListener((slug) {
+      // Warm-start deep-link race: if the user is signed OUT when a join
+      // link arrives, `router.go('/join/$slug')` gets redirected to /login
+      // by the auth guard and the slug is lost. Mirror the cold-start path
+      // (initDeepLinks → pendingJoinSlug) so the router's post-login redirect
+      // (loggedIn && pendingJoinSlug != null → /join/{slug}) picks it up
+      // after the user authenticates.
+      if (FirebaseAuth.instance.currentUser == null) {
+        pendingJoinSlug = slug;
+        return;
+      }
       router.go('/join/$slug');
     });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Parallel init helpers — each is self-contained + swallows its own errors so
+// _performDeferredInit's Future.wait completes even if one fails.
+// ---------------------------------------------------------------------------
+
+Future<void> _initGoogleSignIn() async {
+  try {
+    await GoogleSignIn.instance.initialize(
+      serverClientId:
+          '846580817724-flf3up2e57c80cjb00u0ce8tf012ae90.apps.googleusercontent.com',
+    );
+  } catch (e, st) {
+    debugPrint('appDeferredInit: GoogleSignIn.initialize failed: $e');
+    try {
+      FirebaseCrashlytics.instance.recordError(
+        e,
+        st,
+        reason: 'appDeferredInit.googleSignInInitialize',
+        fatal: false,
+      );
+    } catch (_) {}
+  }
+}
+
+/// Persists the user's IANA timezone to users/{uid}.timezone so the
+/// server-side reminders scheduler (processDueReminders) can compute
+/// nextTriggerAt in the user's local wall-clock time.
+///
+/// Runs on every cold start after sign-in. Cheap: only writes when the
+/// value changed vs the local cache (SharedPreferences via Hive). Follows
+/// the "hybrid" strategy from the adversarial review (R-2) — auto-detect
+/// on first boot; user-visible mismatches after travel are handled by a
+/// separate manual toggle in Settings (future).
+Future<void> _syncUserTimezone() async {
+  try {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return;
+    String tz;
+    try {
+      // flutter_timezone 5.x returns TimezoneInfo { identifier, offset }.
+      // We want the IANA identifier (e.g. 'America/Mexico_City') to feed
+      // the server-side scheduler.
+      final info = await FlutterTimezone.getLocalTimezone();
+      tz = info.identifier;
+    } catch (e) {
+      debugPrint('_syncUserTimezone: FlutterTimezone failed: $e');
+      return;
+    }
+    if (tz.isEmpty || tz.length > 60) return;
+
+    // Cheap dedupe: read the current value BEFORE writing so an idle
+    // cold-start doesn't rack up Firestore write ops. Falls through to a
+    // write on any read error (safer to write than to skip if unsure).
+    try {
+      final snap = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(user.uid)
+          .get();
+      if (snap.exists && snap.get('timezone') == tz) return;
+    } catch (_) {
+      /* fall through to write */
+    }
+
+    await FirebaseFirestore.instance.collection('users').doc(user.uid).set({
+      'timezone': tz,
+    }, SetOptions(merge: true));
+  } catch (e) {
+    debugPrint('_syncUserTimezone failed: $e');
+  }
+}
+
+Future<void> _initNotificationsChain() async {
+  try {
+    await NotificationService.instance.initialize();
+    final user = FirebaseAuth.instance.currentUser;
+    if (user != null) {
+      await NotificationService.instance.syncFcmToken(user.uid);
+      NotificationService.instance.listenForTokenRefresh(user.uid);
+      // Reminder resync — gated on needsResync to skip N*(cancel+schedule)
+      // platform-channel round-trips on cold starts where nothing changed.
+      final ns = NotificationService.instance;
+      if (ns.needsResync) {
+        try {
+          final repo = ReminderRepository(FirebaseFirestore.instance);
+          final reminders = await repo.fetchAll(user.uid);
+          await Future.wait(reminders.map((r) => ns.scheduleReminder(r)));
+          await ns.markResyncDone();
+        } catch (e) {
+          debugPrint('appDeferredInit: reminder resync failed: $e');
+        }
+      }
+    }
+  } catch (e) {
+    debugPrint('appDeferredInit: notifications chain failed: $e');
+  }
+}
+
+Future<void> _initStripe() async {
+  try {
+    if (StripeConfig.publishableKey.isEmpty) return;
+    Stripe.publishableKey = StripeConfig.publishableKey;
+    if (StripeConfig.merchantIdentifier.isNotEmpty) {
+      Stripe.merchantIdentifier = StripeConfig.merchantIdentifier;
+    }
+    await Stripe.instance.applySettings();
+  } catch (e) {
+    debugPrint('appDeferredInit: Stripe init failed: $e');
+  }
+}
+
+Future<void> _initFeedback() async {
+  try {
+    await FeedbackService.instance.init();
+  } catch (e) {
+    debugPrint('appDeferredInit: FeedbackService init failed: $e');
   }
 }

@@ -16,22 +16,37 @@
 
   <meta charset="UTF-8">
   <meta content="IE=Edge" http-equiv="X-UA-Compatible">
-  <meta name="description" content="A new Flutter project.">
+  <!-- Round-6 audit LOW fix: brand-neutral for the multi-tenant SaaS.
+       Tenant-specific meta (og:image, description) is emitted per-route
+       via SSR when we add it; static shell stays generic. -->
+  <meta name="description" content="Pushka - Alcancía digital de tzedaká. Donaciones seguras.">
 
-  <!-- iOS meta tags & icons -->
+  <!-- iOS PWA meta — Add to Home Screen enables full-screen standalone mode -->
   <meta name="mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-status-bar-style" content="black">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <!-- Round-6 audit MEDIUM fix: matches manifest.short_name so Add-to-Home
+       shows the same label on iOS Safari and Android Chrome. Was "Chabad
+       Pushka" while manifest said "Pushka". -->
   <meta name="apple-mobile-web-app-title" content="Pushka">
+  <meta name="theme-color" content="#2563EB">
+  <meta name="format-detection" content="telephone=no">
   <link rel="apple-touch-icon" href="icons/Icon-192.png">
+  <link rel="apple-touch-icon" sizes="192x192" href="icons/Icon-192.png">
+  <link rel="apple-touch-icon" sizes="512x512" href="icons/Icon-512.png">
 
   <!-- Favicon -->
   <link rel="icon" type="image/png" href="favicon.png">
 
-  <title>Pushka</title>
+  <title>Chabad Pushka</title>
   <link rel="manifest" href="manifest.json">
-  
-  
-  <meta content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" name="viewport">
+
+
+  <!-- viewport-fit=cover + safe area — full-screen en iPhone con notch.
+       Round-6 audit HIGH fix (WCAG 2.5.5): removed maximum-scale=1.0 y
+       user-scalable=no. Bloqueaba pinch-zoom para users con baja vision.
+       initial-scale=1 mantiene el fit inicial pero permite zoom manual. -->
+  <meta content="width=device-width, initial-scale=1.0, viewport-fit=cover" name="viewport">
   
   
   
@@ -54,8 +69,11 @@
     body {
       margin: 0;
       min-height: 100%;
-      background-color: #3B7FD8;
-          background-size: 100% 100%;
+      /* Round-6 audit MEDIUM fix: matches manifest.json.background_color
+         (#2563EB) so cold-start doesn't flash from Chrome's tab color to
+         our body color, then to the manifest splash, then to app content. */
+      background-color: #2563EB;
+      background-size: 100% 100%;
     }
 
     .center {
@@ -121,7 +139,86 @@
   
   
   
+  <!--
+    Mark this browser+origin as "PWA has been opened" whenever this page
+    loads in standalone display-mode (i.e. from the home-screen icon on
+    Android/iOS or a desktop shortcut). Read from pushkapp.cc/get to
+    flip the CTA from "Instalar" to "Abrir la app". Same origin = shared
+    localStorage on Chrome/Edge/Firefox; iOS Safari PWAs are storage-
+    isolated so this write is only visible to other iOS PWA launches
+    (still useful when Chrome-family users revisit /get).
+  -->
+  <script>
+    try {
+      var _isPwaStandalone =
+        (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches)
+        || window.navigator.standalone === true;
+      if (_isPwaStandalone && window.localStorage) {
+        window.localStorage.setItem('pushka_pwa_seen', String(Date.now()));
+      }
+    } catch (e) { /* private mode / storage disabled — safe no-op */ }
+  </script>
+
+  <!--
+    Load Stripe.js at boot so the Payment Element widget can mount without
+    a first-use race. Async keeps it non-blocking. The Flutter code awaits
+    window.Stripe.loadStripe(...) internally (via flutter_stripe_web), so
+    if this script isn't fully loaded yet when the sheet opens, the wrapper
+    will re-load it on demand. Belt + suspenders.
+  -->
+  <script src="https://js.stripe.com/v3/" async></script>
+
   <script src="flutter_bootstrap.js" async=""></script>
 
+  <!--
+    Force reload when a new service worker takes control. Without this,
+    users stay on the old cached JS bundle after we deploy a new version —
+    they'd only get the fix on a manual hard-refresh or on the SECOND
+    reopen of the PWA (which most users never do). Causes the "sin
+    conexión" banner from an old buggy connectivity_plus build to
+    persist even after the opportunistic-detection fix was deployed.
+
+    'controllerchange' fires when a new SW claims the page. First load
+    after we deploy: OLD SW serves the app, new SW installs silently.
+    User reloads (or comes back later): new SW activates + fires
+    controllerchange → this listener reloads once → user gets fresh code.
+    The `refreshing` guard prevents an infinite loop on the second load.
+  -->
+  <script>
+    if ('serviceWorker' in navigator) {
+      let refreshing = false;
+      navigator.serviceWorker.addEventListener('controllerchange', function () {
+        if (refreshing) return;
+        refreshing = true;
+        window.location.reload();
+      });
+    }
+  </script>
+
+  <!--
+    Register the Firebase Cloud Messaging service worker so iOS/Android PWAs
+    can receive server-sent push notifications while the app is closed.
+    Uses an explicit scope of "/firebase-cloud-messaging-push-scope" — the
+    default scope the Firebase Web SDK looks for — to keep it out of the way
+    of Flutter's own /flutter_service_worker.js. Registration is fire-and-
+    forget: a failure here MUST NOT block app boot (e.g. Safari private mode
+    disables SWs), so we only log to console.
+  -->
+  <script>
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', function () {
+        navigator.serviceWorker
+          .register('/firebase-messaging-sw.js', { scope: '/firebase-cloud-messaging-push-scope' })
+          .catch(function (err) {
+            console.warn('[pushka] FCM service worker registration failed:', err);
+          });
+      });
+    }
+  </script>
+
+  <!-- Version marker for debugging cache issues — grep this string on
+       deployed HTML to confirm the newest build is being served.
+       Bump the date on each significant deploy. -->
+  <meta name="pushka-version" content="2026-08-05-r7-regression-fixes">
 
 </body></html>

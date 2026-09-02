@@ -55,13 +55,27 @@ class AnalyticsService {
     }
   }
 
-  Future<void> logDonation(double amount, String currency) async {
+  /// Round-8 audit HIGH fix: use GA4's standard `purchase` event so
+  /// donations show up in native GA4 revenue reports (previously the custom
+  /// `donation` event was invisible to GA4's revenue dashboard). Optional
+  /// contextual fields for slicing: donation_reason, payment_method, tenant_id.
+  Future<void> logDonation(
+    double amount,
+    String currency, {
+    String? donationReason,
+    String? paymentMethod,
+    String? tenantId,
+  }) async {
     try {
       await _analytics.logEvent(
-        name: 'donation',
+        name: 'purchase',
         parameters: {
-          'amount': amount,
-          'currency': currency,
+          'value': amount,
+          'currency': currency.toUpperCase(),
+          'transaction_id': DateTime.now().microsecondsSinceEpoch.toString(),
+          if (donationReason != null && donationReason.isNotEmpty) 'donation_reason': donationReason,
+          if (paymentMethod != null && paymentMethod.isNotEmpty) 'payment_method': paymentMethod,
+          if (tenantId != null && tenantId.isNotEmpty) 'tenant_id': tenantId,
         },
       );
     } catch (e, st) {
@@ -69,15 +83,81 @@ class AnalyticsService {
     }
   }
 
-  Future<void> logPushkaEmpty(double amount) async {
+  /// Round-8 audit HIGH fix: currency dimension for slicing pushka_empty
+  /// aggregations. Previously all currencies collapsed into one bucket.
+  Future<void> logPushkaEmpty(double amount, {String currency = 'USD'}) async {
     try {
       await _analytics.logEvent(
         name: 'pushka_empty',
-        parameters: {'amount': amount},
+        parameters: {
+          'amount': amount,
+          'currency': currency.toUpperCase(),
+        },
       );
     } catch (e, st) {
-      _report(e, st, 'logPushkaEmpty', extra: {'amount': amount});
+      _report(e, st, 'logPushkaEmpty', extra: {'amount': amount, 'currency': currency});
     }
+  }
+
+  /// Round-8 audit MEDIUM fix: track donation intent lifecycle (not just
+  /// success). Lets us measure funnel drop-off (initiated -> succeeded,
+  /// initiated -> failed, initiated -> canceled).
+  Future<void> logDonationInitiated({
+    required double amount,
+    required String currency,
+    String? tenantId,
+  }) async {
+    try {
+      await _analytics.logEvent(name: 'donation_initiated', parameters: {
+        'amount': amount, 'currency': currency.toUpperCase(),
+        if (tenantId != null && tenantId.isNotEmpty) 'tenant_id': tenantId,
+      });
+    } catch (e, st) { _report(e, st, 'logDonationInitiated'); }
+  }
+
+  Future<void> logDonationFailed({
+    required String reason,
+    String? currency,
+  }) async {
+    try {
+      await _analytics.logEvent(name: 'donation_failed', parameters: {
+        'reason': reason,
+        if (currency != null) 'currency': currency.toUpperCase(),
+      });
+    } catch (e, st) { _report(e, st, 'logDonationFailed'); }
+  }
+
+  Future<void> logDonationCanceled({String? currency}) async {
+    try {
+      await _analytics.logEvent(name: 'donation_canceled', parameters: {
+        if (currency != null) 'currency': currency.toUpperCase(),
+      });
+    } catch (e, st) { _report(e, st, 'logDonationCanceled'); }
+  }
+
+  /// Round-8 audit HIGH fix: MRR is invisible without these. Sub create/cancel
+  /// are the two key business events post-launch.
+  Future<void> logSubscriptionCreated({
+    required double amount,
+    required String currency,
+    String? interval,
+    String? tenantId,
+  }) async {
+    try {
+      await _analytics.logEvent(name: 'subscription_created', parameters: {
+        'value': amount, 'currency': currency.toUpperCase(),
+        if (interval != null && interval.isNotEmpty) 'interval': interval,
+        if (tenantId != null && tenantId.isNotEmpty) 'tenant_id': tenantId,
+      });
+    } catch (e, st) { _report(e, st, 'logSubscriptionCreated'); }
+  }
+
+  Future<void> logSubscriptionCanceled({String? tenantId}) async {
+    try {
+      await _analytics.logEvent(name: 'subscription_canceled', parameters: {
+        if (tenantId != null && tenantId.isNotEmpty) 'tenant_id': tenantId,
+      });
+    } catch (e, st) { _report(e, st, 'logSubscriptionCanceled'); }
   }
 
   Future<void> logReminderCreated() async {

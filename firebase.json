@@ -2,29 +2,161 @@
   "functions": {"source": "functions"},
   "firestore": {"rules": "firestore.rules", "indexes": "firestore.indexes.json"},
   "storage": {"rules": "storage.rules"},
-  "hosting": {
-    "site": "pushka-app-ioel",
-    "public": "public",
-    "ignore": ["firebase.json", "**/.*", "**/node_modules/**"],
-    "cleanUrls": true,
-    "trailingSlash": false,
-    "headers": [
-      {
-        "source": "/.well-known/**",
-        "headers": [
-          { "key": "Cache-Control", "value": "public, max-age=86400, s-maxage=86400" }
-        ]
-      },
-      {
-        "source": "**/*.html",
-        "headers": [
-          { "key": "Cache-Control", "value": "public, max-age=300, s-maxage=300" },
-          { "key": "X-Content-Type-Options", "value": "nosniff" },
-          { "key": "Referrer-Policy", "value": "strict-origin-when-cross-origin" }
-        ]
-      }
-    ]
-  },
+  "hosting": [
+    {
+      "target": "assetlinks",
+      "public": "public",
+      "ignore": ["firebase.json", "**/.*", "**/node_modules/**"],
+      "cleanUrls": true,
+      "trailingSlash": false,
+      "headers": [
+        {
+          "source": "/.well-known/**",
+          "headers": [
+            { "key": "Cache-Control", "value": "public, max-age=86400, s-maxage=86400" }
+          ]
+        },
+        {
+          "//": "apple-app-site-association has NO file extension. Without an explicit Content-Type, Firebase Hosting serves it as application/octet-stream and iOS silently rejects the file (Universal Links stop working). Force application/json.",
+          "source": "/.well-known/apple-app-site-association",
+          "headers": [
+            { "key": "Content-Type", "value": "application/json" },
+            { "key": "Cache-Control", "value": "public, max-age=86400, s-maxage=86400" }
+          ]
+        },
+        {
+          "source": "**/*.html",
+          "headers": [
+            { "key": "Cache-Control", "value": "public, max-age=300, s-maxage=300" },
+            { "key": "X-Content-Type-Options", "value": "nosniff" },
+            { "key": "Referrer-Policy", "value": "strict-origin-when-cross-origin" }
+          ]
+        }
+      ],
+      "redirects": [
+        {
+          "//": "Round-5 audit HIGH fix: previous redirect was 302 → /get on this same host, but /get does not exist on the assetlinks target (which only serves /.well-known/assetlinks.json). Users clicking pushka-app-ioel.web.app/join/xxx from a browser used to hit /get and see a broken page. Now redirect to the PWA target which HAS the /join/:slug route.",
+          "source": "/join/:slug",
+          "destination": "https://pushkapp.cc/join/:slug",
+          "type": 302
+        }
+      ]
+    },
+    {
+      "target": "landing",
+      "public": "landing",
+      "ignore": ["firebase.json", "**/.*", "**/node_modules/**"],
+      "cleanUrls": true,
+      "trailingSlash": false,
+      "headers": [
+        {
+          "source": "**/*.html",
+          "headers": [
+            { "key": "Cache-Control", "value": "public, max-age=300, s-maxage=300" },
+            { "key": "X-Content-Type-Options", "value": "nosniff" },
+            { "key": "Referrer-Policy", "value": "strict-origin-when-cross-origin" }
+          ]
+        },
+        {
+          "source": "**/*.@(png|jpg|jpeg|svg|ico|webp)",
+          "headers": [
+            { "key": "Cache-Control", "value": "public, max-age=86400" }
+          ]
+        },
+        {
+          "//": "APK sideload de /instalar/. Content-Type explícito para que Chrome lo trate como instalable (sin esto Firebase puede servirlo como octet-stream y el instalador de Android no lo reconoce). no-store para que un APK viejo cacheado no se sirva después de subir una versión nueva con el mismo nombre.",
+          "source": "**/*.apk",
+          "headers": [
+            { "key": "Content-Type", "value": "application/vnd.android.package-archive" },
+            { "key": "Cache-Control", "value": "no-store" }
+          ]
+        }
+      ]
+    },
+    {
+      "target": "pwa",
+      "public": "build/web",
+      "ignore": ["firebase.json", "**/.*", "**/node_modules/**"],
+      "cleanUrls": true,
+      "trailingSlash": false,
+      "headers": [
+        {
+          "source": "**/*.@(js|css|woff2|png|jpg|jpeg|webp|svg|ico)",
+          "headers": [
+            { "key": "Cache-Control", "value": "public, max-age=31536000, immutable" }
+          ]
+        },
+        {
+          "source": "**/*.html",
+          "headers": [
+            { "key": "Cache-Control", "value": "no-cache, no-store, must-revalidate" },
+            { "key": "X-Content-Type-Options", "value": "nosniff" },
+            { "key": "Referrer-Policy", "value": "strict-origin-when-cross-origin" }
+          ]
+        },
+        {
+          "source": "/",
+          "headers": [
+            { "key": "Cache-Control", "value": "no-cache, no-store, must-revalidate" },
+            { "key": "X-Content-Type-Options", "value": "nosniff" },
+            { "key": "Referrer-Policy", "value": "strict-origin-when-cross-origin" }
+          ]
+        },
+        {
+          "source": "/get",
+          "headers": [
+            { "key": "Cache-Control", "value": "no-cache, no-store, must-revalidate" },
+            { "key": "X-Content-Type-Options", "value": "nosniff" },
+            { "key": "Referrer-Policy", "value": "strict-origin-when-cross-origin" }
+          ]
+        },
+        {
+          "source": "/main.dart.js",
+          "headers": [
+            { "key": "Cache-Control", "value": "no-cache, no-store, must-revalidate" }
+          ]
+        },
+        {
+          "source": "/flutter_bootstrap.js",
+          "headers": [
+            { "key": "Cache-Control", "value": "no-cache, no-store, must-revalidate" }
+          ]
+        },
+        {
+          "source": "/flutter.js",
+          "headers": [
+            { "key": "Cache-Control", "value": "no-cache, no-store, must-revalidate" }
+          ]
+        },
+        {
+          "source": "/flutter_service_worker.js",
+          "headers": [
+            { "key": "Cache-Control", "value": "no-cache, no-store, must-revalidate" }
+          ]
+        },
+        {
+          "source": "/firebase-messaging-sw.js",
+          "headers": [
+            { "key": "Cache-Control", "value": "no-cache, no-store, must-revalidate" },
+            { "key": "Service-Worker-Allowed", "value": "/" }
+          ]
+        },
+        {
+          "source": "/manifest.json",
+          "headers": [
+            { "key": "Cache-Control", "value": "public, max-age=3600" }
+          ]
+        }
+      ],
+      "rewrites": [
+        {
+          "//": "Round-6 audit MEDIUM fix: previous rewrite was **  → /index.html which served HTML as a response for missing .js/.wasm/.map (browsers logged 'MIME type mismatch' and Flutter web crashed silently). Now exclude common asset extensions so 404s stay 404 while SPA routes (with no extension) still hit index.html.",
+          "source": "!/@(**\\.js|**\\.wasm|**\\.map|**\\.png|**\\.jpg|**\\.jpeg|**\\.gif|**\\.svg|**\\.webp|**\\.ico|**\\.woff|**\\.woff2|**\\.ttf|**\\.otf|**\\.mp3|**\\.mp4|**\\.pdf|**\\.txt|**\\.xml|**\\.json)",
+          "destination": "/index.html"
+        }
+      ]
+    }
+  ],
   "flutter": {
     "platforms": {
       "android": {

@@ -31,21 +31,29 @@ class FeedbackService {
       'https://storage.googleapis.com/pushka-app-ioel.firebasestorage.app/ambient/nigunim.mp3';
 
   Future<void> init() async {
-    if (_initialized || kIsWeb) return;
+    if (_initialized) return;
     try {
-      // Set persistent audio focus so sounds aren't blocked by each other on Android.
-      await AudioPlayer.global.setAudioContext(AudioContext(
-        android: AudioContextAndroid(
-          contentType: AndroidContentType.music,
-          usageType: AndroidUsageType.media,
-          audioFocus: AndroidAudioFocus.gain,
-          isSpeakerphoneOn: false,
-          stayAwake: false,
-        ),
-        iOS: AudioContextIOS(
-          category: AVAudioSessionCategory.playback,
-        ),
-      ));
+      // Set persistent audio focus so sounds aren't blocked by each other on
+      // Android. AudioContext is mobile-only (audioplayers_web ignores it),
+      // so we skip it on web to avoid a noisy UnsupportedError at cold start.
+      if (!kIsWeb) {
+        await AudioPlayer.global.setAudioContext(AudioContext(
+          android: AudioContextAndroid(
+            contentType: AndroidContentType.music,
+            usageType: AndroidUsageType.media,
+            audioFocus: AndroidAudioFocus.gain,
+            isSpeakerphoneOn: false,
+            stayAwake: false,
+          ),
+          iOS: AudioContextIOS(
+            category: AVAudioSessionCategory.playback,
+          ),
+        ));
+      }
+      // Preload asset sources. On web this maps to HTMLAudioElement.preload —
+      // the .play() call itself may fail silently if fired before any user
+      // gesture (browser autoplay policy), but preload always succeeds and
+      // any post-gesture play() works normally.
       await _successPlayer.setSource(AssetSource('sounds/success.wav'));
       await _billPlayer.setSource(AssetSource('sounds/bill_flutter.wav'));
       await _successPlayer.setVolume(1.0);
@@ -61,8 +69,17 @@ class FeedbackService {
     bool? vibration,
     bool? ambient,
   }) {
-    if (sound != null) soundEnabled = sound;
-    if (vibration != null) vibrationEnabled = vibration;
+    // "Sonido" toggle in Settings now controls BOTH audio + haptic feedback
+    // — per user request to simplify the UI (they were confusingly separate
+    // toggles doing similar things). When `sound` is passed, vibration
+    // mirrors it. The `vibration` param is still accepted for legacy call
+    // sites but no-ops unless `sound` is null.
+    if (sound != null) {
+      soundEnabled = sound;
+      vibrationEnabled = sound;
+    } else if (vibration != null) {
+      vibrationEnabled = vibration;
+    }
     if (ambient != null && ambient != ambientEnabled) {
       ambientEnabled = ambient;
       if (ambient) {
@@ -119,8 +136,9 @@ class FeedbackService {
   }
 
   Future<void> playSuccess() async {
-    if (!soundEnabled || kIsWeb) return;
-    if (vibrationEnabled) {
+    if (!soundEnabled) return;
+    // HapticFeedback is native-only (dart:ui platform channels); noop on web.
+    if (vibrationEnabled && !kIsWeb) {
       HapticFeedback.mediumImpact();
       unawaited(Future.delayed(const Duration(milliseconds: 100), HapticFeedback.mediumImpact));
       unawaited(Future.delayed(const Duration(milliseconds: 200), HapticFeedback.heavyImpact));
@@ -145,13 +163,24 @@ class FeedbackService {
 
   /// Soft flutter at start of bill fall, then a thud at 2.5 s when it enters.
   Future<void> playBillFall() async {
-    if (!soundEnabled || kIsWeb) return;
+    if (!soundEnabled) return;
     unawaited(_fadeAmbientTo(_ambientDuck));
     try {
       await _billPlayer.stop();
       await _billPlayer.setVolume(0.8);
-      await _billPlayer.play(AssetSource('sounds/bill_flutter.wav'),
-          position: const Duration(milliseconds: 300));
+      // On web/PWA, the `position: 300ms` seek breaks audioplayers_web:
+      // stop() releases the HTMLAudioElement (default ReleaseMode.release),
+      // then setSource early-returns because _currentUrl matches, then the
+      // seek runs on a null player and start() re-creates the element with
+      // currentTime=0.3 while readyState < HAVE_METADATA → Chrome silently
+      // rejects the play() promise and the bill is muted. Accept 300 ms of
+      // pre-roll on web; native still trims the intro as before.
+      if (kIsWeb) {
+        await _billPlayer.play(AssetSource('sounds/bill_flutter.wav'));
+      } else {
+        await _billPlayer.play(AssetSource('sounds/bill_flutter.wav'),
+            position: const Duration(milliseconds: 300));
+      }
       // Fade out over the last 600 ms to match the bill's opacity fade
       unawaited(Future.delayed(const Duration(milliseconds: 2900), () async {
         for (final step in [0.65, 0.45, 0.28, 0.14, 0.04]) {
@@ -171,7 +200,7 @@ class FeedbackService {
   /// soundEnabled gate as the rest of FeedbackService — flips to silent
   /// instantly when the user toggles "sonido" off in settings.
   Future<void> playCoinDrop() async {
-    if (!soundEnabled || kIsWeb) return;
+    if (!soundEnabled) return;
     // 800 ms delay para que el sparkle suene cerca del momento en que
     // la moneda entra por la ranura, no cuando recién empieza a caer
     // desde arriba. Ioel ajustó este timing visualmente.

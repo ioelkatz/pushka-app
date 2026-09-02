@@ -2,6 +2,7 @@ import 'dart:io' show Platform;
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_stripe/flutter_stripe.dart';
@@ -38,7 +39,11 @@ class _SavedCardsScreenState extends ConsumerState<SavedCardsScreen> {
     // open or when the cache is stale we fall back to the spinner +
     // network round trip.
     final uid = ref.read(currentUserProvider)?.uid;
-    final cached = uid == null ? null : HiveCache.instance.loadSavedCards(uid);
+    // Direct Charges: cards live per-tenant on the connected account. Scope
+    // the Hive cache by (uid, tenantId) so switching tenants can't flash the
+    // previous tenant's cards (BUG #5/#6/#13).
+    final tenantId = ref.read(userProfileProvider).valueOrNull?['tenantId'] as String?;
+    final cached = uid == null ? null : HiveCache.instance.loadSavedCards(uid, tenantId: tenantId);
     if (cached != null) {
       _cards = cached.cards;
       _defaultPaymentMethodId = cached.defaultPmId;
@@ -52,13 +57,20 @@ class _SavedCardsScreenState extends ConsumerState<SavedCardsScreen> {
     // promotes the first card to default and back-fills those fields.
     _loadCards(
       autoSetDefault: true,
-      // Skip the spinner when we already painted from cache; the refresh
-      // happens silently and updates the UI when it lands.
-      silent: cached?.fresh == true,
+      // Skip the spinner whenever we have ANY cache (fresh or stale). A
+      // stale cache is still a better first frame than a blank spinner,
+      // and the CF revalidates in the background. Only cold-first-open
+      // (no cache) shows the spinner.
+      silent: cached != null,
     );
   }
 
-  Future<void> _loadCards({bool autoSetDefault = false, bool silent = false}) async {
+  /// Returns true when the list was refreshed from the CF successfully,
+  /// false when both attempts failed. Callers that need to make decisions
+  /// based on the post-load state (e.g. _addCard's duplicate detection)
+  /// must respect this — a false reload leaves `_cards` empty and would
+  /// otherwise falsely trip the "already saved" branch.
+  Future<bool> _loadCards({bool autoSetDefault = false, bool silent = false}) async {
     if (!silent) {
       setState(() {
         _loading = true;
@@ -75,7 +87,7 @@ class _SavedCardsScreenState extends ConsumerState<SavedCardsScreen> {
     for (var attempt = 0; attempt < 2; attempt++) {
       try {
         final result = await callable.call({});
-        if (!mounted) return;
+        if (!mounted) return true;
         final data = result.data as Map<dynamic, dynamic>;
         final rawCards = data['cards'] as List<dynamic>? ?? [];
         final cards = rawCards
@@ -87,13 +99,19 @@ class _SavedCardsScreenState extends ConsumerState<SavedCardsScreen> {
           _cards = cards;
           _defaultPaymentMethodId = defaultId;
           _loading = false;
+          // Round-9 regression fix: clear stale error banner on success.
+          // Without this, the red banner stays up after a silent refresh
+          // recovered — the user thinks cards are still broken.
+          _error = null;
         });
 
         // Persist to Hive so the next open paints instantly.
         final uid = ref.read(currentUserProvider)?.uid;
+        final tid = ref.read(userProfileProvider).valueOrNull?['tenantId'] as String?;
         if (uid != null) {
           await HiveCache.instance.saveSavedCards(
             uid: uid,
+            tenantId: tid,
             cards: cards,
             defaultPmId: defaultId,
           );
@@ -102,7 +120,7 @@ class _SavedCardsScreenState extends ConsumerState<SavedCardsScreen> {
         if (autoSetDefault && defaultId == null && cards.isNotEmpty && mounted) {
           await _setDefault(cards.first['id'] as String);
         }
-        return;
+        return true;
       } catch (e) {
         lastError = e;
         if (attempt == 0 && mounted) {
@@ -113,17 +131,18 @@ class _SavedCardsScreenState extends ConsumerState<SavedCardsScreen> {
         }
       }
     }
-    if (!mounted) return;
+    if (!mounted) return false;
     // Silent refresh failures keep whatever's already on screen — no need
     // to wipe the cache-rendered list just because a background refresh
     // hiccuped.
-    if (silent) return;
+    if (silent) return false;
     // Treat repeated load errors as empty state — user can still add a card.
     setState(() {
       _cards = [];
       _error = lastError?.toString();
       _loading = false;
     });
+    return false;
   }
 
   Future<void> _addCard() async {
@@ -140,10 +159,33 @@ class _SavedCardsScreenState extends ConsumerState<SavedCardsScreen> {
     try {
       await StripeService.instance.setupCard(
         merchantDisplayName: ref.read(tenantConfigProvider).valueOrNull?.appName ?? 'Pushka',
+        sheetContext: context,
       );
       if (!mounted) return;
-      await _loadCards(autoSetDefault: true);
+      // Capture the reload outcome. If _loadCards fails (e.g. flaky
+      // network right after the SetupIntent confirmed), _cards resets to
+      // [] which would make `_cards.length <= cardCountBefore` trivially
+      // true — falsely telling the donor "esta tarjeta ya estaba guardada"
+      // when in reality the card WAS just added on Stripe. In that case
+      // we assume success + skip duplicate detection + skip auto-default
+      // promotion (both need a trustworthy post-add snapshot).
+      final loadOk = await _loadCards(autoSetDefault: true);
       if (!mounted) return;
+      if (!loadOk) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(tr.cardAdded)),
+        );
+        // Round-7 regression fix: without this retry, Hive stays as the
+        // pre-add snapshot and the next open of Saved Cards paints as if
+        // the new card was never added (silent refresh hydrates from CF
+        // eventually — but between the two opens the user sees a stale
+        // list). Delayed silent retry gives the transient network hiccup
+        // time to clear.
+        Future.delayed(const Duration(seconds: 3), () {
+          if (mounted) _loadCards(silent: true);
+        });
+        return;
+      }
       final isDuplicate = _cards.length <= cardCountBefore;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -177,9 +219,11 @@ class _SavedCardsScreenState extends ConsumerState<SavedCardsScreen> {
             // Mirror the new default into the Hive cache so the next
             // open of this screen paints with the correct indicator.
             final uid = ref.read(currentUserProvider)?.uid;
+            final tid = ref.read(userProfileProvider).valueOrNull?['tenantId'] as String?;
             if (uid != null) {
               await HiveCache.instance.saveSavedCards(
                 uid: uid,
+                tenantId: tid,
                 cards: _cards,
                 defaultPmId: newPmId,
               );
@@ -208,8 +252,18 @@ class _SavedCardsScreenState extends ConsumerState<SavedCardsScreen> {
     } on StripeServiceException catch (e) {
       if (!mounted) return;
       if (e.code == 'canceled') return;
+      // Web (PWA): setupCard() is not supported via the flutter_stripe
+      // Payment Sheet. Instead of a generic "error loading cards" that
+      // reads as a bug, tell the donor the exact workaround: donate
+      // normally and Stripe will attach + save that card on the customer.
+      // TODO(web): implement a Stripe Checkout Session in setup mode
+      // (mode='setup') via a new CF `createCheckoutSetupSession` so PWA
+      // donors can save a card without a real donation.
+      final message = e.code == 'web_add_card_not_available'
+          ? tr.webAddCardNotAvailable
+          : tr.errorLoadingCards;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(tr.errorLoadingCards)),
+        SnackBar(content: Text(message)),
       );
     } catch (e) {
       if (!mounted) return;
@@ -234,9 +288,11 @@ class _SavedCardsScreenState extends ConsumerState<SavedCardsScreen> {
       // Persist the new default to the local cache so the next open
       // paints with the right indicator instead of the previous default.
       final uid = ref.read(currentUserProvider)?.uid;
+      final tid = ref.read(userProfileProvider).valueOrNull?['tenantId'] as String?;
       if (uid != null) {
         await HiveCache.instance.saveSavedCards(
           uid: uid,
+          tenantId: tid,
           cards: _cards,
           defaultPmId: pmId,
         );
@@ -319,53 +375,153 @@ class _SavedCardsScreenState extends ConsumerState<SavedCardsScreen> {
               '${_brandLabel(replacementCard!['brand'] as String? ?? 'card')}'
               ' •••• ${replacementCard['last4'] as String? ?? '••••'}',
             );
-      final result = await showDialog<bool>(
+      final result = await showModalBottomSheet<bool>(
         context: context,
-        builder: (ctx) => AlertDialog(
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-          title: Text(tr.deleteCardLinkedAutoEmptyTitle),
-          content: Text(dialogBody),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: Text(tr.cancelBtn),
-            ),
-            ElevatedButton(
-              onPressed: () => Navigator.pop(ctx, true),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFFE05A4F),
-                foregroundColor: Colors.white,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        isScrollControlled: true,
+        useSafeArea: true,
+        backgroundColor: Theme.of(context).colorScheme.surface,
+        shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
+        ),
+        builder: (ctx) => SafeArea(
+          top: false,
+          child: Padding(
+            padding: EdgeInsets.only(bottom: MediaQuery.of(ctx).viewInsets.bottom),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Center(
+                    child: Container(
+                      width: 36,
+                      height: 4,
+                      margin: const EdgeInsets.only(bottom: 16),
+                      decoration: BoxDecoration(
+                        color: Theme.of(ctx).colorScheme.outlineVariant,
+                        borderRadius: BorderRadius.circular(2),
+                      ),
+                    ),
+                  ),
+                  Text(
+                    tr.deleteCardLinkedAutoEmptyTitle,
+                    style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 14),
+                  Text(
+                    dialogBody,
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      fontSize: 14,
+                      color: Theme.of(ctx).colorScheme.onSurfaceVariant,
+                      height: 1.4,
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+                  SizedBox(
+                    width: double.infinity,
+                    height: 48,
+                    child: ElevatedButton(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Theme.of(ctx).colorScheme.error,
+                        foregroundColor: Colors.white,
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      ),
+                      onPressed: () => Navigator.pop(ctx, true),
+                      child: Text(tr.deleteConfirm, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  SizedBox(
+                    width: double.infinity,
+                    height: 44,
+                    child: TextButton(
+                      onPressed: () => Navigator.pop(ctx, false),
+                      child: Text(tr.cancelBtn, style: TextStyle(color: Theme.of(ctx).colorScheme.onSurfaceVariant, fontWeight: FontWeight.w500)),
+                    ),
+                  ),
+                ],
               ),
-              child: Text(tr.deleteConfirm),
             ),
-          ],
+          ),
         ),
       );
       confirmed = result == true;
     } else {
       if (!mounted) return;
-      final result = await showDialog<bool>(
+      final result = await showModalBottomSheet<bool>(
         context: context,
-        builder: (ctx) => AlertDialog(
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-          title: Text(tr.confirmDeleteCard),
-          content: Text(tr.confirmDeleteCardBody),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: Text(tr.cancelBtn),
-            ),
-            ElevatedButton(
-              onPressed: () => Navigator.pop(ctx, true),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFFE05A4F),
-                foregroundColor: Colors.white,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        isScrollControlled: true,
+        useSafeArea: true,
+        backgroundColor: Theme.of(context).colorScheme.surface,
+        shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
+        ),
+        builder: (ctx) => SafeArea(
+          top: false,
+          child: Padding(
+            padding: EdgeInsets.only(bottom: MediaQuery.of(ctx).viewInsets.bottom),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Center(
+                    child: Container(
+                      width: 36,
+                      height: 4,
+                      margin: const EdgeInsets.only(bottom: 16),
+                      decoration: BoxDecoration(
+                        color: Theme.of(ctx).colorScheme.outlineVariant,
+                        borderRadius: BorderRadius.circular(2),
+                      ),
+                    ),
+                  ),
+                  Text(
+                    tr.confirmDeleteCard,
+                    style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 14),
+                  Text(
+                    tr.confirmDeleteCardBody,
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      fontSize: 14,
+                      color: Theme.of(ctx).colorScheme.onSurfaceVariant,
+                      height: 1.4,
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+                  SizedBox(
+                    width: double.infinity,
+                    height: 48,
+                    child: ElevatedButton(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Theme.of(ctx).colorScheme.error,
+                        foregroundColor: Colors.white,
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      ),
+                      onPressed: () => Navigator.pop(ctx, true),
+                      child: Text(tr.deleteConfirm, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  SizedBox(
+                    width: double.infinity,
+                    height: 44,
+                    child: TextButton(
+                      onPressed: () => Navigator.pop(ctx, false),
+                      child: Text(tr.cancelBtn, style: TextStyle(color: Theme.of(ctx).colorScheme.onSurfaceVariant, fontWeight: FontWeight.w500)),
+                    ),
+                  ),
+                ],
               ),
-              child: Text(tr.deleteConfirm),
             ),
-          ],
+          ),
         ),
       );
       confirmed = result == true;
@@ -373,6 +529,12 @@ class _SavedCardsScreenState extends ConsumerState<SavedCardsScreen> {
     if (!confirmed || !mounted) return;
 
     setState(() => _processing = true);
+    // Snapshot state BEFORE the optimistic removal so we can roll back on
+    // CF failure — otherwise the card stays in Stripe but the UI shows it
+    // deleted (a silent lie). Declared outside the try block so the catch
+    // handlers can restore state.
+    final previousCards = List<Map<String, dynamic>>.of(_cards);
+    final previousDefault = _defaultPaymentMethodId;
     try {
       // Clear the now-stale autoEmptyPaymentMethodId on the current
       // tenantState BEFORE deleting the PM. If we deleted first and the
@@ -463,17 +625,62 @@ class _SavedCardsScreenState extends ConsumerState<SavedCardsScreen> {
           // skips with no_saved_card on the next tick.
         }
       }
+      // Round-7 regression fix: sync Hive cache BEFORE the network reload
+      // so a failed _loadCards() doesn't leave the deleted card sitting in
+      // cache. Optimistic UI already removed it from _cards; mirror to disk.
+      final uidForCache = ref.read(firebaseAuthProvider).currentUser?.uid;
+      final tidForCache = ref.read(userProfileProvider).valueOrNull?['tenantId'] as String?;
+      if (uidForCache != null) {
+        await HiveCache.instance.saveSavedCards(
+          uid: uidForCache,
+          tenantId: tidForCache,
+          cards: _cards,
+          defaultPmId: _defaultPaymentMethodId,
+        );
+      }
       // Skip the autoSetDefault round-trip — server already promoted.
-      await _loadCards();
+      // Round-9 regression fix: silent reload — the optimistic UI already
+      // reflects the deleted card, so a full-screen loading flash on top
+      // of an already-correct list just looks buggy.
+      await _loadCards(silent: true);
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(tr.cardDeleted)),
       );
+    } on FirebaseFunctionsException catch (e) {
+      if (!mounted) return;
+      // Roll back the optimistic UI so the card reappears — otherwise the
+      // donor sees a "deleted" card that still exists in Stripe.
+      setState(() {
+        _cards = previousCards;
+        _defaultPaymentMethodId = previousDefault;
+      });
+      // failed-precondition is thrown by deletePaymentMethod when the user
+      // tries to remove their last card while an active subscription /
+      // auto-empty still depends on it — the CF's Spanish message is the
+      // most helpful thing to show verbatim.
+      if (e.code == 'failed-precondition' && (e.message?.isNotEmpty ?? false)) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(e.message!)),
+        );
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(tr.errorLoadingCards)),
+        );
+        // Resync from the source of truth in case the CF partially succeeded.
+        await _loadCards(silent: true);
+      }
     } catch (e) {
       if (!mounted) return;
+      // Roll back optimistic removal + resync from the CF.
+      setState(() {
+        _cards = previousCards;
+        _defaultPaymentMethodId = previousDefault;
+      });
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(tr.errorLoadingCards)),
       );
+      await _loadCards(silent: true);
     } finally {
       if (mounted) setState(() => _processing = false);
     }
@@ -742,9 +949,14 @@ class _SavedCardsScreenState extends ConsumerState<SavedCardsScreen> {
             const SizedBox(width: 6),
           ],
           Padding(
-            padding: const EdgeInsets.only(right: 4, left: 8),
+            // Round-6 audit fix: EdgeInsetsDirectional flips in RTL so the
+            // 8px "start" spacing lands on the correct visual side in HE.
+            // Chevron is also directional to point the reading way.
+            padding: const EdgeInsetsDirectional.only(end: 4, start: 8),
             child: Icon(
-              Icons.chevron_right_rounded,
+              Directionality.of(context) == TextDirection.rtl
+                  ? Icons.chevron_left_rounded
+                  : Icons.chevron_right_rounded,
               color: cs.onSurfaceVariant,
               size: 22,
             ),
@@ -938,6 +1150,19 @@ class _SavedCardsScreenState extends ConsumerState<SavedCardsScreen> {
     final tr = S.of(context);
     const actionColor = AppTokens.primaryBlue;
 
+    // BUG #20 fix: reactively pick up default PM changes from tenantState
+    // stream (e.g. another device set a new default, or setDefault CF
+    // completed after Hive cache was seeded). Falls back to the local
+    // `_defaultPaymentMethodId` field (seeded from CF/Hive) when the
+    // tenantState stream hasn't emitted yet.
+    final tenantStateStream = ref.watch(tenantStateProvider).valueOrNull;
+    final liveDefaultPmId =
+        (tenantStateStream?['stripeConnectDefaultPaymentMethodId'] as String?)?.trim();
+    final effectiveDefaultPmId =
+        (liveDefaultPmId != null && liveDefaultPmId.isNotEmpty)
+            ? liveDefaultPmId
+            : _defaultPaymentMethodId;
+
     return Scaffold(
       body: SafeArea(
         child: Column(
@@ -989,10 +1214,19 @@ class _SavedCardsScreenState extends ConsumerState<SavedCardsScreen> {
                           // PaymentSheet, so listing the wrong one would
                           // mislead the user.
                           final wallets = <_WalletKind>[
-                            if (Platform.isAndroid) _WalletKind.googlePay,
-                            if (Platform.isIOS) _WalletKind.applePay,
+                            if (!kIsWeb && Platform.isAndroid) _WalletKind.googlePay,
+                            if (!kIsWeb && Platform.isIOS) _WalletKind.applePay,
                           ];
-                          return ListView.separated(
+                          return RefreshIndicator(
+                            // silent:true so RefreshIndicator's own spinner is
+                            // the only loading affordance — flipping _loading
+                            // would swap the ListView for a full-page spinner
+                            // and unmount the RefreshIndicator mid-swipe.
+                            onRefresh: () async {
+                              await _loadCards(silent: true);
+                            },
+                            child: ListView.separated(
+                            physics: const AlwaysScrollableScrollPhysics(),
                           padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
                           itemCount: _cards.length + wallets.length,
                           separatorBuilder: (_, _) => Divider(
@@ -1012,7 +1246,11 @@ class _SavedCardsScreenState extends ConsumerState<SavedCardsScreen> {
                             final last4 = card['last4'] as String? ?? '••••';
                             final expMonth = (card['expMonth'] as num?)?.toInt() ?? 0;
                             final expYear = (card['expYear'] as num?)?.toInt() ?? 0;
-                            final isDefault = pmId == _defaultPaymentMethodId;
+                            // BUG #20 fix: use live default from
+                            // tenantStateProvider stream (falls back to
+                            // local state seeded from CF/Hive) so remote
+                            // changes reflect immediately.
+                            final isDefault = pmId == effectiveDefaultPmId;
                             final nickname = card['nickname'] as String?;
                             return _buildCardTile(
                               pmId: pmId,
@@ -1025,11 +1263,14 @@ class _SavedCardsScreenState extends ConsumerState<SavedCardsScreen> {
                               tr: tr,
                             );
                           },
-                        );
+                        ),
+                      );
                         }),
             ),
 
-            // Add card button — always visible
+            // Add card: reactivated on both platforms in Stage 5.
+            //   Native → flutter_stripe PaymentSheet in SetupIntent mode
+            //   Web    → Stripe Elements inline via showWebCardSetupSheet
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
               child: SizedBox(

@@ -99,7 +99,7 @@ const _legalContentEs = LegalContent(
     title: 'Política de Privacidad',
     lastUpdated: _lastUpdatedLabel,
     intro:
-        'Esta Política describe cómo Pushka recopila, usa, comparte y protege tu información cuando utilizás la aplicación. Al usar Pushka, aceptás las prácticas descritas aquí. Si no estás de acuerdo, te pedimos que no uses la app.',
+        'Esta Política describe cómo Pushka recopila, usa, comparte y protege tu información cuando utilizas la aplicación. Al usar Pushka, aceptas las prácticas descritas aquí. Si no estás de acuerdo, te pedimos que no uses la app.',
     sections: [
       LegalSection(
         title: '1. Quiénes somos',
@@ -112,7 +112,7 @@ const _legalContentEs = LegalContent(
         title: '2. Información que recopilamos',
         paragraphs: [
           '2.1 Datos de cuenta: nombre, dirección de correo electrónico, foto de perfil (opcional), credenciales de inicio de sesión proporcionadas por Firebase Authentication, idioma preferido y país/moneda.',
-          '2.2 Datos de pago: NO almacenamos los datos completos de tu tarjeta de crédito o débito. El procesamiento se realiza íntegramente a través de Stripe, Inc. Únicamente conservamos un identificador de cliente de Stripe ("stripeCustomerId"), los últimos 4 dígitos de la tarjeta y la marca (Visa, Mastercard, etc.) para mostrarlos en tu lista de tarjetas guardadas.',
+          '2.2 Datos de pago: NO almacenamos los datos completos de tu tarjeta de crédito o débito. El procesamiento se realiza íntegramente a través de Stripe, Inc. Únicamente conservamos identificadores de cliente de Stripe (uno por cada organización a la que donás, en la cuenta Stripe conectada de esa organización), los últimos 4 dígitos de la tarjeta y la marca (Visa, Mastercard, etc.) para mostrarlos en tu lista de tarjetas guardadas.',
           '2.3 Historial de donaciones: monto, moneda, fecha, organización receptora, designación elegida (si aplica), mensaje opcional del donante y método de pago. Esta información es necesaria para cumplir con obligaciones contables y fiscales tanto nuestras como de las Organizaciones receptoras.',
           '2.4 Datos de uso y dispositivo: tipo de dispositivo, sistema operativo, idioma, identificador único de la app (no del dispositivo), región aproximada inferida del idioma o moneda. NO recopilamos tu ubicación GPS precisa.',
           '2.5 Notificaciones push: tokens de Firebase Cloud Messaging para enviarte recordatorios, confirmaciones de pago y avisos de festividades.',
@@ -127,14 +127,14 @@ const _legalContentEs = LegalContent(
           '3.2 Funcionamiento de la app: para operar tu cuenta, mantener tu balance acumulado en tu pushka virtual, gestionar suscripciones recurrentes, programar el vaciado automático y mostrar tu historial.',
           '3.3 Notificaciones: para enviarte recordatorios de festividades, confirmaciones de pago, alertas de cobros fallidos y otras comunicaciones operativas relacionadas con tu cuenta.',
           '3.4 Seguridad y prevención de fraude: para detectar y prevenir actividad sospechosa, proteger contra accesos no autorizados y cumplir con requisitos antifraude de Stripe.',
-          '3.5 Mejoras y analítica: para entender cómo se usa la app, identificar errores, optimizar la experiencia. Usamos Firebase Analytics y Crashlytics, que pueden recopilar datos agregados sobre el uso. Podés desactivar la recopilación opcional desde la configuración de tu dispositivo.',
+          '3.5 Mejoras y analítica: para entender cómo se usa la app, identificar errores, optimizar la experiencia. Usamos Firebase Analytics y Crashlytics, que pueden recopilar datos agregados sobre el uso. Puedes desactivar la recopilación opcional desde la configuración de tu dispositivo.',
           '3.6 Cumplimiento legal: para cumplir con obligaciones fiscales, contables, antifraude y antilavado aplicables.',
         ],
       ),
       LegalSection(
         title: '4. Stripe y el procesamiento de pagos',
         paragraphs: [
-          'Pushka utiliza Stripe, Inc. (con sede en San Francisco, EE.UU.) para procesar todos los pagos. Cuando ingresás los datos de tu tarjeta, estos se transmiten directamente a Stripe a través de su SDK certificado en PCI DSS Nivel 1, sin pasar por nuestros servidores.',
+          'Pushka utiliza Stripe, Inc. (con sede en San Francisco, EE.UU.) para procesar todos los pagos. Cuando ingresas los datos de tu tarjeta, estos se transmiten directamente a Stripe a través de su SDK certificado en PCI DSS Nivel 1, sin pasar por nuestros servidores.',
           'Stripe es un controlador independiente de los datos de pago que recolecta. Su uso de tu información se rige por la Política de Privacidad de Stripe, disponible en https://stripe.com/privacy.',
           'Si optás por guardar una tarjeta para futuros cobros, Stripe almacena los datos completos de forma segura y nos devuelve únicamente un token (identificador) que usamos para iniciar nuevos cobros con tu autorización previa.',
         ],
@@ -145,7 +145,7 @@ const _legalContentEs = LegalContent(
           'Cuando donás a una Organización a través de Pushka, esa Organización recibe acceso a información necesaria para gestionar tu donación: tu nombre o seudónimo, dirección de correo electrónico, monto donado, fecha, designación elegida (si la Organización configuró opciones) y mensaje opcional que vos hayas escrito.',
           'La Organización NO recibe datos completos de tu tarjeta, tu contraseña, tu historial de donaciones a otras organizaciones, ni datos sensibles fuera del contexto de las donaciones que vos le hayas hecho específicamente a ella.',
           'Cada Organización es responsable como controlador independiente de los datos personales que recibe a través de Pushka. Recomendamos consultar la política de privacidad de la Organización a la que estás donando.',
-          'Si elegís donar a múltiples Organizaciones desde la misma cuenta, mantenemos los historiales y donaciones recurrentes separados por Organización.',
+          'Si eliges donar a múltiples Organizaciones desde la misma cuenta, mantenemos los historiales y donaciones recurrentes separados por Organización.',
         ],
       ),
       LegalSection(
@@ -169,17 +169,17 @@ const _legalContentEs = LegalContent(
         title: '8. Retención y eliminación',
         paragraphs: [
           'Conservamos tu información mientras tu cuenta esté activa. Los datos de transacciones se conservan por al menos el período mínimo requerido por leyes contables, fiscales y antilavado aplicables (típicamente 5 a 10 años, según jurisdicción), incluso después de que cierres tu cuenta.',
-          'Podés eliminar tu cuenta en cualquier momento desde Configuración → "Eliminar mi cuenta". Al hacerlo: cancelaremos tus suscripciones recurrentes activas, eliminaremos tu cliente en Stripe (lo que desvincula todas las tarjetas guardadas), y borraremos tus datos personales identificables. El historial de transacciones se anonimiza pero se conserva por las razones legales mencionadas arriba.',
-          'También podés exportar tus datos en cualquier momento desde Configuración → "Exportar mis datos".',
+          'Puedes eliminar tu cuenta en cualquier momento desde Configuración → "Eliminar mi cuenta". Al hacerlo, haremos el mejor esfuerzo por: cancelar tus suscripciones recurrentes activas, eliminar tu cliente en Stripe en cada organización a la que donaste (lo que desvincula todas las tarjetas guardadas), y borrar tus datos personales identificables. Cualquier suscripción que no pueda cancelarse automáticamente (falla temporal de Stripe, organización desconectada) será reintentada por procesos de reconciliación; si detectas que sigues siendo cobrado, contactanos y lo resolvemos manualmente. Los registros de transacciones se eliminan; conservamos únicamente un identificador anónimo (tombstone) con fecha de eliminación para cumplir obligaciones antilavado y fiscales.',
+          'Para solicitar una copia de tus datos en formato exportable, contactanos en $_contactEmail y te la enviaremos dentro del plazo legal aplicable (típicamente 30 días).',
         ],
       ),
       LegalSection(
         title: '9. Tus derechos',
         paragraphs: [
-          'Dependiendo de tu jurisdicción, podés tener los siguientes derechos sobre tus datos personales: acceso, rectificación, eliminación, oposición al procesamiento, portabilidad, limitación del procesamiento y retiro del consentimiento.',
-          'Residentes de la Unión Europea / Espacio Económico Europeo (RGPD): tenés derecho a presentar reclamos ante tu autoridad de protección de datos local.',
-          'Residentes de California (CCPA/CPRA): tenés derecho a saber qué información recopilamos, eliminarla, corregirla y a no ser discriminado por ejercer estos derechos.',
-          'Residentes de Brasil (LGPD), Argentina (Ley 25.326) y otras jurisdicciones latinoamericanas: tenés derechos análogos según tu legislación local.',
+          'Dependiendo de tu jurisdicción, puedes tener los siguientes derechos sobre tus datos personales: acceso, rectificación, eliminación, oposición al procesamiento, portabilidad, limitación del procesamiento y retiro del consentimiento.',
+          'Residentes de la Unión Europea / Espacio Económico Europeo (RGPD): tienes derecho a presentar reclamos ante tu autoridad de protección de datos local.',
+          'Residentes de California (CCPA/CPRA): tienes derecho a saber qué información recopilamos, eliminarla, corregirla y a no ser discriminado por ejercer estos derechos.',
+          'Residentes de Brasil (LGPD), Argentina (Ley 25.326) y otras jurisdicciones latinoamericanas: tienes derechos análogos según tu legislación local.',
           'Para ejercer cualquier derecho, contactanos en $_contactEmail. Responderemos dentro del plazo que exija la ley aplicable (típicamente 30 días).',
         ],
       ),
@@ -214,7 +214,7 @@ const _legalContentEs = LegalContent(
       LegalSection(
         title: '14. Contacto',
         paragraphs: [
-          'Si tenés preguntas, comentarios o reclamos sobre esta Política de Privacidad o sobre cómo manejamos tus datos, escribinos a:',
+          'Si tienes preguntas, comentarios o reclamos sobre esta Política de Privacidad o sobre cómo manejamos tus datos, escríbenos a:',
           'Pushka — Soporte y Privacidad',
           'Correo: $_contactEmail',
         ],
@@ -252,15 +252,15 @@ const _legalContentEs = LegalContent(
         title: '4. Cómo funcionan las donaciones',
         paragraphs: [
           '4.1 Donación única ("Donar ahora"): efectuás un cargo único a tu medio de pago. Una vez confirmado, los fondos se envían a la Organización elegida menos la comisión de plataforma.',
-          '4.2 Pushka virtual ("Vaciar Pushka"): podés acumular un balance virtual ingresándolo manualmente en la app y, cuando lo decidas, cobrar el total acumulado en una sola transacción. La app ofrece también la opción de "Vaciado automático" que cobra periódicamente el balance acumulado.',
-          '4.3 Donación recurrente: podés crear suscripciones semanales o mensuales por un monto fijo. Cada cobro se realiza automáticamente con la tarjeta guardada como predeterminada.',
+          '4.2 Pushka virtual ("Vaciar Pushka"): puedes acumular un balance virtual ingresándolo manualmente en la app y, cuando lo decidas, cobrar el total acumulado en una sola transacción. La app ofrece también la opción de "Vaciado automático" que cobra periódicamente el balance acumulado.',
+          '4.3 Donación recurrente: puedes crear suscripciones semanales o mensuales por un monto fijo. Cada cobro se realiza automáticamente con la tarjeta guardada como predeterminada.',
           '4.4 Comisión de plataforma: Pushka cobra una comisión sobre cada donación procesada. La comisión por defecto es del 3%, pero puede variar por Organización. Esta comisión cubre los costos de infraestructura, procesamiento, soporte y desarrollo.',
         ],
       ),
       LegalSection(
         title: '5. Donaciones recurrentes — cancelación',
         paragraphs: [
-          'Podés cancelar cualquier suscripción recurrente en cualquier momento desde la sección "Mis donaciones recurrentes". La cancelación detiene cobros futuros pero no genera reembolsos automáticos por cobros ya realizados.',
+          'Puedes cancelar cualquier suscripción recurrente en cualquier momento desde la sección "Mis donaciones recurrentes". La cancelación detiene cobros futuros pero no genera reembolsos automáticos por cobros ya realizados.',
           'Si tu medio de pago falla en un cobro recurrente, te notificaremos y mantendremos la suscripción activa pero pausada hasta que actualices la información de pago. Tras múltiples intentos fallidos consecutivos, la suscripción puede cancelarse automáticamente.',
         ],
       ),
@@ -268,7 +268,7 @@ const _legalContentEs = LegalContent(
         title: '6. Vaciado automático',
         paragraphs: [
           'Al activar el "Vaciado automático", autorizás a Pushka a cobrar tu tarjeta guardada predeterminada según la frecuencia y condiciones que configurés (semanal, mensual, en Erev Rosh Jodesh, etc.) por el monto que tengas acumulado en tu pushka virtual al momento del cobro.',
-          'Estos cobros son "off-session" — se ejecutan automáticamente sin requerir tu confirmación cada vez. Podés desactivar el vaciado automático en cualquier momento desde Configuración. Los cobros ya realizados no se reembolsan automáticamente al desactivarlo.',
+          'Estos cobros son "off-session" — se ejecutan automáticamente sin requerir tu confirmación cada vez. Puedes desactivar el vaciado automático en cualquier momento desde Configuración. Los cobros ya realizados no se reembolsan automáticamente al desactivarlo.',
           'Si la tarjeta guardada falla, la app te notificará y reintentará en 24 horas. Si los reintentos fallan, deberás reabilitar manualmente el método de pago.',
         ],
       ),
@@ -291,13 +291,13 @@ const _legalContentEs = LegalContent(
         title: '9. Conducta de las Organizaciones',
         paragraphs: [
           'Cada Organización inscrita en Pushka es responsable independiente del uso que haga de los fondos recibidos, de cumplir con las regulaciones fiscales y de cumplir con sus obligaciones frente a sus donantes.',
-          'Pushka no audita ni garantiza el uso final de los fondos por parte de las Organizaciones. Si tenés dudas sobre cómo una Organización usa los fondos, te recomendamos contactar directamente a esa Organización y, si lo considerás necesario, a las autoridades competentes.',
+          'Pushka no audita ni garantiza el uso final de los fondos por parte de las Organizaciones. Si tienes dudas sobre cómo una Organización usa los fondos, te recomendamos contactar directamente a esa Organización y, si lo consideras necesario, a las autoridades competentes.',
         ],
       ),
       LegalSection(
         title: '10. Propiedad intelectual',
         paragraphs: [
-          'La app Pushka, su código, diseño, logotipos y marca son propiedad de Pushka y están protegidos por leyes de propiedad intelectual. No podés copiar, modificar, distribuir, vender ni crear obras derivadas sin nuestro consentimiento previo por escrito.',
+          'La app Pushka, su código, diseño, logotipos y marca son propiedad de Pushka y están protegidos por leyes de propiedad intelectual. No puedes copiar, modificar, distribuir, vender ni crear obras derivadas sin nuestro consentimiento previo por escrito.',
           'Los logotipos, nombres y marcas de las Organizaciones son propiedad de cada Organización respectivamente. Pushka muestra esta información con la autorización de cada Organización para identificar el destino de las donaciones.',
         ],
       ),
@@ -319,7 +319,7 @@ const _legalContentEs = LegalContent(
       LegalSection(
         title: '13. Suspensión y terminación',
         paragraphs: [
-          'Podés terminar tu cuenta en cualquier momento desde Configuración → "Eliminar mi cuenta". Al hacerlo, cancelaremos tus suscripciones activas y procesaremos la eliminación de datos según la sección 8 de la Política de Privacidad.',
+          'Puedes terminar tu cuenta en cualquier momento desde Configuración → "Eliminar mi cuenta". Al hacerlo, cancelaremos tus suscripciones activas y procesaremos la eliminación de datos según la sección 8 de la Política de Privacidad.',
           'Podemos suspender o terminar tu cuenta inmediatamente, sin aviso previo, si: (a) violás estos Términos; (b) detectamos actividad fraudulenta; (c) lo exige una autoridad competente. En caso de terminación por parte nuestra, los cargos no reembolsables ya procesados no serán devueltos.',
         ],
       ),
@@ -340,7 +340,7 @@ const _legalContentEs = LegalContent(
       LegalSection(
         title: '16. Disposiciones generales',
         paragraphs: [
-          'Si alguna disposición de estos Términos es declarada inválida o inejecutable, el resto de los Términos permanecerá en pleno vigor. Nuestra falta de ejercicio de un derecho no constituye renuncia. No podés ceder tus derechos bajo estos Términos sin nuestro consentimiento previo por escrito.',
+          'Si alguna disposición de estos Términos es declarada inválida o inejecutable, el resto de los Términos permanecerá en pleno vigor. Nuestra falta de ejercicio de un derecho no constituye renuncia. No puedes ceder tus derechos bajo estos Términos sin nuestro consentimiento previo por escrito.',
         ],
       ),
       LegalSection(
@@ -377,7 +377,7 @@ const _legalContentEn = LegalContent(
         title: '2. Information we collect',
         paragraphs: [
           '2.1 Account data: name, email address, profile photo (optional), authentication credentials provided by Firebase Authentication, preferred language, and country/currency.',
-          '2.2 Payment data: we DO NOT store your full credit/debit card information. Processing is performed entirely through Stripe, Inc. We only retain a Stripe customer identifier ("stripeCustomerId"), the last 4 digits of the card, and the brand (Visa, Mastercard, etc.) to display in your saved cards list.',
+          '2.2 Payment data: we DO NOT store your full credit/debit card information. Processing is performed entirely through Stripe, Inc. We only retain Stripe customer identifiers (one per organization you donate to, on that organization\'s connected Stripe account), the last 4 digits of the card, and the brand (Visa, Mastercard, etc.) to display in your saved cards list.',
           '2.3 Donation history: amount, currency, date, recipient Organization, chosen designation (if applicable), optional donor message, and payment method. This information is required to comply with accounting and tax obligations both for us and for the recipient Organizations.',
           '2.4 Usage and device data: device type, operating system, language, unique app identifier (not the device), approximate region inferred from language or currency. We DO NOT collect your precise GPS location.',
           '2.5 Push notifications: Firebase Cloud Messaging tokens to send you reminders, payment confirmations, and holiday alerts.',
@@ -434,8 +434,8 @@ const _legalContentEn = LegalContent(
         title: '8. Retention and deletion',
         paragraphs: [
           'We retain your information while your account is active. Transaction data is kept for at least the minimum period required by applicable accounting, tax, and anti-money-laundering laws (typically 5 to 10 years, depending on jurisdiction), even after you close your account.',
-          'You can delete your account at any time from Settings → "Delete my account". When you do: we will cancel your active recurring subscriptions, delete your customer in Stripe (which unlinks all saved cards), and erase your identifiable personal data. Transaction history is anonymized but retained for the legal reasons mentioned above.',
-          'You can also export your data at any time from Settings → "Export my data".',
+          'You can delete your account at any time from Settings → "Delete my account". When you do, we will make best efforts to: cancel your active recurring subscriptions, delete your customer in Stripe on each organization you donated to (which unlinks all saved cards), and erase your identifiable personal data. Any subscription that cannot be canceled automatically (transient Stripe failure, disconnected organization) will be retried by reconciliation processes; if you notice you are still being charged, contact us and we will resolve it manually. Transaction records are deleted; we retain only an anonymous tombstone identifier with the deletion date to comply with anti-money-laundering and tax obligations.',
+          'To request an export of your data, contact us at $_contactEmail and we will send it within the applicable legal timeframe (typically 30 days).',
         ],
       ),
       LegalSection(

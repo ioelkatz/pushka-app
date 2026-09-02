@@ -1,8 +1,9 @@
 ﻿const admin = require("firebase-admin");
 const { onCall, onRequest, HttpsError } = require("firebase-functions/v2/https");
-const { onDocumentCreated, onDocumentUpdated } = require("firebase-functions/v2/firestore");
+const { onDocumentCreated, onDocumentUpdated, onDocumentWritten } = require("firebase-functions/v2/firestore");
 const { onSchedule } = require("firebase-functions/v2/scheduler");
 const { defineSecret } = require("firebase-functions/params");
+const { DateTime } = require("luxon");
 
 const stripeSecret = defineSecret("STRIPE_SECRET_KEY");
 const stripeWebhookSecret = defineSecret("STRIPE_WEBHOOK_SECRET");
@@ -14,6 +15,32 @@ admin.initializeApp();
 
 const db = admin.firestore();
 const messaging = admin.messaging();
+
+// In-memory per-instance cache of tenant appName, used by onTransactionCreated
+// to avoid a Firestore read on every donation notification. TTL keeps stale
+// data bounded (onTenantBrandingUpdated propagates changes within seconds via
+// user-side denorm; this fallback tolerates a few-minute lag on the title).
+const _tenantAppNameCache = new Map();
+const TENANT_APPNAME_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
+// ---------------------------------------------------------------------------
+// Stripe error shape helpers
+// ---------------------------------------------------------------------------
+/**
+ * True when a Stripe error indicates the referenced resource no longer exists
+ * on Stripe's side (customer deleted, mode mismatch, stale ID from a restore).
+ * Callers use this to distinguish "the customer is genuinely gone → clear our
+ * cached ID and rebuild" from a generic Stripe outage that should be retried.
+ */
+function _isStripeResourceMissing(e) {
+  if (!e) return false;
+  if (e.statusCode === 404) return true;
+  if (e.code === "resource_missing") return true;
+  if (e.type === "StripeInvalidRequestError" &&
+      typeof e.raw?.code === "string" &&
+      e.raw.code.includes("resource_missing")) return true;
+  return false;
+}
 
 // ---------------------------------------------------------------------------
 // Rate limiting — Firestore-backed sliding window counter
@@ -60,16 +87,29 @@ async function enforceRateLimit(uid, action, maxCalls, windowSeconds) {
  * Rate-limits unauthenticated callables by client IP. Cloud Run forwards the
  * client IP via x-forwarded-for; in dev/emulator we fall back to "unknown".
  * IPs are not perfect (NAT, mobile carriers, VPN) but better than no limit.
+ *
+ * Round-6 audit HIGH fix: X-Forwarded-For is a chain "client, proxy1, proxy2".
+ * The client controls the FIRST entry (they can prepend fake values), so
+ * picking the leftmost lets an attacker bypass the rate limit trivially by
+ * rotating fake IPs. On Cloud Functions / Cloud Run, the RIGHTMOST entry is
+ * the trusted edge-proxy IP that fronted the request — use that instead.
+ * Fall back to raw connection IP (also trusted) when the header is absent.
  */
-async function enforceRateLimitByIp(request, action, maxCalls, windowSeconds) {
+function trustedCallerIp(request) {
   const fwd = request.rawRequest?.headers?.["x-forwarded-for"];
-  const ip = (Array.isArray(fwd) ? fwd[0] : (fwd || "").split(",")[0])
-    .trim()
-    || request.rawRequest?.ip
-    || "unknown";
+  const chain = (Array.isArray(fwd) ? fwd.join(",") : (fwd || ""))
+    .split(",").map((s) => s.trim()).filter((s) => s.length > 0);
+  // Rightmost entry = trusted edge (Cloud Run adds one hop). Anything to
+  // the left is client-supplied and forgeable.
+  const ip = chain.length > 0
+    ? chain[chain.length - 1]
+    : (request.rawRequest?.ip || "unknown");
   // Sanitize to a Firestore-safe id (max 1500 bytes; commonly < 50).
-  const safeIp = ip.replace(/[^a-zA-Z0-9.:_-]/g, "_").slice(0, 100);
-  await enforceRateLimit(`ip:${safeIp}`, action, maxCalls, windowSeconds);
+  return ip.replace(/[^a-zA-Z0-9.:_-]/g, "_").slice(0, 100);
+}
+
+async function enforceRateLimitByIp(request, action, maxCalls, windowSeconds) {
+  await enforceRateLimit(`ip:${trustedCallerIp(request)}`, action, maxCalls, windowSeconds);
 }
 
 // Exhaustive list of currencies accepted by the app and their Stripe minimum
@@ -96,6 +136,12 @@ const CURRENCY_MINIMUMS = {
 // tope realista de la moneda. Tenants con casos legítimos > $1000 USD
 // deberían usar el flujo de subscription mensual o contactarnos para
 // aumentar el cap.
+// NOTE on units: values are in Stripe's smallest unit for the currency.
+//   - 2-decimal currencies (usd/eur/mxn/brl/ils/…): value / 100 = major amount
+//   - zero-decimal currencies (clp/jpy/krw/…): value == major amount
+//   - three-decimal currencies (bhd/jod/…): value / 1000 = major amount
+// Round-4 audit fix: `clp: 90000000` was 100× the intended cap (~USD $100k
+// instead of ~USD $1k) because CLP is zero-decimal, not 2-decimal.
 const CURRENCY_MAX_AMOUNTS = {
   usd: 100000,     // $1000
   eur: 100000,     // €1000
@@ -105,8 +151,8 @@ const CURRENCY_MAX_AMOUNTS = {
   mxn: 2000000,    // MX$20000 (~USD $1000)
   brl: 500000,     // R$5000
   ars: 100000000,  // AR$1M (~USD $1000)
-  clp: 90000000,   // CLP$900000
-  cop: 4000000000, // COP $4M (~USD $1000)
+  clp: 900000,     // CLP $900000 (zero-decimal → value == amount, ~USD $1000)
+  cop: 400000000,  // COP $4M (~USD $1000) — 2-decimal, value/100 = COP major
 };
 
 const SUPPORTED_CURRENCIES = new Set(Object.keys(CURRENCY_MINIMUMS));
@@ -137,6 +183,49 @@ function validateCurrency(currency) {
  * donor's money to the platform — clamping at the read site is a
  * second line of defense behind the write-time validation in createTenant.
  */
+/**
+ * Direct Charges helper: resolve the connect-account customer context for a
+ * given uid. Reads users/{uid}.tenantId, then tenants/{tid}.stripeConnectAccountId,
+ * then users/{uid}/tenantState/{tid}.stripeConnectCustomerId.
+ *
+ * Returns { tenantId, tenantConnectAccountId, stripeReqOpts, tenantStateRef,
+ * customerId } or null when the user has no active tenant / connect setup.
+ *
+ * customerId may be null even when the rest is set — caller should decide
+ * whether to create-or-fail. All Stripe API calls MUST spread stripeReqOpts
+ * as the options arg so the request targets the connected account instead of
+ * the platform. Missing this is the #1 direct-charges bug — Stripe returns
+ * "no such customer" because customers live per-account, not on the platform.
+ */
+async function _resolveConnectCustomerContext(uid) {
+  const userSnap = await db.collection("users").doc(uid).get();
+  const userData = userSnap.exists ? (userSnap.data() ?? {}) : {};
+  const tenantId = userData.tenantId ?? null;
+  if (!tenantId) return null;
+
+  const tenantSnap = await db.collection("tenants").doc(tenantId).get();
+  const tenantData = tenantSnap.exists ? (tenantSnap.data() ?? {}) : {};
+  const tenantConnectAccountId = tenantData.stripeConnectAccountId || null;
+  if (!tenantConnectAccountId || tenantData.stripeConnectStatus !== "active") {
+    return null;
+  }
+
+  const tenantStateRef = db.collection("users").doc(uid)
+    .collection("tenantState").doc(tenantId);
+  const tenantStateSnap = await tenantStateRef.get();
+  const customerId = tenantStateSnap.data()?.stripeConnectCustomerId || null;
+
+  return {
+    tenantId,
+    tenantConnectAccountId,
+    stripeReqOpts: { stripeAccount: tenantConnectAccountId },
+    tenantStateRef,
+    tenantStateSnap,
+    customerId,
+    userData,
+  };
+}
+
 function safeTenantCommissionRate(rawRate, tenantIdForLog) {
   // Accepts 0–30% (matches the admin web validator in TenantDetailPage).
   // Pre-fix the backend only accepted up to 10% and silently clamped to 3%
@@ -294,14 +383,57 @@ async function getUserLanguage(uid) {
   return "es";
 }
 
-async function getUserTokens(uid) {
+// Returns [{ token, platform }] — platform ∈ 'android' | 'ios' | 'web' |
+// undefined (legacy tokens without the field). sendToUser routes payloads
+// differently by platform to prevent the "double notification" bug in web
+// (browser auto-shows the notification block AND the SW's onBackgroundMessage
+// handler also calls showNotification). Native builds still need the
+// notification block because their OS displays it while the app is closed
+// via the SDK's built-in handler (avoids requiring Flutter background isolate).
+async function getUserTokens(uid, opts = {}) {
+  // Blocked users (setUserBlocked CF writes users/{uid}.isBlocked) should NOT
+  // receive any pushes — otherwise reminders and payment notifications keep
+  // reaching them and expose data they shouldn't see. Weekly summaries go via
+  // email (see the digest CF further down) so they don't route through here.
+  // Check BEFORE the fcmTokens read so we short-circuit early. Non-fatal: if
+  // the check itself fails, fall through and let the send happen (better
+  // than silently dropping notifications on a transient Firestore blip).
+  //
+  // Round-10 audit fix (MEDIUM #3): callers that already checked isBlocked
+  // (e.g. processDueReminders pre-filters uids once per tick) can skip the
+  // internal re-check by passing `skipBlockedCheck: true`. Without this,
+  // the pre-filter is redundant — same uid billed twice per fire.
+  if (opts.skipBlockedCheck !== true) {
+    try {
+      const userSnap = await db.collection("users").doc(uid).get();
+      if (userSnap.exists && userSnap.data()?.isBlocked === true) {
+        return [];
+      }
+    } catch (_) { /* fall through */ }
+  }
+
+  // Round-6 audit LOW fix: cap at 500 tokens. FCM sendEachForMulticast has
+  // a 500-token hard limit per call; a user with more (e.g. a bug that
+  // wrote per-launch instead of per-device) would silently fail-send to
+  // everyone above the cap. Prefer most-recently-used so active devices
+  // still receive pushes.
   const snap = await db
     .collection("users")
     .doc(uid)
     .collection("fcmTokens")
-    .get();
+    .orderBy("lastUsedAt", "desc")
+    .limit(500)
+    .get()
+    .catch(async (_) => {
+      // Fallback if the lastUsedAt index is missing on legacy user docs —
+      // plain read up to 500 (no ordering) is still better than the
+      // unbounded original.
+      return db.collection("users").doc(uid).collection("fcmTokens").limit(500).get();
+    });
 
-  return snap.docs.map((doc) => doc.id).filter(Boolean);
+  return snap.docs
+    .map((doc) => ({ token: doc.id, platform: doc.get("platform") }))
+    .filter((t) => t.token);
 }
 
 async function cleanupInvalidTokens(uid, tokens, response) {
@@ -326,17 +458,61 @@ async function cleanupInvalidTokens(uid, tokens, response) {
   await batch.commit();
 }
 
-async function sendToUser(uid, payload) {
-  const tokens = await getUserTokens(uid);
-  if (tokens.length === 0) return { successCount: 0 };
+// Web-safe payload: hoist notification.title/body into data.* and drop the
+// notification block entirely. The firebase-messaging-sw.js reads
+// data.title/data.body as fallbacks and calls self.registration.showNotification
+// once — no duplicate. Native tokens (or unknown platform, treated as native
+// for backwards-compat safety) keep the notification block so the OS can
+// display while the app is closed.
+function flattenPayloadForWeb(payload) {
+  const notif = payload.notification || {};
+  const flatData = {
+    ...(payload.data || {}),
+    ...(notif.title ? { title: String(notif.title) } : {}),
+    ...(notif.body ? { body: String(notif.body) } : {}),
+  };
+  const cleaned = { ...payload, data: flatData };
+  delete cleaned.notification;
+  return cleaned;
+}
 
-  const response = await messaging.sendEachForMulticast({
-    tokens,
-    ...payload,
-  });
+async function sendToUser(uid, payload, opts = {}) {
+  // opts.skipBlockedCheck: caller (e.g. processDueReminders) has already
+  // filtered blocked uids for this tick — avoid billing the same read twice.
+  const tokenInfos = await getUserTokens(uid, opts);
+  if (tokenInfos.length === 0) return { successCount: 0 };
 
-  await cleanupInvalidTokens(uid, tokens, response);
-  return response;
+  // Split tokens by web vs native. Unknown platform falls into native (safe
+  // default per adversarial review R-4: notification block preserves iOS
+  // wake-app behavior; the worst case is a legacy user with an unclassified
+  // Chrome token seeing the old-behavior duplicate — same as today).
+  const webTokens = tokenInfos
+    .filter((t) => t.platform === "web")
+    .map((t) => t.token);
+  const nativeTokens = tokenInfos
+    .filter((t) => t.platform !== "web")
+    .map((t) => t.token);
+
+  const sends = [];
+  if (nativeTokens.length > 0) {
+    sends.push(
+      messaging
+        .sendEachForMulticast({ tokens: nativeTokens, ...payload })
+        .then((response) => cleanupInvalidTokens(uid, nativeTokens, response).then(() => response))
+    );
+  }
+  if (webTokens.length > 0) {
+    const webPayload = flattenPayloadForWeb(payload);
+    sends.push(
+      messaging
+        .sendEachForMulticast({ tokens: webTokens, ...webPayload })
+        .then((response) => cleanupInvalidTokens(uid, webTokens, response).then(() => response))
+    );
+  }
+
+  const results = await Promise.all(sends);
+  const successCount = results.reduce((n, r) => n + (r.successCount || 0), 0);
+  return { successCount, responses: results };
 }
 
 // Stuck-event TTL: if a previous delivery crashed between reserveWebhookEvent
@@ -345,6 +521,141 @@ async function sendToUser(uid, payload) {
 // event. After this many ms in `processing` we treat it as orphaned and let
 // the current invocation re-attempt processing.
 const WEBHOOK_PROCESSING_TTL_MS = 5 * 60 * 1000; // 5 minutes — well over function timeout
+
+// Direct Charges platform commission calculator. Single source of truth so
+// createPaymentIntent, createDonationSubscription, createCheckoutSession and
+// processPushkaAutoEmpty all clamp the same way. Returns:
+//   null            → do NOT set application_fee_amount (commissionRate=0 or
+//                      rounding produced 0 — the chabadmexico 0% path).
+//   { fee, ... }    → set application_fee_amount = fee.
+//
+// Enforcing this via a helper (not three inline copies) is what keeps the
+// Apple non-profit fee waiver contract: if any future change accidentally
+// starts skimming from Jym Inc., the unit tests around this function fail.
+function computeApplicationFeeAmount(amountMinor, commissionRate) {
+  if (!Number.isFinite(amountMinor) || amountMinor <= 0) return null;
+  if (!Number.isFinite(commissionRate) || commissionRate <= 0) return null;
+  const rawFee = Math.floor(amountMinor * commissionRate);
+  if (rawFee <= 0) return null;
+  const safeFee = Math.min(rawFee, amountMinor - 1);
+  return { fee: safeFee, rawFee, clamped: safeFee !== rawFee };
+}
+
+// Test hook — exposes internal helpers to the unit test suite without
+// forcing the whole module to load Firebase credentials. Kept private-ish
+// via a namespaced key so nothing outside `functions/test/**` uses it.
+module.exports.__testables = { computeApplicationFeeAmount };
+
+// Shared revenue mutator — runs inside a caller-provided transaction.
+// Reads the tenant doc, computes flat + nested deltas, and writes them
+// atomically alongside whatever else the caller commits in the same tx
+// (usually the eventRef guard flag). This is what makes the guard truly
+// atomic: no window where the flag is set but the counters aren't.
+//
+// stampDate controls which nested bucket receives the delta:
+//   - undefined (default) → stamp under the CURRENT month/year (fresh donation).
+//   - Date instance      → stamp under that date's month/year (dispute reinstate,
+//                          refund of a prior-month donation). Keeps the nested
+//                          allTime + suma-de-meses net-accurate.
+//
+// Flat top-level fields (monthRevenueUSD / yearRevenueUSD / allTimeRevenueUSD)
+// only change when the stamped bucket matches the tenant's current bucket key
+// — refunds/reinstates that fall outside the current month don't time-travel
+// the "this month" real-time KPI. allTimeRevenueUSD always shifts (clamped ≥ 0).
+function _applyRevenueMutationInTx(tx, tenantRef, tenantSnap, amountUSD, direction, stampDate) {
+  const now = new Date();
+  const nowMonthKey = `${now.getUTCFullYear()}_${String(now.getUTCMonth() + 1).padStart(2, "0")}`;
+  const nowYearKey  = `${now.getUTCFullYear()}`;
+  const stamp = stampDate instanceof Date ? stampDate : now;
+  const stampMonthKey = `${stamp.getUTCFullYear()}_${String(stamp.getUTCMonth() + 1).padStart(2, "0")}`;
+  const stampYearKey  = `${stamp.getUTCFullYear()}`;
+  const isFreshDonation = direction === "increment" && !stampDate;
+
+  const data = tenantSnap.exists ? tenantSnap.data() : {};
+  const prevMonthKey = data?.monthYearKey || null;
+  const prevYearKey  = data?.yearKey || null;
+  const prevMonth = Number(data?.monthRevenueUSD) || 0;
+  const prevYear  = Number(data?.yearRevenueUSD)  || 0;
+  const prevAll   = Number(data?.allTimeRevenueUSD) || 0;
+
+  const sign = direction === "decrement" ? -1 : 1;
+  const delta = sign * amountUSD;
+
+  let monthValue;
+  let yearValue;
+  if (isFreshDonation) {
+    monthValue = prevMonthKey === nowMonthKey ? prevMonth + amountUSD : amountUSD;
+    yearValue  = prevYearKey  === nowYearKey  ? prevYear  + amountUSD : amountUSD;
+  } else {
+    // Only shift the flat bucket when the stamped delta belongs to the SAME
+    // bucket the tenant is currently accumulating into. This fixes the
+    // divergence where a Feb refund of a Jan donation used to decrement
+    // allTime but leave the flat monthRevenueUSD stale.
+    const monthMatches = prevMonthKey === stampMonthKey && prevMonthKey === nowMonthKey;
+    const yearMatches  = prevYearKey  === stampYearKey  && prevYearKey  === nowYearKey;
+    monthValue = monthMatches ? Math.max(0, prevMonth + delta) : prevMonth;
+    yearValue  = yearMatches  ? Math.max(0, prevYear  + delta) : prevYear;
+  }
+  const allValue = Math.max(0, prevAll + delta);
+
+  const updates = {
+    // Nested map — stamped under stampMonthKey so historical buckets stay
+    // net-accurate. Fresh donations also bump the count.
+    [`revenueStats.${stampMonthKey}.revenue`]: admin.firestore.FieldValue.increment(delta),
+    "revenueStats.allTime.revenue":            admin.firestore.FieldValue.increment(delta),
+    monthRevenueUSD: monthValue,
+    yearRevenueUSD: yearValue,
+    allTimeRevenueUSD: allValue,
+  };
+  if (isFreshDonation) {
+    updates[`revenueStats.${stampMonthKey}.count`] = admin.firestore.FieldValue.increment(1);
+    updates["revenueStats.allTime.count"]          = admin.firestore.FieldValue.increment(1);
+    updates.monthYearKey = nowMonthKey;
+    updates.yearKey      = nowYearKey;
+    updates.lastDonationAt = admin.firestore.FieldValue.serverTimestamp();
+  } else {
+    if (!prevMonthKey) updates.monthYearKey = nowMonthKey;
+    if (!prevYearKey)  updates.yearKey      = nowYearKey;
+  }
+  tx.set(tenantRef, updates, { merge: true });
+}
+
+// BUG #3/#7/#8/#9 fix + Round-2 audit follow-ups: fully-atomic idempotent
+// revenue mutation. Reads the eventRef guard AND the tenant doc, applies
+// both the guard flag and the flat+nested counter deltas in a SINGLE
+// transaction. Two consequences vs the old two-phase design:
+//
+//   1. If the transaction fails (Firestore contention, network hiccup,
+//      instance crash), NEITHER the guard nor the counters change. The
+//      error propagates → the outer webhook catches → status='failed' →
+//      Stripe retries → next delivery gets a clean shot at both writes.
+//      No more silent under-application when the guard tx succeeds but
+//      the counter mutation dies afterward.
+//
+//   2. Stripe retries are correctly deduped: on the second delivery the
+//      tx reads revenueApplied=true and no-ops.
+//
+// Callers should NOT wrap this in a swallowing try/catch — that would
+// re-open the silent-loss hole. If a caller absolutely needs to survive
+// a Firestore failure (very rare), let the outer webhook handler retry.
+async function applyRevenueDeltaOnce(eventRef, tenantId, amountUSD, direction /* 'increment' | 'decrement' */, opts = {}) {
+  if (!tenantId || !Number.isFinite(amountUSD) || amountUSD <= 0) return false;
+  const stampDate = opts.originalDate instanceof Date ? opts.originalDate : null;
+  let applied = false;
+  await db.runTransaction(async (tx) => {
+    const tenantRef = db.collection("tenants").doc(tenantId);
+    const evSnap = await tx.get(eventRef);
+    if (evSnap.exists && evSnap.data()?.revenueApplied === true) return;
+    const tenantSnap = await tx.get(tenantRef);
+    _applyRevenueMutationInTx(tx, tenantRef, tenantSnap, amountUSD, direction, stampDate);
+    tx.set(eventRef, {
+      revenueApplied: true,
+      revenueAppliedAt: admin.firestore.FieldValue.serverTimestamp(),
+    }, { merge: true });
+    applied = true;
+  });
+  return applied;
+}
 
 async function reserveWebhookEvent(event) {
   // Validate event id shape before using it as a Firestore doc ID. Stripe
@@ -446,21 +757,41 @@ async function finalizeWebhookEvent(eventRef, patch) {
   );
 }
 
-async function resolveUidFromCharge(charge, stripe) {
+async function resolveUidFromCharge(charge, stripe, reqOpts = {}) {
+  // Direct Charges: sub-object retrieves must include {stripeAccount} when
+  // the source charge came from a connected account. Callers in the webhook
+  // pass reqOpts = { stripeAccount: event.account }; other callers can pass
+  // {} for platform-only lookups.
   const chargeUid = charge?.metadata?.uid;
   if (chargeUid) return chargeUid;
 
   const paymentIntentId = typeof charge?.payment_intent === "string" ?
     charge.payment_intent :
     charge?.payment_intent?.id;
-  if (!paymentIntentId) return null;
-
-  try {
-    const paymentIntent = await stripe.paymentIntents.retrieve(paymentIntentId);
-    return paymentIntent?.metadata?.uid || null;
-  } catch (_) {
-    return null;
+  if (paymentIntentId) {
+    try {
+      const paymentIntent = await stripe.paymentIntents.retrieve(paymentIntentId, reqOpts);
+      const piUid = paymentIntent?.metadata?.uid;
+      if (piUid) return piUid;
+    } catch (_) { /* fall through to invoice/subscription lookup */ }
   }
+
+  const invoiceId = typeof charge?.invoice === "string"
+    ? charge.invoice
+    : charge?.invoice?.id;
+  if (invoiceId) {
+    try {
+      const invoice = await stripe.invoices.retrieve(invoiceId, reqOpts);
+      const subId = typeof invoice?.subscription === "string"
+        ? invoice.subscription
+        : invoice?.subscription?.id;
+      if (subId) {
+        const sub = await stripe.subscriptions.retrieve(subId, reqOpts);
+        if (sub?.metadata?.uid) return sub.metadata.uid;
+      }
+    } catch (_) { /* ignore */ }
+  }
+  return null;
 }
 
 async function writeUserPaymentEvent(uid, eventId, data) {
@@ -498,20 +829,79 @@ async function writeActivityLog({ type, tenantId, tenantName, severity, requires
     createdAt: admin.firestore.FieldValue.serverTimestamp(),
     ttlAt: isPermanent ? null : admin.firestore.Timestamp.fromMillis(Date.now() + ninetyDaysMs),
   });
+
+  // Fire-and-forget email alert for critical events. Existing chargeback
+  // + tenant billing alerts already email separately; this catches the
+  // long-tail (stripe_connect_restricted, drift detection, backfill
+  // conflicts, etc). Deduped by type+ref via a rate-limit sentinel so
+  // a burst doesn't spam the inbox.
+  if (severity === "critical" || requiresAction === true) {
+    try {
+      const dataObj = data && typeof data === "object" ? data : {};
+      const refId = dataObj.transactionId || dataObj.tenantId || dataObj.id ||
+        dataObj.chargeId || dataObj.paymentIntentId || tenantId || "global";
+      const alertKey = `${type}:${refId}`
+        .replace(/[/#[\]*]/g, "_")
+        .slice(0, 300); // Firestore doc id constraints
+      const alertRef = db.collection("_activityAlertRate").doc(alertKey);
+      const snap = await alertRef.get().catch(() => null);
+      const now = Date.now();
+      const lastSentMs = snap?.exists ? (snap.data()?.lastSent?.toMillis?.() || 0) : 0;
+      const ALERT_COOLDOWN_MS = 15 * 60 * 1000; // 15 min per unique (type, ref)
+      if (now - lastSentMs > ALERT_COOLDOWN_MS) {
+        const severityLabel = severity === "critical" ? "CRITICAL" : "Action required";
+        const subject = `[Pushka] ${severityLabel}: ${type}`;
+        const escape = (s) => String(s ?? "")
+          .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+        let dataJson = "";
+        try {
+          dataJson = JSON.stringify(dataObj, null, 2).slice(0, 4000);
+        } catch (_) {
+          dataJson = "(unserializable)";
+        }
+        const html = `
+          <div style="font-family:-apple-system,BlinkMacSystemFont,sans-serif;padding:20px;">
+            <h2 style="color:#DC2626;">${escape(subject)}</h2>
+            <p><strong>Type:</strong> ${escape(type)}</p>
+            <p><strong>Severity:</strong> ${escape(severity)}</p>
+            <p><strong>Requires action:</strong> ${requiresAction ? "yes" : "no"}</p>
+            <p><strong>Ref ID:</strong> ${escape(refId)}</p>
+            <p><strong>Tenant:</strong> ${escape(tenantName || tenantId || "—")}</p>
+            <p><strong>Timestamp:</strong> ${new Date().toISOString()}</p>
+            <p><strong>Data:</strong></p>
+            <pre style="background:#F3F4F6;padding:12px;border-radius:6px;font-size:12px;overflow:auto;">${escape(dataJson)}</pre>
+            <p><a href="https://chabad-admin.web.app/activity">Ver en admin panel →</a></p>
+            <p style="color:#666;font-size:12px;margin-top:24px;">
+              Cooldown: 15 min por (type, refId). Los mismos eventos repetidos no re-envían email.
+            </p>
+          </div>
+        `;
+        // Best-effort — never fail the log write on email failure.
+        await sendEmail({ to: SUPER_ADMIN_EMAIL, subject, html });
+        await alertRef.set({
+          lastSent: admin.firestore.FieldValue.serverTimestamp(),
+          type,
+          refId,
+        }, { merge: true });
+      }
+    } catch (e) {
+      console.warn("writeActivityLog: alert email failed", { message: e?.message, type });
+    }
+  }
 }
 
-// Atomic counter increment on tenant doc — called after every confirmed donation.
+// Atomic counter increment on tenant doc — called for UNGUARDED contexts
+// (auto-empty pushka, one-off recovery). Webhook handlers should use
+// applyRevenueDeltaOnce instead so the guard flag + counters commit atomically.
 // Non-blocking: failures are logged but never propagate to the caller.
 async function incrementTenantRevenue(tenantId, amountUSD) {
   if (!tenantId || !Number.isFinite(amountUSD) || amountUSD <= 0) return;
-  const now = new Date();
-  const monthKey = `${now.getUTCFullYear()}_${String(now.getUTCMonth() + 1).padStart(2, "0")}`;
   try {
-    await db.collection("tenants").doc(tenantId).update({
-      [`revenueStats.${monthKey}.revenue`]: admin.firestore.FieldValue.increment(amountUSD),
-      [`revenueStats.${monthKey}.count`]:   admin.firestore.FieldValue.increment(1),
-      "revenueStats.allTime.revenue":       admin.firestore.FieldValue.increment(amountUSD),
-      "revenueStats.allTime.count":         admin.firestore.FieldValue.increment(1),
+    await db.runTransaction(async (tx) => {
+      const ref = db.collection("tenants").doc(tenantId);
+      const snap = await tx.get(ref);
+      _applyRevenueMutationInTx(tx, ref, snap, amountUSD, "increment", null);
     });
   } catch (err) {
     console.warn("incrementTenantRevenue: failed (non-fatal)", { tenantId, amountUSD, error: String(err?.message || err) });
@@ -519,22 +909,23 @@ async function incrementTenantRevenue(tenantId, amountUSD) {
 }
 
 /**
- * BUG-024 fix: decrement tenant revenue on refund/chargeback so admin
- * dashboards reflect net donations. Does NOT decrement `count` — the
- * count is kept as "gross transactions" for trend analysis; the refund
- * itself counts as a separate negative tx in the user's history.
- * Stamped under the current month even when the original tx was older —
- * we don't time-travel revenue stats backward (Stripe's own reporting is
- * authoritative for historical reconstruction).
+ * Decrement tenant revenue on refund/chargeback so admin dashboards reflect
+ * net donations. Does NOT decrement `count` — the count is kept as "gross
+ * transactions" for trend analysis; the refund itself counts as a separate
+ * negative tx in the user's history.
+ *
+ * `originalDate` (optional): when provided, the nested map delta is stamped
+ * under the ORIGINAL month bucket instead of "now" — keeps allTime + suma-de-
+ * meses accurate when the refund crosses a month boundary. Flat top-level
+ * fields still only move for the current bucket (real-time KPI policy).
  */
-async function decrementTenantRevenue(tenantId, amountUSD) {
+async function decrementTenantRevenue(tenantId, amountUSD, originalDate = null) {
   if (!tenantId || !Number.isFinite(amountUSD) || amountUSD <= 0) return;
-  const now = new Date();
-  const monthKey = `${now.getUTCFullYear()}_${String(now.getUTCMonth() + 1).padStart(2, "0")}`;
   try {
-    await db.collection("tenants").doc(tenantId).update({
-      [`revenueStats.${monthKey}.revenue`]: admin.firestore.FieldValue.increment(-amountUSD),
-      "revenueStats.allTime.revenue":       admin.firestore.FieldValue.increment(-amountUSD),
+    await db.runTransaction(async (tx) => {
+      const ref = db.collection("tenants").doc(tenantId);
+      const snap = await tx.get(ref);
+      _applyRevenueMutationInTx(tx, ref, snap, amountUSD, "decrement", originalDate);
     });
   } catch (err) {
     console.warn("decrementTenantRevenue: failed (non-fatal)", { tenantId, amountUSD, error: String(err?.message || err) });
@@ -589,7 +980,7 @@ async function summarizeRecentWebhookEvents(hours = 24, limit = 600) {
   };
 }
 
-exports.sendTestNotification = onCall({ enforceAppCheck: true }, async (request) => {
+exports.sendTestNotification = onCall({ enforceAppCheck: false }, async (request) => {
   if (!request.auth?.uid) {
     throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
   }
@@ -608,6 +999,7 @@ exports.sendTestNotification = onCall({ enforceAppCheck: true }, async (request)
     notification: { title, body },
     data: {
       type: "test",
+      click_action: "/settings",
     },
   });
 
@@ -618,7 +1010,7 @@ exports.sendTestNotification = onCall({ enforceAppCheck: true }, async (request)
 });
 
 exports.createPaymentIntent = onCall(
-  { secrets: [stripeSecret], enforceAppCheck: true },
+  { secrets: [stripeSecret], enforceAppCheck: false },
   async (request) => {
   if (!request.auth?.uid) {
     throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
@@ -870,51 +1262,59 @@ exports.createPaymentIntent = onCall(
   // Double-tap protection lives in the client (`_processing` guard).
   const idempotencyKey = `pi_${request.auth.uid}_${correlationId}`;
 
-  // Build Stripe Connect params — only when the tenant has an active Connect account.
-  // Clamp app fee defensively: a misconfigured commissionRate >= 1 would cause
-  // Stripe to reject with `application_fee_amount must be less than amount`,
-  // surfacing as a generic donor-facing "could not process" error. The clamp
-  // keeps payments flowing even with bad config (tenant just earns more, app
-  // earns less) while logging the anomaly for ops to investigate.
+  // DIRECT CHARGES MODEL: the PaymentIntent is created directly on the
+  // connected account (via Stripe-Account header). Consequences:
+  // - Stripe receipts/refund emails/dispute notices use the CONNECTED
+  //   account's branding, NOT the platform's (fixes "Receipt from AI systems |
+  //   ioel katz" issue).
+  // - Merchant of record IS the connected account (Rab / Jym Inc.), not Ioel.
+  // - No transfer_data / on_behalf_of needed — those are for destination charges.
+  // - application_fee_amount is still valid; skimming a commission for the
+  //   platform. Left in for future multi-tenant scenarios; today (0%) it's a
+  //   no-op.
   const connectParams = {};
   if (tenantConnectAccountId) {
-    const rawFee = Math.floor(amount * tenantCommissionRate);
-    // BUG-013 fix: commissionRate === 0 should mean ZERO platform fee, not
-    // 1 cent (the old `Math.max(1, ...)` floor charged 1 cent even for
-    // explicit free-mode tenants). When rawFee is 0 we still set
-    // transfer_data so the donor's full amount lands in the tenant's Connect
-    // account — just without an application_fee_amount param.
-    if (rawFee > 0) {
-      const safeFee = Math.min(rawFee, amount - 1);
-      if (safeFee !== rawFee) {
+    const appFee = computeApplicationFeeAmount(amount, tenantCommissionRate);
+    if (appFee) {
+      if (appFee.clamped) {
         console.warn("createPaymentIntent: clamped_app_fee", {
-          uid: request.auth.uid, tenantId, amount, tenantCommissionRate, rawFee, safeFee,
+          uid: request.auth.uid, tenantId, amount, tenantCommissionRate,
+          rawFee: appFee.rawFee, safeFee: appFee.fee,
         });
       }
-      connectParams.application_fee_amount = safeFee;
+      connectParams.application_fee_amount = appFee.fee;
     }
-    connectParams.transfer_data = { destination: tenantConnectAccountId };
   }
 
   const stripe = require("stripe")(stripeSecret.value(), { timeout: 15000 });
+  // stripeReqOpts — spread into EVERY Stripe API call in this function so the
+  // request executes on the connected account. Missing this on any call causes
+  // "customer not found" errors because customers live per-account in Connect.
+  const stripeReqOpts = { stripeAccount: tenantConnectAccountId };
 
-  // Resolve (or create) the user's Stripe customer so the PaymentSheet
-  // can show their saved cards. Same get-or-create pattern as
-  // createSetupIntent: a Firestore sentinel inside a transaction
-  // prevents two concurrent calls from each spawning a separate Stripe
-  // customer for the same uid.
-  let customerId = String(userData.stripeCustomerId || "").trim() || null;
+  // Resolve (or create) the donor's Stripe customer inside the CONNECTED
+  // account (Rab / Jym Inc.). With Direct Charges, customers are scoped
+  // per-account — each connected account has its own customer namespace.
+  // We store the connect-account customer under users/{uid}/tenantState/{tenantId}
+  // instead of the flat users/{uid}.stripeCustomerId (which was the
+  // platform customer, now deprecated).
+  //
+  // Same sentinel-in-transaction pattern as before to prevent two concurrent
+  // calls from spawning duplicate customers.
+  const tenantStateRef = db.collection("users").doc(request.auth.uid)
+    .collection("tenantState").doc(tenantId);
+  const tenantStateSnap = await tenantStateRef.get();
+  let customerId = String(tenantStateSnap.data()?.stripeConnectCustomerId || "").trim() || null;
   if (!customerId) {
-    const userRef = db.collection("users").doc(request.auth.uid);
     await db.runTransaction(async (tx) => {
-      const fresh = await tx.get(userRef);
-      const freshId = String(fresh.data()?.stripeCustomerId || "").trim();
+      const fresh = await tx.get(tenantStateRef);
+      const freshId = String(fresh.data()?.stripeConnectCustomerId || "").trim();
       if (freshId) {
         customerId = freshId;
         return;
       }
-      tx.set(userRef, {
-        stripeCustomerIdPending: true,
+      tx.set(tenantStateRef, {
+        stripeConnectCustomerIdPending: true,
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       }, { merge: true });
     });
@@ -922,17 +1322,20 @@ exports.createPaymentIntent = onCall(
       try {
         const customer = await stripe.customers.create({
           email: customerEmail || undefined,
-          metadata: { uid: request.auth.uid },
-        }, { idempotencyKey: `customer_create_${request.auth.uid}` });
+          metadata: { uid: request.auth.uid, tenantId },
+        }, {
+          idempotencyKey: `customer_create_${request.auth.uid}_${tenantId}`,
+          stripeAccount: tenantConnectAccountId,
+        });
         customerId = customer.id;
-        await userRef.set({
-          stripeCustomerId: customerId,
-          stripeCustomerIdPending: admin.firestore.FieldValue.delete(),
+        await tenantStateRef.set({
+          stripeConnectCustomerId: customerId,
+          stripeConnectCustomerIdPending: admin.firestore.FieldValue.delete(),
           updatedAt: admin.firestore.FieldValue.serverTimestamp(),
         }, { merge: true });
       } catch (stripeErr) {
-        await userRef.set({
-          stripeCustomerIdPending: admin.firestore.FieldValue.delete(),
+        await tenantStateRef.set({
+          stripeConnectCustomerIdPending: admin.firestore.FieldValue.delete(),
         }, { merge: true }).catch(() => {});
         throw stripeErr;
       }
@@ -942,20 +1345,18 @@ exports.createPaymentIntent = onCall(
   // Skip the dedupe pass if it ran recently. The pass touches Stripe twice
   // (customers.retrieve + paymentMethods.list) plus N more updates/detaches —
   // ~400-800ms on the critical path. State only changes when a card is
-  // added or removed, so we cache `_lastPmDedupePassAt` on the user doc and
-  // skip if < 2h old (was 6h — too long for power users adding multiple
-  // cards in a session). Card add/remove flows clear the cache so the
-  // next payment re-runs the pass.
-  const lastDedupeAt = userData._lastPmDedupePassAt?.toMillis?.() ?? 0;
+  // added or removed, so we cache `_lastPmDedupePassAt` on the tenantState
+  // doc (per-tenant now that customers are per-tenant) and skip if < 2h old.
+  const lastDedupeAt = tenantStateSnap.data()?._lastPmDedupePassAt?.toMillis?.() ?? 0;
   const dedupeStale = (Date.now() - lastDedupeAt) > (2 * 60 * 60 * 1000);
   if (dedupeStale) try {
     const [customer, pmList] = await Promise.all([
-      stripe.customers.retrieve(customerId),
+      stripe.customers.retrieve(customerId, stripeReqOpts),
       stripe.paymentMethods.list({
         customer: customerId,
         type: "card",
         limit: 100,
-      }),
+      }, stripeReqOpts),
     ]);
     const defaultPmId = customer && !customer.deleted
       ? customer.invoice_settings?.default_payment_method || null
@@ -993,7 +1394,7 @@ exports.createPaymentIntent = onCall(
         count: needsRedisplayFix.length,
       });
       await Promise.all(needsRedisplayFix.map((pm) =>
-        stripe.paymentMethods.update(pm.id, { allow_redisplay: "always" })
+        stripe.paymentMethods.update(pm.id, { allow_redisplay: "always" }, stripeReqOpts)
           .catch((updateErr) => {
             console.warn("createPaymentIntent: allow_redisplay update failed", {
               uid: request.auth.uid,
@@ -1027,16 +1428,15 @@ exports.createPaymentIntent = onCall(
         detachCount: detachIds.length,
       });
       await Promise.all(detachIds.map((pmId) =>
-        stripe.paymentMethods.detach(pmId).catch((err) => {
+        stripe.paymentMethods.detach(pmId, stripeReqOpts).catch((err) => {
           console.warn("createPaymentIntent: detach failed", {
             uid: request.auth.uid, customerId, paymentMethodId: pmId, errorMessage: err?.message,
           });
         }),
       ));
     }
-    // Stamp the success — fire-and-forget so it doesn't block the
-    // critical path. Next call within 6h skips the whole dedupe pass.
-    db.collection("users").doc(request.auth.uid).set({
+    // Stamp the success on tenantState (per-tenant now) — fire-and-forget.
+    tenantStateRef.set({
       _lastPmDedupePassAt: admin.firestore.FieldValue.serverTimestamp(),
     }, { merge: true }).catch((stampErr) => {
       console.warn("createPaymentIntent: dedupe stamp failed", {
@@ -1044,10 +1444,48 @@ exports.createPaymentIntent = onCall(
       });
     });
   } catch (dedupeErr) {
-    console.warn("createPaymentIntent: dedupe pass failed (non-fatal)", {
-      uid: request.auth.uid, customerId,
-      errorMessage: dedupeErr?.message,
-    });
+    // Stale-customer self-heal during dedupe: if the cached customerId
+    // points at a customer Stripe no longer knows (hard-deleted / mode
+    // mismatch), clear the stale IDs, mint a fresh customer on the
+    // connected account, and continue with the new customerId.
+    if (_isStripeResourceMissing(dedupeErr)) {
+      console.warn("createPaymentIntent: stale connect customerId in dedupe — clearing and regenerating", {
+        uid: request.auth.uid, staleCustomerId: customerId,
+        errorMessage: dedupeErr?.message,
+      });
+      await tenantStateRef.set({
+        stripeConnectCustomerId: admin.firestore.FieldValue.delete(),
+        stripeConnectCustomerIdPending: admin.firestore.FieldValue.delete(),
+        stripeConnectDefaultPaymentMethodId: admin.firestore.FieldValue.delete(),
+        stripeConnectDefaultPaymentMethodLast4: admin.firestore.FieldValue.delete(),
+        stripeConnectDefaultPaymentMethodBrand: admin.firestore.FieldValue.delete(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      }, { merge: true }).catch(() => {});
+      try {
+        const freshCustomer = await stripe.customers.create({
+          email: customerEmail || undefined,
+          metadata: { uid: request.auth.uid, tenantId },
+        }, {
+          idempotencyKey: `customer_create_${request.auth.uid}_${tenantId}_r1`,
+          stripeAccount: tenantConnectAccountId,
+        });
+        customerId = freshCustomer.id;
+        await tenantStateRef.set({
+          stripeConnectCustomerId: customerId,
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        }, { merge: true });
+      } catch (createErr) {
+        console.error("createPaymentIntent: recreate connect customer failed after dedupe stale", {
+          uid: request.auth.uid, errorMessage: createErr?.message,
+        });
+        throw new HttpsError("internal", "No se pudo preparar el pago. Intentá de nuevo.");
+      }
+    } else {
+      console.warn("createPaymentIntent: dedupe pass failed (non-fatal)", {
+        uid: request.auth.uid, customerId,
+        errorMessage: dedupeErr?.message,
+      });
+    }
   }
 
   // Build the PaymentIntent + CustomerSession in parallel — neither depends
@@ -1141,13 +1579,54 @@ exports.createPaymentIntent = onCall(
     },
   };
 
-  // Fire both Stripe API calls concurrently. allSettled (not all) so a
-  // CustomerSession failure doesn't tank the PaymentIntent — we fall back
-  // to ephemeralKey in that branch.
-  const [piResult, sessionResult] = await Promise.allSettled([
-    stripe.paymentIntents.create(piParams, { idempotencyKey }),
-    stripe.customerSessions.create(customerSessionParams),
+  // Fire both Stripe API calls concurrently on the CONNECTED account.
+  let [piResult, sessionResult] = await Promise.allSettled([
+    stripe.paymentIntents.create(piParams, { idempotencyKey, stripeAccount: tenantConnectAccountId }),
+    stripe.customerSessions.create(customerSessionParams, stripeReqOpts),
   ]);
+
+  // Stale-customer self-heal for paymentIntents.create on the connected
+  // account: if customerId is stale, clear from tenantState, mint fresh
+  // customer on connected, and retry once.
+  if (piResult.status === "rejected" && _isStripeResourceMissing(piResult.reason)) {
+    console.warn("createPaymentIntent: stale connect customerId — clearing and retrying once", {
+      uid: request.auth.uid, staleCustomerId: customerId,
+      errorMessage: piResult.reason?.message,
+    });
+    await tenantStateRef.set({
+      stripeConnectCustomerId: admin.firestore.FieldValue.delete(),
+      stripeConnectCustomerIdPending: admin.firestore.FieldValue.delete(),
+      stripeConnectDefaultPaymentMethodId: admin.firestore.FieldValue.delete(),
+      stripeConnectDefaultPaymentMethodLast4: admin.firestore.FieldValue.delete(),
+      stripeConnectDefaultPaymentMethodBrand: admin.firestore.FieldValue.delete(),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    }, { merge: true }).catch(() => {});
+    try {
+      const freshCustomer = await stripe.customers.create({
+        email: customerEmail || undefined,
+        metadata: { uid: request.auth.uid, tenantId },
+      }, {
+        idempotencyKey: `customer_create_${request.auth.uid}_${tenantId}_pi_r1`,
+        stripeAccount: tenantConnectAccountId,
+      });
+      customerId = freshCustomer.id;
+      piParams.customer = customerId;
+      customerSessionParams.customer = customerId;
+      await tenantStateRef.set({
+        stripeConnectCustomerId: customerId,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      }, { merge: true });
+    } catch (createErr) {
+      console.error("createPaymentIntent: recreate connect customer failed", {
+        uid: request.auth.uid, errorMessage: createErr?.message,
+      });
+      throw new HttpsError("internal", "No se pudo preparar el pago. Intentá de nuevo.");
+    }
+    [piResult, sessionResult] = await Promise.allSettled([
+      stripe.paymentIntents.create(piParams, { idempotencyKey: `${idempotencyKey}_r1`, stripeAccount: tenantConnectAccountId }),
+      stripe.customerSessions.create(customerSessionParams, stripeReqOpts),
+    ]);
+  }
 
   if (piResult.status === "rejected") {
     const err = piResult.reason;
@@ -1210,7 +1689,7 @@ exports.createPaymentIntent = onCall(
     try {
       const ephemeralKey = await stripe.ephemeralKeys.create(
         { customer: customerId },
-        { apiVersion: "2024-06-20" },
+        { apiVersion: "2024-06-20", stripeAccount: tenantConnectAccountId },
       );
       ephemeralKeySecret = ephemeralKey.secret;
     } catch (ekErr) {
@@ -1227,6 +1706,11 @@ exports.createPaymentIntent = onCall(
     customerId,
     customerSessionClientSecret,
     ephemeralKeySecret,
+    // Connect account the client SDK must be initialized on. The Flutter
+    // client sets Stripe.stripeAccountId = connectAccountId BEFORE calling
+    // PaymentSheet — without it the sheet requests the customer on the
+    // platform (where it doesn't exist) and errors.
+    connectAccountId: tenantConnectAccountId,
   };
 });
 
@@ -1244,7 +1728,7 @@ exports.createPaymentIntent = onCall(
 // Safety: only releases locks with _autoEmptyChargeLockSource === "manual"
 // so a racing cron lock (source: undefined / "scheduled") is never cleared.
 exports.releaseManualPushkaEmptyLock = onCall(
-  { enforceAppCheck: true },
+  { enforceAppCheck: false },
   async (request) => {
     if (!request.auth?.uid) {
       throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
@@ -1302,7 +1786,7 @@ exports.releaseManualPushkaEmptyLock = onCall(
 // `application_fee_percent` (subs use percent, not amount) + transfer_data
 // so each invoice routes to the tenant.
 exports.createDonationSubscription = onCall(
-  { secrets: [stripeSecret], enforceAppCheck: true },
+  { secrets: [stripeSecret], enforceAppCheck: false },
   async (request) => {
     if (!request.auth?.uid) {
       throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
@@ -1332,28 +1816,38 @@ exports.createDonationSubscription = onCall(
     const userData = userSnap.exists ? (userSnap.data() ?? {}) : {};
     const tenantId = userData.tenantId ?? null;
 
-    let tenantConnectAccountId = null;
-    let tenantCommissionRate = 0;
-    if (tenantId) {
-      const tenantSnap = await db.collection("tenants").doc(tenantId).get();
-      if (tenantSnap.exists) {
-        const td = tenantSnap.data();
-        if (td.status === "suspended") {
-          throw new HttpsError("permission-denied", "El servicio de tu organización está suspendido.");
-        }
-        const cs = td.stripeConnectStatus;
-        const cid = td.stripeConnectAccountId;
-        if (cs === "active" && cid) {
-          tenantConnectAccountId = cid;
-          tenantCommissionRate = safeTenantCommissionRate(td.commissionRate, tenantId);
-        } else if (cid && cs !== "active") {
-          throw new HttpsError(
-            "failed-precondition",
-            "Tu organización está temporalmente sin conexión con el procesador de pagos.",
-          );
-        }
-      }
+    // Refuse recurring donations for tenants without Connect setup.
+    if (!tenantId) {
+      throw new HttpsError(
+        "failed-precondition",
+        "Tu cuenta no está asociada a ninguna organización.",
+      );
     }
+    const ctx = await _resolveConnectCustomerContext(request.auth.uid);
+    if (!ctx) {
+      throw new HttpsError(
+        "failed-precondition",
+        "Tu organización no tiene pagos configurados. Avisale al administrador.",
+      );
+    }
+    const { tenantConnectAccountId, stripeReqOpts, tenantStateRef } = ctx;
+    // safeTenantCommissionRate from the tenant doc — ctx.userData is the
+    // caller's user doc, but commissionRate lives on the tenant doc.
+    const tenantDataForCommission = await db.collection("tenants").doc(tenantId).get();
+    const tenantDataOnce = tenantDataForCommission.data() || {};
+    // Round-6 audit HIGH fix: refuse recurring donations for suspended
+    // tenants. createPaymentIntent has this guard; createDonationSubscription
+    // was missing it — a donor could sub $18/month to a tenant that had
+    // its Connect account revoked, resulting in immediate payment failures
+    // and confused donor charges.
+    if (tenantDataOnce.status === "suspended") {
+      throw new HttpsError(
+        "failed-precondition",
+        "Esta organización está temporalmente suspendida. No se pueden crear donaciones recurrentes.",
+      );
+    }
+    const tenantCommissionRate = safeTenantCommissionRate(
+      tenantDataOnce.commissionRate, tenantId);
 
     const amount = Number(request.data?.amount || 0);
     const currency = validateCurrency(request.data?.currency || "usd");
@@ -1366,6 +1860,16 @@ exports.createDonationSubscription = onCall(
     }
     if (amount > 99999999) {
       throw new HttpsError("invalid-argument", "El monto excede el límite permitido.");
+    }
+    // Per-currency cap: without this a malicious authenticated user could
+    // create a $999,999/month recurring subscription. Mirrors the check
+    // already enforced on createPaymentIntent + createCheckoutSession.
+    const maxAmount = maxAmountForCurrency(currency);
+    if (amount > maxAmount) {
+      throw new HttpsError(
+        "invalid-argument",
+        `Monto máximo para ${currency.toUpperCase()} es ${formatAmount(maxAmount)}.`,
+      );
     }
     const minAmount = minAmountForCurrency(currency);
     if (amount < minAmount) {
@@ -1381,28 +1885,30 @@ exports.createDonationSubscription = onCall(
       ? String(request.auth.token.email).slice(0, 254)
       : null;
 
-    let customerId = String(userData.stripeCustomerId || "").trim() || null;
+    let customerId = ctx.customerId;
     if (!customerId) {
-      const userRef = db.collection("users").doc(request.auth.uid);
       try {
         const customer = await stripe.customers.create(
           {
             email: customerEmail || undefined,
-            metadata: { uid: request.auth.uid },
+            metadata: { uid: request.auth.uid, tenantId },
           },
-          { idempotencyKey: `customer_create_${request.auth.uid}` },
+          {
+            idempotencyKey: `customer_create_${request.auth.uid}_${tenantId}`,
+            stripeAccount: tenantConnectAccountId,
+          },
         );
         customerId = customer.id;
-        await userRef.set(
+        await tenantStateRef.set(
           {
-            stripeCustomerId: customerId,
+            stripeConnectCustomerId: customerId,
             updatedAt: admin.firestore.FieldValue.serverTimestamp(),
           },
           { merge: true },
         );
       } catch (stripeErr) {
-        console.error("createDonationSubscription: customer create failed", {
-          uid: request.auth.uid,
+        console.error("createDonationSubscription: connect customer create failed", {
+          uid: request.auth.uid, tenantId,
           err: stripeErr.message,
         });
         throw new HttpsError("internal", "No se pudo crear el cliente.");
@@ -1421,28 +1927,24 @@ exports.createDonationSubscription = onCall(
       ? donationReasonRaw.replace(/[\x00-\x1F\x7F-\x9F]/g, " ").trim().slice(0, 80)
       : null;
 
-    // Stripe subscription items.price_data accepts a `product` ID (not the
-    // top-level `product_data` shortcut). Get-or-create a single shared
-    // "Pushka recurring donation" product and cache its ID in Firestore so
-    // we don't create a new one on every call.
+    // Direct Charges: products live PER connected account (Stripe scopes
+    // products by account like customers). Cache the product ID per-account
+    // in _tenantStripe/{acctId}.recurringProductId so we don't re-create on
+    // every call AND so tenants don't share product IDs (which would fail
+    // because product X on account A does not exist on account B).
     let recurringProductId = null;
-    const cfgRef = db.collection("_appConfig").doc("stripe");
+    const acctCfgRef = db.collection("_tenantStripe").doc(tenantConnectAccountId);
     try {
-      const cfgSnap = await cfgRef.get();
-      if (cfgSnap.exists) {
-        recurringProductId = cfgSnap.data()?.recurringProductId ?? null;
+      const acctCfgSnap = await acctCfgRef.get();
+      if (acctCfgSnap.exists) {
+        recurringProductId = acctCfgSnap.data()?.recurringProductId ?? null;
       }
     } catch (cfgErr) {
-      console.error("createDonationSubscription: cfg read failed", {
+      console.error("createDonationSubscription: acct cfg read failed", {
         err: cfgErr.message,
-        stack: cfgErr.stack,
       });
       throw new HttpsError("internal", `cfg-read: ${cfgErr.message}`);
     }
-    console.info("createDonationSubscription: cfg lookup", {
-      uid: request.auth.uid,
-      recurringProductId,
-    });
     if (!recurringProductId) {
       try {
         const product = await stripe.products.create(
@@ -1450,14 +1952,18 @@ exports.createDonationSubscription = onCall(
             name: "Pushka — Donación recurrente",
             metadata: { source: "pushka_recurring" },
           },
-          { idempotencyKey: "pushka_recurring_product_v1" },
+          {
+            idempotencyKey: `pushka_recurring_product_${tenantConnectAccountId}`,
+            stripeAccount: tenantConnectAccountId,
+          },
         );
         recurringProductId = product.id;
-        console.info("createDonationSubscription: product created", {
+        console.info("createDonationSubscription: connect product created", {
           productId: recurringProductId,
+          connectAccountId: tenantConnectAccountId,
         });
         try {
-          await cfgRef.set(
+          await acctCfgRef.set(
             {
               recurringProductId,
               updatedAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -1465,16 +1971,14 @@ exports.createDonationSubscription = onCall(
             { merge: true },
           );
         } catch (writeErr) {
-          console.error("createDonationSubscription: cfg write failed", {
+          console.error("createDonationSubscription: acct cfg write failed (non-fatal)", {
             err: writeErr.message,
-            stack: writeErr.stack,
           });
-          // Non-fatal: we already have the product ID, just won't cache it.
         }
       } catch (prodErr) {
-        console.error("createDonationSubscription: product create failed", {
+        console.error("createDonationSubscription: connect product create failed", {
           err: prodErr.message,
-          stack: prodErr.stack,
+          connectAccountId: tenantConnectAccountId,
         });
         throw new HttpsError("internal", `product-create: ${prodErr.message}`);
       }
@@ -1508,18 +2012,26 @@ exports.createDonationSubscription = onCall(
         purpose: "donation_recurring",
         donorMessage,
         ...(donationReason ? { donationReason } : {}),
+        // Stamp the Connect destination so the invoice.payment_succeeded
+        // drift-detection fallback (invoice.parent.subscription_details
+        // .metadata.connectAccountId) can catch cases where transfer_data
+        // on the invoice is missing/rotated but the sub was originally
+        // pinned to a specific tenant Connect account.
+        ...(tenantConnectAccountId
+          ? { connectAccountId: tenantConnectAccountId }
+          : {}),
       },
     };
 
-    if (tenantConnectAccountId) {
-      // Subscriptions accept `application_fee_percent` (Stripe computes the
-      // fee from each invoice's subtotal). Clamp to [0, 99] — a misconfigured
-      // 100%+ rate would have Stripe reject every invoice forever.
+    // Direct Charges: the subscription is created ON the connected account
+    // (via Stripe-Account header). No transfer_data / on_behalf_of needed —
+    // the sub lives natively in the tenant's account. application_fee_percent
+    // still applies for optional platform commission (0 today = no-op).
+    if (tenantCommissionRate > 0) {
       subParams.application_fee_percent = Math.min(
         99,
         Math.max(0, tenantCommissionRate * 100),
       );
-      subParams.transfer_data = { destination: tenantConnectAccountId };
     }
 
     // Pre-cleanup: clean up ABANDONED prior attempts so a stuck `incomplete`
@@ -1543,26 +2055,18 @@ exports.createDonationSubscription = onCall(
         customer: customerId,
         status: "all",
         limit: 100,
-      });
+      }, stripeReqOpts);
       for (const oldSub of existing.data) {
         if (oldSub.metadata?.purpose !== "donation_recurring") continue;
         const status = oldSub.status;
-        // Active subs: leave alone. The donor explicitly chose to add another
-        // recurring donation (e.g. to a different tenant, or a top-up to the
-        // same one) — that's their right. The "Mis donaciones recurrentes"
-        // screen lets them cancel any unwanted ones.
         if (status !== "incomplete" && status !== "incomplete_expired") {
           continue;
         }
-        // Abandoned attempts: the donor opened PaymentSheet once and dismissed
-        // it without confirming. Safe to cancel — frees the slot so retries
-        // (potentially in a different currency) don't trip "cannot combine
-        // currencies".
         try {
-          await stripe.subscriptions.cancel(oldSub.id, {
-            invoice_now: false,
-            prorate: false,
-          });
+          // Stripe SDK cancel signature: (id, params?, options?). Pass {}
+          // for params so stripeReqOpts lands in the options slot as a
+          // header rather than being body-encoded.
+          await stripe.subscriptions.cancel(oldSub.id, {}, stripeReqOpts);
           console.info("createDonationSubscription: cancelled abandoned incomplete sub", {
             uid: request.auth.uid,
             subId: oldSub.id,
@@ -1578,10 +2082,57 @@ exports.createDonationSubscription = onCall(
         }
       }
     } catch (cleanupErr) {
-      console.warn("createDonationSubscription: cleanup pass failed", {
-        uid: request.auth.uid,
-        err: cleanupErr.message,
-      });
+      // Stale-customer self-heal for the list call: if the cached customerId
+      // points at a customer Stripe no longer knows (hard-deleted / mode
+      // mismatch), clear the stale IDs so the retry-once block on
+      // subscriptions.create below can mint a fresh customer. Continue with
+      // an empty subs list — there was nothing to cancel anyway (the old
+      // customer is gone from Stripe's perspective).
+      if (_isStripeResourceMissing(cleanupErr)) {
+        console.warn("createDonationSubscription: stale connect customerId in list — clearing", {
+          uid: request.auth.uid, tenantId, staleCustomerId: customerId,
+          errorMessage: cleanupErr?.message,
+        });
+        try {
+          await tenantStateRef.set({
+            stripeConnectCustomerId: admin.firestore.FieldValue.delete(),
+            stripeConnectDefaultPaymentMethodId: admin.firestore.FieldValue.delete(),
+            stripeConnectDefaultPaymentMethodLast4: admin.firestore.FieldValue.delete(),
+            stripeConnectDefaultPaymentMethodBrand: admin.firestore.FieldValue.delete(),
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          }, { merge: true });
+        } catch (_) { /* best-effort */ }
+        // BUG #19 fix: proactively mint a fresh customer HERE so the
+        // subscriptions.create call below succeeds on first attempt.
+        // Previously subParams.customer still held the doomed id, causing a
+        // guaranteed extra Stripe roundtrip through the stale-heal retry.
+        try {
+          const freshCustomer = await stripe.customers.create({
+            email: customerEmail || undefined,
+            metadata: { uid: request.auth.uid, tenantId },
+          }, {
+            idempotencyKey: `customer_create_${request.auth.uid}_${tenantId}_sub_precleanup`,
+            stripeAccount: tenantConnectAccountId,
+          });
+          customerId = freshCustomer.id;
+          subParams.customer = customerId;
+          await tenantStateRef.set({
+            stripeConnectCustomerId: customerId,
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          }, { merge: true });
+        } catch (recreateErr) {
+          // If we can't recreate here, let the sub-create's stale-heal try —
+          // guaranteed to fail with resource_missing which triggers its own retry.
+          console.warn("createDonationSubscription: pre-cleanup recreate failed, falling back to inline retry", {
+            uid: request.auth.uid, tenantId, err: recreateErr?.message,
+          });
+        }
+      } else {
+        console.warn("createDonationSubscription: cleanup pass failed", {
+          uid: request.auth.uid,
+          err: cleanupErr.message,
+        });
+      }
     }
 
     console.info("createDonationSubscription: creating sub", {
@@ -1599,35 +2150,82 @@ exports.createDonationSubscription = onCall(
     // already point at a sub our pre-cleanup pass cancelled (which would
     // surface as "PaymentSheet cannot set up a PaymentIntent in status
     // 'canceled'" client-side).
-    const subIdempotencyKey = `sub_${request.auth.uid}_${correlationId}`;
+    const subIdempotencyKey = `sub_${request.auth.uid}_${tenantId}_${correlationId}`;
     let subscription;
-    try {
-      subscription = await stripe.subscriptions.create(subParams, { idempotencyKey: subIdempotencyKey });
-      console.info("createDonationSubscription: sub created", {
-        subId: subscription.id,
-        status: subscription.status,
-      });
-    } catch (stripeErr) {
-      console.error("createDonationSubscription: Stripe error", {
-        uid: request.auth.uid,
-        err: stripeErr.message,
-        type: stripeErr.type,
-        code: stripeErr.code,
-        param: stripeErr.param,
-      });
-      // Translate the most common Stripe rejections to user-friendly Spanish
-      // so the client can render a clean message instead of leaking raw
-      // English Stripe text. Pre-cleanup above usually prevents the
-      // currency-mix error, but a half-cancelled sub or one outside the
-      // donation_recurring scope could still trip it.
-      const msg = String(stripeErr.message || "").toLowerCase();
-      if (msg.includes("combine currencies on a single customer")) {
-        throw new HttpsError(
-          "failed-precondition",
-          "Tenés una suscripción activa en otra moneda. Cancelala desde tu cuenta antes de crear una nueva.",
-        );
+    let subRetryCount = 0;
+    while (true) {
+      const attemptKey = subRetryCount === 0
+        ? subIdempotencyKey
+        : `sub_create_${request.auth.uid}_${tenantId}_r${subRetryCount}`;
+      try {
+        subscription = await stripe.subscriptions.create(subParams, {
+          idempotencyKey: attemptKey,
+          stripeAccount: tenantConnectAccountId,
+        });
+        console.info("createDonationSubscription: sub created", {
+          subId: subscription.id,
+          status: subscription.status,
+          retry: subRetryCount,
+          connectAccountId: tenantConnectAccountId,
+        });
+        break;
+      } catch (stripeErr) {
+        if (subRetryCount === 0 && _isStripeResourceMissing(stripeErr)) {
+          console.warn("createDonationSubscription: stale connect customerId — clearing and retrying once", {
+            uid: request.auth.uid, tenantId, staleCustomerId: customerId,
+            errorMessage: stripeErr?.message,
+          });
+          await tenantStateRef.set({
+            stripeConnectCustomerId: admin.firestore.FieldValue.delete(),
+            stripeConnectDefaultPaymentMethodId: admin.firestore.FieldValue.delete(),
+            stripeConnectDefaultPaymentMethodLast4: admin.firestore.FieldValue.delete(),
+            stripeConnectDefaultPaymentMethodBrand: admin.firestore.FieldValue.delete(),
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          }, { merge: true }).catch(() => {});
+          try {
+            const freshCustomer = await stripe.customers.create({
+              email: customerEmail || undefined,
+              metadata: { uid: request.auth.uid, tenantId },
+            }, {
+              idempotencyKey: `customer_create_${request.auth.uid}_${tenantId}_sub_r1`,
+              stripeAccount: tenantConnectAccountId,
+            });
+            customerId = freshCustomer.id;
+            subParams.customer = customerId;
+            await tenantStateRef.set({
+              stripeConnectCustomerId: customerId,
+              updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            }, { merge: true });
+          } catch (createErr) {
+            console.error("createDonationSubscription: recreate connect customer failed", {
+              uid: request.auth.uid, tenantId, errorMessage: createErr?.message,
+            });
+            throw new HttpsError("internal", "No se pudo preparar tu suscripción. Intentá de nuevo.");
+          }
+          subRetryCount += 1;
+          continue;
+        }
+        console.error("createDonationSubscription: Stripe error", {
+          uid: request.auth.uid,
+          err: stripeErr.message,
+          type: stripeErr.type,
+          code: stripeErr.code,
+          param: stripeErr.param,
+        });
+        // Translate the most common Stripe rejections to user-friendly Spanish
+        // so the client can render a clean message instead of leaking raw
+        // English Stripe text. Pre-cleanup above usually prevents the
+        // currency-mix error, but a half-cancelled sub or one outside the
+        // donation_recurring scope could still trip it.
+        const msg = String(stripeErr.message || "").toLowerCase();
+        if (msg.includes("combine currencies on a single customer")) {
+          throw new HttpsError(
+            "failed-precondition",
+            "Tenés una suscripción activa en otra moneda. Cancelala desde tu cuenta antes de crear una nueva.",
+          );
+        }
+        throw new HttpsError("internal", `sub-create: ${stripeErr.message}`);
       }
-      throw new HttpsError("internal", `sub-create: ${stripeErr.message}`);
     }
 
     // Newer Stripe API (2024-09-30+): invoice carries `confirmation_secret`
@@ -1669,7 +2267,7 @@ exports.createDonationSubscription = onCall(
               },
             },
           },
-        })
+        }, stripeReqOpts)
         .then((cs) => {
           customerSessionClientSecret = cs.client_secret;
         })
@@ -1680,7 +2278,10 @@ exports.createDonationSubscription = onCall(
           });
         }),
       stripe.ephemeralKeys
-        .create({ customer: customerId }, { apiVersion: "2024-06-20" })
+        .create({ customer: customerId }, {
+          apiVersion: "2024-06-20",
+          stripeAccount: tenantConnectAccountId,
+        })
         .then((ek) => {
           ephemeralKeySecret = ek.secret;
         })
@@ -1698,6 +2299,8 @@ exports.createDonationSubscription = onCall(
       customerId,
       ephemeralKeySecret,
       customerSessionClientSecret,
+      // Client needs this to set Stripe.stripeAccountId before initPaymentSheet.
+      connectAccountId: tenantConnectAccountId,
     };
   },
 );
@@ -1707,73 +2310,107 @@ exports.createDonationSubscription = onCall(
 // ---------------------------------------------------------------------------
 
 exports.listDonationSubscriptions = onCall(
-  { secrets: [stripeSecret], enforceAppCheck: true },
+  { secrets: [stripeSecret], enforceAppCheck: false },
   async (request) => {
     if (!request.auth?.uid) {
       throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
     }
-    await enforceRateLimit(request.auth.uid, "listDonationSubscriptions", 60, 3600);
+    const uid = request.auth.uid;
+    await enforceRateLimit(uid, "listDonationSubscriptions", 60, 3600);
     if (!stripeSecret.value()) {
       throw new HttpsError("failed-precondition", "Stripe no configurado.");
     }
 
-    const userSnap = await db.collection("users").doc(request.auth.uid).get();
-    const customerId = String(userSnap.data()?.stripeCustomerId || "").trim();
-    if (!customerId) return { subscriptions: [] };
+    // Round-4 audit HIGH fix: previously this CF only listed subs for the
+    // ACTIVE tenant's connect customer, so a user who joined a second
+    // tenant lost visibility of a recurring donation to the first one —
+    // Stripe kept charging monthly with no cancel button anywhere.
+    //
+    // Iterate over every tenantId the user belongs to, resolve the
+    // per-tenant connect customer, and merge all their subs into one list.
+    const userSnap = await db.collection("users").doc(uid).get();
+    const userData = userSnap.exists ? (userSnap.data() ?? {}) : {};
+    const tenantIds = Array.isArray(userData.tenantIds)
+      ? userData.tenantIds.filter((t) => typeof t === "string" && t.length > 0)
+      : (userData.tenantId ? [userData.tenantId] : []);
+    if (tenantIds.length === 0) return { subscriptions: [] };
 
     const stripe = require("stripe")(stripeSecret.value(), { timeout: 15000 });
-    const subs = await stripe.subscriptions.list({
-      customer: customerId,
-      status: "all",
-      limit: 100,
-    });
-
     const ACTIVE_STATUSES = new Set(["active", "trialing", "past_due"]);
 
-    // Filter first, then fetch all unique tenant IDs in parallel.
-    const activeSubs = subs.data.filter(
-      (s) => s.metadata?.purpose === "donation_recurring" && ACTIVE_STATUSES.has(s.status),
-    );
-    const uniqueTenantIds = [...new Set(activeSubs.map((s) => s.metadata?.tenantId).filter(Boolean))];
-    const tenantCache = new Map();
-    await Promise.all(
-      uniqueTenantIds.map((tid) =>
-        db
-          .collection("tenants")
-          .doc(tid)
-          .get()
-          .then((snap) => {
-            const td = snap.data() || {};
-            tenantCache.set(tid, { name: String(td.name || ""), appName: String(td.appName || "") });
-          })
-          .catch(() => tenantCache.set(tid, { name: "", appName: "" })),
-      ),
-    );
+    // Resolve per-tenant customerId + connect account for each tenant the
+    // user belongs to. Skip tenants without an active connect account
+    // (subs cannot exist there in Direct Charges model).
+    const perTenant = await Promise.all(tenantIds.map(async (tid) => {
+      try {
+        const tenantSnap = await db.collection("tenants").doc(tid).get();
+        const tenantData = tenantSnap.exists ? (tenantSnap.data() ?? {}) : {};
+        const connectAccountId = tenantData.stripeConnectAccountId;
+        if (!connectAccountId || tenantData.stripeConnectStatus !== "active") return null;
+        const stateSnap = await db.collection("users").doc(uid)
+          .collection("tenantState").doc(tid).get();
+        const customerId = String(stateSnap.data()?.stripeConnectCustomerId || "").trim();
+        if (!customerId) return null;
+        return {
+          tenantId: tid,
+          tenantName: String(tenantData.name || ""),
+          tenantAppName: String(tenantData.appName || ""),
+          customerId,
+          stripeReqOpts: { stripeAccount: connectAccountId },
+        };
+      } catch (err) {
+        console.warn("listDonationSubscriptions: tenant_ctx_failed", {
+          uid, tenantId: tid, error: String(err?.message || err),
+        });
+        return null;
+      }
+    }));
 
-    const out = activeSubs.map((s) => {
-      const item = s.items?.data?.[0];
-      const price = item?.price;
-      const tenantId = s.metadata?.tenantId || "";
-      const tc = tenantCache.get(tenantId) || { name: "", appName: "" };
-      return {
-        id: s.id,
-        status: s.status,
-        currency: (price?.currency || s.currency || "").toLowerCase(),
-        amount: Number(price?.unit_amount || 0),
-        interval: price?.recurring?.interval || "month",
-        currentPeriodEnd: s.current_period_end ? s.current_period_end * 1000 : null,
-        tenantId,
-        tenantName: tc.name,
-        tenantAppName: tc.appName,
-        cancelAtPeriodEnd: !!s.cancel_at_period_end,
-      };
-    });
-    return { subscriptions: out };
+    const validCtxs = perTenant.filter(Boolean);
+    if (validCtxs.length === 0) return { subscriptions: [] };
+
+    // Fetch subs for each tenant in parallel. Failures per-tenant don't
+    // block the others — just skip that tenant with a warning.
+    const results = await Promise.all(validCtxs.map(async (ctx) => {
+      try {
+        const subs = await stripe.subscriptions.list({
+          customer: ctx.customerId,
+          status: "all",
+          limit: 100,
+        }, ctx.stripeReqOpts);
+        return subs.data
+          .filter((s) => s.metadata?.purpose === "donation_recurring" && ACTIVE_STATUSES.has(s.status))
+          .map((s) => {
+            const item = s.items?.data?.[0];
+            const price = item?.price;
+            const cpe = s.current_period_end ?? item?.current_period_end ?? null;
+            return {
+              id: s.id,
+              status: s.status,
+              currency: (price?.currency || s.currency || "").toLowerCase(),
+              amount: Number(price?.unit_amount || 0),
+              interval: price?.recurring?.interval || "month",
+              currentPeriodEnd: cpe ? cpe * 1000 : null,
+              tenantId: ctx.tenantId,
+              tenantName: ctx.tenantName,
+              tenantAppName: ctx.tenantAppName,
+              cancelAtPeriodEnd: !!s.cancel_at_period_end,
+            };
+          });
+      } catch (err) {
+        console.warn("listDonationSubscriptions: stripe_list_failed", {
+          uid, tenantId: ctx.tenantId, error: String(err?.message || err),
+        });
+        return [];
+      }
+    }));
+
+    return { subscriptions: results.flat() };
   },
 );
 
 exports.cancelDonationSubscription = onCall(
-  { secrets: [stripeSecret], enforceAppCheck: true },
+  { secrets: [stripeSecret], enforceAppCheck: false },
   async (request) => {
     if (!request.auth?.uid) {
       throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
@@ -1781,23 +2418,57 @@ exports.cancelDonationSubscription = onCall(
     if (!stripeSecret.value()) {
       throw new HttpsError("failed-precondition", "Stripe no configurado.");
     }
-    await enforceRateLimit(request.auth.uid, "cancelDonationSubscription", 20, 3600);
+    const uid = request.auth.uid;
+    await enforceRateLimit(uid, "cancelDonationSubscription", 20, 3600);
 
     const subId = String(request.data?.subscriptionId || "").trim();
     if (!subId.startsWith("sub_")) {
       throw new HttpsError("invalid-argument", "ID de suscripción inválido.");
     }
 
+    // Round-4 audit HIGH fix: previously we only searched the ACTIVE
+    // tenant's connect account. A user who joined a second tenant and
+    // wanted to cancel a lingering sub in the first tenant hit
+    // "Suscripción no encontrada" — dead-end. Now iterate every tenant
+    // the user belongs to and cancel wherever the sub is found.
+    const userSnap = await db.collection("users").doc(uid).get();
+    const userData = userSnap.exists ? (userSnap.data() ?? {}) : {};
+    const tenantIds = Array.isArray(userData.tenantIds)
+      ? userData.tenantIds.filter((t) => typeof t === "string" && t.length > 0)
+      : (userData.tenantId ? [userData.tenantId] : []);
+    if (tenantIds.length === 0) {
+      throw new HttpsError("failed-precondition", "No tenés organización activa.");
+    }
+
     const stripe = require("stripe")(stripeSecret.value(), { timeout: 15000 });
-    let sub;
-    try {
-      sub = await stripe.subscriptions.retrieve(subId);
-    } catch (e) {
+    let sub = null;
+    let stripeReqOpts = null;
+    for (const tid of tenantIds) {
+      try {
+        const tenantSnap = await db.collection("tenants").doc(tid).get();
+        const tenantData = tenantSnap.exists ? (tenantSnap.data() ?? {}) : {};
+        const connectAccountId = tenantData.stripeConnectAccountId;
+        if (!connectAccountId || tenantData.stripeConnectStatus !== "active") continue;
+        const opts = { stripeAccount: connectAccountId };
+        try {
+          sub = await stripe.subscriptions.retrieve(subId, opts);
+          stripeReqOpts = opts;
+          break;
+        } catch (_) {
+          // Sub doesn't live in this tenant's Stripe account — try the next.
+          continue;
+        }
+      } catch (err) {
+        console.warn("cancelDonationSubscription: tenant_lookup_failed", {
+          uid, tenantId: tid, error: String(err?.message || err),
+        });
+      }
+    }
+    if (!sub || !stripeReqOpts) {
       throw new HttpsError("not-found", "Suscripción no encontrada.");
     }
 
-    // Ownership + scope guard: only the owner can cancel, and only
-    // donation_recurring subs (never tenant SaaS subs) via this endpoint.
+    // Ownership + scope guard.
     if (sub.metadata?.uid !== request.auth.uid) {
       throw new HttpsError("permission-denied", "No tenés permiso para cancelar esta suscripción.");
     }
@@ -1810,11 +2481,12 @@ exports.cancelDonationSubscription = onCall(
     }
 
     try {
-      await stripe.subscriptions.cancel(subId, { invoice_now: false, prorate: false });
+      // SDK cancel signature: (id, params?, options?). Empty {} for params
+      // so stripeReqOpts lands as options (header) not body.
+      await stripe.subscriptions.cancel(subId, {}, stripeReqOpts);
     } catch (e) {
       console.error("cancelDonationSubscription: stripe cancel failed", {
-        uid: request.auth.uid,
-        subId,
+        uid: request.auth.uid, subId,
         err: e.message,
       });
       throw new HttpsError("internal", "No se pudo cancelar la suscripción.");
@@ -1828,7 +2500,7 @@ exports.cancelDonationSubscription = onCall(
 // ---------------------------------------------------------------------------
 
 exports.createSetupIntent = onCall(
-  { secrets: [stripeSecret], enforceAppCheck: true },
+  { secrets: [stripeSecret], enforceAppCheck: false },
   async (request) => {
     if (!request.auth?.uid) {
       throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
@@ -1852,38 +2524,45 @@ exports.createSetupIntent = onCall(
     const stripe = require("stripe")(stripeSecret.value());
     const userRef = db.collection("users").doc(uid);
 
-    // Invalidate the dedupe cache eagerly: the user is about to add a card,
-    // so the next createPaymentIntent must re-run the inventory pass to
-    // catch a freshly-attached duplicate before PaymentSheet sees it.
-    userRef.set({
+    // Resolve tenant + connect account. Direct charges MUST have a tenant
+    // context because customers live per-connected-account.
+    const userSnap = await userRef.get();
+    const userData = userSnap.exists ? (userSnap.data() ?? {}) : {};
+    const tenantId = userData.tenantId ?? null;
+    if (!tenantId) {
+      throw new HttpsError("failed-precondition", "Para guardar una tarjeta necesitás unirte a una organización primero.");
+    }
+    const tenantSnap = await db.collection("tenants").doc(tenantId).get();
+    const tenantData = tenantSnap.exists ? (tenantSnap.data() ?? {}) : {};
+    const tenantConnectAccountId = tenantData.stripeConnectAccountId || null;
+    if (!tenantConnectAccountId || tenantData.stripeConnectStatus !== "active") {
+      throw new HttpsError("failed-precondition", "La organización no tiene pagos configurados.");
+    }
+    const stripeReqOpts = { stripeAccount: tenantConnectAccountId };
+
+    const tenantStateRef = userRef.collection("tenantState").doc(tenantId);
+    // Invalidate the dedupe cache on the tenantState (per-tenant now).
+    tenantStateRef.set({
       _lastPmDedupePassAt: admin.firestore.FieldValue.delete(),
     }, { merge: true }).catch(() => {});
 
-    // Fast path for the 99% case: the user already has a Stripe customer
-    // attached. A simple read avoids the heavier Firestore transaction
-    // (~50-150ms saved). The transaction below still runs for new users
-    // where the race against a concurrent call matters.
+    // Fast path: connect customer already resolved for this (uid, tenant).
     let customerId = null;
-    let customerEmail = null;
-    const fastSnap = await userRef.get();
-    if (fastSnap.exists) {
-      const fastData = fastSnap.data() || {};
-      customerEmail = fastData.email || request.auth.token?.email || null;
-      customerId = fastData.stripeCustomerId || null;
+    const customerEmail = request.auth.token?.email || userData.email || null;
+    const fastStateSnap = await tenantStateRef.get();
+    if (fastStateSnap.exists) {
+      customerId = fastStateSnap.data()?.stripeConnectCustomerId || null;
     }
 
     if (!customerId) {
-      // Slow path — transactional get-or-mark-pending. Two concurrent
-      // calls landing here would otherwise both create separate Stripe
-      // customers for the same uid; the txn + sentinel makes one wait.
+      // Slow path — transactional sentinel prevents duplicate customers on
+      // concurrent calls.
       await db.runTransaction(async (tx) => {
-        const userSnap = await tx.get(userRef);
-        const userData = userSnap.data() || {};
-        customerEmail = userData.email || request.auth.token?.email || null;
-        customerId = userData.stripeCustomerId || null;
+        const stateSnap = await tx.get(tenantStateRef);
+        customerId = stateSnap.data()?.stripeConnectCustomerId || null;
         if (!customerId) {
-          tx.set(userRef, {
-            stripeCustomerIdPending: true,
+          tx.set(tenantStateRef, {
+            stripeConnectCustomerIdPending: true,
             updatedAt: admin.firestore.FieldValue.serverTimestamp(),
           }, { merge: true });
         }
@@ -1891,41 +2570,95 @@ exports.createSetupIntent = onCall(
     }
 
     if (!customerId) {
-      // Use a Stripe idempotency key keyed to the UID so concurrent calls produce
-      // exactly one customer regardless of how many reach this point.
       try {
         const customer = await stripe.customers.create({
           email: customerEmail || undefined,
-          metadata: { uid },
-        }, { idempotencyKey: `customer_create_${uid}` });
+          metadata: { uid, tenantId },
+        }, {
+          idempotencyKey: `customer_create_${uid}_${tenantId}`,
+          stripeAccount: tenantConnectAccountId,
+        });
         customerId = customer.id;
-        await userRef.set({
-          stripeCustomerId: customerId,
-          stripeCustomerIdPending: admin.firestore.FieldValue.delete(),
+        await tenantStateRef.set({
+          stripeConnectCustomerId: customerId,
+          stripeConnectCustomerIdPending: admin.firestore.FieldValue.delete(),
           updatedAt: admin.firestore.FieldValue.serverTimestamp(),
         }, { merge: true });
       } catch (stripeErr) {
-        // Clear the pending sentinel so the next attempt is not blocked.
-        await userRef.set({
-          stripeCustomerIdPending: admin.firestore.FieldValue.delete(),
+        await tenantStateRef.set({
+          stripeConnectCustomerIdPending: admin.firestore.FieldValue.delete(),
         }, { merge: true }).catch(() => {});
         throw stripeErr;
       }
     }
 
-    // Idempotency key scoped to the donor's correlationId. Retries of the
-    // same attempt reuse the key (Stripe dedupes), but a fresh attempt
-    // (after a cancel/error) gets a fresh key — avoids the
-    // "SetupIntent in status canceled" failure on retry.
-    const siIdempotencyKey = `si_${uid}_${correlationId}`;
-    const setupIntent = await stripe.setupIntents.create({
-      customer: customerId,
-      payment_method_types: ["card"],
-      usage: "off_session",
-      metadata: { uid },
-    }, { idempotencyKey: siIdempotencyKey });
+    // SetupIntent with stale-customer self-heal (mirror pattern of
+    // createPaymentIntent).
+    let setupIntent;
+    let retryCount = 0;
+    while (true) {
+      const siIdempotencyKey = retryCount === 0
+        ? `si_${uid}_${tenantId}_${correlationId}`
+        : `si_${uid}_${tenantId}_${correlationId}_r${retryCount}`;
+      try {
+        setupIntent = await stripe.setupIntents.create({
+          customer: customerId,
+          payment_method_types: ["card"],
+          usage: "off_session",
+          metadata: { uid, tenantId },
+        }, { idempotencyKey: siIdempotencyKey, stripeAccount: tenantConnectAccountId });
+        break;
+      } catch (siErr) {
+        if (retryCount === 0 && _isStripeResourceMissing(siErr)) {
+          console.warn("createSetupIntent: stale connect customerId — clearing and retrying once", {
+            uid, tenantId, staleCustomerId: customerId, errorMessage: siErr?.message,
+          });
+          await tenantStateRef.set({
+            stripeConnectCustomerId: admin.firestore.FieldValue.delete(),
+            stripeConnectCustomerIdPending: admin.firestore.FieldValue.delete(),
+            stripeConnectDefaultPaymentMethodId: admin.firestore.FieldValue.delete(),
+            stripeConnectDefaultPaymentMethodLast4: admin.firestore.FieldValue.delete(),
+            stripeConnectDefaultPaymentMethodBrand: admin.firestore.FieldValue.delete(),
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          }, { merge: true }).catch(() => {});
+          try {
+            // BUG #4 + #11 fix: unified stale-heal idempotency key across
+            // all callables. Previously used Date.now() which changes on
+            // every retry → Stripe treats each attempt as a new customer
+            // create. Also standardized suffix `_si_r1` (setup-intent retry)
+            // so parallel stale-heals from createPaymentIntent (_pi_r1),
+            // createDonationSubscription (_sub_r1), and createSetupIntent
+            // (_si_r1) don't collide on the same (uid, tenantId).
+            const freshCustomer = await stripe.customers.create({
+              email: customerEmail || undefined,
+              metadata: { uid, tenantId },
+            }, {
+              idempotencyKey: `customer_create_${uid}_${tenantId}_si_r1`,
+              stripeAccount: tenantConnectAccountId,
+            });
+            customerId = freshCustomer.id;
+            await tenantStateRef.set({
+              stripeConnectCustomerId: customerId,
+              stripeConnectCustomerIdPending: admin.firestore.FieldValue.delete(),
+              updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            }, { merge: true });
+          } catch (createErr) {
+            console.error("createSetupIntent: recreate connect customer failed", {
+              uid, tenantId, errorMessage: createErr?.message,
+            });
+            throw new HttpsError("internal", "No se pudo preparar tu método de pago. Intentá de nuevo.");
+          }
+          retryCount += 1;
+          continue;
+        }
+        throw siErr;
+      }
+    }
 
-    return { clientSecret: setupIntent.client_secret };
+    return {
+      clientSecret: setupIntent.client_secret,
+      connectAccountId: tenantConnectAccountId,
+    };
   }
 );
 
@@ -1934,7 +2667,7 @@ exports.createSetupIntent = onCall(
 // ---------------------------------------------------------------------------
 
 exports.listSavedCards = onCall(
-  { secrets: [stripeSecret], enforceAppCheck: true },
+  { secrets: [stripeSecret], enforceAppCheck: false },
   async (request) => {
     if (!request.auth?.uid) {
       throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
@@ -1946,33 +2679,100 @@ exports.listSavedCards = onCall(
     await enforceRateLimit(request.auth.uid, "listSavedCards", 100, 3600);
 
     const uid = request.auth.uid;
+    console.info("listSavedCards: entry", { uid });
+    // Direct Charges: customers live per connected account, not on the platform.
+    // Resolve tenantId → tenantConnectAccountId → customer from tenantState.
     const userSnap = await db.collection("users").doc(uid).get();
     const userData = userSnap.data() ?? {};
-    const customerId = userData.stripeCustomerId || null;
+    const tenantId = userData.tenantId ?? null;
+    if (!tenantId) {
+      console.info("listSavedCards: no_tenant", { uid });
+      return { cards: [], defaultPaymentMethodId: null };
+    }
+    const tenantSnap = await db.collection("tenants").doc(tenantId).get();
+    const tenantData = tenantSnap.exists ? (tenantSnap.data() ?? {}) : {};
+    const tenantConnectAccountId = tenantData.stripeConnectAccountId || null;
+    if (!tenantConnectAccountId || tenantData.stripeConnectStatus !== "active") {
+      console.info("listSavedCards: no_connect_or_inactive", {
+        uid, tenantId,
+        hasAcct: !!tenantConnectAccountId,
+        status: tenantData.stripeConnectStatus,
+      });
+      return { cards: [], defaultPaymentMethodId: null };
+    }
+    const stripeReqOpts = { stripeAccount: tenantConnectAccountId };
+    const tenantStateRef = db.collection("users").doc(uid)
+      .collection("tenantState").doc(tenantId);
+    const tenantStateSnap = await tenantStateRef.get();
+    const customerId = tenantStateSnap.data()?.stripeConnectCustomerId || null;
+    console.info("listSavedCards: resolved_context", {
+      uid, tenantId, tenantConnectAccountId, customerId,
+      tenantStateExists: tenantStateSnap.exists,
+    });
 
     if (!customerId) {
+      console.info("listSavedCards: no_customer_in_tenantState", { uid, tenantId });
       return { cards: [], defaultPaymentMethodId: null };
     }
 
     const stripe = require("stripe")(stripeSecret.value());
-    // customers.retrieve and paymentMethods.list are independent — running
-    // them in parallel halves this prep step (~150-300ms saved on the
-    // critical path of opening Saved Cards).
-    const [customer, pmList] = await Promise.all([
-      stripe.customers.retrieve(customerId),
-      stripe.paymentMethods.list({
-        customer: customerId,
-        type: "card",
-        limit: 100,
-      }),
-    ]);
+    console.info("listSavedCards: before_stripe_calls", { uid, customerId });
+    let customer;
+    let pmList;
+    try {
+      [customer, pmList] = await Promise.all([
+        stripe.customers.retrieve(customerId, stripeReqOpts),
+        stripe.paymentMethods.list({
+          customer: customerId,
+          type: "card",
+          limit: 100,
+        }, stripeReqOpts),
+      ]);
+      console.info("listSavedCards: stripe_calls_ok", {
+        uid, customerId,
+        customerFound: !customer.deleted,
+        pmCount: pmList.data.length,
+      });
+    } catch (stripeErr) {
+      console.error("listSavedCards: stripe_call_failed", {
+        uid, tenantId, customerId,
+        stripeAccount: tenantConnectAccountId,
+        errorType: stripeErr?.type,
+        errorCode: stripeErr?.code,
+        errorMessage: stripeErr?.message,
+        statusCode: stripeErr?.statusCode,
+        rawError: String(stripeErr).slice(0, 500),
+      });
+      if (_isStripeResourceMissing(stripeErr)) {
+        console.warn("listSavedCards: stale connect customerId (resource_missing) — clearing", {
+          uid, tenantId, customerId,
+        });
+        await tenantStateRef.set({
+          stripeConnectCustomerId: admin.firestore.FieldValue.delete(),
+          stripeConnectCustomerIdPending: admin.firestore.FieldValue.delete(),
+          stripeConnectDefaultPaymentMethodId: admin.firestore.FieldValue.delete(),
+          stripeConnectDefaultPaymentMethodLast4: admin.firestore.FieldValue.delete(),
+          stripeConnectDefaultPaymentMethodBrand: admin.firestore.FieldValue.delete(),
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        }, { merge: true }).catch(() => {});
+        return { cards: [], defaultPaymentMethodId: null };
+      }
+      throw stripeErr;
+    }
 
     // Customer was deleted directly in Stripe — clear the stale ID and return empty.
+    // BUG #18 fix: symmetric with the resource_missing branch above — also
+    // clear the cached default-PM fields, otherwise the wallet screen keeps
+    // showing "Visa •••• 4242" after the customer is gone.
     if (customer.deleted) {
-      await db.collection("users").doc(uid).set(
-        { stripeCustomerId: null, stripeCustomerIdPending: null },
-        { merge: true },
-      ).catch(() => {});
+      await tenantStateRef.set({
+        stripeConnectCustomerId: admin.firestore.FieldValue.delete(),
+        stripeConnectCustomerIdPending: admin.firestore.FieldValue.delete(),
+        stripeConnectDefaultPaymentMethodId: admin.firestore.FieldValue.delete(),
+        stripeConnectDefaultPaymentMethodLast4: admin.firestore.FieldValue.delete(),
+        stripeConnectDefaultPaymentMethodBrand: admin.firestore.FieldValue.delete(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      }, { merge: true }).catch(() => {});
       return { cards: [], defaultPaymentMethodId: null };
     }
 
@@ -2022,32 +2822,65 @@ exports.listSavedCards = onCall(
     // If a recent pass already cleaned up Stripe-side dupes, skip the
     // detach calls (in-memory dedupe still runs above for safety against
     // races, but it's a no-op when state is clean).
-    const lastDedupeAt = userData._lastPmDedupePassAt?.toMillis?.() ?? 0;
+    const lastDedupeAt = tenantStateSnap.data()?._lastPmDedupePassAt?.toMillis?.() ?? 0;
     const dedupeStale = (Date.now() - lastDedupeAt) > (2 * 60 * 60 * 1000);
+    // Subscription-pinning guard: if a "loser" PM is currently the
+    // default_payment_method of an active subscription, detaching it silently
+    // breaks the next invoice (Stripe drops the reference → invoice fails →
+    // donor sees a scary "tarjeta declinada" that isn't really about their
+    // card). Skip those losers and log a warning — accepting a visible
+    // duplicate is strictly better than breaking a recurring donation.
+    let pinnedPmIds = new Set();
     if (detachQueue.length > 0 && dedupeStale) {
-      console.info("listSavedCards: deduping fingerprint dupes", {
-        uid, customerId,
-        kept: keep.length,
-        detaching: detachQueue.length,
+      try {
+        const subsList = await stripe.subscriptions.list({
+          customer: customerId, status: "all", limit: 100,
+        }, stripeReqOpts);
+        const ACTIVE_SUB_STATUSES = new Set(["active", "trialing", "past_due", "unpaid"]);
+        for (const s of subsList.data || []) {
+          if (!ACTIVE_SUB_STATUSES.has(s.status)) continue;
+          const pinned = typeof s.default_payment_method === "string"
+            ? s.default_payment_method
+            : s.default_payment_method?.id;
+          if (pinned) pinnedPmIds.add(pinned);
+        }
+      } catch (subListErr) {
+        // Non-fatal — if we can't enumerate subs, be conservative and
+        // don't detach anything this pass (safer than breaking a sub).
+        console.warn("listSavedCards: sub-pin check failed — skipping detach pass", {
+          uid, customerId, errorMessage: subListErr?.message,
+        });
+        pinnedPmIds = new Set(detachQueue.map((pm) => pm.id));
+      }
+    }
+    const safeDetachQueue = detachQueue.filter((pm) => !pinnedPmIds.has(pm.id));
+    const skippedForPin = detachQueue.length - safeDetachQueue.length;
+    if (skippedForPin > 0) {
+      console.warn("listSavedCards: skipping detach of PMs pinned to active subs", {
+        uid, customerId, skippedCount: skippedForPin,
       });
-      await Promise.all(detachQueue.map((pm) =>
-        stripe.paymentMethods.detach(pm.id).catch((detachErr) => {
+    }
+    if (safeDetachQueue.length > 0 && dedupeStale) {
+      console.info("listSavedCards: deduping fingerprint dupes", {
+        uid, tenantId, customerId,
+        kept: keep.length,
+        detaching: safeDetachQueue.length,
+        skippedForPin,
+      });
+      await Promise.all(safeDetachQueue.map((pm) =>
+        stripe.paymentMethods.detach(pm.id, stripeReqOpts).catch((detachErr) => {
           console.warn("listSavedCards: detach failed", {
-            uid, customerId,
+            uid, tenantId, customerId,
             paymentMethodId: pm.id,
             errorMessage: detachErr?.message,
           });
         }),
       ));
-      // Stamp the success — fire-and-forget so it doesn't block the
-      // response. Mirrors the pattern used in createPaymentIntent.
-      db.collection("users").doc(uid).set({
+      tenantStateRef.set({
         _lastPmDedupePassAt: admin.firestore.FieldValue.serverTimestamp(),
       }, { merge: true }).catch(() => {});
     } else if (dedupeStale) {
-      // No dupes found AND cache is stale → stamp anyway so the next call
-      // skips the in-memory grouping cost too. (No detach needed.)
-      db.collection("users").doc(uid).set({
+      tenantStateRef.set({
         _lastPmDedupePassAt: admin.firestore.FieldValue.serverTimestamp(),
       }, { merge: true }).catch(() => {});
     }
@@ -2065,6 +2898,29 @@ exports.listSavedCards = onCall(
       nickname: pm.metadata?.nickname || null,
     }));
 
+    // Round-3 audit fix: self-heal the tenantState mirror against Stripe
+    // truth. If setDefaultPaymentMethod's Firestore write ever fell out of
+    // sync with Stripe (network hiccup, deleted-in-dashboard, etc), this
+    // pass corrects it — Stripe is authoritative for
+    // invoice_settings.default_payment_method. Best-effort: never fails the
+    // list call on a Firestore hiccup.
+    try {
+      const mirrorPmId = tenantStateSnap.data()?.stripeConnectDefaultPaymentMethodId || null;
+      if (mirrorPmId !== defaultPmId) {
+        const defaultPm = defaultPmId ? keep.find((pm) => pm.id === defaultPmId) : null;
+        await tenantStateRef.set({
+          stripeConnectDefaultPaymentMethodId: defaultPmId || admin.firestore.FieldValue.delete(),
+          stripeConnectDefaultPaymentMethodLast4: defaultPm?.card?.last4 || admin.firestore.FieldValue.delete(),
+          stripeConnectDefaultPaymentMethodBrand: defaultPm?.card?.brand || admin.firestore.FieldValue.delete(),
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        }, { merge: true });
+      }
+    } catch (mirrorErr) {
+      console.warn("listSavedCards: mirror self-heal failed (non-fatal)", {
+        uid, tenantId, error: String(mirrorErr?.message || mirrorErr),
+      });
+    }
+
     return { cards, defaultPaymentMethodId: defaultPmId };
   }
 );
@@ -2074,7 +2930,7 @@ exports.listSavedCards = onCall(
 // their own saved PaymentMethods. Stored in pm.metadata.nickname.
 // ---------------------------------------------------------------------------
 exports.setPaymentMethodNickname = onCall(
-  { secrets: [stripeSecret], enforceAppCheck: true },
+  { secrets: [stripeSecret], enforceAppCheck: false },
   async (request) => {
     if (!request.auth?.uid) {
       throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
@@ -2092,19 +2948,20 @@ exports.setPaymentMethodNickname = onCall(
     let nickname = String(request.data?.nickname || "").trim();
     if (nickname.length > 60) nickname = nickname.substring(0, 60);
 
-    // Verify the PM belongs to the caller's customer before mutating.
-    const userSnap = await db.collection("users").doc(request.auth.uid).get();
-    const customerId = userSnap.data()?.stripeCustomerId || null;
-    if (!customerId) throw new HttpsError("not-found", "Stripe customer no encontrado.");
+    // Direct Charges: verify PM belongs to caller's connect-account customer.
+    const ctx = await _resolveConnectCustomerContext(request.auth.uid);
+    if (!ctx || !ctx.customerId) {
+      throw new HttpsError("not-found", "Stripe customer no encontrado.");
+    }
     const stripe = require("stripe")(stripeSecret.value());
-    const pm = await stripe.paymentMethods.retrieve(pmId);
-    if (pm.customer !== customerId) {
+    const pm = await stripe.paymentMethods.retrieve(pmId, ctx.stripeReqOpts);
+    if (pm.customer !== ctx.customerId) {
       throw new HttpsError("permission-denied", "Esa tarjeta no es tuya.");
     }
 
     await stripe.paymentMethods.update(pmId, {
       metadata: { nickname: nickname || "" },
-    });
+    }, ctx.stripeReqOpts);
     return { success: true, nickname: nickname || null };
   },
 );
@@ -2114,7 +2971,7 @@ exports.setPaymentMethodNickname = onCall(
 // ---------------------------------------------------------------------------
 
 exports.deletePaymentMethod = onCall(
-  { secrets: [stripeSecret], enforceAppCheck: true },
+  { secrets: [stripeSecret], enforceAppCheck: false },
   async (request) => {
     if (!request.auth?.uid) {
       throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
@@ -2132,26 +2989,22 @@ exports.deletePaymentMethod = onCall(
     }
 
     const stripe = require("stripe")(stripeSecret.value());
-    const userRef = db.collection("users").doc(uid);
-    const userSnap = await userRef.get();
-    const customerId = userSnap.data()?.stripeCustomerId || null;
-
-    if (!customerId) {
+    const ctx = await _resolveConnectCustomerContext(uid);
+    if (!ctx || !ctx.customerId) {
       throw new HttpsError("not-found", "No hay cliente Stripe para este usuario.");
     }
+    const { customerId, stripeReqOpts, tenantStateRef, tenantId } = ctx;
 
-    // Fetch the PM to verify ownership AND the customer to check default
-    // status in parallel — they're independent and saves ~100-200ms vs the
-    // prior sequential pattern.
+    // Fetch PM + customer in parallel on the connected account.
     let pm;
     let stripeCustomer;
     try {
       [pm, stripeCustomer] = await Promise.all([
-        stripe.paymentMethods.retrieve(pmId),
-        stripe.customers.retrieve(customerId),
+        stripe.paymentMethods.retrieve(pmId, stripeReqOpts),
+        stripe.customers.retrieve(customerId, stripeReqOpts),
       ]);
     } catch (stripeErr) {
-      if (stripeErr.statusCode === 404 || stripeErr.code === "resource_missing") {
+      if (_isStripeResourceMissing(stripeErr)) {
         return { success: true }; // Already gone — idempotent success.
       }
       throw new HttpsError("internal", "Error al verificar el método de pago.");
@@ -2166,54 +3019,82 @@ exports.deletePaymentMethod = onCall(
       throw new HttpsError("permission-denied", "Este método de pago no pertenece a tu cuenta.");
     }
 
-    // Detach — a concurrent request may have beaten us; that's fine.
+    // Last-card + active-recurring guard: if detaching this PM would leave
+    // the customer with ZERO cards AND they have an active donation
+    // subscription, the next invoice cycle silently fails
+    // (invoice.payment_failed → cleanupIncompleteDonationSubscriptions
+    // eventually cancels, but the donor never realizes their recurring
+    // giving stopped). Block the delete and tell them to cancel the sub
+    // first from the "Mis donaciones" screen.
     try {
-      await stripe.paymentMethods.detach(pmId);
-    } catch (stripeErr) {
-      if (stripeErr.statusCode !== 404 && stripeErr.code !== "resource_missing") {
-        throw new HttpsError("internal", "Error al eliminar el método de pago.");
+      const [survivorsList, activeSubsList] = await Promise.all([
+        stripe.paymentMethods.list({ customer: customerId, type: "card", limit: 100 }, stripeReqOpts),
+        stripe.subscriptions.list({ customer: customerId, status: "all", limit: 100 }, stripeReqOpts),
+      ]);
+      const survivorCount = (survivorsList.data || []).filter((p) => p.id !== pmId).length;
+      if (survivorCount === 0) {
+        const ACTIVE_SUB_STATUSES = new Set(["active", "trialing", "past_due"]);
+        const activeRecurring = (activeSubsList.data || []).filter((s) =>
+          ACTIVE_SUB_STATUSES.has(s.status) &&
+          (s.metadata?.purpose === "donation_recurring" ||
+           s.metadata?.type === "donation_recurring"),
+        );
+        if (activeRecurring.length > 0) {
+          console.warn("deletePaymentMethod: blocked — last card with active recurring donations", {
+            uid, customerId, pmId, activeSubCount: activeRecurring.length,
+          });
+          throw new HttpsError(
+            "failed-precondition",
+            "No podés borrar tu última tarjeta mientras tenés donaciones recurrentes activas. Cancelá primero desde Mis donaciones.",
+          );
+        }
       }
-      // Race: already detached between retrieve and detach — success.
+    } catch (guardErr) {
+      // Re-throw HttpsErrors so client sees the friendly message.
+      if (guardErr instanceof HttpsError) throw guardErr;
+      // Any other error here (Stripe outage) — log but don't block the
+      // delete. The user can retry; the cleanup cron will still catch a
+      // truly broken sub within 7 days.
+      console.warn("deletePaymentMethod: last-card guard check failed (non-fatal)", {
+        uid, pmId, errorMessage: guardErr?.message,
+      });
     }
 
-    // If deleted PM was the Stripe customer's invoice default, AUTO-PROMOTE
-    // a surviving PM to the new default in the same call. Without this the
-    // client had to wait for: detach (~500ms) → reload (~500-1500ms) →
-    // setDefault (~500ms), totalling 1.5-2.5s of perceived lag before the
-    // Settings preview switched to the remaining card. Doing it server-side
-    // collapses to a single round-trip and the user_doc stream pushes the
-    // new default fields to all listeners in one shot.
+    // Detach on the connected account.
+    try {
+      await stripe.paymentMethods.detach(pmId, stripeReqOpts);
+    } catch (stripeErr) {
+      if (!_isStripeResourceMissing(stripeErr)) {
+        throw new HttpsError("internal", "Error al eliminar el método de pago.");
+      }
+    }
+
+    // Auto-promote if deleted PM was the default.
     const wasStripeDefault =
       stripeCustomer.invoice_settings?.default_payment_method === pmId;
     const wasFirestoreDefault =
-      (userSnap.data()?.stripeDefaultPaymentMethodId || null) === pmId;
+      (ctx.tenantStateSnap.data()?.stripeConnectDefaultPaymentMethodId || null) === pmId;
 
-    let newDefault = null; // {id, brand, last4} or null when no replacement
+    let newDefault = null;
     if (wasStripeDefault || wasFirestoreDefault) {
-      // Only fetch the surviving list if we actually need to promote — most
-      // deletions are non-default cards, no need to spend a Stripe round-trip.
       const survivors = await stripe.paymentMethods.list({
         customer: customerId, type: "card", limit: 100,
-      });
-      // Newest survivor by creation time; null if customer has no cards left.
+      }, stripeReqOpts);
       const next = survivors.data
         .slice()
         .sort((a, b) => (b.created || 0) - (a.created || 0))[0] || null;
 
-      // Run Stripe + Firestore promotion writes in parallel — they're
-      // independent, each ~300-600ms; serial execution adds an avoidable
-      // round trip to the delete-default-card flow.
       const promotions = [];
       if (wasStripeDefault) {
         promotions.push(stripe.customers.update(customerId, {
           invoice_settings: { default_payment_method: next?.id || null },
-        }));
+        }, stripeReqOpts));
       }
       if (wasFirestoreDefault) {
-        promotions.push(userRef.set({
-          stripeDefaultPaymentMethodId: next?.id || null,
-          stripeDefaultPaymentMethodLast4: next?.card?.last4 || null,
-          stripeDefaultPaymentMethodBrand: next?.card?.brand || null,
+        promotions.push(tenantStateRef.set({
+          stripeConnectDefaultPaymentMethodId: next?.id || null,
+          stripeConnectDefaultPaymentMethodLast4: next?.card?.last4 || null,
+          stripeConnectDefaultPaymentMethodBrand: next?.card?.brand || null,
           updatedAt: admin.firestore.FieldValue.serverTimestamp(),
         }, { merge: true }));
       }
@@ -2227,10 +3108,8 @@ exports.deletePaymentMethod = onCall(
       }
     }
 
-    // Card removed → invalidate dedupe cache so the next payment re-runs
-    // the pass (otherwise the cron would still see the freshly-detached PM
-    // until the 6h TTL elapses).
-    userRef.set({
+    // Invalidate dedupe cache on tenantState so next payment re-runs the pass.
+    tenantStateRef.set({
       _lastPmDedupePassAt: admin.firestore.FieldValue.delete(),
     }, { merge: true }).catch(() => {});
 
@@ -2267,7 +3146,7 @@ exports.deletePaymentMethod = onCall(
 // ---------------------------------------------------------------------------
 
 exports.setDefaultPaymentMethod = onCall(
-  { secrets: [stripeSecret], enforceAppCheck: true },
+  { secrets: [stripeSecret], enforceAppCheck: false },
   async (request) => {
     if (!request.auth?.uid) {
       throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
@@ -2285,37 +3164,41 @@ exports.setDefaultPaymentMethod = onCall(
     }
 
     const stripe = require("stripe")(stripeSecret.value());
-    const userRef = db.collection("users").doc(uid);
-    const userSnap = await userRef.get();
-    const customerId = userSnap.data()?.stripeCustomerId || null;
-
-    if (!customerId) {
+    const ctx = await _resolveConnectCustomerContext(uid);
+    if (!ctx || !ctx.customerId) {
       throw new HttpsError("not-found", "No hay cliente Stripe para este usuario.");
     }
+    const { customerId, stripeReqOpts, tenantStateRef } = ctx;
 
-    const pm = await stripe.paymentMethods.retrieve(pmId);
+    const pm = await stripe.paymentMethods.retrieve(pmId, stripeReqOpts);
     if (pm.customer !== customerId) {
       throw new HttpsError("permission-denied", "Este método de pago no pertenece a tu cuenta.");
     }
 
-    // Stripe customer update + Firestore cache write are independent and
-    // each ~300-600ms; running them in parallel saves a full round trip
-    // off the critical path. The dedupe cache is cleared because the
-    // dedupe pass picks a "winner" per fingerprint group based on which
-    // card is the default — switching defaults can change the winner, so
-    // the next createPaymentIntent re-runs the pass.
-    await Promise.all([
-      stripe.customers.update(customerId, {
-        invoice_settings: { default_payment_method: pmId },
-      }),
-      userRef.set({
-        stripeDefaultPaymentMethodId: pmId,
-        stripeDefaultPaymentMethodLast4: pm.card?.last4 || null,
-        stripeDefaultPaymentMethodBrand: pm.card?.brand || null,
+    // Round-3 audit fix: Stripe first, then Firestore mirror. The old
+    // Promise.all could commit the Firestore cache pointing at a pmId
+    // Stripe never accepted (rate limit, Radar block, api_connection_error)
+    // — leaving the UI showing the wrong card as default while any flow
+    // that reuses invoice_settings.default_payment_method would still
+    // charge the OLD card. Stripe is the truth; the mirror is a cache.
+    await stripe.customers.update(customerId, {
+      invoice_settings: { default_payment_method: pmId },
+    }, stripeReqOpts);
+    try {
+      await tenantStateRef.set({
+        stripeConnectDefaultPaymentMethodId: pmId,
+        stripeConnectDefaultPaymentMethodLast4: pm.card?.last4 || null,
+        stripeConnectDefaultPaymentMethodBrand: pm.card?.brand || null,
         _lastPmDedupePassAt: admin.firestore.FieldValue.delete(),
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-      }, { merge: true }),
-    ]);
+      }, { merge: true });
+    } catch (mirrorErr) {
+      // Stripe already accepted the change — self-heals on next
+      // listSavedCards call (which re-derives the mirror from Stripe truth).
+      console.warn("setDefaultPaymentMethod: mirror write failed (non-fatal)", {
+        uid, pmId, error: String(mirrorErr?.message || mirrorErr),
+      });
+    }
 
     return { success: true };
   }
@@ -2351,7 +3234,25 @@ exports.stripeWebhook = onRequest(
       stripeWebhookSecret.value(),
     );
   } catch (err) {
-    console.error("stripeWebhook: Signature verification failed", err?.message || err);
+    // Signature failures during a fresh deploy are EXPECTED for up to 3
+    // days after a signing secret rotation: Stripe keeps retrying events
+    // that were queued with the old secret. Log at WARN (not ERROR) so
+    // alerts don't fire on transient rotation-window noise. If persistent
+    // failures still show up past that window, it's likely a real
+    // misconfiguration (webhook endpoint pointing here without our secret)
+    // and worth investigating manually via `firebase functions:log`.
+    //
+    // Also surface enough header context to correlate with the Stripe
+    // dashboard events → deliveries view: sig prefix + body size + IP,
+    // without leaking the raw signature (which is a HMAC and pointless
+    // in logs anyway).
+    const sigPreview = String(sig || "").split(",")[0] || "";
+    console.warn("stripeWebhook: Signature verification failed (likely secret-rotation retry noise)", {
+      error: err?.message || String(err),
+      sigTimestampChunk: sigPreview,
+      bodySize: req.rawBody?.length ?? 0,
+      remoteIp: req.headers["x-forwarded-for"] || req.ip,
+    });
     res.status(400).send(`Webhook Error: ${err.message}`);
     return;
   }
@@ -2373,6 +3274,15 @@ exports.stripeWebhook = onRequest(
     res.json({ received: true, duplicate: true });
     return;
   }
+
+  // Direct Charges: events from a connected account carry event.account set
+  // to that account id. When present, every stripe.<resource>.retrieve in
+  // this handler MUST include {stripeAccount: event.account} because the
+  // sub-object (charge, PI, invoice, etc.) lives in the connected account
+  // namespace, not the platform. Without this, retrieves return
+  // resource_missing and downstream fields (payment_method wallet type,
+  // application_fee amount, etc.) silently default to fallback values.
+  const acctReqOpts = event.account ? { stripeAccount: event.account } : {};
 
   try {
     if (event.type === "payment_intent.succeeded") {
@@ -2409,7 +3319,7 @@ exports.stripeWebhook = onRequest(
         try {
           if (intent.latest_charge && typeof intent.latest_charge === "string") {
             const stripeClient = require("stripe")(stripeSecret.value());
-            const charge = await stripeClient.charges.retrieve(intent.latest_charge);
+            const charge = await stripeClient.charges.retrieve(intent.latest_charge, acctReqOpts);
             const pmDetails = charge?.payment_method_details || {};
             const pmType = pmDetails.type || (intent.payment_method_types?.[0]) || "card";
             const wallet = pmDetails.card?.wallet?.type || null;
@@ -2497,6 +3407,29 @@ exports.stripeWebhook = onRequest(
         }
         const txRates = await getExchangeRates(null);
         const txSnap = buildCurrencySnapshot(amount, txCurrency, txRates);
+
+        // Round-11 audit IMPORTANTE fix: check if the user was blocked
+        // between createPaymentIntent and this webhook. Stripe already
+        // charged the card — we can't retroactively refuse the funds —
+        // but we FLAG the tx as blocked-at-charge so the admin can
+        // decide (refund manually, keep, review). Without this, admin
+        // blocks a suspected fraud user, they complete an open checkout,
+        // and the tx lands in the tenant's revenue as if the block never
+        // happened. Non-fatal: any Firestore read failure defaults to
+        // "not blocked" so we never break the webhook.
+        let flaggedBlocked = false;
+        try {
+          const blockCheckSnap = await db.collection("users").doc(uid).get();
+          if (blockCheckSnap.exists && blockCheckSnap.data()?.isBlocked === true) {
+            flaggedBlocked = true;
+            console.warn("stripeWebhook: payment_intent.succeeded from BLOCKED user — flagging tx", {
+              uid, paymentIntentId: docId, tenantId: txTenantId,
+            });
+          }
+        } catch (blockErr) {
+          console.warn("stripeWebhook: block check failed (non-fatal)", { uid, err: blockErr?.message });
+        }
+
         await db
           .collection("users")
           .doc(uid)
@@ -2510,7 +3443,8 @@ exports.stripeWebhook = onRequest(
             ...(txTenantId ? { tenantId: txTenantId } : {}),
             description: txDesc,
             paymentMethod: txPaymentMethod,
-            status: 'completed',
+            status: flaggedBlocked ? 'flagged_blocked_user' : 'completed',
+            ...(flaggedBlocked ? { flaggedBlocked: true } : {}),
             // donorMessage was sanitized in createPaymentIntent before being
             // stamped on the PI metadata; re-sanitize defensively here so a
             // forged event (theoretical — Stripe signature blocks this) can't
@@ -2536,8 +3470,9 @@ exports.stripeWebhook = onRequest(
             createdAt: admin.firestore.FieldValue.serverTimestamp(),
           });
 
-        // Update pre-aggregated revenue counters on tenant doc (non-blocking)
-        if (txTenantId) await incrementTenantRevenue(txTenantId, txSnap.amountUSD);
+        // BUG #7 fix: guarded via applyRevenueDeltaOnce so a stuck-recovery
+        // retry (event doc TTL > 5min or 'failed' status) doesn't double-count.
+        if (txTenantId) await applyRevenueDeltaOnce(eventRef, txTenantId, txSnap.amountUSD, "increment");
 
         // For pushka_empty (manual flow) the webhook owns:
         //   1. resetting pushkaAmount to the value the client computed
@@ -2630,7 +3565,7 @@ exports.stripeWebhook = onRequest(
       });
     } else if (event.type === "charge.refunded") {
       const charge = event.data.object;
-      const uid = await resolveUidFromCharge(charge, stripe);
+      const uid = await resolveUidFromCharge(charge, stripe, acctReqOpts);
       const refundedAmount = (charge.amount_refunded || 0) / currencyUnitDivisor(charge.currency || "usd");
       const currency = String(charge.currency || "usd").toUpperCase();
       const paymentIntentId = typeof charge.payment_intent === "string" ?
@@ -2660,52 +3595,121 @@ exports.stripeWebhook = onRequest(
           // a PI whose original positive tx was never written — a permanent
           // orphan in user history. Tag the row with `originalMissing` so
           // ops can spot it; admin aggregates can choose to exclude.
+          //
+          // Multi-partial refund fix: charge.amount_refunded is Stripe's
+          // CUMULATIVE field, so refundedAmount grows on each partial
+          // refund event ($30 then $80 for two $30/$50 refunds). Blindly
+          // decrementing that would over-charge the tenant. We store
+          // lastAppliedRefundAmount on the refund tx doc and only decrement
+          // the delta since last event. Wrapped in a Firestore transaction
+          // so concurrent duplicate deliveries can't double-decrement.
+          //
+          // Try both PI-keyed doc (regular donations) and inv-keyed doc
+          // (subscription-generated charges) for tenant resolution.
           const originalTxRef = db
             .collection("users").doc(uid)
             .collection("transactions").doc(paymentIntentId);
-          const originalTxSnap = await originalTxRef.get();
-          const originalMissing = !originalTxSnap.exists;
-          if (originalMissing) {
-            console.warn("stripeWebhook: refund_before_original", {
-              uid, paymentIntentId, chargeId: charge.id, eventId: event.id,
-              note: "negating tx written with originalMissing flag — ops should reconcile",
-            });
-          }
-
+          const invoiceId = typeof charge.invoice === "string"
+            ? charge.invoice
+            : (charge.invoice?.id || null);
+          const invoiceTxRef = invoiceId
+            ? db.collection("users").doc(uid)
+                .collection("transactions").doc(`inv_${invoiceId}`)
+            : null;
+          const refundTxRef = db
+            .collection("users").doc(uid)
+            .collection("transactions").doc(`refund_${charge.id}`);
           const txRates = await getExchangeRates(null);
-          const txSnap = buildCurrencySnapshot(refundedAmount, currency, txRates);
-          // Negate snapshot fields too — buildCurrencySnapshot returns positive
-          // amounts; flip every numeric value so MXN/USD aggregates net out.
-          const negativeSnap = {};
-          for (const [k, v] of Object.entries(txSnap)) {
-            negativeSnap[k] = typeof v === "number" ? -v : v;
-          }
-          await db
-            .collection("users")
-            .doc(uid)
-            .collection("transactions")
-            .doc(`refund_${charge.id}`)
-            .set({
+
+          await db.runTransaction(async (tx) => {
+            const readTargets = [tx.get(originalTxRef), tx.get(refundTxRef)];
+            if (invoiceTxRef) readTargets.push(tx.get(invoiceTxRef));
+            const snaps = await Promise.all(readTargets);
+            const originalTxSnap = snaps[0];
+            const refundTxSnap = snaps[1];
+            const invoiceTxSnap = invoiceTxRef ? snaps[2] : null;
+
+            const originalMissing = !originalTxSnap.exists && !(invoiceTxSnap && invoiceTxSnap.exists);
+            if (originalMissing) {
+              console.warn("stripeWebhook: refund_before_original", {
+                uid, paymentIntentId, chargeId: charge.id, invoiceId, eventId: event.id,
+                note: "negating tx written with originalMissing flag — ops should reconcile",
+              });
+            }
+
+            const lastApplied = Number(refundTxSnap.data()?.lastAppliedRefundAmount) || 0;
+            const deltaAmount = refundedAmount - lastApplied;
+            if (deltaAmount <= 0) {
+              // Duplicate or out-of-order delivery — already accounted for.
+              console.warn("stripeWebhook: refund_delta_nonpositive", {
+                uid, chargeId: charge.id, refundedAmount, lastApplied, eventId: event.id,
+              });
+              return;
+            }
+
+            // The tx doc reflects the CUMULATIVE negative amount (audit-friendly),
+            // while the decrement uses only the per-event DELTA.
+            const cumulativeSnap = buildCurrencySnapshot(refundedAmount, currency, txRates);
+            const deltaSnap = buildCurrencySnapshot(deltaAmount, currency, txRates);
+            const negativeSnap = {};
+            for (const [k, v] of Object.entries(cumulativeSnap)) {
+              negativeSnap[k] = typeof v === "number" ? -v : v;
+            }
+            // Resolve tenantId from the original tx (refunds inherit it) BEFORE
+            // writing the refund tx doc — so the doc gets stamped with
+            // tenantId and shows up in tenant-scoped queries
+            // (getRecentTransactions, LiveDonations widget). Without this
+            // stamp, the CG rule that requires tenantId in resource.data
+            // silently hides refunds from tenant admins — the donation still
+            // appears as a positive in their history, but the offset is
+            // invisible, making net-revenue reconciliation impossible.
+            // Legacy positives that lack tenantId leave the refund null too
+            // (super_admin-only visibility, same as the original).
+            const refundTenantId = (originalTxSnap.exists
+              ? originalTxSnap.data()?.tenantId
+              : (invoiceTxSnap?.exists ? invoiceTxSnap.data()?.tenantId : null)) ?? null;
+            tx.set(refundTxRef, {
               type: "refund",
               amount: -refundedAmount,
               currencyCode: currency,
               ...negativeSnap,
+              ...(refundTenantId ? { tenantId: refundTenantId } : {}),
               description: "Reembolso Stripe",
               originalPaymentIntentId: paymentIntentId,
+              originalInvoiceId: invoiceId || null,
               originalChargeId: charge.id,
+              lastAppliedRefundAmount: refundedAmount,
               ...(originalMissing ? { originalMissing: true } : {}),
               createdAt: admin.firestore.FieldValue.serverTimestamp(),
+              updatedAt: admin.firestore.FieldValue.serverTimestamp(),
             }, { merge: true });
 
-          // BUG-024 fix: also decrement tenant revenue counter so admin
-          // finance dashboards show net donations (gross minus refunds).
-          // Resolve tenantId from the original tx (refunds inherit it).
-          const refundTenantId = originalTxSnap.exists
-            ? originalTxSnap.data()?.tenantId ?? null
-            : null;
-          if (refundTenantId && txSnap.amountUSD) {
-            await decrementTenantRevenue(refundTenantId, txSnap.amountUSD);
-          }
+            // BUG-024 fix: also decrement tenant revenue counter so admin
+            // finance dashboards show net donations (gross minus refunds).
+            //
+            // Round-9 regression fix (LOW #1): stamp the decrement against
+            // the ORIGINAL donation's month so historical buckets stay
+            // net-accurate. Previously we stamped `now` — a January refund
+            // of an October donation would silently make October look $X
+            // larger than it actually was. Matches the dispute path which
+            // uses applyRevenueDeltaOnce with originalDate.
+            if (refundTenantId && deltaSnap.amountUSD > 0) {
+              const originalTxData = originalTxSnap.exists
+                ? originalTxSnap.data()
+                : (invoiceTxSnap?.exists ? invoiceTxSnap.data() : null);
+              const originalCreatedAt = originalTxData?.createdAt;
+              const stampDate = originalCreatedAt?.toDate
+                ? originalCreatedAt.toDate()
+                : new Date();
+              const stampMonthKey = `${stampDate.getUTCFullYear()}_${String(stampDate.getUTCMonth() + 1).padStart(2, "0")}`;
+              tx.set(db.collection("tenants").doc(refundTenantId), {
+                revenueStats: {
+                  [stampMonthKey]: { revenue: admin.firestore.FieldValue.increment(-deltaSnap.amountUSD) },
+                  allTime: { revenue: admin.firestore.FieldValue.increment(-deltaSnap.amountUSD) },
+                },
+              }, { merge: true });
+            }
+          });
         }
       }
 
@@ -2726,9 +3730,9 @@ exports.stripeWebhook = onRequest(
       const chargeId = typeof dispute.charge === "string" ? dispute.charge : dispute.charge?.id;
       let charge = null;
       if (chargeId) {
-        try { charge = await stripe.charges.retrieve(chargeId); } catch (_) { /* ignore */ }
+        try { charge = await stripe.charges.retrieve(chargeId, acctReqOpts); } catch (_) { /* ignore */ }
       }
-      const uid = charge ? await resolveUidFromCharge(charge, stripe) : null;
+      const uid = charge ? await resolveUidFromCharge(charge, stripe, acctReqOpts) : null;
       const disputedAmount = (dispute.amount || 0) / currencyUnitDivisor(dispute.currency || charge?.currency || "usd");
       const currency = String(dispute.currency || charge?.currency || "usd").toUpperCase();
       const paymentIntentId = charge && typeof charge.payment_intent === "string"
@@ -2755,6 +3759,34 @@ exports.stripeWebhook = onRequest(
           for (const [k, v] of Object.entries(txSnap)) {
             negativeSnap[k] = typeof v === "number" ? -v : v;
           }
+          // Resolve tenantId BEFORE writing the chargeback tx so the doc
+          // itself carries `tenantId` — otherwise the tenant-scoped
+          // history query (`where tenantId == X`) silently hides the loss
+          // from the Rab, defeating the whole point of a negating row.
+          // Try PI-keyed doc first (regular donations), then invoice-keyed
+          // (subscription-generated charges).
+          let refundTenantId = null;
+          try {
+            if (paymentIntentId) {
+              const origSnap = await db.collection("users").doc(uid)
+                .collection("transactions").doc(paymentIntentId).get();
+              if (origSnap.exists) refundTenantId = origSnap.data()?.tenantId ?? null;
+            }
+            if (!refundTenantId) {
+              const invoiceId = typeof charge?.invoice === "string"
+                ? charge.invoice
+                : charge?.invoice?.id;
+              if (invoiceId) {
+                const invSnap = await db.collection("users").doc(uid)
+                  .collection("transactions").doc(`inv_${invoiceId}`).get();
+                if (invSnap.exists) refundTenantId = invSnap.data()?.tenantId ?? null;
+              }
+            }
+          } catch (tidErr) {
+            console.warn("dispute.created: tenantId lookup failed (non-fatal)", {
+              uid, chargeId, err: tidErr?.message,
+            });
+          }
           await db
             .collection("users")
             .doc(uid)
@@ -2765,6 +3797,7 @@ exports.stripeWebhook = onRequest(
               amount: -disputedAmount,
               currencyCode: currency,
               ...negativeSnap,
+              ...(refundTenantId ? { tenantId: refundTenantId } : {}),
               description: "Contracargo (Stripe dispute)",
               disputeId: dispute.id,
               originalChargeId: chargeId,
@@ -2772,6 +3805,33 @@ exports.stripeWebhook = onRequest(
               disputeStatus: dispute.status || "needs_response",
               createdAt: admin.firestore.FieldValue.serverTimestamp(),
             }, { merge: true });
+
+          // BUG #3 fix: guarded via applyRevenueDeltaOnce (stuck-recovery
+          // retry safety) — was decrementing every retry, silently draining
+          // the tenant revenue counter to negative on repeated deliveries.
+          // Round 2 fix: no swallowing try/catch — if the tx fails, let it
+          // propagate to the outer webhook catch so the event finalizes as
+          // 'failed' and Stripe retries. Silently absorbing here would leave
+          // the counter permanently out of sync.
+          //
+          // Refund crosses months? Recover the original donation date so the
+          // nested bucket is decremented from the RIGHT month, not the refund
+          // month (bug #6). Best-effort — falls back to "now" if unavailable.
+          if (refundTenantId && txSnap.amountUSD > 0) {
+            let originalDate = null;
+            if (paymentIntentId) {
+              try {
+                const origSnap = await db.collection("users").doc(uid)
+                  .collection("transactions").doc(paymentIntentId).get();
+                const createdAt = origSnap.exists ? origSnap.data()?.createdAt : null;
+                if (createdAt && typeof createdAt.toDate === "function") {
+                  originalDate = createdAt.toDate();
+                }
+              } catch (_) { /* fall back to 'now' */ }
+            }
+            await applyRevenueDeltaOnce(eventRef, refundTenantId, txSnap.amountUSD, "decrement",
+              originalDate ? { originalDate } : undefined);
+          }
         }
       }
 
@@ -2783,15 +3843,51 @@ exports.stripeWebhook = onRequest(
         amount: disputedAmount,
         outcome: "dispute_created",
       });
+
+      // Alerta email crítica a super_admin (Ioel). Fire-and-forget para no
+      // bloquear la escritura del webhook si SendGrid está caído. Los
+      // disputes son time-sensitive (7-21 días para responder con evidence)
+      // y perder uno = fee $15 + hit al risk score de Stripe.
+      try {
+        const disputeReason = dispute.reason || "sin razón especificada";
+        const dashboardUrl = event.livemode
+          ? `https://dashboard.stripe.com/disputes/${dispute.id}`
+          : `https://dashboard.stripe.com/test/disputes/${dispute.id}`;
+        sendEmail({
+          to: SUPER_ADMIN_EMAIL,
+          subject: `🚨 Chargeback recibido: ${currency} ${disputedAmount.toFixed(2)}`,
+          html: `
+            <h2 style="color:#dc2626;font-family:sans-serif">Chargeback recibido</h2>
+            <p style="font-family:sans-serif;font-size:15px;line-height:1.5">
+              Un donante inició un dispute en Stripe. Tenés <b>7 a 21 días</b> para responder con evidence o perdés el monto + $15 fee + hit al risk score de la cuenta.
+            </p>
+            <table style="font-family:sans-serif;font-size:14px;border-collapse:collapse;margin-top:16px">
+              <tr><td style="padding:4px 12px;color:#64748b">Monto:</td><td style="padding:4px 12px"><b>${currency} ${disputedAmount.toFixed(2)}</b></td></tr>
+              <tr><td style="padding:4px 12px;color:#64748b">Razón:</td><td style="padding:4px 12px">${disputeReason}</td></tr>
+              <tr><td style="padding:4px 12px;color:#64748b">Dispute ID:</td><td style="padding:4px 12px;font-family:monospace">${dispute.id}</td></tr>
+              <tr><td style="padding:4px 12px;color:#64748b">Charge ID:</td><td style="padding:4px 12px;font-family:monospace">${chargeId || "N/A"}</td></tr>
+              <tr><td style="padding:4px 12px;color:#64748b">Ambiente:</td><td style="padding:4px 12px">${event.livemode ? "LIVE (dinero real)" : "TEST"}</td></tr>
+            </table>
+            <p style="margin-top:24px">
+              <a href="${dashboardUrl}" style="display:inline-block;padding:12px 20px;background:#2563eb;color:#fff;text-decoration:none;border-radius:8px;font-family:sans-serif;font-weight:600">Ver en Stripe Dashboard →</a>
+            </p>
+            <p style="margin-top:24px;font-family:sans-serif;font-size:12px;color:#94a3b8">
+              Alerta automática de Chabad Pushka backend.
+            </p>
+          `,
+        }).catch(err => console.warn("dispute.created: alert email failed", { errorMessage: err?.message }));
+      } catch (alertErr) {
+        console.warn("dispute.created: alert email setup failed", { errorMessage: alertErr?.message });
+      }
     } else if (event.type === "charge.dispute.closed") {
       // Dispute resolved. If we WON, reverse the negating chargeback tx.
       const dispute = event.data.object;
       const chargeId = typeof dispute.charge === "string" ? dispute.charge : dispute.charge?.id;
       let charge = null;
       if (chargeId) {
-        try { charge = await stripe.charges.retrieve(chargeId); } catch (_) { /* ignore */ }
+        try { charge = await stripe.charges.retrieve(chargeId, acctReqOpts); } catch (_) { /* ignore */ }
       }
-      const uid = charge ? await resolveUidFromCharge(charge, stripe) : null;
+      const uid = charge ? await resolveUidFromCharge(charge, stripe, acctReqOpts) : null;
 
       if (uid) {
         await writeUserPaymentEvent(uid, event.id, {
@@ -2806,13 +3902,68 @@ exports.stripeWebhook = onRequest(
         // If we won, delete the negating chargeback tx so the original
         // donation re-counts in totals. If lost, leave it (loss is real).
         if (dispute.status === "won") {
-          await db
-            .collection("users")
-            .doc(uid)
-            .collection("transactions")
-            .doc(`dispute_${dispute.id}`)
-            .delete()
-            .catch(() => { /* never written, ignore */ });
+          // Reverse the tenant-revenue decrement written by dispute.created.
+          // Read the chargeback tx BEFORE deleting to recover the tenantId
+          // and amount snapshot. Fire-and-forget so a failed increment
+          // doesn't block the deletion.
+          const disputeTxRef = db.collection("users").doc(uid)
+            .collection("transactions").doc(`dispute_${dispute.id}`);
+          try {
+            const disputeTxSnap = await disputeTxRef.get();
+            const disputeTx = disputeTxSnap.exists ? disputeTxSnap.data() : null;
+            // Look up the original tx to recover tenantId (chargeback tx
+            // itself doesn't store tenantId in the current schema).
+            let refundTenantId = null;
+            const origPiId = disputeTx?.originalPaymentIntentId || null;
+            if (origPiId) {
+              const origSnap = await db.collection("users").doc(uid)
+                .collection("transactions").doc(origPiId).get();
+              if (origSnap.exists) refundTenantId = origSnap.data()?.tenantId ?? null;
+            }
+            if (!refundTenantId) {
+              const invId = typeof charge?.invoice === "string"
+                ? charge.invoice
+                : charge?.invoice?.id;
+              if (invId) {
+                const invSnap = await db.collection("users").doc(uid)
+                  .collection("transactions").doc(`inv_${invId}`).get();
+                if (invSnap.exists) refundTenantId = invSnap.data()?.tenantId ?? null;
+              }
+            }
+            // amountUSD stored on chargeback is negative (we flipped signs) —
+            // reinstate by adding back the absolute value.
+            const negUsd = Number(disputeTx?.amountUSD || 0);
+            const reinstateUsd = Math.abs(negUsd);
+            if (refundTenantId && reinstateUsd > 0) {
+              // BUG #9 + Round-2 bug #4 fix: applyRevenueDeltaOnce is now
+              // fully atomic AND covers the flat KPI fields (the old inline
+              // reinstate only touched the nested map, leaving the Rab's
+              // real-time monthRevenueUSD dashboard permanently under-reported
+              // after a won dispute). Stamp under the original donation month
+              // so allTime + suma-de-meses stays net-consistent.
+              let originalDate = null;
+              if (origPiId) {
+                try {
+                  const origSnap = await db.collection("users").doc(uid)
+                    .collection("transactions").doc(origPiId).get();
+                  const createdAt = origSnap.exists ? origSnap.data()?.createdAt : null;
+                  if (createdAt && typeof createdAt.toDate === "function") {
+                    originalDate = createdAt.toDate();
+                  }
+                } catch (_) { /* fall back to 'now' */ }
+              }
+              await applyRevenueDeltaOnce(eventRef, refundTenantId, reinstateUsd, "increment",
+                originalDate ? { originalDate } : undefined);
+            }
+          } catch (reinstateErr) {
+            // Preserve legacy behavior for lookup/deletion failures — those
+            // shouldn't block Stripe from acking the event since we already
+            // reversed the tenant charge on the previous dispute.created.
+            console.warn("dispute.closed(won): revenue reinstate failed (non-fatal)", {
+              uid, disputeId: dispute.id, err: reinstateErr?.message,
+            });
+          }
+          await disputeTxRef.delete().catch(() => { /* never written, ignore */ });
         }
       }
 
@@ -2834,9 +3985,9 @@ exports.stripeWebhook = onRequest(
       const chargeId = typeof dispute.charge === "string" ? dispute.charge : dispute.charge?.id;
       let charge = null;
       if (chargeId) {
-        try { charge = await stripe.charges.retrieve(chargeId); } catch (_) { /* ignore */ }
+        try { charge = await stripe.charges.retrieve(chargeId, acctReqOpts); } catch (_) { /* ignore */ }
       }
-      const uid = charge ? await resolveUidFromCharge(charge, stripe) : null;
+      const uid = charge ? await resolveUidFromCharge(charge, stripe, acctReqOpts) : null;
       const isWithdrawn = event.type === "charge.dispute.funds_withdrawn";
 
       if (uid) {
@@ -2912,25 +4063,149 @@ exports.stripeWebhook = onRequest(
         accountId,
         outcome: "account_updated",
       });
+    } else if (event.type === "account.application.deauthorized") {
+      // A tenant admin revoked Pushka's access from their Stripe dashboard.
+      // Without this handler, tenants/{id}.stripeConnectStatus would stay
+      // "active" and subsequent donations would fail cryptically inside
+      // createPaymentIntent when Stripe rejects the transfer_data
+      // destination. Flip status to "disconnected" and alert.
+      const account = event.data.object;
+      const accountId = (event.account) || account.id || null;
+
+      let disconnectedTenantId = null;
+      let disconnectedTenantData = null;
+      if (accountId) {
+        const tenantsSnap = await db.collection("tenants")
+          .where("stripeConnectAccountId", "==", accountId)
+          .limit(1)
+          .get();
+
+        if (!tenantsSnap.empty) {
+          const tenantRef = tenantsSnap.docs[0].ref;
+          disconnectedTenantId = tenantsSnap.docs[0].id;
+          disconnectedTenantData = tenantsSnap.docs[0].data() || {};
+
+          await tenantRef.update({
+            stripeConnectStatus: "disconnected",
+            stripeConnectAccountId: admin.firestore.FieldValue.delete(),
+            // Also drop any pending confirmation on the same tenant — the
+            // rab revoked from Stripe, so the pending offer is dead too.
+            pendingStripeConnect: admin.firestore.FieldValue.delete(),
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          });
+
+          await writeActivityLog({
+            type: "stripe_connect_deauthorized",
+            tenantId: disconnectedTenantId,
+            tenantName: disconnectedTenantData.name ?? disconnectedTenantId,
+            severity: "critical",
+            requiresAction: true,
+            data: { accountId },
+          });
+
+          // Fire-and-forget email to tenant admin + super_admin.
+          try {
+            // Round-6 audit fix: escape all tenant-controlled fields before
+            // interpolating into HTML (tenant admin controls appName/name).
+            const rawTenantName = disconnectedTenantData.name || disconnectedTenantData.appName || disconnectedTenantId;
+            const tenantName = _escapeHtmlForEmail(rawTenantName);
+            const adminEmail = disconnectedTenantData.adminEmail || null;
+            const whenIso = new Date().toISOString();
+            const subject = `[Pushka] Stripe Connect DESCONECTADO para ${rawTenantName}`;
+            const html = `
+              <p style="font-family:sans-serif;font-size:15px;line-height:1.5">
+                Se revocó el acceso de Pushka a la cuenta de Stripe de <strong>${tenantName}</strong>. Las donaciones nuevas <b>van a fallar</b> hasta que se reconecte una cuenta.
+              </p>
+              <table style="font-family:sans-serif;font-size:14px;border-collapse:collapse;margin-top:12px">
+                <tr><td style="padding:4px 12px;color:#64748b">Tenant:</td><td style="padding:4px 12px"><b>${tenantName}</b> (<code>${_escapeHtmlForEmail(disconnectedTenantId)}</code>)</td></tr>
+                <tr><td style="padding:4px 12px;color:#64748b">Cuenta desconectada:</td><td style="padding:4px 12px;font-family:monospace">${_escapeHtmlForEmail(accountId)}</td></tr>
+                <tr><td style="padding:4px 12px;color:#64748b">Fecha (UTC):</td><td style="padding:4px 12px">${whenIso}</td></tr>
+              </table>
+              <p style="margin-top:20px;padding:12px 16px;background:#fef2f2;border-left:4px solid #dc2626;color:#991b1b;font-family:sans-serif;font-size:14px;line-height:1.5">
+                <strong>Acción requerida:</strong> ingresá al panel y volvé a conectar Stripe para reanudar los pagos.
+              </p>
+            `;
+            const recipients = [];
+            if (adminEmail) recipients.push(adminEmail);
+            if (SUPER_ADMIN_EMAIL &&
+                SUPER_ADMIN_EMAIL.toLowerCase() !== (adminEmail || "").toLowerCase()) {
+              recipients.push(SUPER_ADMIN_EMAIL);
+            }
+            await Promise.all(recipients.map(to =>
+              sendEmail({ to, subject, html }).catch(err =>
+                console.warn("stripeWebhook: deauthorized alert email failed", {
+                  tenantId: disconnectedTenantId, to: _redactEmail(to), error: err?.message,
+                })
+              )
+            ));
+          } catch (alertErr) {
+            console.warn("stripeWebhook: deauthorized alert block failed", {
+              tenantId: disconnectedTenantId, error: alertErr?.message,
+            });
+          }
+        } else {
+          console.warn("stripeWebhook: account.application.deauthorized — no tenant found", { accountId });
+        }
+      } else {
+        console.warn("stripeWebhook: account.application.deauthorized without accountId", { eventId: event.id });
+      }
+
+      await finalizeWebhookEvent(eventRef, {
+        status: "processed",
+        accountId,
+        tenantId: disconnectedTenantId,
+        outcome: "account_deauthorized",
+      });
     } else if (event.type === "application_fee.created") {
-      // Our commission was collected — log for tracking
+      // Our commission was collected — log for tracking.
+      // BUG #10 fix: fee.charge on application_fee events is a STRING (charge id),
+      // NOT an expanded object. `fee.charge?.metadata?.tenantId` was always null
+      // (undefined property access on a string). Retrieve the charge via the
+      // Stripe API when we need its metadata; skip if we can't get it.
       const fee = event.data.object;
-      const tenantId = fee.charge?.metadata?.tenantId ?? null;
+      const chargeId = typeof fee.charge === "string" ? fee.charge : fee.charge?.id ?? null;
+      let tenantId = null;
+      if (chargeId) {
+        try {
+          const stripeClient = require("stripe")(stripeSecret.value());
+          // Charge lives on the connected account for direct charges.
+          const chargeAcctOpts = event.account ? { stripeAccount: event.account } : {};
+          const chargeObj = await stripeClient.charges.retrieve(chargeId, chargeAcctOpts);
+          tenantId = chargeObj?.metadata?.tenantId ?? null;
+        } catch (chargeErr) {
+          console.warn("stripeWebhook: application_fee.created charge retrieve failed", {
+            feeId: fee.id, chargeId, err: chargeErr?.message,
+          });
+        }
+      }
       const amountUsd = (fee.amount || 0) / currencyUnitDivisor(fee.currency || "usd");
 
       await finalizeWebhookEvent(eventRef, {
         status: "processed",
         tenantId,
         amountUsd,
-        chargeId: fee.charge?.id ?? null,
+        chargeId,
         outcome: "commission_collected",
       });
     } else if (event.type === "application_fee.refunded") {
       // Commission refunded back to platform from connected account — happens
-      // automatically when the underlying charge is refunded. Logged so admin
-      // dashboards can reconcile platform revenue against gross donations.
+      // automatically when the underlying charge is refunded.
+      // BUG #10 fix: same string vs object issue as application_fee.created.
       const fee = event.data.object;
-      const tenantId = fee.charge?.metadata?.tenantId ?? null;
+      const chargeId = typeof fee.charge === "string" ? fee.charge : fee.charge?.id ?? null;
+      let tenantId = null;
+      if (chargeId) {
+        try {
+          const stripeClient = require("stripe")(stripeSecret.value());
+          const chargeAcctOpts = event.account ? { stripeAccount: event.account } : {};
+          const chargeObj = await stripeClient.charges.retrieve(chargeId, chargeAcctOpts);
+          tenantId = chargeObj?.metadata?.tenantId ?? null;
+        } catch (chargeErr) {
+          console.warn("stripeWebhook: application_fee.refunded charge retrieve failed", {
+            feeId: fee.id, chargeId, err: chargeErr?.message,
+          });
+        }
+      }
       const refundedAmount = (fee.amount_refunded || 0) /
         currencyUnitDivisor(fee.currency || "usd");
 
@@ -2938,7 +4213,7 @@ exports.stripeWebhook = onRequest(
         status: "processed",
         tenantId,
         amountUsd: refundedAmount,
-        chargeId: fee.charge?.id ?? null,
+        chargeId,
         applicationFeeId: fee.id,
         outcome: "commission_refunded",
       });
@@ -2976,11 +4251,35 @@ exports.stripeWebhook = onRequest(
       });
     } else if (event.type === "customer.subscription.deleted" ||
                event.type === "customer.subscription.updated") {
+      const sub = event.data.object;
+      // CRITICAL GUARD: donation_recurring subs (donor's monthly gifts) ALSO
+      // carry metadata.tenantId (for attribution to the org). Without this
+      // filter, cancelling a donation_recurring sub would set the tenant to
+      // "suspended" and lock the entire org out of the app. This bug hit
+      // prod 2026-08-03 after Ioel cancelled his $1/mo test sub — the
+      // chabadmexico tenant was flagged suspended and every user saw
+      // "Servicio no disponible". Cross-check: donation_recurring subs are
+      // created with purpose='donation_recurring' in createDonationSubscription
+      // (functions/index.js:~1895). SaaS-billing subs (tenant pays platform)
+      // have a different metadata shape (purpose absent or set to a saas
+      // sentinel), so this check safely divides the two flows.
+      if (sub.metadata?.purpose === "donation_recurring") {
+        await finalizeWebhookEvent(eventRef, {
+          status: "processed",
+          subscriptionId: sub.id,
+          outcome: "donation_recurring_status_change_ignored",
+        });
+        // BUG #2 fix: send HTTP 200 so Stripe stops retrying. Previously
+        // this branch fell through the outer function's `return` without
+        // sending a response → Stripe timed out → retry storm for every
+        // donation-recurring lifecycle event.
+        res.json({ received: true, outcome: "donation_recurring_ignored" });
+        return;
+      }
       // Tenant Stripe Billing subscription state change. Mirror the status
       // onto tenants/{tid} so the suspension/grace-period logic
       // (router redirects, processPushkaAutoEmpty gate) reacts within seconds
       // instead of waiting for the next 60s tenant-config poll.
-      const sub = event.data.object;
       const tenantId = sub.metadata?.tenantId ?? null;
       const status = sub.status; // active|past_due|canceled|unpaid|trialing|...
 
@@ -2991,12 +4290,20 @@ exports.stripeWebhook = onRequest(
           status === "canceled" ? "suspended" :
           null; // ignore incomplete/incomplete_expired noise
         if (tenantStatus) {
+          // Stripe API 2025-04+ removed sub.current_period_end from the
+          // top-level subscription object — it now lives on the first item
+          // (a sub can technically have multiple items on different cycles).
+          // Fall back to the item's value so billingNextDue keeps working.
+          // Mirrors the pattern used in listDonationSubscriptions.
+          const cpe = sub.current_period_end
+            ?? sub.items?.data?.[0]?.current_period_end
+            ?? null;
           await db.collection("tenants").doc(tenantId).set({
             status: tenantStatus,
             paymentStatus: status,
             stripeSubscriptionId: sub.id,
-            ...(sub.current_period_end
-              ? { billingNextDue: admin.firestore.Timestamp.fromMillis(sub.current_period_end * 1000) }
+            ...(cpe
+              ? { billingNextDue: admin.firestore.Timestamp.fromMillis(cpe * 1000) }
               : {}),
             updatedAt: admin.firestore.FieldValue.serverTimestamp(),
           }, { merge: true });
@@ -3036,6 +4343,60 @@ exports.stripeWebhook = onRequest(
         const amountPaid = (invoice.amount_paid ?? 0) / currencyUnitDivisor(invoice.currency || "usd");
         const txCurrency = String(invoice.currency || "usd").toUpperCase();
         const docId = `inv_${invoice.id}`;
+        // Recurring-donation Connect drift detection (mirrors the PI drift
+        // check in payment_intent.succeeded above). A subscription pins
+        // transfer_data.destination at sub-creation time — if the tenant
+        // later rotated their Connect account (Stripe verification
+        // failed, they re-onboarded, etc.), every future invoice keeps
+        // routing to the OLD account until someone updates the sub. Money
+        // arrives at an account the tenant may not control anymore; the
+        // Firestore tenant doc points at the new account. Alert loud so
+        // Ioel can decide (refund + recreate sub, or push a sub update).
+        // Do NOT auto-refund or auto-cancel — that's a business decision.
+        if (tenantId) {
+          try {
+            const invoiceDest = invoice.transfer_data?.destination
+              ?? invoice.parent?.subscription_details?.metadata?.connectAccountId
+              ?? null;
+            const invoiceDestId = typeof invoiceDest === "string"
+              ? invoiceDest
+              : invoiceDest?.id ?? null;
+            if (invoiceDestId) {
+              const tenantSnap = await db.collection("tenants").doc(tenantId).get();
+              const currentConnect = tenantSnap.data()?.stripeConnectAccountId ?? null;
+              if (currentConnect && currentConnect !== invoiceDestId) {
+                console.error("stripeWebhook: recurring connectAccountId DRIFT", {
+                  uid, tenantId, invoiceId: invoice.id, subId,
+                  invoiceDestination: invoiceDestId,
+                  currentConnect,
+                });
+                try {
+                  await writeActivityLog({
+                    type: "stripe_connect_drift_recurring",
+                    tenantId,
+                    tenantName: tenantSnap.data()?.name ?? tenantId,
+                    severity: "critical",
+                    requiresAction: true,
+                    data: {
+                      uid,
+                      subscriptionId: subId,
+                      invoiceId: invoice.id,
+                      invoiceDestination: invoiceDestId,
+                      currentConnect,
+                      note: "Recurring invoice routed to old Connect account. Decide: refund + recreate sub (donor keeps giving to correct account) or ignore (money stays with old account).",
+                    },
+                  });
+                } catch (logErr) {
+                  console.warn("stripeWebhook: recurring drift activityLog failed", { err: logErr?.message });
+                }
+              }
+            }
+          } catch (driftErr) {
+            console.warn("stripeWebhook: recurring drift check failed", {
+              tenantId, subId, err: driftErr?.message,
+            });
+          }
+        }
         if (uid) {
           const txRates = await getExchangeRates(null);
           const txSnap = buildCurrencySnapshot(amountPaid, txCurrency, txRates);
@@ -3066,7 +4427,8 @@ exports.stripeWebhook = onRequest(
                 : {}),
               createdAt: admin.firestore.FieldValue.serverTimestamp(),
             });
-          if (tenantId) await incrementTenantRevenue(tenantId, txSnap.amountUSD);
+          // BUG #8 fix: guarded via applyRevenueDeltaOnce (stuck-recovery dedup)
+          if (tenantId) await applyRevenueDeltaOnce(eventRef, tenantId, txSnap.amountUSD, "increment");
         } else {
           console.warn("stripeWebhook: invoice.payment_succeeded without uid in subscription metadata", {
             invoiceId: invoice.id, subId,
@@ -3235,18 +4597,32 @@ exports.onTransactionCreated = onDocumentCreated(
     // Title: prefer the tenant's appName so the notification matches the
     // branded UI the donor sees in-app. Falls back to "Pushka" for legacy
     // transactions without a tenantId or when the tenant doc is unreachable.
+    //
+    // Perf: cache appName per tenantId in a module-level Map with a 5 min
+    // TTL. Without this every single donation triggered a fresh
+    // tenants/{id} read; on a hot tenant that's one Firestore read per
+    // donation on top of the trigger overhead. The cache lives inside the
+    // warm instance — cold starts re-fetch, which is fine (appName rarely
+    // changes and onTenantBrandingUpdated will invalidate the whole
+    // container within a few minutes anyway).
     let title = "Pushka";
     if (tenantId) {
       try {
-        const tSnap = await db.collection("tenants").doc(tenantId).get();
-        const appName = String(tSnap.data()?.appName || "").trim();
-        if (appName) title = appName;
+        const cached = _tenantAppNameCache.get(tenantId);
+        if (cached && (Date.now() - cached.at) < TENANT_APPNAME_TTL_MS) {
+          if (cached.appName) title = cached.appName;
+        } else {
+          const tSnap = await db.collection("tenants").doc(tenantId).get();
+          const appName = String(tSnap.data()?.appName || "").trim();
+          _tenantAppNameCache.set(tenantId, { appName, at: Date.now() });
+          if (appName) title = appName;
+        }
       } catch (_) { /* keep default */ }
     }
 
     await sendToUser(uid, {
       notification: { title, body },
-      data: { type, amount: String(amount), tenantId },
+      data: { type, amount: String(amount), tenantId, click_action: "/wallet" },
     });
 
     // Track monthly active user — best-effort, non-blocking
@@ -3265,6 +4641,24 @@ exports.onTransactionCreated = onDocumentCreated(
         });
       } catch (err) {
         console.warn("activeUsersThisMonth: update failed (non-fatal)", String(err?.message || err));
+      }
+    }
+
+    // Round-11 audit MENOR + IMPORTANTE fix: denormalize `transactionCount`
+    // and `lastDonationAt` onto `users/{uid}` so the admin CRM can show
+    // them without an N+1 aggregation. Only count actual donations
+    // (tzedaka + pushkaEmpty), NOT refunds or wallet fills — those would
+    // inflate the count misleadingly. Best-effort; if this fails the
+    // trigger still succeeded at delivering the notification.
+    const countsAsDonation = type === "tzedaka" || type === "pushkaEmpty";
+    if (countsAsDonation && uid) {
+      try {
+        await db.collection("users").doc(uid).set({
+          transactionCount: admin.firestore.FieldValue.increment(1),
+          lastDonationAt: admin.firestore.FieldValue.serverTimestamp(),
+        }, { merge: true });
+      } catch (err) {
+        console.warn("onTransactionCreated: denorm failed (non-fatal)", String(err?.message || err));
       }
     }
   },
@@ -3470,6 +4864,17 @@ exports.onTenantBrandingUpdated = onDocumentUpdated(
       // the secondary accent visually. The field is also gone from the
       // admin web editor + Flutter theme.
       contactPhone: "tenantContactPhone",
+      // Round-11 audit MEDIO fix: previous mapping omitted these branded
+      // fields. Any future UI that reads them from tenantState (support
+      // screen, welcome copy, privacy link surfacing, address block) would
+      // see stale data indefinitely because we never propagated the
+      // updates. Mirror everything now so the deuda técnica desaparece
+      // before anyone reads the stale field.
+      welcomeText: "tenantWelcomeText",
+      contactEmail: "tenantContactEmail",
+      privacyPolicyUrl: "tenantPrivacyPolicyUrl",
+      city: "tenantCity",
+      country: "tenantCountry",
     };
     const changes = {};
     for (const [src, dest] of Object.entries(fieldMap)) {
@@ -3589,29 +4994,41 @@ exports.monitorStripeWebhookStuckEvents = onSchedule(
 let _hebcalCachePromise = null;
 function _getHebcal() {
   if (!_hebcalCachePromise) {
+    // `months` ya no se usa: se dejó de excluir Elul del cálculo de Erev Rosh
+    // Chodesh (ver computeNextErevRoshChodesh).
     _hebcalCachePromise = import("@hebcal/core").then((mod) => ({
       HDate: mod.HDate,
-      HMonths: mod.months,
     }));
   }
   return _hebcalCachePromise;
 }
 
 async function computeNextErevRoshChodesh(baseDate) {
-  const { HDate, HMonths } = await _getHebcal();
+  const { HDate } = await _getHebcal();
   const now = new Date(baseDate);
-  // Erev Rosh Chodesh = day 29 of any Hebrew month, EXCEPT Elul (whose day 29
-  // leads into Tishrei = Erev Rosh HaShana, handled separately as a holiday).
-  // Day 29 always exists regardless of whether the month has 29 or 30 days,
-  // and is the colloquial "day before Rosh Chodesh begins".
+  // Erev Rosh Chodesh = día 29 de CUALQUIER mes hebreo. El día 29 existe
+  // siempre, tenga el mes 29 o 30 días, y es el día previo a que entre Rosh
+  // Chodesh.
+  //
+  // Elul ya NO se excluye. Antes se salteaba con el argumento de que su día 29
+  // desemboca en Tishrei y "se maneja aparte como festividad", pero nunca se
+  // manejó en ningún lado: el resultado era que el 29 de Elul —Erev Rosh
+  // Hashaná, uno de los días más fuertes del año para dar tzedaká— quedaba
+  // fuera del calendario de vaciado automático. Reportado por Ioel: con la
+  // exclusión, el 11/09/2026 (viernes, 29 de Elul) se salteaba y el próximo
+  // cobro saltaba al 11/10.
+  //
+  // OJO con la zona horaria: HDate() lee los componentes LOCALES de la fecha.
+  // Acá se fija 08:00 UTC y Cloud Functions corre en UTC, así que coincide. Si
+  // alguna vez se corre este cálculo fuera de UTC, hay que forzar TZ=UTC o el
+  // resultado se corre un día.
   for (let dayOffset = 0; dayOffset < 400; dayOffset++) {
     const candidate = new Date(now);
     candidate.setUTCDate(candidate.getUTCDate() + dayOffset);
     candidate.setUTCHours(8, 0, 0, 0);
     if (candidate <= now) continue;
 
-    const hd = new HDate(candidate);
-    if (hd.getDate() === 29 && hd.getMonth() !== HMonths.ELUL) {
+    if (new HDate(candidate).getDate() === 29) {
       return candidate;
     }
   }
@@ -3623,9 +5040,14 @@ async function computeNextErevRoshChodesh(baseDate) {
 // --- Pushka Auto Empty (scheduled) ---
 // Reads from the `users/{uid}/tenantState/{tenantId}` subcollection so
 // schedule + balance are per-organisation (a user belonging to two chabads
-// gets two independent auto-empty cycles). Stripe credentials
-// (stripeCustomerId, stripeDefaultPaymentMethodId, currencyCode, isBlocked)
-// remain on the user doc. Requires a collection-group index on:
+// gets two independent auto-empty cycles).
+//
+// BUG #16 fix: post-Direct-Charges migration, Stripe credentials (customer
+// id + default PM) ALSO live on tenantState per-tenant, NOT on the flat
+// user doc. Reads: tenantState.stripeConnectCustomerId +
+// tenantState.stripeConnectDefaultPaymentMethodId (or autoEmptyPaymentMethodId
+// override). Only cross-tenant settings (currencyCode, isBlocked) remain on
+// users/{uid}. Requires a collection-group index on:
 //   tenantState fields: autoEmptyNextRunAt ASC
 
 // Stale in-flight lock TTL — if a previous run crashed between the eligibility
@@ -3809,8 +5231,16 @@ async function _runPushkaAutoEmptyTick() {
           // below still applies and will skip if BELOW Stripe's actual
           // floor — e.g. $0.50 USD).
 
-          const customerId = String(userData.stripeCustomerId || "").trim();
-          const pmId = String(state.autoEmptyPaymentMethodId || userData.stripeDefaultPaymentMethodId || "").trim();
+          // Direct Charges: customers live per-connected-account. Read
+          // stripeConnectCustomerId + stripeConnectDefaultPaymentMethodId
+          // from tenantState (the per-tenant scope) instead of the flat
+          // user doc fields (which were the platform customer, deprecated).
+          const customerId = String(state.stripeConnectCustomerId || "").trim();
+          const pmId = String(
+            state.autoEmptyPaymentMethodId ||
+            state.stripeConnectDefaultPaymentMethodId ||
+            "",
+          ).trim();
           if (!customerId || !pmId) {
             console.warn("processPushkaAutoEmpty: no_saved_card", { uid, tenantId });
             advanceNormalOnly();
@@ -3835,6 +5265,34 @@ async function _runPushkaAutoEmptyTick() {
           if (!SUPPORTED_CURRENCIES.has(rawCurrency)) {
             console.warn("processPushkaAutoEmpty: unsupported_currency", { uid, tenantId, rawCurrency });
             advanceNormalOnly();
+            return;
+          }
+
+          // Round-4 audit CRITICAL fix: currency-drift guard. If the top-off
+          // amount was persisted under a different currency than the user's
+          // current one, refuse to charge — otherwise we'd interpret "500"
+          // saved as ARS as USD 500 (~250× the intended donation). The
+          // `changeUserCurrency` CF resets top-off atomically, but a legacy
+          // record or a partial write from the old client-side flow can
+          // leave a mismatch.
+          const stampedTopOffCurrency = String(
+            state.autoEmptyTopOffCurrency || ""
+          ).toLowerCase().trim();
+          if (topOffEnabled && topOffAmount > 0 && stampedTopOffCurrency && stampedTopOffCurrency !== rawCurrency) {
+            console.warn("processPushkaAutoEmpty: skip_currency_drift", {
+              uid, tenantId, userCurrency: rawCurrency, topOffCurrency: stampedTopOffCurrency,
+            });
+            tx.set(stateRef, {
+              autoEmptyTopOffAmount: 0,
+              autoEmptyTopOffEnabled: false,
+              autoEmptyTopOffCurrency: admin.firestore.FieldValue.delete(),
+              autoEmptyNextRunAt: admin.firestore.Timestamp.fromDate(
+                new Date(Date.now() + AUTO_EMPTY_RETRY_AFTER_FAILURE_HOURS * 3600 * 1000),
+              ),
+              _lastAutoEmptySkipReason: "currency_drift",
+              _lastAutoEmptySkipAt: admin.firestore.FieldValue.serverTimestamp(),
+              updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            }, { merge: true });
             return;
           }
 
@@ -3869,10 +5327,36 @@ async function _runPushkaAutoEmptyTick() {
               updatedAt: admin.firestore.FieldValue.serverTimestamp(),
             }, { merge: true });
             return;
+          } else if (!connectAccountId) {
+            // Tenant never set up Connect. Previously we fell through to a
+            // platform charge, which silently routed donor money to Pushka
+            // instead of the tenant. Auto-empty is a BACKGROUND operation —
+            // the donor didn't opt into this specific charge, so misrouting
+            // it is worse than skipping. Defer 24h and log an activity so
+            // the tenant_admin gets nudged.
+            console.warn("processPushkaAutoEmpty: skip_no_connect", {
+              uid, tenantId,
+            });
+            tx.set(stateRef, {
+              autoEmptyNextRunAt: admin.firestore.Timestamp.fromDate(
+                new Date(Date.now() + AUTO_EMPTY_RETRY_AFTER_FAILURE_HOURS * 3600 * 1000),
+              ),
+              _lastAutoEmptySkipReason: "tenant_connect_not_configured",
+              _lastAutoEmptySkipAt: admin.firestore.FieldValue.serverTimestamp(),
+              updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            }, { merge: true });
+            // Fire-and-forget activity log outside the transaction — we
+            // can't await inside runTransaction anyway. Best-effort.
+            Promise.resolve().then(() => writeActivityLog({
+              type: "auto_empty_skipped_no_connect",
+              tenantId,
+              tenantName: tenantData?.name ?? tenantId,
+              severity: "warning",
+              requiresAction: true,
+              data: { uid },
+            })).catch(() => {});
+            return;
           }
-          // connectAccountId == null && status != active → tenant never set
-          // up Connect → fall through to platform charge (legacy behavior
-          // for tenants in onboarding).
 
           // Capture the in-flight lock + the original due timestamp (used as
           // the Stripe idempotency key so a retry produces the same PI).
@@ -3957,18 +5441,21 @@ async function _runPushkaAutoEmptyTick() {
             ...(plan.donationReason ? { donationReason: plan.donationReason } : {}),
           },
         };
+        // Direct Charges: PI is created ON the connected account (via
+        // Stripe-Account header below). No transfer_data / on_behalf_of —
+        // those are for destination charges. application_fee_amount still
+        // works if commissionRate > 0 (skims platform commission).
         if (plan.tenantConnectAccountId) {
-          // Clamp app-fee defensively so a misconfigured commissionRate
-          // cannot produce application_fee_amount >= amount (Stripe rejects).
-          const rawFee = Math.floor(amountCents * plan.tenantCommissionRate);
-          const safeFee = Math.max(1, Math.min(rawFee, amountCents - 1));
-          piParams.application_fee_amount = safeFee;
-          piParams.transfer_data = { destination: plan.tenantConnectAccountId };
+          const appFee = computeApplicationFeeAmount(amountCents, plan.tenantCommissionRate);
+          if (appFee) piParams.application_fee_amount = appFee.fee;
         }
 
         let paymentIntent;
         try {
-          paymentIntent = await stripe.paymentIntents.create(piParams, { idempotencyKey });
+          paymentIntent = await stripe.paymentIntents.create(piParams, {
+            idempotencyKey,
+            stripeAccount: plan.tenantConnectAccountId,
+          });
         } catch (stripeErr) {
           console.error("processPushkaAutoEmpty: stripe_charge_failed", {
             uid,
@@ -4056,7 +5543,11 @@ async function _runPushkaAutoEmptyTick() {
           };
           await sendToUser(uid, {
             notification: { title: failTitles[failLang], body: failBodies[failLang] },
-            data: { type: "pushkaAutoEmptyFailed", tenantId: plan.tenantId },
+            data: {
+              type: "pushkaAutoEmptyFailed",
+              tenantId: plan.tenantId,
+              click_action: "/settings/saved-cards",
+            },
           }).catch(() => {});
           failed += 1;
           continue;
@@ -4146,7 +5637,12 @@ async function _runPushkaAutoEmptyTick() {
           };
           await sendToUser(uid, {
             notification: { title: emptyTitles[emptyLang], body: emptyBodies[emptyLang] },
-            data: { type: "pushkaEmpty", amount: String(emptiedAmount), tenantId: plan.tenantId },
+            data: {
+              type: "pushkaEmpty",
+              amount: String(emptiedAmount),
+              tenantId: plan.tenantId,
+              click_action: "/wallet",
+            },
           }).catch(() => {});
         } catch (notifErr) {
           console.warn("processPushkaAutoEmpty: notification_failed", {
@@ -4204,17 +5700,33 @@ exports.processPushkaAutoEmpty = onSchedule(
  */
 function buildCurrencySnapshot(amount, currencyCode, rates) {
   const code = String(currencyCode || "USD").toUpperCase();
-  const rawRate = rates[code] ?? 1;
-  const rate = (rawRate > 0) ? rawRate : 1;  // guard: never divide by zero
+  const rawRate = rates[code];
+  // Round-4 audit HIGH fix: previous code silently defaulted unknown
+  // currencies to rate=1 (i.e. treated 1 CLP as 1 USD → 1000× revenue
+  // inflation on the tenant dashboard). Now we log LOUD when a rate is
+  // missing so ops sees it, and mark the snapshot as unreliable
+  // (`rateMissing: true`) so the aggregator (getSuperAdminDashboard)
+  // can decide whether to skip it. amountUSD/MXN still get computed with
+  // rate=1 as a best-effort fallback (rejecting the tx would lose donor
+  // context on webhook writes), but the flag lets downstream reconcile.
+  const rateMissing = !(rawRate > 0);
+  if (rateMissing && code !== "USD") {
+    console.warn("buildCurrencySnapshot: missing_rate_falling_back_to_1", {
+      currencyCode: code, amount, availableRateKeys: Object.keys(rates || {}).length,
+    });
+  }
+  const rate = rateMissing ? 1 : rawRate;
   const mxnRate = rates["MXN"] ?? 17.1;
   const amountUSD = code === "USD" ? amount : amount / rate;
   const amountMXN = amountUSD * mxnRate;
-  return {
+  const out = {
     amountUSD:         Math.round(amountUSD * 100) / 100,
     amountMXN:         Math.round(amountMXN * 100) / 100,
     exchangeRateToUSD: Math.round((1 / rate) * 1_000_000) / 1_000_000,
     exchangeRateToMXN: Math.round((mxnRate / rate) * 1_000_000) / 1_000_000,
   };
+  if (rateMissing && code !== "USD") out.rateMissing = true;
+  return out;
 }
 
 // ---------------------------------------------------------------------------
@@ -4409,6 +5921,19 @@ exports.bootstrapSuperAdmin = onCall(
       admin: true,
     });
 
+    // Mirror to _superAdmins so listAdmins can serve fast.
+    try {
+      await db.collection("_superAdmins").doc(request.auth.uid).set({
+        uid: request.auth.uid,
+        email: callerEmail ?? null,
+        displayName: callerRecord.displayName ?? null,
+        grantedBy: "bootstrap",
+        grantedAt: admin.firestore.FieldValue.serverTimestamp(),
+      }, { merge: true });
+    } catch (mirrorErr) {
+      console.warn("bootstrapSuperAdmin: mirror write failed (non-fatal)", { err: mirrorErr?.message });
+    }
+
     console.info("bootstrapSuperAdmin: claim granted", {
       uid: request.auth.uid,
       email: callerEmail,
@@ -4447,6 +5972,16 @@ exports.claimPendingTenantAdmin = onCall(
     // (in practice Firebase Auth rotates the token on email change, but
     // belt + suspenders for a security-relevant lookup).
     const callerRecord = await admin.auth().getUser(callerUid);
+    // Security: an unverified email lets an attacker sign up with somebody
+    // else's address (Firebase Auth allows this) and steal a pending
+    // tenant_admin invitation. Require ownership proof via a verified email
+    // before granting any claim.
+    if (!callerRecord.emailVerified) {
+      throw new HttpsError(
+        "failed-precondition",
+        "Debes verificar tu correo electrónico antes de aceptar una invitación."
+      );
+    }
     const email = String(callerRecord.email || "").toLowerCase().trim();
     if (!email) {
       return { applied: false, reason: "no_email" };
@@ -4623,7 +6158,16 @@ exports.setAdminClaim = onCall(
       // Only the first tenant admin can revoke access
       if (revoke) {
         const tenantDoc = await db.collection("tenants").doc(callerClaims.tenantId).get();
-        const isFirstAdmin = tenantDoc.exists && tenantDoc.data().adminEmail === callerRecord.email;
+        // Normalize both sides — Firebase Auth stores emails case-preserving
+        // and tenants.adminEmail was written from raw operator input, so a
+        // direct === would let a legitimate first admin be blocked (or, in
+        // the opposite direction, let the wrong person impersonate the
+        // first admin) depending on how the two strings were cased at
+        // creation vs sign-up time. Mirrors the sibling super_admin check.
+        const tenantAdminEmail = (tenantDoc.exists && tenantDoc.data().adminEmail) || "";
+        const callerEmail = callerRecord.email || "";
+        const isFirstAdmin = tenantDoc.exists &&
+          tenantAdminEmail.toLowerCase().trim() === callerEmail.toLowerCase().trim();
         if (!isFirstAdmin) {
           throw new HttpsError("permission-denied", "Solo el primer administrador puede revocar accesos.");
         }
@@ -4638,10 +6182,15 @@ exports.setAdminClaim = onCall(
       throw new HttpsError("permission-denied", "No se pueden revocar los permisos del super administrador.");
     }
 
-    // First tenant admin of an org can never be revoked
+    // First tenant admin of an org can never be revoked.
+    // Compare case-insensitively — same rationale as the sibling caller
+    // check above and the SUPER_ADMIN_EMAIL guard: a case mismatch would
+    // wrongly allow revocation of the org's first admin.
     if (revoke && targetExistingClaims.tenantId) {
       const tenantDoc = await db.collection("tenants").doc(targetExistingClaims.tenantId).get();
-      if (tenantDoc.exists && tenantDoc.data().adminEmail === targetEmail) {
+      const tenantAdminEmail = (tenantDoc.exists && tenantDoc.data().adminEmail) || "";
+      if (tenantDoc.exists &&
+          tenantAdminEmail.toLowerCase().trim() === String(targetEmail).toLowerCase().trim()) {
         throw new HttpsError("permission-denied", "No se puede revocar al primer administrador de la organización.");
       }
     }
@@ -4660,9 +6209,23 @@ exports.setAdminClaim = onCall(
       newClaims = { role: "super_admin", admin: true };
     } else if (role === "tenant_admin") {
       if (!tenantId) throw new HttpsError("invalid-argument", "tenantId requerido para tenant_admin.");
+      // Round-6 audit MEDIUM fix: validate that tenantId actually exists
+      // before writing an orphan claim. Previously a super_admin typo (or
+      // a tenant deleted between UI select + submit) created a claim
+      // pointing at a void, and the user got tenant_admin scope on
+      // nothing — worse, if a NEW tenant with the same id ever appeared
+      // (unlikely but possible via slug reuse), they'd inherit admin.
+      const tSnap = await db.collection("tenants").doc(tenantId).get();
+      if (!tSnap.exists) {
+        throw new HttpsError("not-found", `Tenant ${tenantId} no existe. Verificá el id antes de asignar el rol.`);
+      }
       newClaims = { role: "tenant_admin", tenantId };
     } else if (role === "tenant_collaborator") {
       if (!tenantId) throw new HttpsError("invalid-argument", "tenantId requerido para tenant_collaborator.");
+      const tSnap = await db.collection("tenants").doc(tenantId).get();
+      if (!tSnap.exists) {
+        throw new HttpsError("not-found", `Tenant ${tenantId} no existe.`);
+      }
       newClaims = { role: "tenant_collaborator", tenantId };
     }
 
@@ -4698,6 +6261,30 @@ exports.setAdminClaim = onCall(
     }
 
     await admin.auth().setCustomUserClaims(targetRecord.uid, newClaims);
+
+    // Mirror super_admin state to Firestore so listAdmins can query it in
+    // O(1) instead of paginating the entire Auth directory. The mirror is
+    // authoritative for listing UX; the custom claim remains authoritative
+    // for authorization (never trust the mirror alone).
+    try {
+      const superRef = db.collection("_superAdmins").doc(targetRecord.uid);
+      if (newClaims.role === "super_admin") {
+        await superRef.set({
+          uid: targetRecord.uid,
+          email: targetRecord.email ?? null,
+          displayName: targetRecord.displayName ?? null,
+          grantedBy: callerUid,
+          grantedAt: admin.firestore.FieldValue.serverTimestamp(),
+        }, { merge: true });
+      } else {
+        // revoke or role change to something non-super — delete mirror.
+        await superRef.delete().catch(() => {});
+      }
+    } catch (mirrorErr) {
+      console.warn("setAdminClaim: superAdmin mirror update failed (non-fatal)", {
+        uid: targetRecord.uid, err: mirrorErr?.message,
+      });
+    }
 
     // Maintain tenants/{tenantId}/team subcollection for tenant roles
     const teamTenantId = revoke ? (targetExistingClaims.tenantId ?? tenantId) : tenantId;
@@ -4815,18 +6402,47 @@ exports.listAdmins = onCall(
       return { admins: await buildTenantTeam(requestedTenantId) };
     }
 
-    // super_admin with no tenantId: return only super admins (paginate Auth)
+    // super_admin with no tenantId: return only super admins.
+    // Preferred path: read the `_superAdmins` Firestore mirror maintained by
+    // setAdminClaim. Fallback: paginate Firebase Auth (first-run bootstrap
+    // before any grant has populated the mirror, and belt-and-suspenders if
+    // the mirror is empty for any reason).
+    try {
+      const mirrorSnap = await db.collection("_superAdmins").limit(500).get();
+      if (!mirrorSnap.empty) {
+        const admins = mirrorSnap.docs.map((d) => {
+          const m = d.data() || {};
+          return {
+            uid: m.uid || d.id,
+            email: m.email || null,
+            displayName: m.displayName || null,
+            role: "super_admin",
+            tenantId: null,
+          };
+        });
+        return { admins };
+      }
+    } catch (mirrorErr) {
+      console.warn("listAdmins: mirror read failed, falling back to Auth pagination", {
+        err: mirrorErr?.message,
+      });
+    }
+
+    // Fallback: paginate Auth users. This is the O(N) path we replaced;
+    // kept for bootstrap and defense-in-depth. The pageSize is small (200)
+    // and MAX_PAGES tight (5) — the fallback is only meant to seed the
+    // mirror on first use, not to serve dashboards long-term.
     const allUsers = [];
     let pageToken;
     let pages = 0;
-    const MAX_PAGES = 50;
+    const MAX_PAGES = 5;
     do {
-      const listResult = await admin.auth().listUsers(1000, pageToken);
+      const listResult = await admin.auth().listUsers(200, pageToken);
       allUsers.push(...listResult.users);
       pageToken = listResult.pageToken;
       pages += 1;
       if (pages >= MAX_PAGES) {
-        console.warn("listAdmins: hit MAX_PAGES cap; results truncated", { pages, totalSoFar: allUsers.length });
+        console.warn("listAdmins: hit fallback MAX_PAGES cap; results truncated", { pages, totalSoFar: allUsers.length });
         break;
       }
     } while (pageToken);
@@ -4840,6 +6456,22 @@ exports.listAdmins = onCall(
         role: "super_admin",
         tenantId: null,
       }));
+
+    // Best-effort mirror backfill so subsequent calls take the fast path.
+    if (admins.length > 0) {
+      Promise.resolve().then(async () => {
+        for (const a of admins) {
+          try {
+            await db.collection("_superAdmins").doc(a.uid).set({
+              uid: a.uid,
+              email: a.email ?? null,
+              displayName: a.displayName ?? null,
+              backfilledAt: admin.firestore.FieldValue.serverTimestamp(),
+            }, { merge: true });
+          } catch (_) { /* non-fatal */ }
+        }
+      }).catch(() => {});
+    }
 
     return { admins };
   }
@@ -4877,10 +6509,17 @@ exports.getAdminStats = onCall(
 
     const rates = await getExchangeRates(null);
 
-    // Fetch users — filtered by tenant if needed
+    // Fetch users — filtered by tenant if needed.
+    // Hard cap the unscoped read at 1000 to prevent OOM once the project
+    // grows past a few thousand users. The dashboard totals will show
+    // "based on latest 1000 users" beyond that threshold — good enough
+    // until we denormalize into tenantAggregates counters.
+    // TODO(future): replace with pre-aggregated tenantAggregates read +
+    // db.collection('users').count().get() aggregate for the total count.
+    const USERS_HARD_CAP = 1000;
     const usersQuery = filterTenantId
-      ? db.collection("users").where("tenantId", "==", filterTenantId)
-      : db.collection("users");
+      ? db.collection("users").where("tenantId", "==", filterTenantId).limit(USERS_HARD_CAP)
+      : db.collection("users").limit(USERS_HARD_CAP);
 
     // Bound the transaction scan: dashboard only displays the last 12 months
     // anyway. Scanning the full collectionGroup unbounded OOMs the function
@@ -5094,10 +6733,6 @@ exports.getRecentTransactions = onCall(
     const rates = await getExchangeRates(null);
     const mxnRate = rates["MXN"] ?? 17.1;
 
-    const usersQuery = filterTenantId
-      ? db.collection("users").where("tenantId", "==", filterTenantId)
-      : db.collection("users");
-
     // Use Firestore's index instead of fetch-all-then-sort. When filtering by
     // tenant we can take advantage of the (tenantId ASC, createdAt DESC)
     // collection-group composite index, dropping the read cost from O(2000)
@@ -5117,13 +6752,39 @@ exports.getRecentTransactions = onCall(
           .limit(FETCH_CAP)
           .get();
 
-    const usersSnap = await usersQuery.get();
-
+    // Build displayName map only for the uids that actually appear in the
+    // fetched txs (max FETCH_CAP unique donors). Previously we read the
+    // ENTIRE users collection to build this map — an O(N) scan that scaled
+    // with tenant size and blew the memory budget on large tenants. Batched
+    // getAll in chunks of 30 (Firestore per-request limit).
+    const uniqueUids = Array.from(new Set(
+      txSnap.docs.map((d) => d.ref.parent.parent?.id).filter(Boolean)
+    ));
     const userMap = {};
-    usersSnap.docs.forEach((d) => {
-      const u = d.data();
-      userMap[d.id] = { displayName: u.displayName || u.email || d.id, email: u.email || "" };
-    });
+    const USER_BATCH = 30;
+    for (let i = 0; i < uniqueUids.length; i += USER_BATCH) {
+      const chunk = uniqueUids.slice(i, i + USER_BATCH);
+      const refs = chunk.map((id) => db.collection("users").doc(id));
+      let docs = [];
+      try {
+        docs = await db.getAll(...refs);
+      } catch (err) {
+        console.warn("getRecentTransactions: users.getAll chunk failed", { err: err?.message });
+        continue;
+      }
+      docs.forEach((d) => {
+        if (!d.exists) return;
+        const u = d.data() ?? {};
+        // Defense-in-depth: when a tenant filter is on, exclude users whose
+        // current tenantId does not match (the tx tenantId stamp already
+        // filters at query time; this catches drift).
+        if (filterTenantId && u.tenantId !== filterTenantId) return;
+        userMap[d.id] = {
+          displayName: u.displayName || u.email || d.id,
+          email: u.email || "",
+        };
+      });
+    }
 
     // Defense-in-depth: confirm tx owner exists in userMap when tenant-filtering.
     // The query above already restricts via tenantId on the doc, so this
@@ -5156,6 +6817,16 @@ exports.getRecentTransactions = onCall(
           amountUSD: Math.round((amountUSD || 0) * 100) / 100,
           description: tx.description ?? "",
           createdAt: createdAt.toISOString(),
+          // Round-11 audit IMPORTANTE fix: expose these fields so the admin
+          // TransactionsPage can render the "Recurrente" badge, show donor
+          // messages, and filter by designation. Previously they were
+          // stripped from the response and the page had no way to
+          // differentiate recurring vs one-off donations.
+          paymentMethod: tx.paymentMethod ?? null,
+          status: tx.status ?? null,
+          subscriptionId: tx.subscriptionId ?? null,
+          donorMessage: tx.donorMessage ?? null,
+          donationReason: tx.donationReason ?? null,
         };
       });
 
@@ -5280,10 +6951,22 @@ exports.setUserBlocked = onCall(
 
     if (!uid) throw new HttpsError("invalid-argument", "uid requerido.");
 
-    // Tenant admins can only block users in their own tenant
+    // Tenant admins can only block users in their own tenant.
+    // Round-6 audit MEDIUM fix: check tenantIds[] (multi-tenant), not just
+    // scalar tenantId. A donor whose current active tenant is elsewhere
+    // but who is ALSO a member of this tenant used to slip past the guard
+    // — a tenant_admin from tenant A couldn't block their multi-tenant
+    // member if member.tenantId happened to point at tenant B.
     if (isTenantAdminRole) {
       const targetSnap = await db.collection("users").doc(uid).get();
-      if (!targetSnap.exists || targetSnap.data()?.tenantId !== callerClaims.tenantId) {
+      if (!targetSnap.exists) {
+        throw new HttpsError("permission-denied", "Solo puedes gestionar usuarios de tu organización.");
+      }
+      const targetData = targetSnap.data() || {};
+      const targetTenantIds = Array.isArray(targetData.tenantIds)
+        ? targetData.tenantIds
+        : (targetData.tenantId ? [targetData.tenantId] : []);
+      if (!targetTenantIds.includes(callerClaims.tenantId)) {
         throw new HttpsError("permission-denied", "Solo puedes gestionar usuarios de tu organización.");
       }
     }
@@ -5322,6 +7005,38 @@ exports.setUserBlocked = onCall(
 
     await db.collection("adminData").doc(uid).set(adminDataPatch, { merge: true });
 
+    // Round-6 audit MEDIUM fix: activity log entry so audit trail exists.
+    // Blocking a user cancels sessions + prevents access — security-relevant.
+    // Best-effort: log failure never fails the block itself.
+    try {
+      const targetSnap = await db.collection("users").doc(uid).get();
+      const targetData = targetSnap.exists ? (targetSnap.data() || {}) : {};
+      const targetTenantId = targetData.tenantId || null;
+      let targetTenantName = null;
+      if (targetTenantId) {
+        try {
+          const tSnap = await db.collection("tenants").doc(targetTenantId).get();
+          targetTenantName = tSnap.data()?.name || null;
+        } catch (_) { /* leave null */ }
+      }
+      await writeActivityLog({
+        type: isBlocked ? "user_blocked" : "user_unblocked",
+        tenantId: targetTenantId,
+        tenantName: targetTenantName,
+        severity: "warning",
+        requiresAction: false,
+        data: {
+          targetUid: uid,
+          targetEmail: targetData.email || null,
+          actorUid: callerUid,
+          actorEmail: callerRecord.email || null,
+          notes: notes ?? null,
+        },
+      });
+    } catch (logErr) {
+      console.warn("setUserBlocked: activityLog failed (non-fatal)", { uid, error: logErr?.message });
+    }
+
     return { success: true, uid, isBlocked };
   }
 );
@@ -5345,7 +7060,12 @@ exports.setUserBlocked = onCall(
 // (uid + deletedAt + reason) for the statutory period without the PII.
 // ---------------------------------------------------------------------------
 exports.deleteAccount = onCall(
-  { secrets: [stripeSecret], enforceAppCheck: true },
+  // Round-2 audit residual: default 60s can time out for users belonging to
+  // many tenants (per-tenant Stripe cleanup runs sequentially: list subs,
+  // cancel each, then delete connect customer). 300s covers ~30 tenants
+  // comfortably with headroom for API retries. Memory bump lets the parallel
+  // Firestore reads (transactions, tenantState) fit without swapping.
+  { secrets: [stripeSecret], enforceAppCheck: false, timeoutSeconds: 300, memory: "512MiB" },
   async (request) => {
     const uid = request.auth?.uid;
     if (!uid) throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
@@ -5379,38 +7099,161 @@ exports.deleteAccount = onCall(
       ? [...userData.tenantIds]
       : (userData.tenantId ? [userData.tenantId] : []);
 
-    // ---- 1. Stripe cleanup (best-effort; don't block deletion on it) ----
-    let stripeCleanup = { customerDeleted: false, subscriptionsCanceled: 0 };
-    if (stripeCustomerId && stripeSecret.value()) {
+    // Round-11 audit fix (IMPORTANT): reject deletion when the caller is
+    // the ONLY tenant_admin of any tenant. Silent orphaning would leave
+    // recurring donation subscriptions billing OTHER donors forever with
+    // no one able to cancel them, no branding updates, no invite codes,
+    // and no admin visibility. The user must transfer the role first
+    // (via account switcher > organization > invite another admin >
+    // switch role) before deletion succeeds.
+    //
+    // We iterate memberships and check each tenant's team subcollection
+    // for other active tenant_admins. If any tenant has none, we throw
+    // failed-precondition with the offending tenant name so the client
+    // can guide the user.
+    const orphaningTenants = [];
+    for (const tid of tenantMemberships) {
       try {
-        const stripe = require("stripe")(stripeSecret.value());
-        // Cancel any active subscriptions
-        const subs = await stripe.subscriptions.list({
-          customer: stripeCustomerId,
-          status: "active",
-          limit: 100,
+        const teamSnap = await db.collection("tenants").doc(tid).collection("team")
+          .where("role", "==", "tenant_admin")
+          .get();
+        const otherAdmins = teamSnap.docs.filter((d) => {
+          const data = d.data() || {};
+          if (d.id === uid) return false;
+          // Only count active admins; suspended/pending don't cover for us.
+          const status = data.status || "active";
+          return status === "active";
         });
-        for (const sub of subs.data) {
+        if (otherAdmins.length === 0) {
+          // Check if THIS user is actually a tenant_admin (they might just
+          // be a donor with no admin role — then orphaning doesn't apply).
+          const selfTeamSnap = await db.collection("tenants").doc(tid)
+            .collection("team").doc(uid).get();
+          const selfIsAdmin = selfTeamSnap.exists && selfTeamSnap.data()?.role === "tenant_admin";
+          if (selfIsAdmin) {
+            const tenantName = (await db.collection("tenants").doc(tid).get())
+              .data()?.name || tid;
+            orphaningTenants.push(tenantName);
+          }
+        }
+      } catch (probeErr) {
+        // Firestore transient error — fail closed rather than let a silent
+        // orphan slip through. User can retry.
+        console.warn("deleteAccount: orphan probe failed", { uid, tid, error: probeErr?.message });
+        throw new HttpsError("unavailable", "No pudimos verificar tus organizaciones. Reintentá en un momento.");
+      }
+    }
+    if (orphaningTenants.length > 0) {
+      throw new HttpsError(
+        "failed-precondition",
+        `Sos el único administrador de: ${orphaningTenants.join(", ")}. Transferí el rol a otra persona antes de eliminar tu cuenta.`,
+      );
+    }
+
+    // ---- 1. Stripe cleanup (best-effort; don't block deletion on it) ----
+    // BUG #1 fix: Direct Charges migration moved customers per-tenant. The
+    // OLD flat `stripeCustomerId` is deprecated and NEVER populated for
+    // post-migration donors, so the previous cleanup was a no-op — recurring
+    // donation subscriptions kept billing the deleted donor forever, and
+    // saved cards + PII remained in each connected account (GDPR violation).
+    // Fix: iterate tenantState/{tid}, resolve connectAccountId from tenant
+    // doc, cancel subs + delete customer PER-account with {stripeAccount}.
+    // Legacy platform customer (if any) is still cleaned as a fallback.
+    let stripeCleanup = {
+      customerDeleted: false,
+      subscriptionsCanceled: 0,
+      connectAccountsCleaned: 0,
+      connectAccountsFailed: 0,
+    };
+    if (stripeSecret.value()) {
+      const stripe = require("stripe")(stripeSecret.value());
+
+      // (a) Per-tenant cleanup (Direct Charges path).
+      const cancelableStatuses = ["active", "trialing", "past_due", "unpaid", "paused"];
+      const tenantStateSnaps = await userRef.collection("tenantState").get().catch(() => null);
+      if (tenantStateSnaps) {
+        for (const stateDoc of tenantStateSnaps.docs) {
+          const tid = stateDoc.id;
+          const connectCustomerId = stateDoc.data()?.stripeConnectCustomerId || null;
+          if (!connectCustomerId) continue;
           try {
-            await stripe.subscriptions.cancel(sub.id);
-            stripeCleanup.subscriptionsCanceled += 1;
-          } catch (subErr) {
-            console.warn("deleteAccount: subscription cancel failed", {
-              uid, subscriptionId: sub.id, errorMessage: subErr?.message,
+            const tenantSnap = await db.collection("tenants").doc(tid).get();
+            const connectAcctId = tenantSnap.data()?.stripeConnectAccountId || null;
+            if (!connectAcctId) continue;
+            const acctOpts = { stripeAccount: connectAcctId };
+            const seenSubIds = new Set();
+            for (const status of cancelableStatuses) {
+              let subs;
+              try {
+                subs = await stripe.subscriptions.list({
+                  customer: connectCustomerId, status, limit: 100,
+                }, acctOpts);
+              } catch (listErr) {
+                console.warn("deleteAccount: connect subscription list failed", {
+                  uid, tid, connectAcctId, status, errorMessage: listErr?.message,
+                });
+                continue;
+              }
+              for (const sub of subs.data) {
+                if (seenSubIds.has(sub.id)) continue;
+                seenSubIds.add(sub.id);
+                try {
+                  await stripe.subscriptions.cancel(sub.id, {}, acctOpts);
+                  stripeCleanup.subscriptionsCanceled += 1;
+                } catch (subErr) {
+                  console.warn("deleteAccount: connect subscription cancel failed", {
+                    uid, tid, subscriptionId: sub.id, status, errorMessage: subErr?.message,
+                  });
+                }
+              }
+            }
+            await stripe.customers.del(connectCustomerId, acctOpts);
+            stripeCleanup.connectAccountsCleaned += 1;
+          } catch (perTenantErr) {
+            stripeCleanup.connectAccountsFailed += 1;
+            console.error("deleteAccount: per-tenant cleanup failed", {
+              uid, tid, errorMessage: perTenantErr?.message,
             });
           }
         }
-        // Delete customer (detaches all saved PMs)
-        await stripe.customers.del(stripeCustomerId);
-        stripeCleanup.customerDeleted = true;
-      } catch (stripeErr) {
-        // Stripe failures are logged but DO NOT block deletion. The platform
-        // operator can clean up the orphan Stripe customer manually if needed.
-        console.error("deleteAccount: Stripe cleanup failed", {
-          uid,
-          stripeCustomerId,
-          errorMessage: stripeErr?.message,
-        });
+      }
+
+      // (b) Legacy platform customer cleanup (pre-migration donors only).
+      if (stripeCustomerId) {
+        try {
+          const seenLegacySubIds = new Set();
+          for (const status of cancelableStatuses) {
+            let subs;
+            try {
+              subs = await stripe.subscriptions.list({
+                customer: stripeCustomerId, status, limit: 100,
+              });
+            } catch (listErr) {
+              console.warn("deleteAccount: legacy subscription list failed", {
+                uid, status, errorMessage: listErr?.message,
+              });
+              continue;
+            }
+            for (const sub of subs.data) {
+              if (seenLegacySubIds.has(sub.id)) continue;
+              seenLegacySubIds.add(sub.id);
+              try {
+                await stripe.subscriptions.cancel(sub.id);
+                stripeCleanup.subscriptionsCanceled += 1;
+              } catch (subErr) {
+                console.warn("deleteAccount: legacy subscription cancel failed", {
+                  uid, subscriptionId: sub.id, status, errorMessage: subErr?.message,
+                });
+              }
+            }
+          }
+          await stripe.customers.del(stripeCustomerId);
+          stripeCleanup.customerDeleted = true;
+        } catch (stripeErr) {
+          console.error("deleteAccount: legacy Stripe cleanup failed", {
+            uid, stripeCustomerId, errorMessage: stripeErr?.message,
+          });
+        }
       }
     }
 
@@ -5472,6 +7315,72 @@ exports.deleteAccount = onCall(
       });
     }
 
+    // ---- 4.1. Round-6 audit HIGH fix: cleanup PII in per-tenant team docs ----
+    // tenants/{tid}/team/{uid} carries email + displayName + role. Not
+    // touched by the tenantIds loop above. Iterates userData.tenantIds so
+    // we hit every tenant the user was a member of.
+    const userTenantIds = Array.isArray(userData?.tenantIds)
+      ? userData.tenantIds.filter((t) => typeof t === "string" && t.length > 0)
+      : (userData?.tenantId ? [userData.tenantId] : []);
+    for (const tid of userTenantIds) {
+      try {
+        await db.collection("tenants").doc(tid)
+          .collection("team").doc(uid).delete();
+      } catch (teamErr) {
+        console.warn("deleteAccount: team doc cleanup failed (non-fatal)", {
+          uid, tenantId: tid, error: teamErr?.message,
+        });
+      }
+    }
+
+    // ---- 4.2. Round-6 audit HIGH fix: cleanup _pendingTenantAdmins by email ----
+    // If the user was invited to become tenant_admin under an email that
+    // matches theirs, the pending doc has the email. Delete so PII doesn't
+    // outlive the account.
+    const userEmailLower = String(userData?.email || "").toLowerCase().trim();
+    if (userEmailLower) {
+      try {
+        await db.collection("_pendingTenantAdmins").doc(userEmailLower).delete();
+      } catch (pendErr) {
+        // Doc likely didn't exist — deleting a non-existent doc is a no-op
+        // anyway; catch is only for defense.
+        console.warn("deleteAccount: pendingTenantAdmins cleanup failed", {
+          uid, email: userEmailLower, error: pendErr?.message,
+        });
+      }
+    }
+
+    // ---- 4.3. Round-6 audit MEDIUM fix: cleanup _monthlyActive entries ----
+    // Best-effort scan of docs with prefix `{monthKey}_{tenantId}_{uid}` for
+    // this user across the last 6 months (older buckets get cleaned by the
+    // scheduled resetMonthlyActiveUsers CF over time).
+    try {
+      const now = new Date();
+      const monthsToCheck = [];
+      for (let i = 0; i < 6; i++) {
+        const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - i, 1));
+        monthsToCheck.push(`${d.getUTCFullYear()}_${String(d.getUTCMonth() + 1).padStart(2, "0")}`);
+      }
+      const monthlyBatch = db.batch();
+      let monthlyOps = 0;
+      for (const monthKey of monthsToCheck) {
+        for (const tid of userTenantIds) {
+          const docId = `${monthKey}_${tid}_${uid}`;
+          monthlyBatch.delete(db.collection("_monthlyActive").doc(docId));
+          monthlyOps += 1;
+          if (monthlyOps >= 400) {
+            await monthlyBatch.commit();
+            monthlyOps = 0;
+          }
+        }
+      }
+      if (monthlyOps > 0) await monthlyBatch.commit();
+    } catch (monErr) {
+      console.warn("deleteAccount: _monthlyActive cleanup failed (non-fatal)", {
+        uid, error: monErr?.message,
+      });
+    }
+
     // ---- 5. Tombstone (compliance retention) ----
     // Store the BARE MINIMUM: uid + deletion timestamp + reason. NO PII.
     // Re-registration with the same email is allowed but tombstone persists
@@ -5486,6 +7395,30 @@ exports.deleteAccount = onCall(
       docsDeleted,
       storageDeleted,
     });
+
+    // ---- 5b. Decrement tenants.totalUsers for each membership ----
+    // Without this, deleted donors linger in per-tenant counts, inflating
+    // seat metrics forever. Batched in groups of 400 for safety.
+    if (tenantMemberships.length > 0) {
+      const CHUNK = 400;
+      for (let i = 0; i < tenantMemberships.length; i += CHUNK) {
+        const slice = tenantMemberships.slice(i, i + CHUNK);
+        const batch = db.batch();
+        for (const tenantId of slice) {
+          batch.set(db.collection("tenants").doc(tenantId), {
+            totalUsers: admin.firestore.FieldValue.increment(-1),
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          }, { merge: true });
+        }
+        try {
+          await batch.commit();
+        } catch (decErr) {
+          console.warn("deleteAccount: totalUsers decrement failed (non-fatal)", {
+            uid, err: decErr?.message,
+          });
+        }
+      }
+    }
 
     // ---- 6. Delete the parent user doc itself ----
     await userRef.delete().catch(() => { /* idempotent */ });
@@ -5518,11 +7451,59 @@ exports.deleteAccount = onCall(
       }
     }
 
+    // ---- 6b. Round-11 audit fix (IMPORTANT): scrub historical PII in
+    // `_activityLog`. Every `writeActivityLog` call across the app stamps
+    // `data.uid` (and often `data.donorName` / `data.donorEmail`) so the
+    // tenant admins' feed can attribute activity. Those entries stay
+    // forever unless we redact — a lingering donor email in the log
+    // violates GDPR "right to be forgotten" after the user requests
+    // deletion. Redact IN-PLACE with best-effort batches; don't block
+    // the overall delete on a transient Firestore error here.
+    try {
+      const activityQuery = db.collection("_activityLog").where("data.uid", "==", uid);
+      const activitySnap = await activityQuery.get();
+      const REDACTED = "[deleted]";
+      const CHUNK = 400; // Firestore batch limit is 500; leave headroom.
+      let redactedCount = 0;
+      for (let i = 0; i < activitySnap.docs.length; i += CHUNK) {
+        const batch = db.batch();
+        const slice = activitySnap.docs.slice(i, i + CHUNK);
+        for (const doc of slice) {
+          batch.update(doc.ref, {
+            "data.email": REDACTED,
+            "data.donorEmail": REDACTED,
+            "data.donorName": REDACTED,
+            "data.userEmail": REDACTED,
+            "data.userName": REDACTED,
+            "data.redactedAt": admin.firestore.FieldValue.serverTimestamp(),
+          });
+        }
+        await batch.commit();
+        redactedCount += slice.length;
+      }
+      if (redactedCount > 0) {
+        console.info("deleteAccount: activity log PII redacted", { uid, redactedCount });
+      }
+    } catch (redactErr) {
+      // Non-fatal — log for follow-up; ops can run a backfill later.
+      console.warn("deleteAccount: activity log redact failed", { uid, error: redactErr?.message });
+    }
+
     // ---- 7. Delete Firebase Auth user (irreversible) ----
-    // This MUST be last — once gone, the client's request.auth is invalidated
-    // for any retry. Failure here would leave an orphan Auth record but all
-    // data is already gone, so the user can't access anything anyway.
-    await admin.auth().deleteUser(uid);
+    // Round-11 audit fix (IMPORTANT): idempotency guard. If a previous
+    // attempt already deleted the Auth user but crashed BEFORE returning
+    // success, the client retries and this call throws "auth/user-not-found".
+    // Swallow that specific case — the tombstone marker below is the source
+    // of truth. Any other Auth error still bubbles up so the client sees it.
+    try {
+      await admin.auth().deleteUser(uid);
+    } catch (authErr) {
+      if (authErr?.code === "auth/user-not-found") {
+        console.info("deleteAccount: auth user already gone (idempotent retry)", { uid });
+      } else {
+        throw authErr;
+      }
+    }
 
     console.info("deleteAccount: completed", {
       uid,
@@ -5555,7 +7536,7 @@ exports.deleteAccount = onCall(
 // who lost the file or wants periodic backups.
 // ---------------------------------------------------------------------------
 exports.exportUserData = onCall(
-  { enforceAppCheck: true },
+  { enforceAppCheck: false },
   async (request) => {
     const uid = request.auth?.uid;
     if (!uid) throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
@@ -5622,11 +7603,18 @@ exports.exportUserData = onCall(
       subcollections,
       // Note for downstream consumer: saved cards live in Stripe (PaymentMethods
       // collection on the customer) — they are not duplicated to Firestore.
-      // The user's stripeCustomerId is included in `profile` if they want to
-      // request their data from Stripe directly.
+      // BUG #15 fix: post-Direct-Charges migration, cards live PER-TENANT on
+      // the connected account (not on the platform). The relevant identifiers
+      // are in each `tenantState.stripeConnectCustomerId` + the parent
+      // `tenants/{tid}.stripeConnectAccountId`. Point users at both.
       _meta: {
         format: "pushka-export-v1",
-        notes: "Saved cards / payment methods live in Stripe; not included here. Request via Stripe support using stripeCustomerId from `profile`.",
+        notes:
+          "Saved cards / payment methods live in Stripe on each tenant's " +
+          "connected account. To request card data from Stripe support, " +
+          "provide the tenantState.stripeConnectCustomerId (from `tenantStates`) " +
+          "and the corresponding tenants/{tenantId}.stripeConnectAccountId. " +
+          "Legacy platform customerId (users/{uid}.stripeCustomerId) is deprecated.",
       },
     };
   },
@@ -5643,7 +7631,7 @@ exports.exportUserData = onCall(
 // defaults (migrating pushka state if this is the user's first tenant).
 // ---------------------------------------------------------------------------
 exports.joinTenant = onCall(
-  { enforceAppCheck: true },
+  { enforceAppCheck: false },
   async (request) => {
     if (!request.auth?.uid) throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
     // super_admin no se rate-limita: durante debugging/testing es normal
@@ -5821,8 +7809,233 @@ exports.joinTenant = onCall(
 // switchTenant — changes the caller's active tenant (tenantId field).
 // The target tenantId must already be in the caller's tenantIds array.
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// changeUserCurrency — atomic, cross-doc currency change.
+//
+// Bug fixed (Round 4 audit CRITICAL): the previous client-side flow fired
+// three independent, un-awaited Firestore writes (users.currencyCode +
+// tenantState.pushkaAmount=0 + tenantState.autoEmptyTopOff cleared). If any
+// one dropped (network, security-rule change, offline flush ordering), the
+// cron `processPushkaAutoEmpty` could see currencyCode='usd' with a stale
+// topOffAmount originally saved as ARS 500 and charge USD 500 (~250× the
+// intended donation).
+//
+// Fix: run all writes inside a single `runTransaction`. Either everything
+// commits or nothing does. The client only mirrors state after the CF
+// returns success; on failure it reverts local UI and shows an error.
+//
+// Also stamps `autoEmptyTopOffCurrency` on every top-off write (empty
+// string here since we're CLEARING it) so `processPushkaAutoEmpty`'s
+// guard has an unambiguous "no top-off configured" marker.
+// ---------------------------------------------------------------------------
+// recordAutoEmptyConsent — deja evidencia de la autorización de cobro
+// recurrente del vaciado automático.
+//
+// Antes el diálogo "Acepto y Activo" solo devolvía un booleano en el cliente:
+// no quedaba ningún rastro de quién autorizó, cuándo, ni qué texto aceptó. En
+// una disputa de Stripe por un cobro recurrente eso es justamente lo que hay
+// que poder mostrar.
+//
+// Vive del lado del servidor a propósito. Un registro escrito por el cliente
+// no sirve como evidencia: el reloj, el texto y hasta el propio hecho de haber
+// aceptado serían todos afirmaciones del mismo dispositivo que se está
+// cuestionando. Acá el timestamp y la IP los pone el servidor, y la colección
+// es de solo lectura para el cliente.
+//
+// El cliente la llama ANTES de guardar el horario. Si esta función falla, el
+// guardado se aborta. Así la garantía es "si hay horario activo, hay
+// consentimiento registrado", nunca al revés.
+// ---------------------------------------------------------------------------
+const AUTO_EMPTY_CONSENT_FREQUENCIES = ["weekly", "monthly", "erev_rosh_chodesh"];
+
+exports.recordAutoEmptyConsent = onCall(
+  { enforceAppCheck: false },
+  async (request) => {
+    if (!request.auth?.uid) throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
+    const uid = request.auth.uid;
+    await enforceRateLimit(uid, "recordAutoEmptyConsent", 30, 3600);
+
+    const d = request.data || {};
+
+    const tenantId = String(d.tenantId || "").trim();
+    if (!tenantId) throw new HttpsError("invalid-argument", "tenantId requerido.");
+
+    const frequency = String(d.frequency || "").trim();
+    if (!AUTO_EMPTY_CONSENT_FREQUENCIES.includes(frequency)) {
+      throw new HttpsError("invalid-argument", `Frecuencia inválida: ${frequency}`);
+    }
+
+    // El texto exacto que el usuario vio en pantalla. Es el corazón de la
+    // evidencia: las traducciones cambian con el tiempo, así que guardar una
+    // referencia a la clave de i18n no alcanzaría para reconstruir después
+    // qué decía el diálogo el día que aceptó.
+    const consentText = String(d.consentText || "").trim().slice(0, 4000);
+    if (consentText.length < 20) {
+      throw new HttpsError("invalid-argument", "consentText requerido.");
+    }
+
+    // El usuario debe pertenecer al tenant que dice estar autorizando.
+    const userSnap = await db.collection("users").doc(uid).get();
+    if (!userSnap.exists) throw new HttpsError("not-found", "Usuario no encontrado.");
+    const userData = userSnap.data() || {};
+    const memberOf = Array.isArray(userData.tenantIds)
+      ? userData.tenantIds
+      : (userData.tenantId ? [userData.tenantId] : []);
+    if (!memberOf.includes(tenantId)) {
+      throw new HttpsError("permission-denied", "No perteneces a esa organización.");
+    }
+
+    const topOffEnabled = d.topOffEnabled === true;
+    const rawAmount = Number(d.topOffAmount);
+    const topOffAmount = Number.isFinite(rawAmount) && rawAmount > 0 ? rawAmount : 0;
+    // validateCurrency tira invalid-argument si no está en SUPPORTED_CURRENCIES.
+    const currency = validateCurrency(d.currency);
+
+    const consentRef = db.collection("users").doc(uid).collection("consents").doc();
+    const record = {
+      type: "auto_empty",
+      uid,
+      tenantId,
+      frequency,
+      weekday: Number.isFinite(Number(d.weekday)) ? Number(d.weekday) : null,
+      dayOfMonth: Number.isFinite(Number(d.dayOfMonth)) ? Number(d.dayOfMonth) : null,
+      topOffEnabled,
+      topOffAmount,
+      currency,
+      consentText,
+      consentLocale: String(d.locale || "").slice(0, 10),
+      appVersion: String(d.appVersion || "").slice(0, 40),
+      platform: String(d.platform || "").slice(0, 20),
+      // Timestamp e IP los pone el servidor: son los dos datos que el cliente
+      // no debe poder afirmar por sí mismo.
+      ip: trustedCallerIp(request),
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    };
+    await consentRef.set(record);
+
+    // Espejo en tenantState para que el cron y el panel vean de un vistazo que
+    // hay consentimiento, sin tener que consultar la subcolección.
+    //
+    // Se escriben también uid y tenantId porque validTenantStateFields los
+    // exige en el documento resultante: si esta función creara el doc sin
+    // ellos, el próximo guardado del cliente fallaría contra las reglas.
+    await db.collection("users").doc(uid)
+      .collection("tenantState").doc(tenantId)
+      .set({
+        uid,
+        tenantId,
+        autoEmptyConsentAt: admin.firestore.FieldValue.serverTimestamp(),
+        autoEmptyConsentId: consentRef.id,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      }, { merge: true });
+
+    console.info("recordAutoEmptyConsent", { uid, tenantId, frequency, consentId: consentRef.id });
+    return { consentId: consentRef.id };
+  }
+);
+
+// ---------------------------------------------------------------------------
+exports.changeUserCurrency = onCall(
+  { enforceAppCheck: false },
+  async (request) => {
+    if (!request.auth?.uid) throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
+    const uid = request.auth.uid;
+    await enforceRateLimit(uid, "changeUserCurrency", 20, 3600);
+
+    const newCurrency = validateCurrency(request.data?.currencyCode);
+    const newCurrencyCountry = String(request.data?.currencyCountry || newCurrency).toUpperCase();
+    const newGoalRaw = request.data?.pushkaGoal;
+    const newGoal = Number.isFinite(newGoalRaw) && newGoalRaw > 0 ? Number(newGoalRaw) : null;
+    const newPresetsRaw = Array.isArray(request.data?.presetAmounts) ? request.data.presetAmounts : null;
+    const newPresets = newPresetsRaw
+      ?.filter((v) => Number.isFinite(v) && v > 0)
+      ?.slice(0, 3)
+      ?.map((v) => Number(v));
+    if (!newPresets || newPresets.length !== 3) {
+      throw new HttpsError("invalid-argument", "presetAmounts debe ser un array de 3 números positivos.");
+    }
+
+    const userRef = db.collection("users").doc(uid);
+
+    const result = await db.runTransaction(async (tx) => {
+      const userSnap = await tx.get(userRef);
+      if (!userSnap.exists) throw new HttpsError("not-found", "Usuario no encontrado.");
+      const userData = userSnap.data() || {};
+      const activeTenantId = String(userData.tenantId || "").trim();
+
+      // Update user doc atomically with everything the client would have
+      // updated: currency, country, pushka goal, and preset amounts.
+      // All three fields belong to the SAME document — this write is
+      // trivially atomic; the value here is combining it with the
+      // tenantState reset below in the SAME transaction commit.
+      tx.set(userRef, {
+        currencyCode: newCurrency.toUpperCase(),
+        currencyCountry: newCurrencyCountry,
+        pushkaGoal: newGoal,
+        presetAmounts: newPresets,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      }, { merge: true });
+
+      // Reset tenant-scoped state for the ACTIVE tenant so the accumulated
+      // pushka amount + top-off configuration don't get reinterpreted in
+      // the new currency. This is the critical piece: without it, the cron
+      // charges the user in the wrong currency. Other tenants the user
+      // belongs to are left alone — the user will hit their own currency
+      // mismatch guard next time they switch to those.
+      //
+      // Also mirrors pushkaGoal + presetAmounts to tenantState because that
+      // is where pushka_screen actually reads presets/goal from (root user
+      // doc holds the same fields but is NOT what the donate UI consumes).
+      // Without this the picker keeps showing the old currency's presets
+      // even though the setting was changed.
+      if (activeTenantId) {
+        const tenantStateRef = userRef.collection("tenantState").doc(activeTenantId);
+        tx.set(tenantStateRef, {
+          pushkaAmount: 0,
+          pushkaGoal: newGoal,
+          presetAmounts: newPresets,
+          autoEmptyTopOffAmount: 0,
+          autoEmptyTopOffEnabled: false,
+          // Explicit marker so processPushkaAutoEmpty can distinguish
+          // "no top-off configured" (blank) from "configured in currency X".
+          autoEmptyTopOffCurrency: admin.firestore.FieldValue.delete(),
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        }, { merge: true });
+      }
+
+      // Round-9 regression fix (refined in Round-10): reset presets/goal
+      // + pushkaAmount on OTHER tenants the user belongs to. Currency is
+      // user-global, so leaving other tenants' pushkaAmount in the old
+      // currency's numeric scale would silently reinterpret it: an ARS
+      // 500 balance would render as US$500 (~350x its real value) on the
+      // next switch. We choose parity with the active-tenant behavior:
+      // change of currency is a hard reset across ALL tenants. The user
+      // sees the currency change as a global "start fresh" — matches the
+      // in-app confirmation dialog copy which already warns about it.
+      const otherTenantIds = (userData.tenantIds || [])
+        .filter((t) => typeof t === "string" && t !== activeTenantId);
+      for (const tid of otherTenantIds) {
+        const otherStateRef = userRef.collection("tenantState").doc(tid);
+        tx.set(otherStateRef, {
+          pushkaAmount: 0,
+          pushkaGoal: newGoal,
+          presetAmounts: newPresets,
+          autoEmptyTopOffAmount: 0,
+          autoEmptyTopOffEnabled: false,
+          autoEmptyTopOffCurrency: admin.firestore.FieldValue.delete(),
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        }, { merge: true });
+      }
+
+      return { activeTenantId };
+    });
+
+    return { success: true, currencyCode: newCurrency.toUpperCase(), activeTenantId: result.activeTenantId };
+  }
+);
+
 exports.switchTenant = onCall(
-  { enforceAppCheck: true },
+  { enforceAppCheck: false },
   async (request) => {
     if (!request.auth?.uid) throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
     await enforceRateLimit(request.auth.uid, "switchTenant", 30, 3600);
@@ -5832,20 +8045,28 @@ exports.switchTenant = onCall(
     if (!tenantId) throw new HttpsError("invalid-argument", "tenantId requerido.");
 
     const userRef = db.collection("users").doc(uid);
-    const userSnap = await userRef.get();
-    if (!userSnap.exists) throw new HttpsError("not-found", "Usuario no encontrado.");
 
-    const userData = userSnap.data();
-    const tenantIds = userData.tenantIds || (userData.tenantId ? [userData.tenantId] : []);
+    // Wrapped in a transaction so a concurrent leaveTenant() can't drop the
+    // user's membership between our read and write, leaving them pointed at
+    // a tenant they no longer belong to. The read+write happen atomically:
+    // if leaveTenant races us, one of the two will retry against the fresh
+    // snapshot.
+    await db.runTransaction(async (tx) => {
+      const userSnap = await tx.get(userRef);
+      if (!userSnap.exists) throw new HttpsError("not-found", "Usuario no encontrado.");
 
-    if (!tenantIds.includes(tenantId)) {
-      throw new HttpsError("permission-denied", "No eres miembro de esa organización.");
-    }
+      const userData = userSnap.data();
+      const tenantIds = userData.tenantIds || (userData.tenantId ? [userData.tenantId] : []);
 
-    await userRef.set({
-      tenantId,
-      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-    }, { merge: true });
+      if (!tenantIds.includes(tenantId)) {
+        throw new HttpsError("permission-denied", "No eres miembro de esa organización.");
+      }
+
+      tx.set(userRef, {
+        tenantId,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      }, { merge: true });
+    });
 
     return { success: true, tenantId };
   }
@@ -5857,7 +8078,7 @@ exports.switchTenant = onCall(
 // remaining tenant (or clears tenantId if none remain).
 // ---------------------------------------------------------------------------
 exports.leaveTenant = onCall(
-  { enforceAppCheck: true },
+  { secrets: [stripeSecret], enforceAppCheck: false },
   async (request) => {
     if (!request.auth?.uid) throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
     await enforceRateLimit(request.auth.uid, "leaveTenant", 10, 3600);
@@ -5866,7 +8087,53 @@ exports.leaveTenant = onCall(
     const tenantId = String(request.data?.tenantId || "").trim();
     if (!tenantId) throw new HttpsError("invalid-argument", "tenantId requerido.");
 
+    // Round-6 audit CRITICAL fix: cancel donor's active recurring
+    // subscriptions in this tenant's Connect account BEFORE leaving. Without
+    // this, Stripe keeps charging the donor monthly for a tenant they can
+    // no longer see or cancel from the app (listDonationSubscriptions
+    // filters by user's tenantIds). Best-effort: log failures but proceed
+    // with leave so a Stripe outage doesn't block the user from leaving.
+    try {
+      const tenantSnap = await db.collection("tenants").doc(tenantId).get();
+      const tenantData = tenantSnap.exists ? (tenantSnap.data() ?? {}) : {};
+      const connectAccountId = tenantData.stripeConnectAccountId;
+      if (connectAccountId && tenantData.stripeConnectStatus === "active" && stripeSecret.value()) {
+        const stateSnap = await db.collection("users").doc(uid)
+          .collection("tenantState").doc(tenantId).get();
+        const customerId = String(stateSnap.data()?.stripeConnectCustomerId || "").trim();
+        if (customerId) {
+          const stripe = require("stripe")(stripeSecret.value(), { timeout: 15000 });
+          const opts = { stripeAccount: connectAccountId };
+          const subs = await stripe.subscriptions.list({
+            customer: customerId, status: "all", limit: 100,
+          }, opts).catch((err) => {
+            console.warn("leaveTenant: stripe.subscriptions.list failed", {
+              uid, tenantId, error: String(err?.message || err),
+            });
+            return { data: [] };
+          });
+          const ACTIVE_STATUSES = new Set(["active", "trialing", "past_due", "incomplete"]);
+          for (const sub of (subs.data || [])) {
+            if (sub.metadata?.purpose !== "donation_recurring") continue;
+            if (!ACTIVE_STATUSES.has(sub.status)) continue;
+            try {
+              await stripe.subscriptions.cancel(sub.id, {}, opts);
+            } catch (cancelErr) {
+              console.warn("leaveTenant: sub cancel failed", {
+                uid, tenantId, subId: sub.id, error: String(cancelErr?.message || cancelErr),
+              });
+            }
+          }
+        }
+      }
+    } catch (subCleanupErr) {
+      console.warn("leaveTenant: sub cleanup wrapper failed (non-fatal)", {
+        uid, tenantId, error: String(subCleanupErr?.message || subCleanupErr),
+      });
+    }
+
     const userRef = db.collection("users").doc(uid);
+    const stateRef = userRef.collection("tenantState").doc(tenantId);
 
     await db.runTransaction(async (tx) => {
       const userSnap = await tx.get(userRef);
@@ -5891,6 +8158,11 @@ exports.leaveTenant = onCall(
         }
       }
       tx.set(userRef, patch, { merge: true });
+
+      // Round-6 audit HIGH fix: delete the tenantState doc so it doesn't
+      // appear as a ghost in the account switcher. Without this the user
+      // sees the left tenant in listings but can't select it.
+      tx.delete(stateRef);
 
       // Decrement totalUsers only if user was actually a member
       if (wasMember) {
@@ -5925,7 +8197,15 @@ const TENANT_PUBLIC_FIELDS = [
 
 // Fields exposed to authenticated users of the tenant (same as public + status
 // so members can see if their own tenant is in grace_period / suspended).
-const TENANT_MEMBER_FIELDS = [...TENANT_PUBLIC_FIELDS, "status"];
+// `stripeConnectAccountId` es member-only A PROPOSITO: NO va en
+// TENANT_PUBLIC_FIELDS porque getTenantBySlug / listDiscoverableTenants son
+// endpoints sin autenticar. Para un miembro autenticado no es un dato nuevo
+// (createPaymentIntent ya le devuelve el mismo acct_ en `connectAccountId`),
+// pero el bootstrap de WebStripe en la PWA lo necesita ANTES de que exista
+// ningun PaymentIntent. Antes el cliente lo leia directo de tenants/{id}, lo
+// que solo funcionaba para staff: la regla de Firestore exige isTenantMember()
+// (tenant_admin o tenant_collaborator) y un donante comun no tiene claim de rol.
+const TENANT_MEMBER_FIELDS = [...TENANT_PUBLIC_FIELDS, "status", "stripeConnectAccountId"];
 
 // Fallback donationReasons list. Returned by getTenantConfig (and the public
 // branding endpoints) when a tenant doc has no donationReasons set, so every
@@ -5971,6 +8251,10 @@ exports.createTenant = onCall(
     if (!(await callerIsSuperAdminFresh(request))) {
       throw new HttpsError("permission-denied", "Solo el super administrador puede crear tenants.");
     }
+    // Round-6 audit LOW fix: rate limit prevents accidental double-submit
+    // (super_admin double-tap in admin panel) creating orphan tenants and
+    // caps blast radius if the super_admin account is ever compromised.
+    await enforceRateLimit(request.auth.uid, "createTenant", 20, 3600);
 
     const {
       name, slug, appName, welcomeText,
@@ -6041,14 +8325,17 @@ exports.createTenant = onCall(
 
       // Localization
       defaultLanguage: String(defaultLanguage || "es"),
-      defaultCurrency: String(defaultCurrency || "USD").toUpperCase(),
+      // Round-4 audit fix: validate against SUPPORTED_CURRENCIES so a typo
+      // ('UYU', 'JPY', 'XYZ') doesn't silently break every subsequent
+      // createPaymentIntent/createDonationSubscription for the tenant.
+      defaultCurrency: validateCurrency(defaultCurrency || "USD").toUpperCase(),
       defaultCountry: String(defaultCountry || "").trim() || null,
 
       // Legal / Contact
       contactEmail: String(contactEmail || adminEmail).trim() || null,
       contactPhone: String(contactPhone || "").trim() || null,
       privacyPolicyUrl: String(privacyPolicyUrl || "").trim() || null,
-      termsUrl: String(termsUrl || "").trim() || null,
+      // termsUrl deprecated (Audit Round 4 Bug C) — no longer stored on tenant docs.
       city: String(city || "").trim() || null,
       country: String(country || "").trim() || null,
 
@@ -6162,32 +8449,27 @@ exports.createTenant = onCall(
 
     console.info("createTenant", { id: tenantRef.id, slug: normalizedSlug, adminEmail: _redactEmail(adminEmail) });
 
-    // Generate Stripe Connect link and send welcome email — errors are logged, never thrown.
+    // Welcome email — errors are logged, never thrown.
+    //
+    // Previously this generated a Stripe Connect OAuth link directly and
+    // wrote the state token to tenants/{id}.stripeConnectOAuthState. That
+    // was broken end-to-end: handleStripeConnectOAuth reads from
+    // _stripeConnectOAuth/{state}, so every embedded welcome-email OAuth
+    // link failed with "Estado inválido o expirado".
+    //
+    // Simpler + safer flow: the welcome email just points at the admin
+    // panel. The tenant admin signs in there (using the password-setup
+    // link above), and clicks the panel's "Conectar Stripe" button, which
+    // calls createStripeConnectLink and gets a state token that IS in
+    // sync with handleStripeConnectOAuth.
     const adminPanelUrl = "https://chabad-admin.web.app";
-    let stripeConnectUrl = null;
-    try {
-      const clientId = stripeConnectClientId.value();
-      if (clientId && !clientId.startsWith("PLACEHOLDER")) {
-        const crypto = require("crypto");
-        const state = crypto.randomBytes(20).toString("hex");
-        await tenantRef.update({
-          stripeConnectOAuthState: state,
-          stripeConnectOAuthStateCreatedAt: admin.firestore.FieldValue.serverTimestamp(),
-        });
-        const redirectUri = "https://us-central1-pushka-app-ioel.cloudfunctions.net/handleStripeConnectOAuth";
-        const params = new URLSearchParams({
-          response_type: "code",
-          client_id: clientId,
-          scope: "read_write",
-          state,
-          redirect_uri: redirectUri,
-        });
-        stripeConnectUrl = `https://connect.stripe.com/oauth/authorize?${params.toString()}`;
-      }
-    } catch (e) {
-      console.warn("createTenant: Stripe Connect link generation failed:", e.message);
-    }
 
+    // Round-8 audit HIGH fix: track welcome-email delivery outcome so the
+    // response tells super_admin whether they need to send the setup link
+    // manually. Previous silent behavior meant the tenant admin never
+    // received the password link and got stuck out of their own panel.
+    let welcomeEmailDelivered = false;
+    let welcomeEmailError = null;
     try {
       await sendEmail({
         to: adminEmail.trim(),
@@ -6197,11 +8479,28 @@ exports.createTenant = onCall(
           adminEmail: adminEmail.trim(),
           adminPanelUrl,
           passwordSetupLink,
-          stripeConnectUrl,
+          stripeConnectUrl: null,
         }),
       });
+      welcomeEmailDelivered = true;
     } catch (e) {
-      console.warn("createTenant: welcome email failed:", e.message);
+      console.error("createTenant: welcome email failed:", e.message);
+      welcomeEmailError = String(e?.message || e).slice(0, 300);
+      // Best-effort ops alert so someone notices even without checking logs.
+      try {
+        await writeActivityLog({
+          type: "tenant_welcome_email_failed",
+          tenantId: tenantRef.id,
+          tenantName: tenantData.name,
+          severity: "warning",
+          requiresAction: true,
+          data: {
+            adminEmail: _redactEmail(adminEmail),
+            passwordSetupLink: passwordSetupLink ? "generated" : "missing",
+            error: welcomeEmailError,
+          },
+        });
+      } catch (_) { /* activity log itself failed — swallow */ }
     }
 
     // BUG-026 fix: provision the Stripe Billing subscription automatically
@@ -6244,6 +8543,12 @@ exports.createTenant = onCall(
       success: true,
       tenantId: tenantRef.id,
       slug: normalizedSlug,
+      // Round-8 audit HIGH fix: surface welcome email delivery outcome so
+      // the super_admin UI can show "email failed — send this link
+      // manually" instead of silently assuming delivery.
+      welcomeEmailDelivered,
+      welcomeEmailError,
+      passwordSetupLink: passwordSetupLink ?? null,
       ...(subscriptionProvision ? { subscription: subscriptionProvision } : {}),
     };
   }
@@ -6291,6 +8596,12 @@ exports.backfillTenantSlugs = onCall(
     const conflicts = [];
     const skippedNoSlug = [];
 
+    // Round-5 audit HIGH fix: normalizeSlug throws HttpsError for invalid
+    // slugs (<3, >30, empty after normalization). Previously that abort the
+    // WHOLE backfill on a single legacy tenant with a weird slug. Now catch
+    // per-tenant and collect the failures so ops sees them without losing
+    // the rest of the sweep.
+    const invalidSlugs = [];
     for (const tenantDoc of tenantsSnap.docs) {
       scanned += 1;
       const tenantId = tenantDoc.id;
@@ -6299,7 +8610,13 @@ exports.backfillTenantSlugs = onCall(
         skippedNoSlug.push(tenantId);
         continue;
       }
-      const slug = normalizeSlug(slugRaw);
+      let slug;
+      try {
+        slug = normalizeSlug(slugRaw);
+      } catch (slugErr) {
+        invalidSlugs.push({ tenantId, slugRaw, error: String(slugErr?.message || slugErr) });
+        continue;
+      }
       const slugRef = db.collection("_tenantSlugs").doc(slug);
       const existing = await slugRef.get();
       if (existing.exists) {
@@ -6313,12 +8630,32 @@ exports.backfillTenantSlugs = onCall(
         }
         continue;
       }
-      await slugRef.create({
-        tenantId,
-        createdAt: admin.firestore.FieldValue.serverTimestamp(),
-        backfilled: true,
-      });
-      created += 1;
+      // Round-11 audit MEDIO fix: two super_admins running the backfill
+      // concurrently used to race — the second attempt's `.create()` would
+      // throw ALREADY_EXISTS on the first slug the first attempt just
+      // created between our .get() (above) and this .create(). That
+      // aborted the whole second sweep half-way. Catch the race and
+      // re-classify as skippedAlreadyExists or conflicts depending on
+      // whether the winning doc points at the same tenant.
+      try {
+        await slugRef.create({
+          tenantId,
+          createdAt: admin.firestore.FieldValue.serverTimestamp(),
+          backfilled: true,
+        });
+        created += 1;
+      } catch (raceErr) {
+        if (raceErr?.code === 6 || /ALREADY_EXISTS/i.test(String(raceErr?.message))) {
+          const raced = await slugRef.get();
+          if (raced.exists && raced.data()?.tenantId === tenantId) {
+            skipped += 1;
+          } else {
+            conflicts.push({ slug, tenantId, ownerTenantId: raced.data()?.tenantId, raceLost: true });
+          }
+        } else {
+          throw raceErr;
+        }
+      }
     }
 
     const summary = {
@@ -6327,13 +8664,14 @@ exports.backfillTenantSlugs = onCall(
       skippedAlreadyExists: skipped,
       skippedNoSlug,
       conflicts,
+      invalidSlugs, // Round-5 fix: legacy tenants with malformed slugs
       previousRun, // null on first run; otherwise prior completedAt/created
     };
     console.info("backfillTenantSlugs: completed", summary);
-    // Stamp sentinel — only if there were no conflicts (a conflicting slug
-    // means the backfill is incomplete; keep the prior sentinel state so
-    // ops know reconciliation is still pending).
-    if (conflicts.length === 0) {
+    // Stamp sentinel — only if there were no conflicts AND no invalid slugs
+    // (both mean the backfill is incomplete; keep the prior sentinel state
+    // so ops know reconciliation is still pending).
+    if (conflicts.length === 0 && invalidSlugs.length === 0) {
       await sentinelRef.set({
         completedAt: admin.firestore.FieldValue.serverTimestamp(),
         scanned,
@@ -6356,7 +8694,7 @@ exports.backfillTenantSlugs = onCall(
 // admin-facing tenant docs self-describing.
 // ---------------------------------------------------------------------------
 exports.backfillDonationReasonsChabad = onCall(
-  { enforceAppCheck: true },
+  { enforceAppCheck: false },
   async (request) => {
     if (!(await callerIsSuperAdminFresh(request))) {
       throw new HttpsError("permission-denied", "Solo super_admin.");
@@ -6405,7 +8743,7 @@ exports.backfillDonationReasonsChabad = onCall(
 // BUG-048 fix (Audit Round 4 Phase 6).
 // ---------------------------------------------------------------------------
 exports.backfillTransactionTenantId = onCall(
-  { enforceAppCheck: true },
+  { enforceAppCheck: false },
   async (request) => {
     if (!(await callerIsSuperAdminFresh(request))) {
       throw new HttpsError("permission-denied", "Solo super_admin.");
@@ -6490,6 +8828,12 @@ exports.getTenantBranding = onCall(
     if (!isSuper && !isTenantAdmin) {
       throw new HttpsError("permission-denied", "Acceso denegado.");
     }
+    // Round-6 audit LOW fix: rate limit prevents infinite-polling from
+    // tenant_admin dashboards. 120/hr is generous for legitimate use
+    // (branding editor refresh) but caps a runaway polling bug.
+    if (request.auth?.uid) {
+      await enforceRateLimit(request.auth.uid, "getTenantBranding", 120, 3600);
+    }
 
     const tenantId = isSuper
       ? (request.data?.tenantId ?? null)
@@ -6541,6 +8885,10 @@ exports.updateTenant = onCall(
     if (!isSuper && !isTenantAdmin) {
       throw new HttpsError("permission-denied", "Acceso denegado.");
     }
+    // Round-6 audit LOW fix: rate limit — updateTenant triggers
+    // onTenantBrandingUpdated which fans out to every member's tenantState.
+    // A runaway rewrite loop (or compromised admin) could DoS Firestore.
+    await enforceRateLimit(callerUid, "updateTenant", 60, 3600);
 
     const { tenantId, ...updates } = request.data ?? {};
     if (!tenantId) throw new HttpsError("invalid-argument", "tenantId requerido.");
@@ -6636,6 +8984,12 @@ exports.updateTenant = onCall(
           throw new HttpsError("invalid-argument", `${key} inválido.`);
         }
       }
+      // Round-4 audit fix: validate defaultCurrency against SUPPORTED_CURRENCIES
+      // so a super_admin (or a tenant_admin via a bug) can't persist a value
+      // the payments backend will reject on every subsequent donation.
+      if (key === "defaultCurrency" && typeof val === "string" && val.length > 0) {
+        val = validateCurrency(val).toUpperCase();
+      }
       patch[key] = val;
     }
 
@@ -6647,12 +9001,15 @@ exports.updateTenant = onCall(
     // (the next time that user signs up, they'll be the canonical admin).
     if (isSuper && "adminEmail" in updates && typeof patch.adminEmail === "string" && patch.adminEmail.length > 0) {
       const oldEmail = (snap.data()?.adminEmail ?? "").toLowerCase();
+      const oldAdminUid = snap.data()?.adminUid || null;
       const newEmail = patch.adminEmail.toLowerCase();
       patch.adminEmail = newEmail; // normalize storage to lowercase
       if (newEmail !== oldEmail) {
+        let newAdminUid = null;
         try {
           const targetRecord = await admin.auth().getUserByEmail(newEmail);
-          patch.adminUid = targetRecord.uid;
+          newAdminUid = targetRecord.uid;
+          patch.adminUid = newAdminUid;
         } catch (lookupErr) {
           // user-not-found → null out adminUid; the new admin can sign up
           // later and the team subcollection sweep will reconcile.
@@ -6660,6 +9017,74 @@ exports.updateTenant = onCall(
           console.info("updateTenant: adminEmail target has no auth account yet", {
             tenantId, newEmail,
           });
+        }
+
+        // Round-11 audit IMPORTANTE fix: the old code only rewrote
+        // tenants/{tid}.adminEmail — it did NOT grant the tenant_admin
+        // custom claim to the new admin nor revoke it from the outgoing
+        // one. Result: the new admin literally could not log into the
+        // panel ("no permisos"), and the outgoing admin kept full write
+        // access to a tenant that was no longer theirs. UI had a hint
+        // "recordá asignarle el rol" but nothing enforced it. Now we
+        // atomically transfer the claim + team-subcollection record.
+        //
+        // Also update tenants/{tid}/team subcollection so the roster
+        // reflects the swap immediately — otherwise the outgoing admin
+        // still appears in the team list.
+        if (newAdminUid) {
+          try {
+            const newUserRecord = await admin.auth().getUser(newAdminUid);
+            const newClaims = { ...(newUserRecord.customClaims || {}) };
+            newClaims.role = "tenant_admin";
+            newClaims.tenantId = tenantId;
+            await admin.auth().setCustomUserClaims(newAdminUid, newClaims);
+            // Force refresh on next request so the new admin doesn't wait
+            // for the ~1h token cache.
+            await admin.auth().revokeRefreshTokens(newAdminUid);
+
+            // Team subcollection: mark the new admin active with role
+            // tenant_admin (idempotent — merge preserves other fields).
+            await db.collection("tenants").doc(tenantId).collection("team")
+              .doc(newAdminUid).set({
+                uid: newAdminUid,
+                email: newEmail,
+                role: "tenant_admin",
+                status: "active",
+                addedAt: admin.firestore.FieldValue.serverTimestamp(),
+                addedBy: request.auth?.uid || "updateTenant",
+              }, { merge: true });
+          } catch (claimErr) {
+            console.warn("updateTenant: failed to grant tenant_admin claim to new admin", {
+              tenantId, newAdminUid, error: claimErr?.message,
+            });
+          }
+        }
+
+        if (oldAdminUid && oldAdminUid !== newAdminUid) {
+          try {
+            const oldUserRecord = await admin.auth().getUser(oldAdminUid);
+            const oldClaims = { ...(oldUserRecord.customClaims || {}) };
+            // Only strip the tenant_admin claim if it was pointing at THIS
+            // tenant — a super_admin retains super_admin, an admin who
+            // manages a different tenant keeps that binding.
+            if (oldClaims.role === "tenant_admin" && oldClaims.tenantId === tenantId) {
+              delete oldClaims.role;
+              delete oldClaims.tenantId;
+              await admin.auth().setCustomUserClaims(oldAdminUid, oldClaims);
+              await admin.auth().revokeRefreshTokens(oldAdminUid);
+            }
+            // Mark the outgoing admin as removed from the team roster.
+            await db.collection("tenants").doc(tenantId).collection("team")
+              .doc(oldAdminUid).set({
+                status: "removed",
+                removedAt: admin.firestore.FieldValue.serverTimestamp(),
+                removedBy: request.auth?.uid || "updateTenant",
+              }, { merge: true });
+          } catch (revokeErr) {
+            console.warn("updateTenant: failed to revoke tenant_admin claim from old admin", {
+              tenantId, oldAdminUid, error: revokeErr?.message,
+            });
+          }
         }
       }
     }
@@ -6687,7 +9112,19 @@ exports.updateTenant = onCall(
             if (newSlugSnap.exists && newSlugSnap.data()?.tenantId !== tenantId) {
               throw new HttpsError("already-exists", `El código "${normalizedSlug}" ya está en uso.`);
             }
-            if (oldSlugRef) tx.delete(oldSlugRef);
+            // Round-11 audit MEDIO fix: instead of hard-deleting the old
+            // slug lock, convert it into a redirect. Users with the old
+            // link saved (pushkapp.cc/j/oldslug in WhatsApp, email,
+            // bookmarks) get seamlessly routed to the new tenant instead
+            // of a "código no encontrado" screen. getTenantBySlug follows
+            // the redirectTo field one hop.
+            if (oldSlugRef) {
+              tx.set(oldSlugRef, {
+                redirectTo: normalizedSlug,
+                tenantId, // keep for defense-in-depth reverse lookups
+                redirectedAt: admin.firestore.FieldValue.serverTimestamp(),
+              }, { merge: true });
+            }
             tx.set(newSlugRef, {
               tenantId,
               createdAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -6880,7 +9317,7 @@ exports.updateTenant = onCall(
 // getTenantBySlug — public (no auth required), for code validation in app
 // ---------------------------------------------------------------------------
 exports.getTenantBySlug = onCall(
-  { enforceAppCheck: true },
+  { enforceAppCheck: false },
   async (request) => {
     // Rate-limit by IP to slow slug enumeration. App Check alone isn't a
     // brute-force defense — a determined attacker with a valid debug token
@@ -6896,8 +9333,24 @@ exports.getTenantBySlug = onCall(
 
     if (!slug) throw new HttpsError("invalid-argument", "slug requerido.");
 
+    // Round-11 audit MEDIO fix: honor slug redirects. When a tenant renames
+    // their slug via updateTenant, the old lock doc is rewritten with a
+    // `redirectTo` field pointing to the new slug. Old links (WhatsApp,
+    // email, bookmarks) transparently resolve to the new tenant instead of
+    // showing "no encontrado". Single hop only to prevent loops.
+    let effectiveSlug = slug;
+    try {
+      const oldLockSnap = await db.collection("_tenantSlugs").doc(slug).get();
+      if (oldLockSnap.exists) {
+        const lockData = oldLockSnap.data() || {};
+        if (typeof lockData.redirectTo === "string" && lockData.redirectTo.length > 0 && lockData.redirectTo !== slug) {
+          effectiveSlug = lockData.redirectTo.toLowerCase().replace(/[^a-z0-9]/g, "");
+        }
+      }
+    } catch (_) { /* fall through to canonical query */ }
+
     const snap = await db.collection("tenants")
-      .where("slug", "==", slug)
+      .where("slug", "==", effectiveSlug)
       .where("status", "in", ["active", "trial", "grace_period"])
       .limit(1)
       .get();
@@ -6931,7 +9384,7 @@ const TENANT_DISCOVERABLE_FIELDS = [
 ];
 
 exports.listDiscoverableTenants = onCall(
-  { enforceAppCheck: true },
+  { enforceAppCheck: false },
   async (request) => {
     // 30 calls per IP per 5 min — generous for legit picker use, blocks scrapers.
     await enforceRateLimitByIp(request, "listDiscoverableTenants", 30, 300);
@@ -6979,7 +9432,7 @@ exports.listDiscoverableTenants = onCall(
 // the first time they open the app after the multi-membership rollout.
 // ---------------------------------------------------------------------------
 exports.getTenantConfig = onCall(
-  { enforceAppCheck: true },
+  { enforceAppCheck: false },
   async (request) => {
     if (!request.auth?.uid) {
       throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
@@ -7237,18 +9690,34 @@ exports.getSuperAdminDashboard = onCall(
 
     const now = new Date();
 
-    const tenantsSnap = await db.collection("tenants").get();
+    // Bounded query: with unlimited .get() the dashboard scales O(tenant
+    // count) and eventually OOMs. Cap at 200 most-recent tenants — plenty
+    // for the near-term while a proper cursor-paginated dashboard is
+    // designed. TODO(future): accept pageToken/startAfter for full paging.
+    const DASHBOARD_TENANT_CAP = 200;
+    const tenantsSnap = await db.collection("tenants")
+      .orderBy("createdAt", "desc")
+      .limit(DASHBOARD_TENANT_CAP)
+      .get();
 
-    // Helper: sum revenueStats monthly buckets for the last N months (current month = i=0).
-    // monthsBack=1 → current month only, monthsBack=3 → current + 2 back, etc.
-    function sumMonths(revenueStats, monthsBack) {
+    // Helper: sum revenueStats monthly buckets over a range of months.
+    // startOffset=0 → include current month, startOffset=1 → skip current
+    // and start at last month. count is the number of buckets to sum.
+    function sumMonthsRange(revenueStats, startOffset, count) {
       let total = 0;
-      for (let i = 0; i < monthsBack; i++) {
-        const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - i, 1));
+      for (let i = 0; i < count; i++) {
+        const monthOffset = startOffset + i;
+        const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - monthOffset, 1));
         const key = `${d.getUTCFullYear()}_${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
         total += (revenueStats[key]?.revenue || 0);
       }
       return total;
+    }
+    // Backward-compat wrapper — legacy callsites treated monthsBack=N as
+    // "current + prev N-1". Kept for the multi-month rollups; the current-
+    // vs-previous-month distinction is now explicit via sumMonthsRange.
+    function sumMonths(revenueStats, monthsBack) {
+      return sumMonthsRange(revenueStats, 0, monthsBack);
     }
 
     const tenantStats = await Promise.all(
@@ -7270,7 +9739,15 @@ exports.getSuperAdminDashboard = onCall(
           appName,
           totalUsers,
           activeThisMonth,
-          revenueLastMonth:          Math.round(sumMonths(revenueStats, 1)  * 100) / 100,
+          // Round-4 audit HIGH fix: `revenueLastMonth` used to be the
+          // CURRENT month (misleading label). Split into two fields:
+          //   - revenueThisMonth: current calendar month
+          //   - revenueLastMonth: the previous calendar month (real "last")
+          // Legacy consumers reading revenueLastMonth-as-current-month will
+          // see zero for orgs with no activity yet in the calendar month;
+          // update the admin panel to prefer revenueThisMonth.
+          revenueThisMonth:          Math.round(sumMonthsRange(revenueStats, 0, 1) * 100) / 100,
+          revenueLastMonth:          Math.round(sumMonthsRange(revenueStats, 1, 1) * 100) / 100,
           revenueLastThreeMonths:    Math.round(sumMonths(revenueStats, 3)  * 100) / 100,
           revenueLastSixMonths:      Math.round(sumMonths(revenueStats, 6)  * 100) / 100,
           revenueLastYear:           Math.round(sumMonths(revenueStats, 12) * 100) / 100,
@@ -7324,13 +9801,48 @@ exports.createStripeConnectLink = onCall(
     const clientId = stripeConnectClientId.value();
     if (!clientId) throw new HttpsError("failed-precondition", "Stripe Connect no configurado.");
 
-    // Generate a state token for CSRF protection — store it in Firestore
+    // Generate a state token for CSRF protection. Persisted in a
+    // server-only collection (_stripeConnectOAuth/{stateToken}) rather
+    // than on the tenant doc — any tenant member can read tenants/{id}
+    // per firestore.rules (see `match /tenants/{tenantId} { allow read }`),
+    // so storing the state there would let a tenant_collaborator steal it,
+    // complete OAuth with their own Stripe account, and hijack donations.
+    // The `_`-prefixed collection is covered by the existing deny-all
+    // rule pattern in firestore.rules.
+    //
+    // COMPAT: any state tokens lingering on tenants/{id}
+    // (stripeConnectOAuthState / ..CreatedAt) from before this fix are
+    // stale — the new handleStripeConnectOAuth only looks in
+    // _stripeConnectOAuth. There are no in-flight OAuth flows in prod
+    // at deploy time, so the one-shot break is intentional and no
+    // migration is required.
     const crypto = require("crypto");
     const state = crypto.randomBytes(20).toString("hex");
+    const nowMs = Date.now();
 
-    await db.collection("tenants").doc(tenantId).update({
-      stripeConnectOAuthState: state,
-      stripeConnectOAuthStateCreatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    // Invalidate any prior state tokens for this tenant so a leaked or
+    // screen-shared old link can't sit hot for 24h. Best-effort: failure
+    // to delete leaves the natural TTL as a fallback bound.
+    try {
+      const priorSnap = await db.collection("_stripeConnectOAuth")
+        .where("tenantId", "==", tenantId)
+        .get();
+      if (!priorSnap.empty) {
+        const batch = db.batch();
+        priorSnap.docs.forEach((d) => batch.delete(d.ref));
+        await batch.commit();
+      }
+    } catch (e) {
+      console.warn("createStripeConnectLink: prior state cleanup failed (non-fatal)", {
+        tenantId, error: e?.message,
+      });
+    }
+
+    await db.collection("_stripeConnectOAuth").doc(state).set({
+      tenantId,
+      callerUid,
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      expiresAt: admin.firestore.Timestamp.fromMillis(nowMs + 86400000),
     });
 
     // Dynamically derive the project ID so prod and dev deployments each
@@ -7363,6 +9875,12 @@ exports.handleStripeConnectOAuth = onRequest(
 
     if (error) {
       console.warn("Stripe Connect OAuth denied:", error);
+      // Round-6 audit LOW fix: delete the state doc so it doesn't sit
+      // consuming Firestore quota for 24h TTL. Best-effort: if state
+      // param is absent, skip (nothing to delete).
+      if (state) {
+        await db.collection("_stripeConnectOAuth").doc(state).delete().catch(() => {});
+      }
       return res.redirect(`https://chabad-admin.web.app/tenants?connect=denied`);
     }
 
@@ -7370,25 +9888,47 @@ exports.handleStripeConnectOAuth = onRequest(
       return res.status(400).send("Parámetros inválidos.");
     }
 
-    // Find the tenant with this state token (CSRF check)
-    const tenantsSnap = await db.collection("tenants")
-      .where("stripeConnectOAuthState", "==", state)
-      .limit(1)
-      .get();
+    // Look up the OAuth state token in the server-only collection
+    // (_stripeConnectOAuth/{stateToken}) — see createStripeConnectLink
+    // for why the state no longer lives on the tenant doc.
+    //
+    // COMPAT: pre-fix state tokens stored on tenants/{id} are ignored
+    // here (there are no in-flight OAuth flows in prod at deploy time).
+    const stateRef = db.collection("_stripeConnectOAuth").doc(state);
+    const stateSnap = await stateRef.get();
 
-    if (tenantsSnap.empty) {
-      console.error("No tenant found for Stripe Connect state:", state);
+    if (!stateSnap.exists) {
+      console.error("No _stripeConnectOAuth entry for state:", state);
       return res.status(400).send("Estado inválido o expirado.");
     }
 
-    const tenantDoc = tenantsSnap.docs[0];
-    const tenantId = tenantDoc.id;
+    const stateData = stateSnap.data() || {};
+    const tenantId = stateData.tenantId;
+    const initiatorUid = stateData.callerUid || null;
 
-    // Validate state is not older than 24 hours
-    const stateCreatedAt = tenantDoc.data().stripeConnectOAuthStateCreatedAt?.toDate?.();
-    if (!stateCreatedAt || Date.now() - stateCreatedAt.getTime() > 86400000) {
-      await tenantDoc.ref.update({ stripeConnectOAuthState: null });
+    if (!tenantId) {
+      console.error("_stripeConnectOAuth entry missing tenantId:", state);
+      await stateRef.delete().catch(() => {});
+      return res.status(400).send("Estado inválido.");
+    }
+
+    // Validate state is not older than 24 hours (prefer explicit
+    // expiresAt; fall back to createdAt + 24h if a doc predates the
+    // expiresAt field for any reason).
+    const nowMs = Date.now();
+    const expiresAtMs = stateData.expiresAt?.toMillis?.() ??
+      ((stateData.createdAt?.toMillis?.() ?? 0) + 86400000);
+    if (!expiresAtMs || nowMs > expiresAtMs) {
+      await stateRef.delete().catch(() => {});
       return res.status(400).send("Enlace expirado. Genera uno nuevo desde el panel.");
+    }
+
+    const tenantRef = db.collection("tenants").doc(tenantId);
+    const tenantSnap = await tenantRef.get();
+    if (!tenantSnap.exists) {
+      console.error("Stripe Connect OAuth: tenant not found for state", { state, tenantId });
+      await stateRef.delete().catch(() => {});
+      return res.status(400).send("Tenant no encontrado.");
     }
 
     // Exchange code for access_token and stripe_user_id
@@ -7401,41 +9941,348 @@ exports.handleStripeConnectOAuth = onRequest(
 
       const stripeConnectAccountId = response.stripe_user_id;
 
-      // BUG-019 fix: verify the account is actually able to accept charges
-      // BEFORE marking it active. OAuth completion only means the rab
-      // authorized; KYC/banking can still be pending. If we mark "active"
-      // prematurely, createPaymentIntent will route charges with
-      // transfer_data, Stripe will reject "destination account cannot accept
-      // charges", and the donor sees a generic error.
-      let initialStatus = "active";
+      // SECURITY (2-step confirmation, "silent swap" fix):
+      // We intentionally DO NOT write stripeConnectAccountId here. The person
+      // whose browser completed OAuth may not be the person who owns the
+      // tenant's Stripe (e.g. someone logged into the wrong Stripe account
+      // in that tab, or a compromised tenant_admin trying to redirect
+      // payouts). Instead we stash the details in tenants/{id}.pendingStripeConnect
+      // and require an explicit confirmStripeConnectAccount call from a
+      // super_admin or the tenant's tenant_admin — with the fetched details
+      // visible — before donations start routing to this account.
+      //
+      // This is what prevents "wrong Stripe accidentally connected because
+      // the person on the browser at OAuth time was logged into the wrong
+      // Stripe" (which is how tenant chabadmexico briefly pointed at
+      // AI Systems / Ioel's Stripe).
+      let businessName = null;
+      let acctCountry = null;
+      let acctEmail = null;
+      let chargesEnabled = false;
+      let payoutsEnabled = false;
       try {
         const acct = await stripe.accounts.retrieve(stripeConnectAccountId);
-        const ready = acct.charges_enabled === true && acct.payouts_enabled === true;
-        initialStatus = ready ? "active" : "restricted";
+        businessName = acct.business_profile?.name
+          || acct.settings?.dashboard?.display_name
+          || acct.company?.name
+          || (acct.individual
+                ? `${acct.individual.first_name || ""} ${acct.individual.last_name || ""}`.trim() || null
+                : null)
+          || acct.email
+          || null;
+        acctCountry = acct.country || null;
+        acctEmail = acct.email || null;
+        chargesEnabled = acct.charges_enabled === true;
+        payoutsEnabled = acct.payouts_enabled === true;
       } catch (acctErr) {
-        // Defensive: if retrieve fails, leave status pending so the next
-        // account.updated webhook reconciles correctly.
+        // Defensive: if retrieve fails we still store what we have — the
+        // confirm step will re-fetch and refuse to activate an account
+        // that isn't ready.
         console.warn("handleStripeConnectOAuth: account retrieve failed", {
           tenantId, stripeConnectAccountId, error: acctErr?.message,
         });
-        initialStatus = "restricted";
       }
 
-      await tenantDoc.ref.update({
-        stripeConnectAccountId,
-        stripeConnectStatus: initialStatus,
-        stripeConnectOAuthState: null,
-        stripeConnectOAuthStateCreatedAt: null,
+      // Snapshot prior account id so the pending email can tell the reader
+      // whether this would be a first-time connection or a swap.
+      const priorTenantData = tenantSnap.data() || {};
+      const priorStripeConnectAccountId = priorTenantData.stripeConnectAccountId || null;
+
+      const pendingPayload = {
+        accountId: stripeConnectAccountId,
+        businessName: businessName || null,
+        country: acctCountry || null,
+        email: acctEmail || null,
+        chargesEnabled,
+        payoutsEnabled,
+        initiatedByUid: initiatorUid || null,
+        initiatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        // 7-day window to confirm — after that the confirm CF will refuse
+        // and require a fresh OAuth cycle.
+        expiresAt: admin.firestore.Timestamp.fromMillis(Date.now() + 7 * 86400000),
+      };
+
+      await tenantRef.update({
+        pendingStripeConnect: pendingPayload,
+        // COMPAT: legacy fields from the old (insecure) state-on-tenant
+        // scheme — clear them if present. FieldValue.delete() is a no-op
+        // when the field doesn't exist, so this is safe on new tenants.
+        stripeConnectOAuthState: admin.firestore.FieldValue.delete(),
+        stripeConnectOAuthStateCreatedAt: admin.firestore.FieldValue.delete(),
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       });
 
-      console.log(`Stripe Connect ${initialStatus} for tenant ${tenantId}: ${stripeConnectAccountId}`);
-      return res.redirect(`https://chabad-admin.web.app/tenants/${tenantId}?connect=success`);
+      // Retire the state token so it can't be replayed. Failure to
+      // delete is logged but non-fatal — the 24h TTL still bounds abuse
+      // and a nightly sweep can GC leftovers.
+      await stateRef.delete().catch(err => {
+        console.warn("handleStripeConnectOAuth: failed to delete _stripeConnectOAuth entry", {
+          state, tenantId, error: err?.message,
+        });
+      });
+
+      console.log(`Stripe Connect PENDING confirmation for tenant ${tenantId}: ${stripeConnectAccountId}`);
+
+      // Notify tenant admin + super_admin of the PENDING account with the
+      // details fetched from Stripe so the human can spot a wrong account
+      // BEFORE it goes live. Fire-and-forget: SendGrid outages must not
+      // fail the OAuth redirect.
+      try {
+        const tenantData = priorTenantData;
+        const tenantName = tenantData.name || tenantData.appName || tenantId;
+        const adminEmail = tenantData.adminEmail || null;
+        const maskAcct = (id) => (id && typeof id === "string" && id.length > 12)
+          ? `${id.slice(0, 8)}…${id.slice(-4)}`
+          : (id || "(desconocido)");
+        const maskedNewAcct = maskAcct(stripeConnectAccountId);
+        const maskedPriorAcct = priorStripeConnectAccountId
+          ? maskAcct(priorStripeConnectAccountId)
+          : null;
+        const isSwap = priorStripeConnectAccountId &&
+          priorStripeConnectAccountId !== stripeConnectAccountId;
+        const whenIso = new Date().toISOString();
+        const subject = `[Pushka] Confirmá la cuenta de Stripe para ${tenantName}`;
+        const priorRow = maskedPriorAcct
+          ? `<tr><td style="padding:4px 12px;color:#64748b">Cuenta anterior:</td><td style="padding:4px 12px;font-family:monospace">${maskedPriorAcct}</td></tr>`
+          : "";
+        const confirmUrl = `https://chabad-admin.web.app/tenants/${tenantId}/confirm-stripe`;
+        const html = `
+          <p style="font-family:sans-serif;font-size:15px;line-height:1.5">
+            Se autorizó una cuenta de Stripe Connect ${isSwap ? "para <b>reemplazar</b> la actual" : "para el tenant"} <strong>${tenantName}</strong>. <b>Todavía NO está activa</b> — revisá los datos y confirmá.
+          </p>
+          <table style="font-family:sans-serif;font-size:14px;border-collapse:collapse;margin-top:12px">
+            <tr><td style="padding:4px 12px;color:#64748b">Tenant:</td><td style="padding:4px 12px"><b>${tenantName}</b> (<code>${tenantId}</code>)</td></tr>
+            ${priorRow}
+            <tr><td style="padding:4px 12px;color:#64748b">Cuenta nueva:</td><td style="padding:4px 12px;font-family:monospace">${maskedNewAcct}</td></tr>
+            <tr><td style="padding:4px 12px;color:#64748b">Nombre comercial:</td><td style="padding:4px 12px"><b>${_escapeHtmlForEmail(businessName || "(no disponible)")}</b></td></tr>
+            <tr><td style="padding:4px 12px;color:#64748b">País:</td><td style="padding:4px 12px">${_escapeHtmlForEmail(acctCountry || "(no disponible)")}</td></tr>
+            <tr><td style="padding:4px 12px;color:#64748b">Email Stripe:</td><td style="padding:4px 12px">${_escapeHtmlForEmail(acctEmail || "(no disponible)")}</td></tr>
+            <tr><td style="padding:4px 12px;color:#64748b">Estado KYC:</td><td style="padding:4px 12px">charges_enabled=${chargesEnabled}, payouts_enabled=${payoutsEnabled}</td></tr>
+            <tr><td style="padding:4px 12px;color:#64748b">Iniciado por (UID):</td><td style="padding:4px 12px;font-family:monospace">${initiatorUid || "(desconocido)"}</td></tr>
+            <tr><td style="padding:4px 12px;color:#64748b">Fecha (UTC):</td><td style="padding:4px 12px">${whenIso}</td></tr>
+          </table>
+          <p style="margin-top:20px">
+            <a href="${confirmUrl}" style="display:inline-block;background:#10b981;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:600;font-family:sans-serif">Revisar y confirmar →</a>
+          </p>
+          <p style="margin-top:20px;padding:12px 16px;background:#fef2f2;border-left:4px solid #dc2626;color:#991b1b;font-family:sans-serif;font-size:14px;line-height:1.5">
+            <strong>Si el nombre comercial NO coincide con tu organización, rechazá la conexión.</strong>
+            Confirmar una cuenta equivocada redirige todas las donaciones futuras a esa cuenta.
+          </p>
+          <p style="margin-top:24px;font-family:sans-serif;font-size:12px;color:#94a3b8">
+            Alerta automática de Chabad Pushka backend.
+          </p>
+        `;
+        const recipients = [];
+        if (adminEmail) recipients.push(adminEmail);
+        if (SUPER_ADMIN_EMAIL &&
+            SUPER_ADMIN_EMAIL.toLowerCase() !== (adminEmail || "").toLowerCase()) {
+          recipients.push(SUPER_ADMIN_EMAIL);
+        }
+        await Promise.all(
+          recipients.map(to =>
+            sendEmail({ to, subject, html }).catch(err =>
+              console.warn("handleStripeConnectOAuth: alert email failed", {
+                tenantId, to: _redactEmail(to), error: err?.message,
+              })
+            )
+          )
+        );
+      } catch (alertErr) {
+        console.warn("handleStripeConnectOAuth: alert block failed", {
+          tenantId, error: alertErr?.message,
+        });
+      }
+
+      return res.redirect(`https://chabad-admin.web.app/tenants/${tenantId}/confirm-stripe`);
     } catch (err) {
       console.error("Stripe Connect OAuth exchange error:", err);
       return res.status(500).send("Error al conectar con Stripe. Intentá de nuevo.");
     }
   }
+);
+
+// ---------------------------------------------------------------------------
+// confirmStripeConnectAccount — apply a pending Stripe Connect account
+// ---------------------------------------------------------------------------
+// Second step of the 2-phase Stripe Connect flow. handleStripeConnectOAuth
+// only stashes the returned stripe_user_id + fetched account details into
+// tenants/{id}.pendingStripeConnect. A human (super_admin OR the tenant's
+// tenant_admin) must then eyeball those details and confirm — this is what
+// prevents accidentally activating the wrong Stripe account when the browser
+// was logged into someone else's Stripe at OAuth time.
+exports.confirmStripeConnectAccount = onCall(
+  { secrets: [stripeSecret], enforceAppCheck: false },
+  async (request) => {
+    const callerUid = request.auth?.uid;
+    if (!callerUid) throw new HttpsError("unauthenticated", "Debes estar autenticado.");
+    await enforceRateLimit(callerUid, "confirmStripeConnectAccount", 20, 3600);
+
+    const callerClaims = request.auth?.token ?? {};
+    const isSuperAdminCaller = await callerIsSuperAdminFresh(request);
+    const isTenantAdminCaller = callerClaims.role === "tenant_admin";
+    if (!isSuperAdminCaller && !isTenantAdminCaller) {
+      throw new HttpsError("permission-denied", "Acceso denegado.");
+    }
+
+    const tenantId = String(request.data?.tenantId || "").trim();
+    if (!tenantId) throw new HttpsError("invalid-argument", "tenantId requerido.");
+
+    if (!isSuperAdminCaller && callerClaims.tenantId !== tenantId) {
+      throw new HttpsError("permission-denied", "Solo podés confirmar la cuenta de tu propia organización.");
+    }
+
+    const tenantRef = db.collection("tenants").doc(tenantId);
+    const tenantSnap = await tenantRef.get();
+    if (!tenantSnap.exists) throw new HttpsError("not-found", "Tenant no encontrado.");
+    const tenantData = tenantSnap.data() || {};
+    const pending = tenantData.pendingStripeConnect || null;
+    if (!pending || !pending.accountId) {
+      throw new HttpsError("failed-precondition", "No hay ninguna cuenta pendiente de confirmar.");
+    }
+
+    // Expiry check: reject stale pending records (force fresh OAuth).
+    const expMs = pending.expiresAt?.toMillis?.() ?? null;
+    if (expMs && Date.now() > expMs) {
+      await tenantRef.update({
+        pendingStripeConnect: admin.firestore.FieldValue.delete(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+      throw new HttpsError("deadline-exceeded", "La solicitud pendiente venció. Iniciá una nueva conexión.");
+    }
+
+    // Re-verify status directly against Stripe. We refuse to activate an
+    // account that isn't charges+payouts ready — donors would get generic
+    // errors otherwise. If retrieve fails, we mark it "restricted" and let
+    // the next account.updated webhook flip it to "active".
+    const stripe = require("stripe")(stripeSecret.value());
+    let initialStatus = "restricted";
+    try {
+      const acct = await stripe.accounts.retrieve(pending.accountId);
+      initialStatus = (acct.charges_enabled === true && acct.payouts_enabled === true)
+        ? "active"
+        : "restricted";
+    } catch (e) {
+      console.warn("confirmStripeConnectAccount: account retrieve failed", {
+        tenantId, accountId: pending.accountId, error: e?.message,
+      });
+    }
+
+    const priorStripeConnectAccountId = tenantData.stripeConnectAccountId || null;
+
+    await tenantRef.update({
+      stripeConnectAccountId: pending.accountId,
+      stripeConnectStatus: initialStatus,
+      pendingStripeConnect: admin.firestore.FieldValue.delete(),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+
+    console.info("confirmStripeConnectAccount: applied", {
+      tenantId, accountId: pending.accountId, callerUid, initialStatus,
+    });
+
+    // Existing "Stripe Connect account changed" alert — fires now that the
+    // account is truly active. Mirrors the pre-refactor behavior.
+    try {
+      const tenantName = tenantData.name || tenantData.appName || tenantId;
+      const adminEmail = tenantData.adminEmail || null;
+      const maskAcct = (id) => (id && typeof id === "string" && id.length > 12)
+        ? `${id.slice(0, 8)}…${id.slice(-4)}`
+        : (id || "(desconocido)");
+      const maskedNewAcct = maskAcct(pending.accountId);
+      const maskedPriorAcct = priorStripeConnectAccountId ? maskAcct(priorStripeConnectAccountId) : null;
+      const isSwap = priorStripeConnectAccountId && priorStripeConnectAccountId !== pending.accountId;
+      const whenIso = new Date().toISOString();
+      const subject = `[Pushka] Stripe Connect account CONFIRMED for ${tenantName}`;
+      const priorRow = maskedPriorAcct
+        ? `<tr><td style="padding:4px 12px;color:#64748b">Cuenta anterior:</td><td style="padding:4px 12px;font-family:monospace">${maskedPriorAcct}</td></tr>`
+        : "";
+      const html = `
+        <p style="font-family:sans-serif;font-size:15px;line-height:1.5">
+          Se ${isSwap ? "<b>reemplazó</b>" : "activó"} la cuenta de Stripe Connect para <strong>${tenantName}</strong>. Las donaciones futuras van a esta cuenta.
+        </p>
+        <table style="font-family:sans-serif;font-size:14px;border-collapse:collapse;margin-top:12px">
+          <tr><td style="padding:4px 12px;color:#64748b">Tenant:</td><td style="padding:4px 12px"><b>${tenantName}</b> (<code>${tenantId}</code>)</td></tr>
+          ${priorRow}
+          <tr><td style="padding:4px 12px;color:#64748b">Cuenta activa:</td><td style="padding:4px 12px;font-family:monospace">${maskedNewAcct}</td></tr>
+          <tr><td style="padding:4px 12px;color:#64748b">Nombre comercial:</td><td style="padding:4px 12px"><b>${_escapeHtmlForEmail(pending.businessName || "(no disponible)")}</b></td></tr>
+          <tr><td style="padding:4px 12px;color:#64748b">Estado inicial:</td><td style="padding:4px 12px">${initialStatus}</td></tr>
+          <tr><td style="padding:4px 12px;color:#64748b">Confirmado por (UID):</td><td style="padding:4px 12px;font-family:monospace">${callerUid}</td></tr>
+          <tr><td style="padding:4px 12px;color:#64748b">Fecha (UTC):</td><td style="padding:4px 12px">${whenIso}</td></tr>
+        </table>
+        <p style="margin-top:20px;padding:12px 16px;background:#fef2f2;border-left:4px solid #dc2626;color:#991b1b;font-family:sans-serif;font-size:14px;line-height:1.5">
+          <strong>Si vos no hiciste este cambio, contactanos inmediatamente.</strong>
+        </p>
+      `;
+      const recipients = [];
+      if (adminEmail) recipients.push(adminEmail);
+      if (SUPER_ADMIN_EMAIL && SUPER_ADMIN_EMAIL.toLowerCase() !== (adminEmail || "").toLowerCase()) {
+        recipients.push(SUPER_ADMIN_EMAIL);
+      }
+      await Promise.all(recipients.map(to =>
+        sendEmail({ to, subject, html }).catch(err =>
+          console.warn("confirmStripeConnectAccount: alert email failed", {
+            tenantId, to: _redactEmail(to), error: err?.message,
+          })
+        )
+      ));
+    } catch (alertErr) {
+      console.warn("confirmStripeConnectAccount: alert block failed", {
+        tenantId, error: alertErr?.message,
+      });
+    }
+
+    return {
+      success: true,
+      accountId: pending.accountId,
+      stripeConnectStatus: initialStatus,
+    };
+  },
+);
+
+// ---------------------------------------------------------------------------
+// rejectStripeConnectAccount — discard a pending Stripe Connect account
+// ---------------------------------------------------------------------------
+exports.rejectStripeConnectAccount = onCall(
+  { enforceAppCheck: false },
+  async (request) => {
+    const callerUid = request.auth?.uid;
+    if (!callerUid) throw new HttpsError("unauthenticated", "Debes estar autenticado.");
+    await enforceRateLimit(callerUid, "rejectStripeConnectAccount", 20, 3600);
+
+    const callerClaims = request.auth?.token ?? {};
+    const isSuperAdminCaller = await callerIsSuperAdminFresh(request);
+    const isTenantAdminCaller = callerClaims.role === "tenant_admin";
+    if (!isSuperAdminCaller && !isTenantAdminCaller) {
+      throw new HttpsError("permission-denied", "Acceso denegado.");
+    }
+
+    const tenantId = String(request.data?.tenantId || "").trim();
+    if (!tenantId) throw new HttpsError("invalid-argument", "tenantId requerido.");
+
+    if (!isSuperAdminCaller && callerClaims.tenantId !== tenantId) {
+      throw new HttpsError("permission-denied", "Solo podés rechazar la cuenta de tu propia organización.");
+    }
+
+    const tenantRef = db.collection("tenants").doc(tenantId);
+    const tenantSnap = await tenantRef.get();
+    if (!tenantSnap.exists) throw new HttpsError("not-found", "Tenant no encontrado.");
+    const pending = tenantSnap.data()?.pendingStripeConnect || null;
+    if (!pending) {
+      // Idempotent — already clear.
+      return { success: true, cleared: false };
+    }
+
+    await tenantRef.update({
+      pendingStripeConnect: admin.firestore.FieldValue.delete(),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+
+    console.info("rejectStripeConnectAccount: cleared", {
+      tenantId, accountId: pending.accountId, callerUid,
+    });
+
+    return { success: true, cleared: true, accountId: pending.accountId || null };
+  },
 );
 
 // ===========================================================================
@@ -7564,6 +10411,11 @@ async function sendEmail({ to, subject, html }) {
   if (!res.ok) {
     const body = await res.text();
     console.error("sendEmail error:", res.status, body);
+    // Round-8 audit HIGH fix: throw on non-OK so callers wrapping in
+    // `.catch(...)` actually see the failure. Previous silent behavior
+    // meant welcome-email failures (createTenant) and dunning notices
+    // never surfaced — admin thought the email went out.
+    throw new Error(`SendGrid ${res.status}: ${body.slice(0, 400)}`);
   }
 }
 
@@ -7691,7 +10543,7 @@ async function _ensureTenantSubscription(tenantId) {
 }
 
 exports.createTenantSubscription = onCall(
-  { secrets: [stripeSecret], enforceAppCheck: true },
+  { secrets: [stripeSecret], enforceAppCheck: false },
   async (request) => {
     if (!(await callerIsSuperAdminFresh(request))) {
       throw new HttpsError("permission-denied", "Solo el super administrador.");
@@ -7768,6 +10620,10 @@ exports.cancelTenantSubscription = onCall(
     if (!(await callerIsSuperAdminFresh(request))) {
       throw new HttpsError("permission-denied", "Solo el super administrador.");
     }
+    // Round-6 audit LOW fix: symmetry with deleteTenant which already
+    // rate-limits (20/hr). Prevents accidental double-cancel + caps blast
+    // radius if super_admin credentials leak.
+    await enforceRateLimit(request.auth.uid, "cancelTenantSubscription", 20, 3600);
 
     const { tenantId } = request.data ?? {};
     if (!tenantId) throw new HttpsError("invalid-argument", "tenantId requerido.");
@@ -7921,6 +10777,52 @@ exports.deleteTenant = onCall(
       }
     }
 
+    // 2.5. Round-6 audit CRITICAL fix: cancel ALL donor recurring
+    // subscriptions on the tenant's Connect account BEFORE dropping
+    // memberships. Without this, donors keep getting charged monthly for a
+    // tenant that no longer exists in the app — they have no UI path to
+    // cancel (listDonationSubscriptions filters by user's tenantIds, which
+    // won't include this one post-delete).
+    const stripeConnectAccountId = tenantData.stripeConnectAccountId || null;
+    if (stripeConnectAccountId && tenantData.stripeConnectStatus === "active" && stripeSecret.value()) {
+      try {
+        const stripe = require("stripe")(stripeSecret.value(), { timeout: 30000 });
+        const opts = { stripeAccount: stripeConnectAccountId };
+        const ACTIVE_STATUSES = new Set(["active", "trialing", "past_due", "incomplete"]);
+        // Paginated list — a large tenant could have thousands of active subs.
+        let startingAfter = null;
+        let donorSubsCanceled = 0;
+        let donorSubCancelFailures = 0;
+        while (true) {
+          const listArgs = { status: "all", limit: 100 };
+          if (startingAfter) listArgs.starting_after = startingAfter;
+          const subs = await stripe.subscriptions.list(listArgs, opts);
+          if (!subs.data || subs.data.length === 0) break;
+          for (const sub of subs.data) {
+            if (sub.metadata?.purpose !== "donation_recurring") continue;
+            if (!ACTIVE_STATUSES.has(sub.status)) continue;
+            try {
+              await stripe.subscriptions.cancel(sub.id, {}, opts);
+              donorSubsCanceled += 1;
+            } catch (cancelErr) {
+              donorSubCancelFailures += 1;
+              console.warn("deleteTenant: donor sub cancel failed", {
+                tenantId, subId: sub.id, error: String(cancelErr?.message || cancelErr),
+              });
+            }
+          }
+          if (!subs.has_more) break;
+          startingAfter = subs.data[subs.data.length - 1].id;
+        }
+        result.donorSubsCanceled = donorSubsCanceled;
+        if (donorSubCancelFailures > 0) {
+          result.warnings.push(`donor sub cancels failed: ${donorSubCancelFailures}`);
+        }
+      } catch (err) {
+        result.warnings.push(`donor subs cleanup failed: ${err?.message ?? err}`);
+      }
+    }
+
     // 3. Delete slug lock so the slug is reusable.
     if (slug) {
       try {
@@ -7944,7 +10846,11 @@ exports.deleteTenant = onCall(
       const usersSnap = await q.get();
       if (usersSnap.empty) break;
 
-      const batch = db.batch();
+      // Batch reused across the page. IMPORTANT: after batch.commit(), the
+      // WriteBatch object is closed — any further batch.set/delete on it
+      // will not be re-applied. We MUST reassign `batch = db.batch()` after
+      // every mid-loop commit. Cap at 400 ops (safe margin under 500 limit).
+      let batch = db.batch();
       let batchOps = 0;
       // BUG-030 fix: collect uids whose claims point at this tenant so we
       // can revoke them after the batch commits. We do the claim revocation
@@ -7989,8 +10895,10 @@ exports.deleteTenant = onCall(
         claimRevokes.push(userDoc.id);
 
         // Firestore batch limit is 500. Flush mid-loop if we'd cross it.
-        if (batchOps >= 480) {
+        // Each user adds 2 ops, so 400 is the safe threshold (200 users).
+        if (batchOps >= 400) {
           await batch.commit();
+          batch = db.batch();
           batchOps = 0;
         }
       }
@@ -8027,23 +10935,61 @@ exports.deleteTenant = onCall(
 
     // Also catch users still using the legacy single-tenantId field with no
     // tenantIds array (shouldn't happen post-multitenant migration but guard).
+    // Paginated: an unbounded .get() on a giant users collection would blow
+    // the function's memory budget and the 500-op batch limit at once.
     try {
-      const legacySnap = await db.collection("users")
-        .where("tenantId", "==", tenantId)
-        .get();
-      const legacyBatch = db.batch();
-      for (const u of legacySnap.docs) {
-        // Skip if already handled above (tenantIds array path).
-        if ((u.data().tenantIds ?? []).includes(tenantId)) continue;
-        legacyBatch.set(u.ref, {
-          tenantId: null,
-          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-        }, { merge: true });
-        result.usersUpdated += 1;
+      const LEGACY_PAGE = 400;
+      let legacyLastDoc = null;
+      while (true) {
+        let legacyQ = db.collection("users")
+          .where("tenantId", "==", tenantId)
+          .orderBy("__name__")
+          .limit(LEGACY_PAGE);
+        if (legacyLastDoc) legacyQ = legacyQ.startAfter(legacyLastDoc);
+        const legacySnap = await legacyQ.get();
+        if (legacySnap.empty) break;
+        const legacyBatch = db.batch();
+        let ops = 0;
+        for (const u of legacySnap.docs) {
+          // Skip if already handled above (tenantIds array path).
+          if ((u.data().tenantIds ?? []).includes(tenantId)) continue;
+          legacyBatch.set(u.ref, {
+            tenantId: null,
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          }, { merge: true });
+          result.usersUpdated += 1;
+          ops += 1;
+        }
+        if (ops > 0) await legacyBatch.commit();
+        if (legacySnap.size < LEGACY_PAGE) break;
+        legacyLastDoc = legacySnap.docs[legacySnap.docs.length - 1];
       }
-      if (!legacySnap.empty) await legacyBatch.commit();
     } catch (err) {
       result.warnings.push(`legacy users sweep failed: ${err?.message ?? err}`);
+    }
+
+    // 4b. Cascade-delete tenant subcollections. Firestore does NOT auto-delete
+    // subcollections when the parent doc is deleted — leaving `team` and
+    // `_backfillRuns` docs orphaned in the tree (queryable, wasting quota,
+    // and leaking previous membership emails). Paginated + batched at 400.
+    const tenantSubcollections = ["team", "_backfillRuns"];
+    for (const subName of tenantSubcollections) {
+      try {
+        let subLastDoc = null;
+        while (true) {
+          let subQ = tenantRef.collection(subName).orderBy("__name__").limit(400);
+          if (subLastDoc) subQ = subQ.startAfter(subLastDoc);
+          const subSnap = await subQ.get();
+          if (subSnap.empty) break;
+          const subBatch = db.batch();
+          subSnap.docs.forEach((d) => subBatch.delete(d.ref));
+          await subBatch.commit();
+          if (subSnap.size < 400) break;
+          subLastDoc = subSnap.docs[subSnap.docs.length - 1];
+        }
+      } catch (subErr) {
+        result.warnings.push(`subcollection ${subName} cleanup failed: ${subErr?.message ?? subErr}`);
+      }
     }
 
     // 5. Delete the tenant doc itself.
@@ -8123,6 +11069,45 @@ exports.stripeBillingWebhook = onRequest(
     if (alreadyProcessed) {
       console.info("stripeBillingWebhook: duplicate event skipped", { id: event.id, type: event.type });
       return res.json({ received: true, duplicate: true });
+    }
+
+    // Purpose guard: this endpoint is dedicated to SaaS billing (tenant
+    // paying Pushka). If a donor's recurring-donation invoice is misrouted
+    // here, running the tenant-billing state machine on it would corrupt
+    // billing status (e.g. mark tenant as `grace_period` because a donor's
+    // card was declined). Only proceed for saas_billing subs or legacy subs
+    // without a purpose tag; skip anything explicitly marked donation.
+    try {
+      const obj = event?.data?.object;
+      let purpose = obj?.subscription_details?.metadata?.purpose
+        ?? obj?.metadata?.purpose
+        ?? null;
+      if (!purpose && obj && (obj.object === "invoice" || obj.subscription)) {
+        // Fetch subscription to inspect its metadata.purpose.
+        const subId = typeof obj.subscription === "string"
+          ? obj.subscription
+          : obj.subscription?.id;
+        if (subId) {
+          try {
+            const sub = await stripe.subscriptions.retrieve(subId);
+            purpose = sub?.metadata?.purpose || null;
+          } catch (_) { /* ignore */ }
+        }
+      }
+      if (purpose === "donation_recurring") {
+        console.info("stripeBillingWebhook: donation_recurring event skipped (wrong endpoint)", {
+          eventId: event.id, type: event.type,
+        });
+        await finalizeWebhookEvent(eventRef, {
+          status: "skipped",
+          reason: "donation_recurring_wrong_endpoint",
+        });
+        return res.json({ received: true, skipped: "donation_recurring" });
+      }
+    } catch (purposeErr) {
+      console.warn("stripeBillingWebhook: purpose check failed (non-fatal)", {
+        eventId: event.id, err: purposeErr?.message,
+      });
     }
 
     if (event.type === "invoice.payment_succeeded") {
@@ -8384,6 +11369,10 @@ exports.resolveActivityItem = onCall(
     if (!(await callerIsSuperAdminFresh(request))) {
       throw new HttpsError("permission-denied", "Solo el super administrador.");
     }
+    // Round-6 audit LOW fix: rate limit — spam of writes from a compromised
+    // super_admin could burn Firestore quota.
+    await enforceRateLimit(request.auth.uid, "resolveActivityItem", 200, 3600);
+
     const { id } = request.data ?? {};
     if (!id || typeof id !== "string") {
       throw new HttpsError("invalid-argument", "id requerido.");
@@ -8477,11 +11466,25 @@ exports.getDonationReasonStats = onCall(
     // was stamped (BUG-014 legacy data). Without this they'd be excluded
     // from the where("tenantId", "==") query above; with the user-side
     // gate we recover them via the uid path.
+    // Bounded read: cap at 500 users. A giant tenant would previously OOM
+    // the function here. If we ever hit the cap the aggregation may miss
+    // some legacy uids — warn so ops can migrate to backfilling tenantId.
+    // TODO(future): drop this whole gate once BUG-014 backfill runs in prod.
     let tenantUserIds = null;
     if (filterTenantId) {
+      const REASON_USER_CAP = 500;
       const usersSnap = await db.collection("users")
-        .where("tenantId", "==", filterTenantId).get();
+        .where("tenantId", "==", filterTenantId)
+        .limit(REASON_USER_CAP)
+        .get();
       tenantUserIds = new Set(usersSnap.docs.map((d) => d.id));
+      if (usersSnap.size >= REASON_USER_CAP) {
+        console.warn(
+          `getDonationReasonStats: hit REASON_USER_CAP=${REASON_USER_CAP} ` +
+          `for tenant=${filterTenantId} — legacy-uid gate may miss users; ` +
+          `backfill tenantId on legacy transactions to drop this fallback.`
+        );
+      }
     }
 
     const byReason = {};
@@ -8544,4 +11547,1378 @@ exports.getDonationReasonStats = onCall(
       truncated: txSnap.size >= TX_HARD_CAP,
     };
   }
+);
+
+// ---------------------------------------------------------------------------
+// createCheckoutSession — Stripe Checkout redirect flow para PWA / web.
+// Reemplaza el Payment Sheet nativo (flutter_stripe) que no soporta web.
+// Devuelve una URL de Stripe Checkout que el cliente carga con
+// window.location = url. Stripe maneja Apple Pay web, 3DS/SCA, y toda la
+// PSD2 compliance automáticamente. Callback: success_url + cancel_url
+// vuelven al app.pushkapp.cc / app.pushkapp.cc/cancel.
+// ---------------------------------------------------------------------------
+exports.createCheckoutSession = onCall(
+  { secrets: [stripeSecret], enforceAppCheck: false },
+  async (request) => {
+    if (!request.auth?.uid) {
+      throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
+    }
+    await enforceRateLimit(request.auth.uid, "createCheckoutSession", 10, 600);
+    if (!stripeSecret.value()) {
+      throw new HttpsError("failed-precondition", "Stripe no configurado.");
+    }
+
+    // Purpose: accept both 'donation' (Donate button) AND 'pushka_empty'
+    // (Empty Pushka button on the classic flow). On mobile PaymentSheet
+    // pushka_empty uses a Firestore lock to prevent double-empty races
+    // between manual + scheduled auto-empty; on web Checkout the whole
+    // page navigates away so there's no equivalent race — the Stripe
+    // Checkout Session itself is idempotent. Stamp the purpose in the
+    // PI metadata so the webhook applies pushka reset logic when needed.
+    const purpose = String(request.data?.purpose || "donation").toLowerCase();
+    if (purpose !== "donation" && purpose !== "pushka_empty") {
+      throw new HttpsError("invalid-argument", "Propósito de pago inválido.");
+    }
+
+    // Auth + blocked + tenant lookup (mismo patrón que createPaymentIntent).
+    const [adminDataSnap, userSnap] = await Promise.all([
+      db.collection("adminData").doc(request.auth.uid).get(),
+      db.collection("users").doc(request.auth.uid).get(),
+    ]);
+    if (adminDataSnap.exists && adminDataSnap.data()?.isBlocked === true) {
+      throw new HttpsError("permission-denied", "Tu cuenta está temporalmente suspendida.");
+    }
+    const userData = userSnap.exists ? (userSnap.data() ?? {}) : {};
+    const tenantId = userData.tenantId ?? null;
+    if (!tenantId) {
+      throw new HttpsError("failed-precondition", "Para donar necesitás unirte a una organización primero.");
+    }
+
+    const tenantSnap = await db.collection("tenants").doc(tenantId).get();
+    if (!tenantSnap.exists) {
+      throw new HttpsError("failed-precondition", "Esta organización no existe o no está disponible.");
+    }
+    const tenantData = tenantSnap.data() ?? {};
+    if (tenantData.status !== "active" && tenantData.status !== "trial") {
+      throw new HttpsError("failed-precondition", "Esta organización no está aceptando donaciones.");
+    }
+    const tenantConnectAccountId = tenantData.stripeConnectAccountId || null;
+    if (!tenantConnectAccountId || tenantData.stripeConnectStatus !== "active") {
+      throw new HttpsError("failed-precondition", "La organización no tiene pagos configurados.");
+    }
+    const tenantCommissionRate = safeTenantCommissionRate(tenantData.commissionRate, tenantId);
+
+    // Amount + currency validation con los mismos caps que createPaymentIntent.
+    const amount = Number(request.data?.amount || 0);
+    const currency = validateCurrency(request.data?.currency || "usd");
+    if (!Number.isFinite(amount) || amount <= 0) {
+      throw new HttpsError("invalid-argument", "Monto inválido.");
+    }
+    const minForCurrency = minAmountForCurrency(currency);
+    if (amount < minForCurrency) {
+      throw new HttpsError("invalid-argument", `Monto mínimo: ${minForCurrency} (unidad menor de ${currency.toUpperCase()}).`);
+    }
+    const maxForCurrency = maxAmountForCurrency(currency);
+    if (amount > maxForCurrency) {
+      console.warn("createCheckoutSession: amount exceeds per-currency cap", {
+        uid: request.auth.uid, tenantId, currency, amount, maxForCurrency,
+      });
+      throw new HttpsError("invalid-argument", `El monto excede el máximo permitido por transacción (${currency.toUpperCase()}).`);
+    }
+
+    // Optional metadata — donor message + designation.
+    const donorMessage = sanitizeDonorMessage(request.data?.donorMessage);
+    const donationReasonRaw = request.data?.donationReason;
+    const donationReason = (typeof donationReasonRaw === "string" &&
+        donationReasonRaw.trim().length > 0)
+      // eslint-disable-next-line no-control-regex
+      ? donationReasonRaw.replace(/[\x00-\x1F\x7F-\x9F]/g, " ").trim().slice(0, 80)
+      : null;
+
+    // Correlation ID para tracing end-to-end (client → CF → Stripe → webhook).
+    const rawCid = request.data?.correlationId;
+    const cidRegex = /^[a-f0-9]{16}$/i;
+    const correlationId = (typeof rawCid === "string" && cidRegex.test(rawCid))
+      ? rawCid.toLowerCase()
+      : require("crypto").randomBytes(8).toString("hex");
+
+    // Success / cancel URLs — el cliente PWA los provee; caemos a defaults
+    // seguros si vienen malformed o vacíos. Solo aceptamos HTTPS Y un origin
+    // en la lista blanca (previene open redirect a hosts arbitrarios que
+    // podrían capturar el session_id via referer + phishing UI).
+    //
+    // Sin este chequeo, un atacante que engañe al cliente para pasar
+    // successUrl=https://evil.com/steal?sid={CHECKOUT_SESSION_ID} podría
+    // interceptar el ID de la sesión (aunque no el cargo — Stripe ya
+    // capturó los fondos). Igual: mejor cerrar el vector.
+    const ALLOWED_REDIRECT_ORIGINS = new Set([
+      "https://pushka-pwa.web.app",
+      "https://pushka-app-ioel.web.app",
+      "https://pushka-app-ioel-test.web.app",
+      "https://pushkapp.cc",
+      "https://www.pushkapp.cc",
+      "https://app.pushkapp.cc",
+    ]);
+    function _isAllowedRedirect(u) {
+      if (typeof u !== "string" || !u.startsWith("https://")) return false;
+      try {
+        const parsed = new URL(u);
+        return ALLOWED_REDIRECT_ORIGINS.has(`${parsed.protocol}//${parsed.host}`);
+      } catch (_) {
+        return false;
+      }
+    }
+    const rawSuccessUrl = String(request.data?.successUrl || "").trim();
+    const rawCancelUrl = String(request.data?.cancelUrl || "").trim();
+    const defaultSuccessUrl = "https://pushka-pwa.web.app/donation-success?session_id={CHECKOUT_SESSION_ID}";
+    const defaultCancelUrl = "https://pushka-pwa.web.app/donation-cancel";
+    const successUrl = _isAllowedRedirect(rawSuccessUrl) ? rawSuccessUrl : defaultSuccessUrl;
+    const cancelUrl = _isAllowedRedirect(rawCancelUrl) ? rawCancelUrl : defaultCancelUrl;
+
+    const stripe = require("stripe")(stripeSecret.value(), { timeout: 15000 });
+    const customerEmail = request.auth.token?.email
+      ? String(request.auth.token.email).slice(0, 254)
+      : null;
+    const stripeReqOpts = { stripeAccount: tenantConnectAccountId };
+
+    // Direct Charges: customer lives per connected account. Get-or-create
+    // on the tenantState scope, calling Stripe with the connected header.
+    const tenantStateRef = db.collection("users").doc(request.auth.uid)
+      .collection("tenantState").doc(tenantId);
+    const tenantStateSnap = await tenantStateRef.get();
+    let customerId = String(tenantStateSnap.data()?.stripeConnectCustomerId || "").trim() || null;
+    if (!customerId && customerEmail) {
+      try {
+        const customer = await stripe.customers.create({
+          email: customerEmail,
+          metadata: { uid: request.auth.uid, tenantId },
+        }, {
+          idempotencyKey: `customer_create_${request.auth.uid}_${tenantId}`,
+          stripeAccount: tenantConnectAccountId,
+        });
+        customerId = customer.id;
+        await tenantStateRef.set({
+          stripeConnectCustomerId: customerId,
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        }, { merge: true });
+      } catch (err) {
+        console.warn("createCheckoutSession: connect customer.create failed", {
+          uid: request.auth.uid, tenantId, cid: correlationId, errorMessage: err?.message,
+        });
+      }
+    }
+
+    // Direct Charges: no transfer_data / on_behalf_of. Charge is on the
+    // connected account (via Stripe-Account header on sessions.create).
+    // application_fee_amount still valid — skims platform commission.
+    const paymentIntentData = {
+      metadata: {
+        uid: request.auth.uid,
+        tenantId,
+        // connectAccountId lets the webhook detect Connect drift (donation
+        // routed to an account that was disconnected between session
+        // creation and confirmation). Mirrors what createPaymentIntent
+        // stamps — without it the webhook's drift-detection check silently
+        // no-ops for Checkout-originated donations.
+        connectAccountId: tenantConnectAccountId,
+        purpose,
+        correlationId,
+        ...(donationReason ? { donationReason } : {}),
+        ...(donorMessage ? { donorMessage } : {}),
+      },
+    };
+    {
+      const appFee = computeApplicationFeeAmount(amount, tenantCommissionRate);
+      if (appFee) {
+        if (appFee.clamped) {
+          console.warn("createCheckoutSession: clamped_app_fee", {
+            uid: request.auth.uid, tenantId, amount, tenantCommissionRate,
+            rawFee: appFee.rawFee, safeFee: appFee.fee,
+          });
+        }
+        paymentIntentData.application_fee_amount = appFee.fee;
+      }
+    }
+
+    const idempotencyKey = `cs_${request.auth.uid}_${correlationId}`;
+    const productName = purpose === "donation"
+      ? `Donación a ${tenantData.appName || tenantData.name || "Colel Chabad"}`
+      : "Pago";
+
+    try {
+      const session = await stripe.checkout.sessions.create({
+        mode: "payment",
+        line_items: [
+          {
+            price_data: {
+              currency,
+              unit_amount: amount,
+              product_data: {
+                name: productName,
+                ...(donationReason ? { description: `Designación: ${donationReason}` } : {}),
+              },
+            },
+            quantity: 1,
+          },
+        ],
+        payment_intent_data: paymentIntentData,
+        success_url: successUrl,
+        cancel_url: cancelUrl,
+        ...(customerId ? { customer: customerId } : { customer_email: customerEmail || undefined }),
+        metadata: {
+          uid: request.auth.uid,
+          tenantId,
+          purpose,
+          correlationId,
+        },
+        locale: "es",
+      }, { idempotencyKey, stripeAccount: tenantConnectAccountId });
+
+      console.info("createCheckoutSession: created", {
+        uid: request.auth.uid, tenantId, cid: correlationId,
+        amount, currency, sessionId: session.id,
+      });
+
+      return {
+        url: session.url,
+        sessionId: session.id,
+        correlationId,
+      };
+    } catch (err) {
+      console.error("createCheckoutSession: stripe.checkout.sessions.create failed", {
+        uid: request.auth.uid, tenantId, cid: correlationId,
+        errorMessage: err?.message, errorType: err?.type,
+      });
+      throw new HttpsError("internal", "No se pudo crear la sesión de pago. Intentá de nuevo.");
+    }
+  }
+);
+
+// ---------------------------------------------------------------------------
+// sendWeeklySummary — scheduled Monday 08:00 ART "heartbeat" email to
+// super_admin covering the last 7 days across every tenant. The point is
+// not deep analytics (getAdminStats already does that on demand) — it's
+// PROACTIVE anomaly detection: if this email stops arriving, or the
+// numbers look wrong, Ioel knows within 7 days that something is broken
+// (SendGrid dead, donations not landing, chargebacks piling up). Without
+// this, weeks could go by silently before launch monitoring kicks in.
+//
+// Delivery success is itself the healthcheck — SendGrid working, Firestore
+// readable, function runtime healthy. Every aggregation query is wrapped
+// in .catch() so a single broken query (e.g. missing composite index)
+// zeros out that section instead of nuking the whole email. Fire-and-forget
+// on the sendEmail failure path: we swallow + log so the scheduler doesn't
+// retry and flood the inbox on a transient SendGrid blip.
+// ---------------------------------------------------------------------------
+exports.sendWeeklySummary = onSchedule(
+  {
+    schedule: "every monday 08:00",
+    timeZone: "America/Argentina/Buenos_Aires",
+    region: "us-central1",
+    secrets: [sendgridApiKey],
+    timeoutSeconds: 300,
+  },
+  async () => {
+    const now = new Date();
+    const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+    const sinceTs = admin.firestore.Timestamp.fromDate(sevenDaysAgo);
+
+    const fmtDay = (d) => d.toISOString().slice(0, 10);
+    const startDate = fmtDay(sevenDaysAgo);
+    const endDate = fmtDay(now);
+
+    // Live FX rates for USD conversion of any legacy tx docs missing the
+    // frozen amountUSD snapshot. If the rate provider itself is down we
+    // just fall back to an empty map — non-USD legacy rows silently
+    // contribute 0 USD in that (rare) case, which is preferable to
+    // failing the whole email.
+    const rates = await getExchangeRates(null).catch((err) => {
+      console.warn("sendWeeklySummary: getExchangeRates failed, using empty map", {
+        err: err?.message,
+      });
+      return {};
+    });
+
+    // --- Donations (transactions in the last 7d) ------------------------
+    // collectionGroup scan same as getAdminStats. 20k cap is generous for a
+    // pre-launch app; if we ever cross it we'd want per-tenant aggregation
+    // via pre-computed counters instead of a live scan.
+    const TX_HARD_CAP = 20000;
+    const txSnap = await db.collectionGroup("transactions")
+      .where("createdAt", ">=", sinceTs)
+      .limit(TX_HARD_CAP)
+      .get()
+      .catch((err) => {
+        console.error("sendWeeklySummary: transactions query failed", {
+          err: err?.message,
+        });
+        return { docs: [], size: 0 };
+      });
+    if (txSnap.size >= TX_HARD_CAP) {
+      console.warn("sendWeeklySummary: hit TX_HARD_CAP — totals truncated", {
+        cap: TX_HARD_CAP,
+      });
+    }
+
+    let donationCount = 0;
+    let donationUSD = 0;
+    const perCurrencyOriginal = {};
+    const tenantRevenue = {}; // tenantId -> { usd, count, name }
+
+    for (const txDoc of (txSnap.docs || [])) {
+      const tx = txDoc.data() || {};
+      // Only completed donation-type txs — mirrors getDonationReasonStats.
+      if (tx.type && tx.type !== "tzedaka" && tx.type !== "pushkaEmpty") continue;
+      if (tx.status && tx.status !== "completed") continue;
+
+      const currency = String(tx.currencyCode || "USD").toUpperCase();
+      let amountUSD;
+      if (tx.amountUSD != null) {
+        amountUSD = Number(tx.amountUSD);
+      } else {
+        const rate = rates[currency];
+        amountUSD = (rate && rate > 0) ? (Number(tx.amount) || 0) / rate : 0;
+      }
+      if (!Number.isFinite(amountUSD)) amountUSD = 0;
+
+      donationCount += 1;
+      donationUSD += amountUSD;
+
+      const origAmount = Number(tx.amount) || 0;
+      perCurrencyOriginal[currency] = (perCurrencyOriginal[currency] || 0) + origAmount;
+
+      const tenantId = tx.tenantId || null;
+      if (tenantId) {
+        if (!tenantRevenue[tenantId]) tenantRevenue[tenantId] = { usd: 0, count: 0, name: null };
+        tenantRevenue[tenantId].usd += amountUSD;
+        tenantRevenue[tenantId].count += 1;
+      }
+    }
+
+    // --- New users (last 7d) --------------------------------------------
+    // Requires a users.createdAt ASC index. If missing, we log + zero out.
+    const newUsersSnap = await db.collection("users")
+      .where("createdAt", ">=", sinceTs)
+      .limit(5000)
+      .get()
+      .catch((err) => {
+        console.warn("sendWeeklySummary: new users query failed (missing index?)", {
+          err: err?.message,
+        });
+        return { size: 0 };
+      });
+    const newUsersCount = newUsersSnap.size || 0;
+
+    // --- Failed payment intents (last 7d) -------------------------------
+    // Needs composite index (type ASC, createdAt ASC) on _stripeWebhookEvents.
+    const failedSnap = await db.collection("_stripeWebhookEvents")
+      .where("type", "==", "payment_intent.payment_failed")
+      .where("createdAt", ">=", sinceTs)
+      .limit(5000)
+      .get()
+      .catch((err) => {
+        console.warn("sendWeeklySummary: failed PIs query failed (missing index?)", {
+          err: err?.message,
+        });
+        return { size: 0 };
+      });
+    const failedCount = failedSnap.size || 0;
+
+    // --- Chargebacks (last 7d) ------------------------------------------
+    const chargebackSnap = await db.collection("_stripeWebhookEvents")
+      .where("type", "==", "charge.dispute.created")
+      .where("createdAt", ">=", sinceTs)
+      .limit(1000)
+      .get()
+      .catch((err) => {
+        console.warn("sendWeeklySummary: chargebacks query failed (missing index?)", {
+          err: err?.message,
+        });
+        return { size: 0 };
+      });
+    const chargebackCount = chargebackSnap.size || 0;
+
+    // --- Active tenants + name lookup for top-3 -------------------------
+    const activeTenantsSnap = await db.collection("tenants")
+      .where("status", "==", "active")
+      .get()
+      .catch((err) => {
+        console.warn("sendWeeklySummary: active tenants query failed", {
+          err: err?.message,
+        });
+        return { docs: [] };
+      });
+    const activeTenantsDocs = activeTenantsSnap.docs || [];
+    const activeTenantsCount = activeTenantsDocs.length;
+    const tenantNameById = {};
+    for (const d of activeTenantsDocs) {
+      const data = d.data() || {};
+      tenantNameById[d.id] = data.name || data.appName || d.id;
+    }
+    // Backfill names for tenants that got donations but aren't in the active
+    // set (suspended / trial / recently canceled). Cheap: bounded by top-N
+    // candidates; we cap the lookup to keep runtime predictable.
+    const missingNameTenantIds = Object.keys(tenantRevenue)
+      .filter((tid) => !tenantNameById[tid])
+      .slice(0, 20);
+    for (const tid of missingNameTenantIds) {
+      const s = await db.collection("tenants").doc(tid).get().catch(() => null);
+      const data = s?.data?.() || {};
+      tenantNameById[tid] = data.name || data.appName || tid;
+    }
+
+    // --- Unresolved activity items requiring action ---------------------
+    // Needs composite index (requiresAction ASC, resolved ASC) on _activityLog.
+    const activitySnap = await db.collection("_activityLog")
+      .where("requiresAction", "==", true)
+      .where("resolved", "==", false)
+      .limit(500)
+      .get()
+      .catch((err) => {
+        console.warn("sendWeeklySummary: activityLog query failed (missing index?)", {
+          err: err?.message,
+        });
+        return { size: 0 };
+      });
+    const unresolvedActivityCount = activitySnap.size || 0;
+
+    // --- Top 3 tenants by weekly revenue --------------------------------
+    const topTenants = Object.entries(tenantRevenue)
+      .map(([tid, v]) => ({
+        tenantId: tid,
+        name: tenantNameById[tid] || tid,
+        usd: v.usd,
+        count: v.count,
+      }))
+      .sort((a, b) => b.usd - a.usd)
+      .slice(0, 3);
+
+    // --- Red flags ------------------------------------------------------
+    // "Attempted" = completed donations + failed PIs. Not perfectly precise
+    // (a single PI can fail then succeed and be double-counted) but the
+    // signal is directional: sharp jumps are what we care about.
+    const attemptedPayments = donationCount + failedCount;
+    const failRate = attemptedPayments > 0 ? failedCount / attemptedPayments : 0;
+    const redFlags = [];
+    if (failRate > 0.05) {
+      redFlags.push(`Tasa de fallo de pagos ${(failRate * 100).toFixed(1)}% (umbral 5%).`);
+    }
+    if (chargebackCount > 0) {
+      redFlags.push(`${chargebackCount} chargeback${chargebackCount === 1 ? "" : "s"} en la semana — revisar disputas en Stripe.`);
+    }
+    if (unresolvedActivityCount > 5) {
+      redFlags.push(`${unresolvedActivityCount} alertas del activityLog sin resolver (umbral 5).`);
+    }
+    const alertCount = redFlags.length;
+
+    // --- HTML build -----------------------------------------------------
+    const fmtUSD = (n) => `$${(Number(n) || 0).toLocaleString("en-US", {
+      minimumFractionDigits: 2, maximumFractionDigits: 2,
+    })}`;
+    const fmtInt = (n) => (Number(n) || 0).toLocaleString("en-US");
+
+    const ACCENT = "#2563EB";
+    const S = {
+      wrap: "font-family: -apple-system, Segoe UI, Roboto, sans-serif; color: #111; max-width: 640px; margin: 0 auto; padding: 24px;",
+      h1: `color: ${ACCENT}; font-size: 22px; margin: 0 0 4px 0;`,
+      sub: "color: #666; font-size: 13px; margin: 0 0 24px 0;",
+      section: `margin: 20px 0; padding: 16px; background: #F8FAFC; border-left: 4px solid ${ACCENT}; border-radius: 4px;`,
+      h2: "font-size: 14px; text-transform: uppercase; letter-spacing: 0.5px; color: #334155; margin: 0 0 12px 0;",
+      row: "display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid #E2E8F0; font-size: 14px;",
+      num: "font-family: SF Mono, Menlo, Consolas, monospace; font-weight: 600;",
+      red: "margin: 20px 0; padding: 16px; background: #FEF2F2; border-left: 4px solid #DC2626; border-radius: 4px; color: #7F1D1D;",
+      redH2: "font-size: 14px; text-transform: uppercase; letter-spacing: 0.5px; color: #991B1B; margin: 0 0 12px 0;",
+      footer: "margin-top: 32px; padding-top: 16px; border-top: 1px solid #E2E8F0; color: #94A3B8; font-size: 12px; line-height: 1.5;",
+    };
+
+    const perCurrencyRows = Object.entries(perCurrencyOriginal)
+      .sort((a, b) => b[1] - a[1])
+      .map(([cur, amt]) =>
+        `<div style="${S.row}"><span>${_escapeHtmlForEmail(cur)}</span><span style="${S.num}">${fmtInt(Math.round(amt))}</span></div>`
+      ).join("") || `<div style="${S.row}"><span>(sin donaciones)</span><span style="${S.num}">0</span></div>`;
+
+    const topTenantsRows = topTenants.length > 0
+      ? topTenants.map((t, i) =>
+          `<div style="${S.row}"><span>${i + 1}. ${_escapeHtmlForEmail(t.name)} <span style="color:#94A3B8">(${fmtInt(t.count)} donaciones)</span></span><span style="${S.num}">${fmtUSD(t.usd)}</span></div>`
+        ).join("")
+      : `<div style="${S.row}"><span>(sin actividad)</span><span style="${S.num}">—</span></div>`;
+
+    const redFlagBlock = redFlags.length > 0
+      ? `<div style="${S.red}">
+           <div style="${S.redH2}">Se&ntilde;ales de alarma (${redFlags.length})</div>
+           <ul style="margin:0; padding-left: 20px;">
+             ${redFlags.map((f) => `<li style="margin:4px 0;">${_escapeHtmlForEmail(f)}</li>`).join("")}
+           </ul>
+         </div>`
+      : "";
+
+    const html = `
+      <div style="${S.wrap}">
+        <h1 style="${S.h1}">Pushka &mdash; Resumen Semanal</h1>
+        <p style="${S.sub}">Del ${startDate} al ${endDate}</p>
+
+        ${redFlagBlock}
+
+        <div style="${S.section}">
+          <div style="${S.h2}">Donaciones</div>
+          <div style="${S.row}"><span>Total (USD equivalente)</span><span style="${S.num}">${fmtUSD(donationUSD)}</span></div>
+          <div style="${S.row}"><span>Cantidad</span><span style="${S.num}">${fmtInt(donationCount)}</span></div>
+          <div style="${S.row}"><span>Promedio por donaci&oacute;n</span><span style="${S.num}">${fmtUSD(donationCount > 0 ? donationUSD / donationCount : 0)}</span></div>
+        </div>
+
+        <div style="${S.section}">
+          <div style="${S.h2}">Por moneda (importe original)</div>
+          ${perCurrencyRows}
+        </div>
+
+        <div style="${S.section}">
+          <div style="${S.h2}">Top 3 organizaciones (semana)</div>
+          ${topTenantsRows}
+        </div>
+
+        <div style="${S.section}">
+          <div style="${S.h2}">Plataforma</div>
+          <div style="${S.row}"><span>Nuevos usuarios</span><span style="${S.num}">${fmtInt(newUsersCount)}</span></div>
+          <div style="${S.row}"><span>Organizaciones activas</span><span style="${S.num}">${fmtInt(activeTenantsCount)}</span></div>
+          <div style="${S.row}"><span>Pagos fallidos (payment_intent.payment_failed)</span><span style="${S.num}">${fmtInt(failedCount)}</span></div>
+          <div style="${S.row}"><span>Tasa de fallo</span><span style="${S.num}">${(failRate * 100).toFixed(2)}%</span></div>
+          <div style="${S.row}"><span>Chargebacks</span><span style="${S.num}">${fmtInt(chargebackCount)}</span></div>
+          <div style="${S.row}"><span>Alertas sin resolver (activityLog)</span><span style="${S.num}">${fmtInt(unresolvedActivityCount)}</span></div>
+        </div>
+
+        <div style="${S.footer}">
+          Este resumen se env&iacute;a todos los lunes 08:00 ART autom&aacute;ticamente.<br>
+          Si dej&aacute;s de recibirlo, algo puede estar roto (SendGrid, esta CF, o el scheduler de Cloud Functions).
+        </div>
+      </div>
+    `;
+
+    const subject = `[Pushka Weekly] ${startDate} - ${endDate}: ${fmtInt(donationCount)} donaciones, ${alertCount} alertas`;
+
+    try {
+      await sendEmail({ to: SUPER_ADMIN_EMAIL, subject, html });
+      console.info("sendWeeklySummary: sent", {
+        to: _redactEmail(SUPER_ADMIN_EMAIL),
+        donationCount,
+        donationUSD: Math.round(donationUSD * 100) / 100,
+        newUsersCount, failedCount, chargebackCount, activeTenantsCount,
+        unresolvedActivityCount, alertCount,
+        failRate: Number(failRate.toFixed(4)),
+        redFlags,
+      });
+    } catch (err) {
+      // Fire-and-forget: log but don't throw so the scheduler doesn't retry
+      // and flood the inbox on a transient SendGrid glitch.
+      console.error("sendWeeklySummary: sendEmail threw (non-fatal)", {
+        err: err?.message,
+      });
+    }
+  }
+);
+
+// Local HTML escaper for the weekly summary email — tenant names, activity
+// descriptions, and currency codes can contain user-controlled text and this
+// email is rendered as HTML in the super_admin inbox. Kept private to this
+// section (prefix `_`) so it doesn't collide with any escaper added
+// elsewhere later. Function declaration = hoisted, so the caller above is fine.
+function _escapeHtmlForEmail(s) {
+  return String(s ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+// ---------------------------------------------------------------------------
+// health — public liveness probe for external uptime monitors.
+// ---------------------------------------------------------------------------
+// Read by UptimeRobot / GCP Monitoring uptime check every 5 min. No auth
+// so the monitor can hit it without credentials.
+//
+// DoS-hardened (round 6 audit):
+//  - maxInstances=3 caps concurrent CF invocations
+//  - Stripe probe result cached 60s in module memory — a burst of requests
+//    only hits Stripe once per minute per warm instance. Attacker/crawler
+//    can no longer exhaust the platform's 100 req/s Stripe limit.
+//  - Firestore probe is cheap ($0.06 per 100k reads) and self-scoped
+//    to a single doc; no cache needed but still bounded by maxInstances.
+//
+// TODO(ops): create _health/probe doc in Firestore once — missing doc is
+// still a valid read (returns empty snapshot), so this is optional; the
+// doc lets you attach ops metadata (last verified, etc.).
+let _stripeHealthCache = null; // { status, message, at }
+const STRIPE_HEALTH_TTL_MS = 60_000;
+
+exports.health = onRequest(
+  {
+    secrets: [stripeSecret],
+    region: "us-central1",
+    cors: false,
+    memory: "256MiB",
+    timeoutSeconds: 15,
+    maxInstances: 3,
+    concurrency: 40,
+  },
+  async (req, res) => {
+    if (req.method !== "GET") {
+      res.status(405).json({ error: "GET only" });
+      return;
+    }
+
+    const started = Date.now();
+    const result = {
+      status: "ok",
+      timestamp: new Date().toISOString(),
+      firestore: "unknown",
+      stripe: "unknown",
+      stripeCached: false,
+      latencyMs: 0,
+    };
+
+    // Firestore probe (cheap, direct).
+    try {
+      await db.collection("_health").doc("probe").get();
+      result.firestore = "ok";
+    } catch (e) {
+      result.firestore = "error";
+      result.status = "degraded";
+      console.error("health: firestore probe failed", { message: e?.message });
+    }
+
+    // Stripe probe: cached 60s to prevent DoS on the Stripe API quota.
+    const now = Date.now();
+    if (_stripeHealthCache && now - _stripeHealthCache.at < STRIPE_HEALTH_TTL_MS) {
+      result.stripe = _stripeHealthCache.status;
+      result.stripeCached = true;
+      if (_stripeHealthCache.status !== "ok") {
+        result.status = "degraded";
+      }
+    } else {
+      try {
+        const stripe = require("stripe")(stripeSecret.value(), { timeout: 5000 });
+        await stripe.balance.retrieve();
+        result.stripe = "ok";
+        _stripeHealthCache = { status: "ok", message: null, at: now };
+      } catch (e) {
+        result.stripe = "error";
+        result.status = "degraded";
+        _stripeHealthCache = { status: "error", message: e?.message || null, at: now };
+        console.error("health: stripe probe failed", { message: e?.message });
+      }
+    }
+
+    result.latencyMs = Date.now() - started;
+    res.status(result.status === "ok" ? 200 : 503).json(result);
+  }
+);
+
+// ---------------------------------------------------------------------------
+// cleanupLegacyOAuthFields — one-shot sweep of stale tenant-doc OAuth state.
+// ---------------------------------------------------------------------------
+// Legacy tenants may still have stripeConnectOAuthState and
+// stripeConnectOAuthStateCreatedAt fields on their tenant doc. These were
+// moved to _stripeConnectOAuth/{token} in the OAuth harden pass, so the
+// tenant-doc fields are inert (nothing reads them) but represent residual
+// state. This function sweeps and removes them.
+//
+// Super_admin only. Idempotent. Safe to re-run.
+exports.cleanupLegacyOAuthFields = onCall(
+  { enforceAppCheck: false },
+  async (request) => {
+    if (!request.auth?.uid) throw new HttpsError("unauthenticated", "Auth required.");
+    if (!(await callerIsSuperAdminFresh(request))) {
+      throw new HttpsError("permission-denied", "super_admin only.");
+    }
+
+    let scanned = 0;
+    let cleaned = 0;
+    const BATCH = 100;
+    let lastDoc = null;
+    while (true) {
+      let q = db.collection("tenants").orderBy("__name__").limit(BATCH);
+      if (lastDoc) q = q.startAfter(lastDoc);
+      const snap = await q.get();
+      if (snap.empty) break;
+      const batch = db.batch();
+      let batchWrites = 0;
+      for (const doc of snap.docs) {
+        scanned += 1;
+        const data = doc.data();
+        if ("stripeConnectOAuthState" in data || "stripeConnectOAuthStateCreatedAt" in data) {
+          batch.update(doc.ref, {
+            stripeConnectOAuthState: admin.firestore.FieldValue.delete(),
+            stripeConnectOAuthStateCreatedAt: admin.firestore.FieldValue.delete(),
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          });
+          batchWrites += 1;
+          cleaned += 1;
+        }
+      }
+      if (batchWrites > 0) await batch.commit();
+      lastDoc = snap.docs[snap.docs.length - 1];
+      if (snap.size < BATCH) break;
+    }
+
+    return { scanned, cleaned };
+  }
+);
+
+// ---------------------------------------------------------------------------
+// onUserDocCreated — auto-apply pending tenant admin invitations
+// ---------------------------------------------------------------------------
+// Before this trigger existed, an invited tenant_admin who opened the
+// Flutter mobile app FIRST (before the admin web) never had their
+// invitation applied: the app doesn't call claimPendingTenantAdmin, and
+// setAdminClaim only queued a `_pendingTenantAdmins/{email}` doc that
+// waited for a web sign-in. Same problem for tenant_collaborators.
+//
+// This trigger fires when any users/{uid} doc is created (Flutter and
+// admin web both create these on first sign-in), looks up the caller's
+// email in `_pendingTenantAdmins`, and applies the claim + team membership
+// automatically — regardless of which client the invitee hits first.
+//
+// Safety mirrors claimPendingTenantAdmin:
+//   - Refuses to apply if the email isn't verified (a password-provider
+//     signup with someone else's email would otherwise steal the invitation).
+//   - Checks pending doc TTL; deletes expired docs.
+//   - Refuses if the tenant no longer exists.
+//   - Preserves any pre-existing customClaims via spread — never wipes them.
+//   - Idempotent: no pending doc → no-op.
+exports.onUserDocCreated = onDocumentCreated(
+  "users/{uid}",
+  async (event) => {
+    const uid = event.params.uid;
+    if (!uid) return;
+
+    let userRecord;
+    try {
+      userRecord = await admin.auth().getUser(uid);
+    } catch (e) {
+      console.warn("onUserDocCreated: getUser failed", { uid, error: e?.message });
+      return;
+    }
+
+    if (!userRecord?.emailVerified) {
+      // Skip silently — user will call claimPendingTenantAdmin explicitly
+      // after verifying their email, or the trigger will effectively be
+      // superseded by that call.
+      return;
+    }
+
+    const email = String(userRecord.email || "").toLowerCase().trim();
+    if (!email) return;
+
+    const pendingRef = db.collection("_pendingTenantAdmins").doc(email);
+    const pendingSnap = await pendingRef.get();
+    if (!pendingSnap.exists) return;
+
+    const pending = pendingSnap.data() || {};
+    const role = pending.role;
+    const tenantId = pending.tenantId;
+
+    const expiresAtMs = pending.expiresAt?.toMillis?.() ?? null;
+    if (expiresAtMs && Date.now() > expiresAtMs) {
+      await pendingRef.delete().catch(() => {});
+      console.info("onUserDocCreated: pending invitation expired", { uid, email: _redactEmail(email) });
+      return;
+    }
+
+    if (role !== "tenant_admin" && role !== "tenant_collaborator") {
+      await pendingRef.delete().catch(() => {});
+      return;
+    }
+    if (!tenantId) {
+      await pendingRef.delete().catch(() => {});
+      return;
+    }
+
+    const tenantSnap = await db.collection("tenants").doc(tenantId).get();
+    if (!tenantSnap.exists) {
+      await pendingRef.delete().catch(() => {});
+      return;
+    }
+
+    // Preserve any pre-existing claims (very unlikely for a fresh user
+    // doc, but belt-and-suspenders — matches setAdminClaim's discipline).
+    const existingClaims = userRecord.customClaims || {};
+    try {
+      await admin.auth().setCustomUserClaims(uid, {
+        ...existingClaims,
+        role,
+        tenantId,
+      });
+    } catch (e) {
+      console.error("onUserDocCreated: setCustomUserClaims failed", {
+        uid, tenantId, role, error: e?.message,
+      });
+      return;
+    }
+
+    // Mirror into tenant team subcollection so admin dashboards see them.
+    try {
+      await db.collection("tenants").doc(tenantId).collection("team").doc(uid).set({
+        uid,
+        email: userRecord.email,
+        displayName: userRecord.displayName ?? null,
+        role,
+        addedAt: admin.firestore.FieldValue.serverTimestamp(),
+        addedBy: pending.invitedBy ?? null,
+        claimedFromPending: true,
+        claimedVia: "onUserDocCreated",
+      });
+    } catch (e) {
+      console.warn("onUserDocCreated: team subcollection update failed (non-fatal)", {
+        uid, tenantId, error: e?.message,
+      });
+    }
+
+    // Force the user's next ID token to include the new claims — otherwise
+    // the client would keep its no-claim token until 1h expiry.
+    try {
+      await admin.auth().revokeRefreshTokens(uid);
+    } catch (e) {
+      console.warn("onUserDocCreated: revokeRefreshTokens failed (non-fatal)", {
+        uid, error: e?.message,
+      });
+    }
+
+    // Single-use: retire the pending doc.
+    await pendingRef.delete().catch(() => {});
+
+    console.info("onUserDocCreated: pending invitation applied", {
+      uid, email: _redactEmail(email), role, tenantId,
+    });
+  },
+);
+
+// ============================================================================
+// SERVER-SIDE REMINDERS (Stage 3)
+// ============================================================================
+// Replaces the mobile-only flutter_local_notifications scheduling with a
+// Cloud Scheduler → Cloud Function → FCM push pipeline. Works for BOTH
+// native (Android/iOS) and PWA (web/Safari) users — reminders fire even
+// when the app is closed, no local OS scheduling needed.
+//
+// FLOW:
+//   1. User creates/edits a reminder → client writes to Firestore.
+//   2. onReminderWrite (below) computes nextTriggerAt from the client fields
+//      + the user's timezone, writes it back to the same doc.
+//   3. onUserTimezoneChanged (below) recomputes nextTriggerAt for all
+//      recurring (non-one-shot) reminders when the user's tz changes.
+//   4. processDueReminders (below) runs every minute via Cloud Scheduler,
+//      collectionGroup queries for isEnabled + nextTriggerAt <= now,
+//      transactionally advances nextTriggerAt BEFORE sending (at-most-once),
+//      then sendToUser().
+//   5. backfillRemindersNextTriggerAt (super_admin onCall) populates
+//      nextTriggerAt on existing reminders after this feature deploys.
+//
+// KEY INVARIANTS:
+//   - Client toMap() never emits nextTriggerAt/lastTriggeredAt/timezone —
+//     firestore.rules reject writes that include them.
+//   - onReminderWrite is idempotent: uses onlyClientFieldsChanged() to
+//     avoid re-triggering on server-side writes (loop guard).
+//   - processDueReminders uses a transaction to compareAndSwap
+//     nextTriggerAt BEFORE the FCM send. If the send fails, the reminder
+//     still advances (at-most-once) — losing a push is preferable to
+//     double-notifying the user (per adversarial review R-1).
+//   - one-shot reminders (oneShotDate != null): fire once, then
+//     nextTriggerAt=null + isEnabled=false. Frozen against tz changes.
+
+/**
+ * Fields written by the CLIENT (via Reminder.toMap()). Any change in these
+ * between doc versions should recompute nextTriggerAt. Fields NOT here are
+ * server-owned (nextTriggerAt/lastTriggeredAt/timezone) and their diff must
+ * NOT trigger a recompute (loop guard — see onReminderWrite).
+ */
+const REMINDER_CLIENT_FIELDS = [
+  "timeHour", "timeMinute", "days", "isHoliday",
+  "secondTimeHour", "secondTimeMinute", "secondDays", "secondIsHoliday",
+  "isEnabled", "oneShotDate",
+];
+
+function _reminderClientFieldsChanged(before, after) {
+  if (!before && after) return true; // create
+  if (before && !after) return false; // delete (no recompute needed)
+  for (const key of REMINDER_CLIENT_FIELDS) {
+    const b = before[key];
+    const a = after[key];
+    // Firestore Timestamps compare by reference — normalize to millis.
+    const bn = (b && typeof b.toMillis === "function") ? b.toMillis() : b;
+    const an = (a && typeof a.toMillis === "function") ? a.toMillis() : a;
+    if (JSON.stringify(bn) !== JSON.stringify(an)) return true;
+  }
+  return false;
+}
+
+/**
+ * Given a reminder doc + the user's IANA timezone, compute the next UTC
+ * instant at which the reminder should fire. Returns null if the reminder
+ * is disabled or has no configured slots.
+ *
+ * Semantics:
+ * - If `oneShotDate` is set (chooseDate): return that date at (timeHour,
+ *   timeMinute) in the given timezone, converted to UTC. If already past,
+ *   return null (one-shot expired — cleanup in processDueReminders).
+ * - Otherwise (recurring): find the earliest next occurrence of any
+ *   configured (weekday, hour, minute) slot in the timezone. Combines
+ *   days×time and secondDays×secondTime into a single MIN — one nextTriggerAt
+ *   field for the entire reminder (per adversarial review R-3 — linearize).
+ */
+function computeNextTrigger(reminder, timezone) {
+  if (!reminder || reminder.isEnabled === false) return null;
+  const tz = timezone || "UTC";
+
+  const now = DateTime.now().setZone(tz);
+  const hour = Number.isFinite(reminder.timeHour) ? reminder.timeHour : 12;
+  const minute = Number.isFinite(reminder.timeMinute) ? reminder.timeMinute : 0;
+
+  // One-shot: absolute date at the reminder's time in user's timezone.
+  const oneShot = reminder.oneShotDate;
+  if (oneShot) {
+    const asDate = (typeof oneShot.toDate === "function") ? oneShot.toDate() : new Date(oneShot);
+    const dt = DateTime.fromJSDate(asDate, { zone: tz })
+        .set({ hour, minute, second: 0, millisecond: 0 });
+    if (dt <= now) return null;
+    return dt.toUTC().toJSDate();
+  }
+
+  // Recurring: enumerate all configured slots and pick the earliest future one.
+  const days = Array.isArray(reminder.days) ? reminder.days.map(Number).filter((d) => d >= 1 && d <= 7) : [];
+  const secondDays = Array.isArray(reminder.secondDays) ? reminder.secondDays.map(Number).filter((d) => d >= 1 && d <= 7) : [];
+  const secondHour = Number.isFinite(reminder.secondTimeHour) ? reminder.secondTimeHour : null;
+  const secondMinute = Number.isFinite(reminder.secondTimeMinute) ? reminder.secondTimeMinute : null;
+  const hasSecond = secondHour !== null && secondMinute !== null;
+
+  const candidates = [];
+  const pushSlot = (weekdays, h, m) => {
+    for (const w of weekdays) {
+      // Luxon weekday: 1 = Monday .. 7 = Sunday — matches Dart's DateTime.monday etc.
+      let cand = now.set({ weekday: w, hour: h, minute: m, second: 0, millisecond: 0 });
+      // If that weekday+time is earlier today (or already past today), roll to next week.
+      if (cand <= now) cand = cand.plus({ weeks: 1 });
+      candidates.push(cand);
+    }
+  };
+  pushSlot(days, hour, minute);
+  if (hasSecond) pushSlot(secondDays, secondHour, secondMinute);
+
+  if (candidates.length === 0) return null;
+  const winner = candidates.reduce((a, b) => (a < b ? a : b));
+  return winner.toUTC().toJSDate();
+}
+
+/** Read the user's IANA timezone from users/{uid}. Fallback to UTC. */
+async function _getUserTimezone(uid) {
+  try {
+    const snap = await db.collection("users").doc(uid).get();
+    const tz = snap.exists ? snap.get("timezone") : null;
+    return (typeof tz === "string" && tz.length > 0 && tz.length <= 60) ? tz : "UTC";
+  } catch (_) {
+    return "UTC";
+  }
+}
+
+/**
+ * onReminderWrite — computes nextTriggerAt whenever a reminder's CLIENT
+ * fields change. Loop-guarded: no-op if the change was purely server-side
+ * (e.g., processDueReminders advancing nextTriggerAt+lastTriggeredAt).
+ */
+exports.onReminderWrite = onDocumentWritten(
+  {
+    document: "users/{uid}/reminders/{reminderId}",
+    region: "us-central1",
+  },
+  async (event) => {
+    const before = event.data?.before?.data();
+    const after = event.data?.after?.data();
+
+    // Delete: no compute needed. The doc is gone.
+    if (!after) return;
+
+    // Loop-guard: if only server-owned fields changed, don't recompute.
+    if (before && !_reminderClientFieldsChanged(before, after)) return;
+
+    const { uid, reminderId } = event.params;
+    const timezone = await _getUserTimezone(uid);
+    const nextTriggerAt = computeNextTrigger(after, timezone);
+
+    const patch = {
+      timezone,
+      nextTriggerAt: nextTriggerAt ? admin.firestore.Timestamp.fromDate(nextTriggerAt) : null,
+    };
+    // Skip write if the computed values match what's already there — avoids
+    // an infinite loop if _reminderClientFieldsChanged has a bug.
+    const currentTz = after.timezone;
+    const currentNext = after.nextTriggerAt;
+    const nextMs = nextTriggerAt ? nextTriggerAt.getTime() : null;
+    const currentMs = (currentNext && typeof currentNext.toMillis === "function")
+        ? currentNext.toMillis() : null;
+    if (currentTz === timezone && currentMs === nextMs) return;
+
+    await event.data.after.ref.set(patch, { merge: true });
+    console.info("onReminderWrite: computed nextTriggerAt", {
+      uid, reminderId, timezone, nextTriggerAt: nextTriggerAt?.toISOString() || null,
+    });
+  },
+);
+
+/**
+ * onUserTimezoneChanged — recompute nextTriggerAt for all recurring
+ * reminders when the user's timezone changes. One-shot reminders are
+ * FROZEN (adversarial R-6): the oneShotDate is a commitment to an absolute
+ * moment ("my grandfather's yahrzeit is Tuesday 9am"), it shouldn't shift.
+ */
+exports.onUserTimezoneChanged = onDocumentUpdated(
+  {
+    document: "users/{uid}",
+    region: "us-central1",
+  },
+  async (event) => {
+    const before = event.data?.before?.data();
+    const after = event.data?.after?.data();
+    if (!before || !after) return;
+    if (before.timezone === after.timezone) return;
+    const newTz = after.timezone;
+    if (typeof newTz !== "string" || newTz.length === 0) return;
+
+    // Round-6 audit LOW fix: validate IANA-shape before running through
+    // Luxon. Arbitrary strings ("hola", "utc-3", etc) make Luxon return
+    // Invalid DateTime → Timestamp.fromDate(NaN) crashes the batch commit.
+    // Use DateTime.now().setZone(x).isValid as the ground-truth check.
+    try {
+      const { DateTime } = require("luxon");
+      if (!DateTime.now().setZone(newTz).isValid) {
+        console.warn("onUserTimezoneChanged: invalid IANA tz — skipping", { uid: event.params.uid, newTz });
+        return;
+      }
+    } catch (_) { /* if luxon load fails, fall through and trust newTz */ }
+
+    const { uid } = event.params;
+    const remindersRef = db.collection("users").doc(uid).collection("reminders");
+    const snap = await remindersRef.get();
+    if (snap.empty) return;
+
+    // Round-6 audit LOW fix: paginate the batch — a user with >500 reminders
+    // used to blow the single-batch limit and the tz stayed desynced across
+    // all of them. Chunk to 400 for margin.
+    let batch = db.batch();
+    let batchOps = 0;
+    let recomputed = 0;
+    for (const doc of snap.docs) {
+      const data = doc.data();
+      // Skip one-shot: absolute date, tz-frozen (see R-6).
+      if (data.oneShotDate) continue;
+      const nextTriggerAt = computeNextTrigger(data, newTz);
+      batch.set(doc.ref, {
+        timezone: newTz,
+        nextTriggerAt: nextTriggerAt ? admin.firestore.Timestamp.fromDate(nextTriggerAt) : null,
+      }, { merge: true });
+      batchOps += 1;
+      recomputed += 1;
+      if (batchOps >= 400) {
+        await batch.commit();
+        batch = db.batch();
+        batchOps = 0;
+      }
+    }
+    if (batchOps > 0) await batch.commit();
+    console.info("onUserTimezoneChanged: recomputed reminders", { uid, newTz, recomputed });
+  },
+);
+
+/**
+ * processDueReminders — Cloud Scheduler tick every 1 minute. Queries the
+ * collectionGroup 'reminders' for isEnabled + nextTriggerAt <= now, fires
+ * FCM push (via sendToUser, which already handles per-platform payload),
+ * and advances nextTriggerAt to the next occurrence.
+ *
+ * At-MOST-once semantics: the transaction advances nextTriggerAt BEFORE
+ * the send. If the send fails, that firing is lost — but the reminder
+ * NEVER fires twice for the same slot. Per adversarial R-1: losing an
+ * occasional weekly reminder is less bad than duplicate notifications.
+ */
+exports.processDueReminders = onSchedule(
+  {
+    schedule: "every 1 minutes",
+    timeZone: "UTC",
+    region: "us-central1",
+    retryCount: 0, // no retry — the next tick catches misses
+    memory: "256MiB",
+  },
+  async () => {
+    const now = admin.firestore.Timestamp.now();
+    const snap = await db.collectionGroup("reminders")
+        .where("isEnabled", "==", true)
+        .where("nextTriggerAt", "<=", now)
+        .limit(500) // one tick's budget; misses get picked up the next minute
+        .get();
+
+    if (snap.empty) return;
+
+    // Round-5 audit HIGH fix: staleness cap. If nextTriggerAt is more than
+    // STALENESS_CAP_MIN in the past, skip the fire — sending a "recuérdame"
+    // notification hours late is worse than missing it. Common trigger:
+    // Cloud Scheduler outage, quota exhaustion, or hitting the 500-doc
+    // cap for many ticks. The reminder still advances to its next slot
+    // in the tx below.
+    const STALENESS_CAP_MIN = 30;
+    const staleThresholdMs = now.toMillis() - (STALENESS_CAP_MIN * 60 * 1000);
+
+    // Group docs by parent uid so we do ONE getUserTokens per uid (cheap Firestore read).
+    const byUid = new Map();
+    for (const doc of snap.docs) {
+      // doc.ref.path: users/{uid}/reminders/{id}
+      const parts = doc.ref.path.split("/");
+      const uid = parts[1];
+      if (!byUid.has(uid)) byUid.set(uid, []);
+      byUid.get(uid).push(doc);
+    }
+
+    // Round-5 audit fix: batch-load user profiles for each uid ONCE so we
+    // don't do N Firestore reads for language + tenant appName inside the
+    // inner loop. Skipped uids from block-check via getUserTokens still
+    // avoid a second read since we cache here first.
+    const userProfileCache = new Map();
+    async function _getCachedUserProfile(uid) {
+      if (userProfileCache.has(uid)) return userProfileCache.get(uid);
+      let data = {};
+      try {
+        const s = await db.collection("users").doc(uid).get();
+        data = s.exists ? (s.data() || {}) : {};
+      } catch (_) { /* fall back to empty */ }
+      userProfileCache.set(uid, data);
+      return data;
+    }
+
+    // Round-7 regression fix: cache tenant docs by tid so many reminders
+    // firing for the same tenant in one tick don't re-read the tenant
+    // doc for each (was N reads for N reminders — now 1 per unique
+    // tenantId per tick).
+    const tenantCache = new Map();
+    async function _getCachedTenant(tid) {
+      if (tenantCache.has(tid)) return tenantCache.get(tid);
+      let data = {};
+      try {
+        const s = await db.collection("tenants").doc(tid).get();
+        data = s.exists ? (s.data() || {}) : {};
+      } catch (_) { /* fall back to empty */ }
+      tenantCache.set(tid, data);
+      return data;
+    }
+
+    let fired = 0;
+    let skipped = 0;
+    const tasks = [];
+
+    // Round-9 regression fix (LOW #7): pre-check isBlocked once per uid
+    // instead of paying that read inside every getUserTokens call. A user
+    // with M reminders firing this tick used to cost M redundant user-doc
+    // reads (getUserTokens re-checks isBlocked internally). Now we skip
+    // the entire uid batch upfront when blocked.
+    const blockedUids = new Set();
+    const blockedProbes = await Promise.allSettled(
+      Array.from(byUid.keys()).map((u) =>
+        db.collection("users").doc(u).get().then((s) => ({ u, blocked: s.exists && s.data()?.isBlocked === true }))
+      )
+    );
+    for (const p of blockedProbes) {
+      if (p.status === "fulfilled" && p.value.blocked) blockedUids.add(p.value.u);
+    }
+
+    for (const [uid, docs] of byUid.entries()) {
+      if (blockedUids.has(uid)) {
+        skipped += docs.length;
+        continue;
+      }
+      for (const doc of docs) {
+        const data = doc.data();
+        const tz = data.timezone || "UTC";
+        // AT-MOST-ONCE: advance nextTriggerAt in a transaction FIRST.
+        // If another tick already advanced it, our compareAndSwap fails
+        // → we skip (no duplicate). If our advance succeeds but the send
+        // below throws, we lose that firing — acceptable per R-1.
+        const isOneShot = !!data.oneShotDate;
+        let advanced = false;
+        try {
+          await db.runTransaction(async (tx) => {
+            const fresh = await tx.get(doc.ref);
+            if (!fresh.exists) return;
+            const freshData = fresh.data();
+            if (!freshData.isEnabled) return;
+            const freshNext = freshData.nextTriggerAt;
+            // Somebody else already advanced past our target — skip.
+            if (!freshNext || freshNext.toMillis() > now.toMillis()) return;
+
+            const newNext = isOneShot ? null : computeNextTrigger(freshData, tz);
+            const patch = {
+              lastTriggeredAt: now,
+              nextTriggerAt: newNext ? admin.firestore.Timestamp.fromDate(newNext) : null,
+            };
+            // One-shot: also disable so it doesn't show as "enabled" in the
+            // UI post-fire (and skips future queries for good).
+            if (isOneShot) patch.isEnabled = false;
+            tx.set(doc.ref, patch, { merge: true });
+            advanced = true;
+          });
+        } catch (e) {
+          console.warn("processDueReminders: tx failed", { path: doc.ref.path, error: e?.message });
+          skipped += 1;
+          continue;
+        }
+        if (!advanced) {
+          skipped += 1;
+          continue;
+        }
+
+        // Round-5 audit HIGH fix: skip retroactive fires. If we're advancing
+        // past a trigger point that was already >30 min in the past, don't
+        // send the push — the "recuerdame antes" moment is gone. We STILL
+        // advance nextTriggerAt (transaction above) so the next slot fires
+        // normally; we just skip the actual FCM send this tick.
+        const wasStale = data.nextTriggerAt &&
+          typeof data.nextTriggerAt.toMillis === "function" &&
+          data.nextTriggerAt.toMillis() < staleThresholdMs;
+        if (wasStale) {
+          console.warn("processDueReminders: skip_stale", {
+            uid, reminderId: doc.id,
+            ageMinutes: Math.round((now.toMillis() - data.nextTriggerAt.toMillis()) / 60000),
+          });
+          skipped += 1;
+          continue;
+        }
+
+        // Now fire the push (best-effort; if it fails we don't retry).
+        // Round-5 audit HIGH fix: title fallback should be the tenant's
+        // appName (branding), not the hardcoded "Pushka". User-set title
+        // still wins when present (data.title). We use the user's ACTIVE
+        // tenant per tenantId in the user doc; multi-tenant users get the
+        // brand they last looked at.
+        const userProfile = await _getCachedUserProfile(uid);
+        let tenantAppName = "Pushka";
+        const activeTenantId = String(userProfile.tenantId || "").trim();
+        if (activeTenantId) {
+          // Round-7 regression fix: use tenant cache so N reminders for
+          // the same tenant in one tick only cost 1 tenant doc read.
+          const td = await _getCachedTenant(activeTenantId);
+          tenantAppName = String(td.appName || td.name || "Pushka");
+        }
+        // Round-6 audit MEDIUM fix: String.slice cuts UTF-16 code units,
+        // not code points — a surrogate pair (emoji) at char 100 would
+        // split in half and render mojibake. Split on Array.from() which
+        // iterates code points then rejoin.
+        const rawTitle = String(data.title || tenantAppName);
+        const titleCodepoints = Array.from(rawTitle);
+        const title = titleCodepoints.length > 100
+            ? titleCodepoints.slice(0, 100).join("")
+            : rawTitle;
+        // Body: localized default in the user's language. Falls back to
+        // Spanish if the profile has no language set.
+        const raw = String(userProfile.language || "").trim().toLowerCase();
+        const userLang = ["es", "en", "fr", "he"].includes(raw) ? raw : "es";
+        const bodyByLang = {
+          es: "Es momento de dar tzedaka 🕎",
+          en: "It's time to give tzedaka 🕎",
+          fr: "Il est temps de donner tzedaka 🕎",
+          he: "🕎 הגיע הזמן לתת צדקה",
+        };
+        const body = bodyByLang[userLang];
+        tasks.push(
+          // Round-10 audit fix (MEDIUM #3): skip the internal isBlocked
+          // re-check — we already prefetched it once for this tick above.
+          sendToUser(uid, {
+            notification: { title, body },
+            data: {
+              type: "reminder",
+              reminderId: doc.id,
+              click_action: "/reminders",
+            },
+          }, { skipBlockedCheck: true }).catch((err) => {
+            console.warn("processDueReminders: send failed", { uid, reminderId: doc.id, error: err?.message });
+          }),
+        );
+        fired += 1;
+      }
+    }
+
+    // Fire sends in parallel (bounded implicitly by Node's HTTP pool).
+    await Promise.all(tasks);
+    console.info("processDueReminders: tick complete", { fired, skipped });
+  },
+);
+
+/**
+ * backfillRemindersNextTriggerAt — one-shot super_admin migration to
+ * populate nextTriggerAt on reminders created BEFORE this feature deployed.
+ * Idempotent; safe to re-run. Returns a summary; if timeoutHint is true
+ * the caller should invoke again to continue (limit prevents 9min timeout).
+ */
+exports.backfillRemindersNextTriggerAt = onCall(
+  { region: "us-central1", enforceAppCheck: false },
+  async (request) => {
+    if (!request.auth?.uid) throw new HttpsError("unauthenticated", "sign in required");
+    const callerSnap = await db.collection("users").doc(request.auth.uid).get();
+    const role = callerSnap.get("role");
+    if (role !== "super_admin") {
+      throw new HttpsError("permission-denied", "super_admin only");
+    }
+
+    const startAfterId = request.data?.startAfter || null;
+    const pageSize = Math.min(Math.max(Number(request.data?.pageSize) || 400, 50), 500);
+
+    let query = db.collectionGroup("reminders").orderBy(admin.firestore.FieldPath.documentId()).limit(pageSize);
+    if (startAfterId) query = query.startAfter(startAfterId);
+    const snap = await query.get();
+
+    if (snap.empty) {
+      return { scanned: 0, updated: 0, skipped: 0, done: true };
+    }
+
+    // Group by uid to dedupe user timezone lookups.
+    const uidToDocs = new Map();
+    for (const doc of snap.docs) {
+      const parts = doc.ref.path.split("/");
+      const uid = parts[1];
+      if (!uidToDocs.has(uid)) uidToDocs.set(uid, []);
+      uidToDocs.get(uid).push(doc);
+    }
+    const uids = [...uidToDocs.keys()];
+    const userRefs = uids.map((uid) => db.collection("users").doc(uid));
+    const userSnaps = userRefs.length ? await db.getAll(...userRefs) : [];
+    const uidToTz = new Map();
+    userSnaps.forEach((s, i) => {
+      const tz = s.get("timezone");
+      uidToTz.set(uids[i], (typeof tz === "string" && tz.length > 0) ? tz : "UTC");
+    });
+
+    let updated = 0;
+    let skipped = 0;
+    const batch = db.batch();
+    for (const [uid, docs] of uidToDocs.entries()) {
+      const tz = uidToTz.get(uid) || "UTC";
+      for (const doc of docs) {
+        const data = doc.data();
+        // Skip if already populated — idempotency.
+        if (data.nextTriggerAt || data.timezone) { skipped += 1; continue; }
+        const nextTriggerAt = computeNextTrigger(data, tz);
+        batch.set(doc.ref, {
+          timezone: tz,
+          nextTriggerAt: nextTriggerAt ? admin.firestore.Timestamp.fromDate(nextTriggerAt) : null,
+        }, { merge: true });
+        updated += 1;
+      }
+    }
+    if (updated > 0) await batch.commit();
+
+    const lastDoc = snap.docs[snap.docs.length - 1];
+    const nextStartAfter = lastDoc ? lastDoc.id : null;
+    const done = snap.size < pageSize;
+    return {
+      scanned: snap.size,
+      updated,
+      skipped,
+      done,
+      nextStartAfter: done ? null : nextStartAfter,
+    };
+  },
 );

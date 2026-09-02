@@ -1,9 +1,13 @@
+import 'package:flutter/foundation.dart' show kIsWeb, defaultTargetPlatform;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:cloud_functions/cloud_functions.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 
 import '../../../app/theme/app_tokens.dart';
+import '../../../core/format_utils.dart' show shortCurrencySymbol;
+import '../../../core/hive_cache.dart';
 import 'card_brand_box.dart';
 
 import '../../../core/keyboard_safe_sheet.dart';
@@ -45,7 +49,7 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
   // Saved cards for the card picker
   List<Map<String, dynamic>> _cards = [];
   bool _loadingCards = false;
-  String? _selectedCardId;  // null = use current default
+  String? _selectedCardId; // null = use current default
 
   // Optional donation designación (per-tenant). null = "Sin designación".
   // Persisted to tenantState.autoEmptyDonationReason so the cron can stamp
@@ -62,13 +66,17 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
     if (_loadingCards) return;
     setState(() => _loadingCards = true);
     try {
-      final callable = FirebaseFunctions.instance.httpsCallable('listSavedCards');
+      final callable = FirebaseFunctions.instance.httpsCallable(
+        'listSavedCards',
+      );
       final result = await callable.call({});
       if (!mounted) return;
       final data = result.data as Map<dynamic, dynamic>;
       final rawCards = data['cards'] as List<dynamic>? ?? [];
       setState(() {
-        _cards = rawCards.map((c) => Map<String, dynamic>.from(c as Map)).toList();
+        _cards = rawCards
+            .map((c) => Map<String, dynamic>.from(c as Map))
+            .toList();
         // Sync `_selectedCardId` with the visible "selected" card. The card
         // selector UI falls back to the default-flagged card (or first in
         // list) when _selectedCardId is null — without this sync, that
@@ -78,7 +86,9 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
         // with no pin set + tapping Guardar (or even just changing
         // frequency) stored `autoEmptyPaymentMethodId: null` instead of
         // the visible card. Now the visible card IS the saved card.
-        if (_selectedCardId == null && _frequency != 'manual' && _cards.isNotEmpty) {
+        if (_selectedCardId == null &&
+            _frequency != 'manual' &&
+            _cards.isNotEmpty) {
           final defaultCard = _cards.firstWhere(
             (c) => c['isDefault'] == true,
             orElse: () => _cards.first,
@@ -100,13 +110,25 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
     final profile = ref.watch(userProfileProvider).valueOrNull;
     final tenantState = ref.watch(tenantStateProvider).valueOrNull;
 
-    // Without a saved card the cron's `processPushkaAutoEmpty` hits the
-    // no_saved_card branch and silently advances the schedule each cycle —
-    // the user thinks they're set up but no money ever moves. Surface the
-    // requirement BEFORE save: inline banner + hard block in the save path.
-    final hasSavedCard = ((profile?['stripeDefaultPaymentMethodId'] as String?) ?? '')
-        .trim()
-        .isNotEmpty;
+    // Direct Charges: default PM lives per-tenant now.
+    // BUG #12 fix: also accept ANY saved card as valid — a user can have
+    // cards in the connected account but no default yet cached in
+    // tenantState (setDefault CF hasn't run since the card was added).
+    // Previously blocked those users from saving an auto-empty schedule
+    // even though the schedule can pin any pmId (state.autoEmptyPaymentMethodId).
+    // Read via HiveCache — same source the SavedCards screen uses — so
+    // there's no extra CF roundtrip on this screen.
+    final hasDefault =
+        ((tenantState?['stripeConnectDefaultPaymentMethodId'] as String?) ?? '')
+            .trim()
+            .isNotEmpty;
+    final uid = user?.uid;
+    final tid = tenantState?['tenantId'] as String?;
+    final cachedCards = (uid != null)
+        ? HiveCache.instance.loadSavedCards(uid, tenantId: tid)
+        : null;
+    final hasAnyCard = (cachedCards?.cards.isNotEmpty ?? false);
+    final hasSavedCard = hasDefault || hasAnyCard;
     final needsCardWarning = _frequency != 'manual' && !hasSavedCard;
 
     if (!_loaded && tenantState != null) {
@@ -114,12 +136,18 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
         setState(() {
-          _frequency = (tenantState['autoEmptyFrequency'] as String?) ?? 'manual';
+          _frequency =
+              (tenantState['autoEmptyFrequency'] as String?) ?? 'manual';
           _savedFrequency = _frequency;
-          _weekday = (tenantState['autoEmptyWeekday'] as num?)?.toInt() ?? DateTime.monday;
-          _dayOfMonth = (tenantState['autoEmptyDayOfMonth'] as num?)?.toInt() ?? 1;
-          _topOffEnabled = (tenantState['autoEmptyTopOffEnabled'] as bool?) ?? false;
-          _topOffAmount = (tenantState['autoEmptyTopOffAmount'] as num?)?.toDouble();
+          _weekday =
+              (tenantState['autoEmptyWeekday'] as num?)?.toInt() ??
+              DateTime.monday;
+          _dayOfMonth =
+              (tenantState['autoEmptyDayOfMonth'] as num?)?.toInt() ?? 1;
+          _topOffEnabled =
+              (tenantState['autoEmptyTopOffEnabled'] as bool?) ?? false;
+          _topOffAmount = (tenantState['autoEmptyTopOffAmount'] as num?)
+              ?.toDouble();
           // Field is now ALWAYS visible (disabled when toggle is off). Show
           // the last saved amount if any, else default to "0" so the user
           // sees a concrete starting value instead of an empty field.
@@ -130,8 +158,8 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
           // an opinionated default over having to opt in to a destination.
           final savedReason = tenantState['autoEmptyDonationReason'] as String?;
           final defaults = tr.defaultDonationReasons;
-          _selectedDonationReason = savedReason ??
-              (_frequency != 'manual' ? defaults.first : null);
+          _selectedDonationReason =
+              savedReason ?? (_frequency != 'manual' ? defaults.first : null);
         });
         if (_frequency != 'manual') _loadCards();
       });
@@ -140,10 +168,7 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
     final cs = Theme.of(context).colorScheme;
 
     return Scaffold(
-      appBar: AppBar(
-        title: Text(tr.autoEmpty),
-        centerTitle: true,
-      ),
+      appBar: AppBar(title: Text(tr.autoEmpty), centerTitle: true),
       body: SafeArea(
         child: SingleChildScrollView(
           padding: const EdgeInsets.fromLTRB(20, 18, 20, 24),
@@ -170,15 +195,21 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
                   decoration: BoxDecoration(
                     color: const Color(0xFFFFF7ED),
                     borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: const Color(0xFFFED7AA), width: 1),
+                    border: Border.all(
+                      color: const Color(0xFFFED7AA),
+                      width: 1,
+                    ),
                   ),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Row(
                         children: [
-                          const Icon(Icons.credit_card_off_rounded,
-                              color: Color(0xFFB45309), size: 20),
+                          const Icon(
+                            Icons.credit_card_off_rounded,
+                            color: Color(0xFFB45309),
+                            size: 20,
+                          ),
                           const SizedBox(width: 10),
                           Expanded(
                             child: Text(
@@ -243,7 +274,9 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
                   ),
                   child: Text(
                     tr.autoEmptyInfo,
-                    style: TextStyle(color: Theme.of(context).colorScheme.onSurface),
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.onSurface,
+                    ),
                   ),
                 ),
                 const SizedBox(height: 20),
@@ -254,10 +287,7 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
                   style: const TextStyle(fontWeight: FontWeight.w600),
                 ),
                 const SizedBox(height: 8),
-                _buildSelectTile(
-                  _weekdayLabel(_weekday),
-                  _showWeeklyDialog,
-                ),
+                _buildSelectTile(_weekdayLabel(_weekday), _showWeeklyDialog),
                 const SizedBox(height: 20),
               ],
               if (_frequency == 'monthly') ...[
@@ -266,23 +296,23 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
                   style: const TextStyle(fontWeight: FontWeight.w600),
                 ),
                 const SizedBox(height: 8),
-                _buildSelectTile(
-                  _dayOfMonth.toString(),
-                  _showMonthlyDialog,
-                ),
+                _buildSelectTile(_dayOfMonth.toString(), _showMonthlyDialog),
                 const SizedBox(height: 20),
               ],
-              if (_frequency != 'manual' && (_loadingCards || _cards.isNotEmpty)) ...[
+              if (_frequency != 'manual' &&
+                  (_loadingCards || _cards.isNotEmpty)) ...[
                 Text(
                   tr.cardForAutoEmpty,
                   style: const TextStyle(fontWeight: FontWeight.w600),
                 ),
                 const SizedBox(height: 8),
                 _loadingCards
-                    ? const Center(child: Padding(
-                        padding: EdgeInsets.symmetric(vertical: 12),
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      ))
+                    ? const Center(
+                        child: Padding(
+                          padding: EdgeInsets.symmetric(vertical: 12),
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        ),
+                      )
                     : _buildCardSelector(tr),
                 const SizedBox(height: 20),
               ],
@@ -310,12 +340,16 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
                           // (matches the "first-time activation" behavior
                           // of switching from manual to a schedule).
                           if (value && _topOffAmount == null) {
-                            final goal = (ref.read(tenantStateProvider).valueOrNull
-                                ?['pushkaGoal'] as num?)?.toDouble();
-                            _topOffAmount = goal ??
-                                (_frequency == 'weekly' ? 18 : 36);
-                            _amountController.text =
-                                _topOffAmount!.toStringAsFixed(0);
+                            final goal =
+                                (ref
+                                            .read(tenantStateProvider)
+                                            .valueOrNull?['pushkaGoal']
+                                        as num?)
+                                    ?.toDouble();
+                            _topOffAmount =
+                                goal ?? (_frequency == 'weekly' ? 18 : 36);
+                            _amountController.text = _topOffAmount!
+                                .toStringAsFixed(0);
                           }
                         });
                       },
@@ -341,14 +375,19 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
                   const SizedBox(height: 12),
                   TextField(
                     controller: _amountController,
-                    keyboardType:
-                        const TextInputType.numberWithOptions(decimal: true),
+                    keyboardType: const TextInputType.numberWithOptions(
+                      decimal: true,
+                    ),
                     style: const TextStyle(
                       fontSize: 16,
                       fontWeight: FontWeight.w500,
                     ),
                     decoration: InputDecoration(
-                      prefixText: '\$ ',
+                      // Show the user's currency symbol, not a hardcoded '$'.
+                      // Reads currencyCode from the user profile and maps to a
+                      // short glyph via _shortCurrencySymbol.
+                      prefixText:
+                          '${shortCurrencySymbol((profile?['currencyCode'] as String?) ?? 'USD')} ',
                       prefixStyle: TextStyle(
                         fontSize: 16,
                         color: Theme.of(context).colorScheme.onSurfaceVariant,
@@ -356,7 +395,10 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
                       ),
                       filled: true,
                       fillColor: Theme.of(context).colorScheme.surface,
-                      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 14,
+                      ),
                       border: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(12),
                         borderSide: BorderSide(color: cs.outline),
@@ -367,12 +409,16 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
                       ),
                       focusedBorder: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(12),
-                        borderSide: BorderSide(color: AppTokens.primaryBlue, width: 2),
+                        borderSide: BorderSide(
+                          color: AppTokens.primaryBlue,
+                          width: 2,
+                        ),
                       ),
                     ),
                     onChanged: (value) {
-                      final parsed =
-                          double.tryParse(value.replaceAll(',', '.'));
+                      final parsed = double.tryParse(
+                        value.replaceAll(',', '.'),
+                      );
                       _topOffAmount = parsed;
                     },
                   ),
@@ -382,89 +428,102 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
               SizedBox(
                 width: double.infinity,
                 child: ElevatedButton(
-                      onPressed: user == null || _saving
-                          ? null
-                          : () async {
-                              // Hard block: enabling a non-manual schedule with no
-                              // saved card creates a "configured but broken" state
-                              // — the cron silently skips every cycle and the user
-                              // never finds out. Surface a dialog with a CTA to
-                              // /settings/saved-cards before any save attempt.
-                              if (needsCardWarning) {
-                                await _showAddCardRequiredDialog();
-                                return;
-                              }
-                              if (_frequency != 'manual' &&
-                                  _topOffEnabled &&
-                                  (_topOffAmount == null || _topOffAmount! <= 0)) {
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  SnackBar(content: Text(tr.enterValidAmount)),
-                                );
-                                return;
-                              }
-                              final messenger = ScaffoldMessenger.of(context);
-                              final navigator = Navigator.of(context);
-                              // Require explicit consent only when switching FROM manual
-                              // (i.e., enabling auto-empty for the first time or re-enabling).
-                              // No consent re-prompt when simply changing day/frequency of
-                              // an already-active schedule.
-                              if (_frequency != 'manual' && _savedFrequency == 'manual') {
-                                final accepted = await _showConsentDialog();
-                                if (!accepted || !mounted) return;
-                              }
-                              if (_biometricEnabled()) {
-                                final authenticated = await BiometricService.instance.authenticate(
-                                  reason: tr.biometricReasonEmpty,
-                                );
-                                if (!authenticated) {
-                                  if (!mounted) return;
-                                  messenger.showSnackBar(
-                                    SnackBar(content: Text(tr.authRequired)),
-                                  );
-                                  return;
-                                }
-                                if (!mounted) return;
-                              }
-                              setState(() => _saving = true);
-                              try {
-                                await _saveConfig(user.uid);
-                                if (!mounted) return;
-                                navigator.pop();
-                                // When this screen was pushed on top of the
-                                // Vaciar Pushka sheet, also dismiss the sheet
-                                // so the user lands back on Mi Pushka home
-                                // instead of the half-filled sheet.
-                                if (widget.popExtra && navigator.canPop()) {
-                                  navigator.pop();
-                                }
-                                messenger.showSnackBar(
-                                  SnackBar(content: Text(tr.settingsSaved)),
-                                );
-                              } catch (e) {
-                                if (!mounted) return;
-                                debugPrint('auto-empty save error: $e');
-                                messenger.showSnackBar(
-                                  SnackBar(content: Text(tr.saveError)),
-                                );
-                              } finally {
-                                if (mounted) setState(() => _saving = false);
-                              }
-                            },
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: AppTokens.primaryBlue,
-                        foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(vertical: 16),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                      ),
-                      child: Text(
-                        tr.saveBtn,
-                        style: const TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
+                  onPressed: user == null || _saving
+                      ? null
+                      : () async {
+                          // Hard block: enabling a non-manual schedule with no
+                          // saved card creates a "configured but broken" state
+                          // — the cron silently skips every cycle and the user
+                          // never finds out. Surface a dialog with a CTA to
+                          // /settings/saved-cards before any save attempt.
+                          if (needsCardWarning) {
+                            await _showAddCardRequiredDialog();
+                            return;
+                          }
+                          if (_frequency != 'manual' &&
+                              _topOffEnabled &&
+                              (_topOffAmount == null || _topOffAmount! <= 0)) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(content: Text(tr.enterValidAmount)),
+                            );
+                            return;
+                          }
+                          final messenger = ScaffoldMessenger.of(context);
+                          final navigator = Navigator.of(context);
+                          // Require explicit consent only when switching FROM manual
+                          // (i.e., enabling auto-empty for the first time or re-enabling).
+                          // No consent re-prompt when simply changing day/frequency of
+                          // an already-active schedule.
+                          final needsConsent =
+                              _frequency != 'manual' &&
+                              _savedFrequency == 'manual';
+                          if (needsConsent) {
+                            final accepted = await _showConsentDialog();
+                            if (!accepted || !mounted) return;
+                          }
+                          if (_biometricEnabled()) {
+                            final authenticated = await BiometricService
+                                .instance
+                                .authenticate(reason: tr.biometricReasonEmpty);
+                            if (!authenticated) {
+                              if (!mounted) return;
+                              messenger.showSnackBar(
+                                SnackBar(content: Text(tr.authRequired)),
+                              );
+                              return;
+                            }
+                            if (!mounted) return;
+                          }
+                          setState(() => _saving = true);
+                          try {
+                            // El consentimiento se registra ANTES de guardar
+                            // el horario, y si falla se aborta el guardado.
+                            // Al revés, un fallo intermedio dejaría un cobro
+                            // recurrente activo sin evidencia de que el
+                            // usuario lo autorizó — justo el caso que este
+                            // registro existe para cubrir.
+                            if (needsConsent) {
+                              await _recordConsent(user.uid, tr);
+                              if (!mounted) return;
+                            }
+                            await _saveConfig(user.uid);
+                            if (!mounted) return;
+                            navigator.pop();
+                            // When this screen was pushed on top of the
+                            // Vaciar Pushka sheet, also dismiss the sheet
+                            // so the user lands back on Mi Pushka home
+                            // instead of the half-filled sheet.
+                            if (widget.popExtra && navigator.canPop()) {
+                              navigator.pop();
+                            }
+                            messenger.showSnackBar(
+                              SnackBar(content: Text(tr.settingsSaved)),
+                            );
+                          } catch (e) {
+                            if (!mounted) return;
+                            debugPrint('auto-empty save error: $e');
+                            messenger.showSnackBar(
+                              SnackBar(content: Text(tr.saveError)),
+                            );
+                          } finally {
+                            if (mounted) setState(() => _saving = false);
+                          }
+                        },
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppTokens.primaryBlue,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                  child: Text(
+                    tr.saveBtn,
+                    style: const TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
                 ),
               ),
             ],
@@ -480,8 +539,12 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
   Widget _buildDonationReasonPicker(S tr) {
     // Same tenant-first fallback used across the donation flow so admin-web
     // designation edits propagate to every picker instance.
-    final tenantReasons = ref.read(tenantConfigProvider).valueOrNull?.donationReasons ?? const <String>[];
-    final reasons = tenantReasons.isNotEmpty ? tenantReasons : tr.defaultDonationReasons;
+    final tenantReasons =
+        ref.read(tenantConfigProvider).valueOrNull?.donationReasons ??
+        const <String>[];
+    final reasons = tenantReasons.isNotEmpty
+        ? tenantReasons
+        : tr.defaultDonationReasons;
     final cs = Theme.of(context).colorScheme;
     return Padding(
       padding: const EdgeInsets.only(bottom: 20),
@@ -512,21 +575,23 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
                 border: Border.all(color: cs.outline),
                 borderRadius: BorderRadius.circular(12),
               ),
-              child: Row(children: [
-                Expanded(
-                  child: Text(
-                    _selectedDonationReason ?? tr.donationReasonNone,
-                    style: TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w500,
-                      color: _selectedDonationReason == null
-                          ? cs.onSurfaceVariant
-                          : cs.onSurface,
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      _selectedDonationReason ?? tr.donationReasonNone,
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w500,
+                        color: _selectedDonationReason == null
+                            ? cs.onSurfaceVariant
+                            : cs.onSurface,
+                      ),
                     ),
                   ),
-                ),
-                Icon(Icons.keyboard_arrow_down, color: cs.onSurfaceVariant),
-              ]),
+                  Icon(Icons.keyboard_arrow_down, color: cs.onSurfaceVariant),
+                ],
+              ),
             ),
           ),
         ],
@@ -610,11 +675,13 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
       barrierColor: const Color(0xDD000000),
       builder: (sheetCtx) {
         final cs = Theme.of(sheetCtx).colorScheme;
-        final selectedId = _selectedCardId ??
+        final selectedId =
+            _selectedCardId ??
             (_cards.firstWhere(
-              (c) => c['isDefault'] == true,
-              orElse: () => _cards.first,
-            )['id'] as String);
+                  (c) => c['isDefault'] == true,
+                  orElse: () => _cards.first,
+                )['id']
+                as String);
         return SafeArea(
           top: false,
           child: SingleChildScrollView(
@@ -625,7 +692,8 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
               children: [
                 Center(
                   child: Container(
-                    width: 36, height: 4,
+                    width: 36,
+                    height: 4,
                     margin: const EdgeInsets.only(bottom: 16),
                     decoration: BoxDecoration(
                       color: cs.outlineVariant,
@@ -648,7 +716,12 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
     }
   }
 
-  Widget _buildCardTile(BuildContext ctx, Map<String, dynamic> card, String selectedId, S tr) {
+  Widget _buildCardTile(
+    BuildContext ctx,
+    Map<String, dynamic> card,
+    String selectedId,
+    S tr,
+  ) {
     final cs = Theme.of(ctx).colorScheme;
     final pmId = card['id'] as String;
     final brand = (card['brand'] as String? ?? 'card').toLowerCase();
@@ -660,8 +733,12 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
         decoration: BoxDecoration(
-          color: isSelected ? AppTokens.primaryBlue.withValues(alpha: 0.12) : cs.surface,
-          border: Border.all(color: isSelected ? AppTokens.primaryBlue : cs.outline),
+          color: isSelected
+              ? AppTokens.primaryBlue.withValues(alpha: 0.12)
+              : cs.surface,
+          border: Border.all(
+            color: isSelected ? AppTokens.primaryBlue : cs.outline,
+          ),
           borderRadius: BorderRadius.circular(12),
         ),
         child: Row(
@@ -689,7 +766,11 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
                 ),
                 child: Text(
                   tr.cardDefault,
-                  style: TextStyle(fontSize: 11, color: cs.onPrimaryContainer, fontWeight: FontWeight.w600),
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: cs.onPrimaryContainer,
+                    fontWeight: FontWeight.w600,
+                  ),
                 ),
               ),
             if (isSelected)
@@ -737,60 +818,120 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
     final tr = S.of(context);
     const accent = AppTokens.primaryBlue;
 
-    await showDialog<void>(
+    await showModalBottomSheet<void>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        title: Row(
-          children: [
-            Icon(Icons.credit_card_off_rounded, color: accent, size: 22),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Text(
-                tr.noCardsYet,
-                style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
-              ),
-            ),
-          ],
-        ),
-        content: Text(
-          tr.noSavedCards,
-          style: const TextStyle(fontSize: 14, height: 1.5),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: Text(
-              tr.cancelBtn,
-              style: TextStyle(color: Theme.of(ctx).colorScheme.onSurfaceVariant),
+      isScrollControlled: true,
+      useSafeArea: true,
+      backgroundColor: Theme.of(context).colorScheme.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
+      ),
+      builder: (ctx) => SafeArea(
+        top: false,
+        child: Padding(
+          padding: EdgeInsets.only(
+            bottom: MediaQuery.of(ctx).viewInsets.bottom,
+          ),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Center(
+                  child: Container(
+                    width: 36,
+                    height: 4,
+                    margin: const EdgeInsets.only(bottom: 16),
+                    decoration: BoxDecoration(
+                      color: Theme.of(ctx).colorScheme.outlineVariant,
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                ),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(
+                      Icons.credit_card_off_rounded,
+                      color: accent,
+                      size: 22,
+                    ),
+                    const SizedBox(width: 10),
+                    Flexible(
+                      child: Text(
+                        tr.noCardsYet,
+                        style: const TextStyle(
+                          fontSize: 20,
+                          fontWeight: FontWeight.w700,
+                        ),
+                        textAlign: TextAlign.center,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 14),
+                Text(
+                  tr.noSavedCards,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 14,
+                    color: Theme.of(ctx).colorScheme.onSurfaceVariant,
+                    height: 1.4,
+                  ),
+                ),
+                const SizedBox(height: 20),
+                SizedBox(
+                  width: double.infinity,
+                  height: 48,
+                  child: ElevatedButton.icon(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: accent,
+                      foregroundColor: Colors.white,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                    icon: const Icon(Icons.add_card_rounded, size: 18),
+                    label: Text(
+                      tr.addCard,
+                      style: const TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    onPressed: () {
+                      // Capture both the screen-level navigator and GoRouter BEFORE
+                      // popping anything: after the sheet + screen pops, the original
+                      // BuildContext is dead and cannot be used for navigation.
+                      final screenNavigator = Navigator.of(context);
+                      final goRouter = GoRouter.of(context);
+                      Navigator.pop(ctx); // close sheet
+                      screenNavigator
+                          .pop(); // close AutoEmptyScreen (MaterialPageRoute)
+                      goRouter.go('/settings/saved-cards');
+                    },
+                  ),
+                ),
+                const SizedBox(height: 8),
+                SizedBox(
+                  width: double.infinity,
+                  height: 44,
+                  child: TextButton(
+                    onPressed: () => Navigator.pop(ctx),
+                    child: Text(
+                      tr.cancelBtn,
+                      style: TextStyle(
+                        color: Theme.of(ctx).colorScheme.onSurfaceVariant,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
             ),
           ),
-          ElevatedButton.icon(
-            style: ElevatedButton.styleFrom(
-              backgroundColor: accent,
-              foregroundColor: Colors.white,
-              padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(10),
-              ),
-            ),
-            icon: const Icon(Icons.add_card_rounded, size: 18),
-            label: Text(
-              tr.addCard,
-              style: const TextStyle(fontWeight: FontWeight.w700),
-            ),
-            onPressed: () {
-              // Capture both the screen-level navigator and GoRouter BEFORE
-              // popping anything: after the dialog + screen pops, the original
-              // BuildContext is dead and cannot be used for navigation.
-              final screenNavigator = Navigator.of(context);
-              final goRouter = GoRouter.of(context);
-              Navigator.pop(ctx); // close dialog
-              screenNavigator.pop(); // close AutoEmptyScreen (MaterialPageRoute)
-              goRouter.go('/settings/saved-cards');
-            },
-          ),
-        ],
+        ),
       ),
     );
   }
@@ -841,7 +982,12 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
                 const SizedBox(height: 16),
                 Text(
                   tr.autoEmptyConsentBody,
-                  style: TextStyle(fontSize: 15, fontWeight: FontWeight.w500, height: 1.55, color: cs.onSurface),
+                  style: TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w500,
+                    height: 1.55,
+                    color: cs.onSurface,
+                  ),
                 ),
                 const SizedBox(height: 20),
                 SizedBox(
@@ -858,7 +1004,10 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
                     onPressed: () => Navigator.pop(ctx, true),
                     child: Text(
                       tr.autoEmptyConsentAccept,
-                      style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
+                      style: const TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w700,
+                      ),
                     ),
                   ),
                 ),
@@ -870,12 +1019,66 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
   }
 
   bool _biometricEnabled() {
+    // Web (PWA) no soporta biometría — retornar false evita bloqueo.
+    if (kIsWeb) return false;
     final profile = ref.read(userProfileProvider).valueOrNull;
     return (profile?['biometricAuthenticationEnabled'] as bool?) ?? false;
   }
 
+  /// Registra en el servidor la autorización de cobro recurrente.
+  ///
+  /// Manda el texto EXACTO que se mostró en pantalla, no una referencia a la
+  /// clave de traducción: las traducciones cambian, y si mañana hay una
+  /// disputa hay que poder reconstruir qué decía el diálogo el día que el
+  /// usuario aceptó. El timestamp y la IP los pone la función, no el
+  /// dispositivo.
+  ///
+  /// Propaga la excepción a propósito: quien la llama aborta el guardado.
+  Future<void> _recordConsent(String uid, S tr) async {
+    final tenantId =
+        ref.read(userProfileProvider).valueOrNull?['tenantId'] as String?;
+    if (tenantId == null || tenantId.isEmpty) {
+      throw StateError('sin tenantId al registrar el consentimiento');
+    }
+    final currency =
+        (ref.read(userProfileProvider).valueOrNull?['currencyCode']
+            as String?) ??
+        'USD';
+
+    // EXACTAMENTE lo que renderiza _showConsentDialog: título y cuerpo, nada
+    // más. Los getters autoEmptyConsentBullet1/3 existen en s.dart pero el
+    // diálogo no los muestra; incluirlos acá haría que el registro afirme que
+    // el usuario leyó un texto que nunca vio, que es peor que no tener
+    // registro. Si algún día se agregan al diálogo, hay que sumarlos también
+    // acá — los dos tienen que decir lo mismo.
+    final shownText =
+        '${tr.autoEmptyConsentTitle}\n\n${tr.autoEmptyConsentBody}';
+
+    // Se lee el locale ANTES del await para no cruzar el BuildContext por un
+    // gap asíncrono.
+    final localeCode = Localizations.localeOf(context).languageCode;
+    final info = await PackageInfo.fromPlatform();
+
+    await FirebaseFunctions.instance
+        .httpsCallable('recordAutoEmptyConsent')
+        .call({
+          'tenantId': tenantId,
+          'frequency': _frequency,
+          'weekday': _frequency == 'weekly' ? _weekday : null,
+          'dayOfMonth': _frequency == 'monthly' ? _dayOfMonth : null,
+          'topOffEnabled': _topOffEnabled,
+          'topOffAmount': _topOffAmount ?? 0,
+          'currency': currency,
+          'consentText': shownText,
+          'locale': localeCode,
+          'appVersion': '${info.version}+${info.buildNumber}',
+          'platform': kIsWeb ? 'web' : defaultTargetPlatform.name,
+        });
+  }
+
   Future<void> _saveConfig(String uid) async {
-    final tenantId = ref.read(userProfileProvider).valueOrNull?['tenantId'] as String?;
+    final tenantId =
+        ref.read(userProfileProvider).valueOrNull?['tenantId'] as String?;
     if (tenantId == null || tenantId.isEmpty) return;
     final repo = ref.read(userRepositoryProvider);
     final nextRunAt = _frequency == 'manual' ? null : _computeNextRunAt();
@@ -893,15 +1096,20 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
       if (nextRunAt.isBefore(now) || nextRunAt.isAfter(maxFuture)) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(S.of(context).deviceClockSkewError),
-            ),
+            SnackBar(content: Text(S.of(context).deviceClockSkewError)),
           );
         }
         return;
       }
     }
 
+    // Round-4 audit CRITICAL fix: stamp the currency the top-off was
+    // configured in so the server cron can detect drift after a currency
+    // change and refuse to charge in the wrong currency.
+    final activeCurrency =
+        (ref.read(userProfileProvider).valueOrNull?['currencyCode']
+            as String?) ??
+        'USD';
     await repo.updateTenantState(
       uid: uid,
       tenantId: tenantId,
@@ -909,59 +1117,261 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
       autoEmptyWeekday: _frequency == 'weekly' ? _weekday : null,
       autoEmptyDayOfMonth: _frequency == 'monthly' ? _dayOfMonth : null,
       autoEmptyTopOffEnabled: _frequency == 'manual' ? false : _topOffEnabled,
-      autoEmptyTopOffAmount:
-          _frequency == 'manual' ? null : (_topOffAmount ?? 0),
+      autoEmptyTopOffAmount: _frequency == 'manual'
+          ? null
+          : (_topOffAmount ?? 0),
+      autoEmptyTopOffCurrency: _frequency == 'manual' ? null : activeCurrency,
       autoEmptyNextRunAt: nextRunAt,
       autoEmptyClearNextRunAt: _frequency == 'manual',
       autoEmptyPaymentMethodId: _frequency != 'manual' ? _selectedCardId : null,
       autoEmptyClearPaymentMethodId: _frequency == 'manual',
-      autoEmptyDonationReason: _frequency != 'manual' ? _selectedDonationReason : null,
-      autoEmptyClearDonationReason: _frequency == 'manual' || _selectedDonationReason == null,
+      autoEmptyDonationReason: _frequency != 'manual'
+          ? _selectedDonationReason
+          : null,
+      autoEmptyClearDonationReason:
+          _frequency == 'manual' || _selectedDonationReason == null,
     );
   }
 
   DateTime _computeNextRunAt() {
-    final now = DateTime.now().toUtc();
+    // Round-6 audit HIGH fix: compute the next run at 08:00 LOCAL time of
+    // the device, then convert to UTC for Firestore. Previously we used
+    // DateTime.utc(...) directly with hour=8, which meant a Mexico user
+    // (UTC-6) had auto-empty fire at 02:00 AM local and an Israel user
+    // (UTC+3) had it fire at 11:00 AM. "08:00 local" is what the config
+    // screen implies to the donor.
+    final nowLocal = DateTime.now();
+    final nowUtc = nowLocal.toUtc();
     if (_frequency == 'weekly') {
-      var next = DateTime.utc(now.year, now.month, now.day, 8, 0, 0);
-      while (next.weekday != _weekday || !next.isAfter(now)) {
-        next = next.add(const Duration(days: 1));
+      var nextLocal = DateTime(
+        nowLocal.year,
+        nowLocal.month,
+        nowLocal.day,
+        8,
+        0,
+        0,
+      );
+      while (nextLocal.weekday != _weekday ||
+          !nextLocal.toUtc().isAfter(nowUtc)) {
+        nextLocal = nextLocal.add(const Duration(days: 1));
       }
-      return next;
+      return nextLocal.toUtc();
     }
     if (_frequency == 'monthly') {
       int clampDay(int year, int month) {
-        final maxDay = DateTime.utc(year, month + 1, 0).day;
+        final maxDay = DateTime(year, month + 1, 0).day;
         return _dayOfMonth.clamp(1, maxDay);
       }
-      var next = DateTime.utc(now.year, now.month, clampDay(now.year, now.month), 8, 0, 0);
-      if (!next.isAfter(now)) {
-        final nm = now.month == 12 ? 1 : now.month + 1;
-        final ny = now.month == 12 ? now.year + 1 : now.year;
-        next = DateTime.utc(ny, nm, clampDay(ny, nm), 8, 0, 0);
+
+      var nextLocal = DateTime(
+        nowLocal.year,
+        nowLocal.month,
+        clampDay(nowLocal.year, nowLocal.month),
+        8,
+        0,
+        0,
+      );
+      if (!nextLocal.toUtc().isAfter(nowUtc)) {
+        final nm = nowLocal.month == 12 ? 1 : nowLocal.month + 1;
+        final ny = nowLocal.month == 12 ? nowLocal.year + 1 : nowLocal.year;
+        nextLocal = DateTime(ny, nm, clampDay(ny, nm), 8, 0, 0);
       }
-      return next;
+      return nextLocal.toUtc();
     }
     if (_frequency == 'erev_rosh_chodesh') {
-      return _computeNextErevRoshChodesh(now);
+      return _computeNextErevRoshChodesh(nowUtc);
     }
-    return now.add(const Duration(days: 30));
+    return nowUtc.add(const Duration(days: 30));
   }
 
   DateTime _computeNextErevRoshChodesh(DateTime now) {
-    // months are 0-indexed to match the Cloud Function table (JS convention)
+    // Meses 0-indexados (convención JS), para espejar la Cloud Function.
+    //
+    // ESTA TABLA LA GENERA hebcal, NO SE EDITA A MANO. El servidor
+    // (computeNextErevRoshChodesh en functions/index.js) no usa tabla: calcula
+    // en vivo con @hebcal/core el día 29 de cada mes hebreo. Acá no hay
+    // librería de calendario hebreo, así que se precalcula lo mismo.
+    //
+    // Incluye el 29 de Elul (Erev Rosh Hashaná). El servidor lo excluía y por
+    // eso el 11/09/2026 —viernes, 29 de Elul— se salteaba y el próximo cobro
+    // saltaba al 11/10. Reportado por Ioel.
+    //
+    // ⚠️ GENERARLA SIEMPRE CON TZ=UTC. `new HDate(fecha)` lee los componentes
+    // LOCALES de la fecha, y Cloud Functions corre en UTC. Generada desde una
+    // máquina en otro huso, la tabla entera queda corrida un día: ya pasó una
+    // vez, generándola desde America/Mexico_City. El comando de abajo fija
+    // TZ=UTC y las 08:00, exactamente como el servidor.
+    //
+    // Para regenerarla (desde functions/):
+    //   TZ=UTC node -e "(async()=>{const m=await import('@hebcal/core');
+    //     const H=m.HDate;
+    //     for(let y=2025;y<=2035;y++){const l=[];
+    //       const d=new Date(Date.UTC(y,0,1));
+    //       while(d.getUTCFullYear()===y){
+    //         const c=new Date(d); c.setUTCHours(8,0,0,0);
+    //         if(new H(c).getDate()===29)
+    //           l.push('['+c.getUTCMonth()+','+c.getUTCDate()+']');
+    //         d.setUTCDate(d.getUTCDate()+1);}
+    //       console.log(y+': ['+l.join(',')+'],');}})()"
     const table = <int, List<List<int>>>{
-      2025: [[0,29],[1,27],[2,29],[3,27],[4,27],[5,25],[6,25],[7,23],[9,21],[10,20],[11,19]],
-      2026: [[0,18],[1,16],[2,18],[3,16],[4,16],[5,14],[6,14],[7,12],[9,10],[10,9],[11,9]],
-      2027: [[0,8],[1,6],[2,8],[3,7],[4,6],[5,5],[6,4],[7,3],[8,1],[9,30],[10,29],[11,29]],
-      2028: [[0,28],[1,26],[2,27],[3,25],[4,25],[5,23],[6,23],[7,21],[9,19],[10,18],[11,17]],
-      2029: [[0,16],[1,14],[2,16],[3,14],[4,14],[5,12],[6,12],[7,10],[9,8],[10,7],[11,6]],
-      2030: [[0,4],[1,2],[2,4],[3,3],[4,2],[5,1],[5,30],[6,30],[7,28],[9,26],[10,25],[11,25]],
-      2031: [[0,24],[1,22],[2,24],[3,22],[4,22],[5,20],[6,20],[7,18],[9,16],[10,15],[11,15]],
-      2032: [[0,13],[1,12],[2,12],[3,11],[4,10],[5,9],[6,8],[7,7],[9,5],[10,3],[11,3]],
-      2033: [[0,2],[1,1],[1,28],[2,30],[3,29],[4,28],[5,27],[6,26],[7,25],[9,22],[10,22],[11,21]],
-      2034: [[0,21],[1,19],[2,21],[3,19],[4,19],[5,17],[6,17],[7,15],[9,13],[10,12],[11,12]],
-      2035: [[0,10],[1,9],[2,11],[3,9],[4,9],[5,7],[6,7],[7,5],[9,3],[10,2],[11,1],[11,31]],
+      2025: [
+        [0, 29],
+        [1, 27],
+        [2, 29],
+        [3, 27],
+        [4, 27],
+        [5, 25],
+        [6, 25],
+        [7, 23],
+        [8, 22],
+        [9, 21],
+        [10, 20],
+        [11, 19],
+      ],
+      2026: [
+        [0, 18],
+        [1, 16],
+        [2, 18],
+        [3, 16],
+        [4, 16],
+        [5, 14],
+        [6, 14],
+        [7, 12],
+        [8, 11],
+        [9, 10],
+        [10, 9],
+        [11, 9],
+      ],
+      2027: [
+        [0, 8],
+        [1, 6],
+        [2, 8],
+        [3, 7],
+        [4, 6],
+        [5, 5],
+        [6, 4],
+        [7, 3],
+        [8, 1],
+        [9, 1],
+        [9, 30],
+        [10, 29],
+        [11, 29],
+      ],
+      2028: [
+        [0, 28],
+        [1, 26],
+        [2, 27],
+        [3, 25],
+        [4, 25],
+        [5, 23],
+        [6, 23],
+        [7, 21],
+        [8, 20],
+        [9, 19],
+        [10, 18],
+        [11, 17],
+      ],
+      2029: [
+        [0, 16],
+        [1, 14],
+        [2, 16],
+        [3, 14],
+        [4, 14],
+        [5, 12],
+        [6, 12],
+        [7, 10],
+        [8, 9],
+        [9, 8],
+        [10, 7],
+        [11, 6],
+      ],
+      2030: [
+        [0, 4],
+        [1, 2],
+        [2, 4],
+        [3, 3],
+        [4, 2],
+        [5, 1],
+        [5, 30],
+        [6, 30],
+        [7, 28],
+        [8, 27],
+        [9, 26],
+        [10, 25],
+        [11, 25],
+      ],
+      2031: [
+        [0, 24],
+        [1, 22],
+        [2, 24],
+        [3, 22],
+        [4, 22],
+        [5, 20],
+        [6, 20],
+        [7, 18],
+        [8, 17],
+        [9, 16],
+        [10, 15],
+        [11, 14],
+      ],
+      2032: [
+        [0, 13],
+        [1, 11],
+        [2, 12],
+        [3, 10],
+        [4, 10],
+        [5, 8],
+        [6, 8],
+        [7, 6],
+        [8, 5],
+        [9, 4],
+        [10, 3],
+        [11, 2],
+        [11, 31],
+      ],
+      2033: [
+        [0, 29],
+        [1, 28],
+        [2, 30],
+        [3, 28],
+        [4, 28],
+        [5, 26],
+        [6, 26],
+        [7, 24],
+        [8, 23],
+        [9, 22],
+        [10, 21],
+        [11, 21],
+      ],
+      2034: [
+        [0, 20],
+        [1, 18],
+        [2, 20],
+        [3, 18],
+        [4, 18],
+        [5, 16],
+        [6, 16],
+        [7, 14],
+        [8, 13],
+        [9, 12],
+        [10, 11],
+        [11, 11],
+      ],
+      2035: [
+        [0, 10],
+        [1, 8],
+        [2, 10],
+        [3, 9],
+        [4, 8],
+        [5, 7],
+        [6, 6],
+        [7, 5],
+        [8, 3],
+        [9, 3],
+        [10, 1],
+        [11, 1],
+        [11, 30],
+      ],
     };
     for (final year in [now.year, now.year + 1]) {
       final yearDates = table[year];
@@ -1008,15 +1418,17 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
       // if they don't want top-off.
       if (wasManual && picked != 'manual') {
         _topOffEnabled = true;
-        final goal = (ref.read(tenantStateProvider).valueOrNull
-            ?['pushkaGoal'] as num?)?.toDouble();
+        final goal =
+            (ref.read(tenantStateProvider).valueOrNull?['pushkaGoal'] as num?)
+                ?.toDouble();
         _topOffAmount = goal ?? _topOffAmount ?? 18;
         // Seed the designación to the tenant's first reason so the
         // schedule starts with a concrete destination instead of the
         // empty/Sin designación state.
         if (_selectedDonationReason == null) {
-          final cfgReasons = ref.read(tenantConfigProvider).valueOrNull
-                  ?.donationReasons ?? const <String>[];
+          final cfgReasons =
+              ref.read(tenantConfigProvider).valueOrNull?.donationReasons ??
+              const <String>[];
           if (cfgReasons.isNotEmpty) {
             _selectedDonationReason = cfgReasons.first;
           }
@@ -1050,31 +1462,81 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
   }
 
   Future<void> _showMonthlyDialog() async {
-    final result = await showDialog<int>(
+    final tr = S.of(context);
+    final result = await showModalBottomSheet<int>(
       context: context,
-      builder: (context) => AlertDialog(
-        content: SizedBox(
-          width: double.maxFinite,
-          child: GridView.builder(
-            shrinkWrap: true,
-            itemCount: 30,
-            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-              crossAxisCount: 7,
-              mainAxisSpacing: 8,
-              crossAxisSpacing: 8,
-            ),
-            itemBuilder: (context, index) {
-              final value = index + 1;
-              return InkWell(
-                onTap: () => Navigator.pop(context, value),
-                child: Center(
-                  child: Text(
-                    value.toString(),
-                    style: const TextStyle(fontSize: 16),
+      isScrollControlled: true,
+      useSafeArea: true,
+      backgroundColor: Theme.of(context).colorScheme.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
+      ),
+      builder: (ctx) => SafeArea(
+        top: false,
+        child: Padding(
+          padding: EdgeInsets.only(
+            bottom: MediaQuery.of(ctx).viewInsets.bottom,
+          ),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Center(
+                  child: Container(
+                    width: 36,
+                    height: 4,
+                    margin: const EdgeInsets.only(bottom: 16),
+                    decoration: BoxDecoration(
+                      color: Theme.of(ctx).colorScheme.outlineVariant,
+                      borderRadius: BorderRadius.circular(2),
+                    ),
                   ),
                 ),
-              );
-            },
+                Text(
+                  tr.dayOfMonth,
+                  style: const TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.w700,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 14),
+                SizedBox(
+                  width: double.maxFinite,
+                  child: GridView.builder(
+                    shrinkWrap: true,
+                    physics: const NeverScrollableScrollPhysics(),
+                    // Allow day 1-31. Months without day 31 (or 30, or 29 in Feb) are
+                    // handled server-side by processPushkaAutoEmpty in
+                    // functions/index.js: it clamps the configured day to the actual
+                    // month length, so picking 31 fires on the 30th in April / 28th in
+                    // February. The picker should not silently forbid the user's
+                    // legitimate choice.
+                    itemCount: 31,
+                    gridDelegate:
+                        const SliverGridDelegateWithFixedCrossAxisCount(
+                          crossAxisCount: 7,
+                          mainAxisSpacing: 8,
+                          crossAxisSpacing: 8,
+                        ),
+                    itemBuilder: (context, index) {
+                      final value = index + 1;
+                      return InkWell(
+                        onTap: () => Navigator.pop(ctx, value),
+                        child: Center(
+                          child: Text(
+                            value.toString(),
+                            style: const TextStyle(fontSize: 16),
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ),
@@ -1084,6 +1546,8 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
       setState(() => _dayOfMonth = result);
     }
   }
+
+  // Removed — using `shortCurrencySymbol()` from format_utils.dart directly.
 
   String _weekdayLabel(int weekday) {
     final tr = S.of(context);
@@ -1107,6 +1571,3 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
     }
   }
 }
-
-
-

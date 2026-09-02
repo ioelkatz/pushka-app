@@ -16,7 +16,7 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 # https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/CoreFoundationKeys.html
 # In Windows, build-name is used as the major, minor, and patch parts
 # of the product and file versions while build-number is used as the build suffix.
-version: 1.0.0+1
+version: 1.0.2+3
 
 environment:
   sdk: ^3.10.4
@@ -34,6 +34,9 @@ dependencies:
   flutter_localizations:
     sdk: flutter
 
+  flutter_web_plugins:
+    sdk: flutter
+
   cupertino_icons: ^1.0.8
   flutter_riverpod: ^2.6.1
   go_router: ^14.6.2
@@ -44,7 +47,14 @@ dependencies:
   cloud_firestore: ^6.0.0
   firebase_messaging: ^16.0.0
   flutter_local_notifications: ^17.2.4
-  google_sign_in: ^6.2.1
+  # v7 migration (2026-07-27): v6 was deprecated and its native flow on
+  # Android 14+ went through the legacy GoogleApiClient path which returns
+  # null after the account chooser when idToken issuance fails. v7 uses
+  # Android's Credential Manager (system-level, replaces the plugin's own
+  # UI) which is Google's official supported flow post Android 14. API is
+  # completely different — see auth_controller.signInWithGoogle + the
+  # GoogleSignIn.instance.initialize() call in app_initializer.dart.
+  google_sign_in: ^7.2.0
   sign_in_with_apple: ^7.0.1
   country_picker: ^2.0.26
   timezone: ^0.9.4
@@ -79,6 +89,18 @@ dependencies:
   # every screen mount re-downloads the same logo from Firebase Storage,
   # spending bandwidth and adding visible flicker on slow networks.
   cached_network_image: ^3.4.1
+  flutter_timezone: ^5.1.0
+  flutter_stripe_web: ^7.6.0
+  # Runtime notification permissions on Android 13+ (POST_NOTIFICATIONS).
+  # We use permission_handler because it distinguishes `denied` from
+  # `permanentlyDenied` — flutter_local_notifications' request returns a
+  # plain bool that treats "user checked Don't ask again" identically to a
+  # first-time denial. That distinction drives the UX in reminders_screen:
+  # when permanently denied we open the app's system settings directly
+  # via `openAppSettings()` instead of firing a doomed request that returns
+  # false without ever showing the OS prompt.
+  permission_handler: ^11.3.1
+  package_info_plus: ^10.2.1
 
 
 dev_dependencies:

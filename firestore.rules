@@ -43,6 +43,17 @@ service cloud.firestore {
           value == 'erev_rosh_chodesh';
     }
 
+    // Round-6 audit MEDIUM fix: whitelist matches functions/index.js
+    // CURRENCY_MINIMUMS keys (uppercase — client always sends uppercase).
+    // Without this any 3-char string passed (e.g. 'XYZ' or an emoji) and
+    // downstream admin FX aggregations silently misconverted. MUST stay
+    // in sync with SUPPORTED_CURRENCIES on the server.
+    function validCurrencyCode(code) {
+      return code == 'USD' || code == 'EUR' || code == 'GBP' || code == 'CAD' ||
+          code == 'ILS' || code == 'MXN' || code == 'BRL' || code == 'ARS' ||
+          code == 'CLP' || code == 'COP';
+    }
+
     // tenantId on users/{uid} must reference an existing tenants/{id} document.
     // Without this, any user could self-assign an arbitrary tenantId string
     // and appear as a member of that tenant in `where(tenantId == X)` queries.
@@ -116,6 +127,12 @@ service cloud.firestore {
               'streakCount', 'lastStreakDate',
               'autoEmptyFrequency', 'autoEmptyWeekday', 'autoEmptyDayOfMonth',
               'autoEmptyTopOffEnabled', 'autoEmptyTopOffAmount', 'autoEmptyNextRunAt',
+              // autoEmptyTopOffCurrency lo escribe el cliente desde el Round-4
+              // audit (sella la moneda en la que se configuro el top-off para
+              // que el cron detecte drift) pero NUNCA se agrego aca. Resultado:
+              // hasOnly() rechazaba TODO guardado de auto-vaciado no manual y
+              // el usuario solo veia "Error al guardar. Intenta nuevamente.".
+              'autoEmptyTopOffCurrency',
               'autoEmptyPaymentMethodId', 'autoEmptyDonationReason',
               'createdAt', 'updatedAt'];
     }
@@ -161,6 +178,14 @@ service cloud.firestore {
               (request.resource.data.autoEmptyTopOffAmount is number &&
                   request.resource.data.autoEmptyTopOffAmount >= 0 &&
                   request.resource.data.autoEmptyTopOffAmount <= 10000000)) &&
+          // Moneda en la que se configuro el top-off. Se valida contra la misma
+          // lista que el resto de la app: SUPPORTED_CURRENCIES en
+          // functions/index.js son exactamente estas 10, asi que un usuario no
+          // puede terminar con una moneda que esta regla rechace.
+          (!('autoEmptyTopOffCurrency' in request.resource.data) ||
+              request.resource.data.autoEmptyTopOffCurrency == null ||
+              (request.resource.data.autoEmptyTopOffCurrency is string &&
+                  validCurrencyCode(request.resource.data.autoEmptyTopOffCurrency))) &&
           (!('autoEmptyNextRunAt' in request.resource.data) ||
               request.resource.data.autoEmptyNextRunAt == null ||
               (request.resource.data.autoEmptyNextRunAt is timestamp &&
@@ -200,6 +225,16 @@ service cloud.firestore {
       // hasOnly includes Stripe fields and isBlocked so that on UPDATE, pre-existing
       // CF-written fields in the resulting document don't fail the check.
       // Writing/changing those fields is separately blocked by the specific guards below.
+      //
+      // BUG #17 note: `_lastPmDedupePassAt` and the flat `stripeCustomer*` /
+      // `stripeDefaultPayment*` fields below are DEPRECATED post-Direct-Charges
+      // migration — CFs write them nowhere anymore, they moved to
+      // users/{uid}/tenantState/{tid}.stripeConnect*. They stay in this
+      // whitelist ONLY to grandfather pre-migration users who still have
+      // those fields on their user doc: without them here, any client
+      // update to the doc (pushkaAmount, language, etc.) would fail
+      // hasOnly because the resulting doc still has the legacy field.
+      // A future migration CF can strip these + drop them from the whitelist.
       return request.resource.data.keys().hasOnly([
             'uid',
             'email',
@@ -243,7 +278,8 @@ service cloud.firestore {
             'isBlocked',
             'tenantId',
             'tenantIds',
-            '_lastPmDedupePassAt'
+            '_lastPmDedupePassAt',
+            'timezone'
           ]) &&
           request.resource.data.uid is string &&
           request.resource.data.uid == uid &&
@@ -279,7 +315,7 @@ service cloud.firestore {
               request.resource.data.currencyCountry is string) &&
           (!('currencyCode' in request.resource.data) ||
               (request.resource.data.currencyCode is string &&
-                  request.resource.data.currencyCode.size() == 3)) &&
+                  validCurrencyCode(request.resource.data.currencyCode))) &&
           (!('autoEmptyFrequency' in request.resource.data) ||
               (request.resource.data.autoEmptyFrequency is string &&
                   validFrequency(request.resource.data.autoEmptyFrequency))) &&
@@ -303,9 +339,29 @@ service cloud.firestore {
                   (request.resource.data.autoEmptyNextRunAt > request.time ||
                       (resource != null &&
                           resource.data.get('autoEmptyNextRunAt', null) == request.resource.data.autoEmptyNextRunAt)))) &&
+          // timezone: IANA name (e.g. 'America/Mexico_City'). Used by the
+          // server-side reminders scheduler to compute nextTriggerAt in the
+          // user's local time. IANA names are max ~40 chars — cap at 60 as
+          // generous slack. Empty string rejected (would confuse the CF).
+          (!('timezone' in request.resource.data) ||
+              (request.resource.data.timezone is string &&
+                  request.resource.data.timezone.size() > 0 &&
+                  request.resource.data.timezone.size() <= 60)) &&
+          // Round-6 audit MEDIUM fix: email must match the incoming Auth
+          // token email + basic format check. Previously any string was
+          // accepted, letting a client rewrite users/{uid}.email to an
+          // arbitrary value and impersonate another user across features
+          // that key off email (e.g. pending tenant admin invites, weekly
+          // summary "from" field). Immutable-once-set: if the doc already
+          // has an email, client can't change it — only the CF onUserDocCreated
+          // (Admin SDK, bypasses rules) can rewrite.
           (!('email' in request.resource.data) ||
               (request.resource.data.email is string &&
-                  request.resource.data.email.size() <= 254)) &&
+                  request.resource.data.email.size() <= 254 &&
+                  request.resource.data.email.matches('.+@.+\\..+') &&
+                  (resource == null ||
+                      !('email' in resource.data) ||
+                      resource.data.email == request.resource.data.email))) &&
           // displayName: cap length AND require at least one non-whitespace
           // char. A name of "   " passes the size check but renders as a blank
           // chip across the UI (donor lists, top-donors leaderboard, history
@@ -372,12 +428,21 @@ service cloud.firestore {
           // malicious client from inflating their own donation history with
           // fake card transactions, and from creating a phantom record
           // alongside the legitimate webhook-written one.
+          // Round-6 audit HIGH fix: positive whitelist instead of blacklist.
+          // The blacklist (paymentMethod != 'card' && != 'auto_card' && != 'auto')
+          // let anything else through — a client with a bug (unknown enum
+          // value) or a malicious payload with 'unknown_method' would pass,
+          // and downstream aggregations that fall back to 'card' would
+          // silently inflate card revenue. The card/auto/auto_card methods
+          // are ONLY written by the Stripe webhook via Admin SDK (bypasses
+          // these rules).
           ('paymentMethod' in request.resource.data) &&
           request.resource.data.paymentMethod is string &&
           request.resource.data.paymentMethod.size() <= 100 &&
-          request.resource.data.paymentMethod != 'card' &&
-          request.resource.data.paymentMethod != 'auto_card' &&
-          request.resource.data.paymentMethod != 'auto' &&
+          (request.resource.data.paymentMethod == 'check' ||
+              request.resource.data.paymentMethod == 'transfer' ||
+              request.resource.data.paymentMethod == 'daf' ||
+              request.resource.data.paymentMethod == 'other') &&
           // status is REQUIRED on client-written transactions and must be one of
           // a known enum. Without this, downstream aggregations would treat a
           // missing status as "completed" and inflate stats with rows the
@@ -391,7 +456,7 @@ service cloud.firestore {
           // FX conversion. Missing currencyCode silently corrupts admin reports.
           ('currencyCode' in request.resource.data) &&
           request.resource.data.currencyCode is string &&
-          request.resource.data.currencyCode.size() == 3 &&
+          validCurrencyCode(request.resource.data.currencyCode) &&
           // tenantId is REQUIRED and must match the user's active tenant. This
           // prevents (a) tenant-less transactions invisible to history queries
           // and (b) tagging a donation as belonging to a tenant the user is
@@ -414,7 +479,19 @@ service cloud.firestore {
             'secondTimeMinute',
             'secondDays',
             'secondIsHoliday',
-            'createdAt'
+            'oneShotDate',
+            'createdAt',
+            // Server-owned fields (populated by onReminderWrite +
+            // processDueReminders via Admin SDK). Included in the allowlist
+            // because client updates use set(..., merge:true), which causes
+            // request.resource.data to be the RESULTING MERGED document —
+            // so once the CF has stamped these, subsequent client updates
+            // carry them through the merge and would otherwise fail
+            // hasOnly(). Client mutation is blocked separately by
+            // hasNoServerOnlyReminderFieldsWritten() (immutable-from-client).
+            'nextTriggerAt',
+            'lastTriggeredAt',
+            'timezone'
           ]) &&
           request.resource.data.title is string &&
           request.resource.data.title.size() <= 100 &&
@@ -449,7 +526,44 @@ service cloud.firestore {
               request.resource.data.secondTimeMinute >= 0 &&
               request.resource.data.secondTimeMinute <= 59
             )
-          );
+          ) &&
+          // oneShotDate: nullable Timestamp for chooseDate one-shot reminders.
+          // Server-side scheduling computes `nextTriggerAt` from it. Client
+          // sets it when the user picks a date; may be omitted for recurring.
+          (!('oneShotDate' in request.resource.data) ||
+              request.resource.data.oneShotDate == null ||
+              request.resource.data.oneShotDate is timestamp);
+    }
+
+    // Server-owned reminder fields — populated by onReminderWrite +
+    // processDueReminders. Clients MUST NOT MUTATE them.
+    //
+    // On CREATE (resource == null): require the fields be ABSENT — the
+    // client has no business seeding server-scheduler state.
+    //
+    // On UPDATE: require each field's post-write value == pre-write value.
+    //   Previous version used `!('field' in request.resource.data)` on both
+    //   create and update. That was correct for `.update()` writes but WRONG
+    //   for `.set(..., merge: true)`: with merge, request.resource.data is
+    //   the RESULTING MERGED document, so pre-existing server-owned fields
+    //   get carried through the merge and appear in request.resource.data.
+    //   Result: the very first client update to any reminder that had already
+    //   been touched by onReminderWrite (i.e. any reminder in the wild)
+    //   failed with PERMISSION_DENIED — surfaced in the app as
+    //   "Could not update reminder". The equality check below correctly
+    //   allows the client to keep the existing server-owned values through
+    //   the merge, while still blocking any attempt to alter them.
+    function hasNoServerOnlyReminderFieldsWritten() {
+      return resource == null
+          ? (!('nextTriggerAt' in request.resource.data) &&
+              !('lastTriggeredAt' in request.resource.data) &&
+              !('timezone' in request.resource.data))
+          : (request.resource.data.get('nextTriggerAt', null) ==
+                  resource.data.get('nextTriggerAt', null) &&
+              request.resource.data.get('lastTriggeredAt', null) ==
+                  resource.data.get('lastTriggeredAt', null) &&
+              request.resource.data.get('timezone', null) ==
+                  resource.data.get('timezone', null));
     }
 
     function validTokenDoc(tokenId) {
@@ -466,7 +580,8 @@ service cloud.firestore {
           request.resource.data.token == tokenId &&
           request.resource.data.platform is string &&
           (request.resource.data.platform == 'android' ||
-              request.resource.data.platform == 'ios');
+              request.resource.data.platform == 'ios' ||
+              request.resource.data.platform == 'web');
     }
 
     // Tenants — branding and config for each organization.
@@ -494,6 +609,16 @@ service cloud.firestore {
       allow read, write: if false;
     }
     match /_tenantSlugs/{slug} {
+      allow read, write: if false;
+    }
+    match /_stripeConnectOAuth/{stateToken} {
+      // Stripe Connect OAuth state tokens (CSRF nonce → tenantId +
+      // callerUid + 24h expiry). Server-only: previously stored on
+      // tenants/{id}, but any tenant member can read that doc — a
+      // tenant_collaborator could steal the state, complete OAuth with
+      // their own Stripe account, and hijack donations. Cloud Functions
+      // (createStripeConnectLink writes, handleStripeConnectOAuth reads
+      // + deletes) use admin SDK and bypass these rules.
       allow read, write: if false;
     }
     match /_stripeWebhookEvents/{document=**} {
@@ -594,7 +719,13 @@ service cloud.firestore {
 
       match /reminders/{reminderId} {
         allow read: if isOwner(uid);
-        allow create, update: if isOwner(uid) && validReminderDoc();
+        // Belt + suspenders: validReminderDoc().hasOnly() already excludes
+        // server-owned fields (nextTriggerAt/lastTriggeredAt/timezone). The
+        // extra hasNoServerOnlyReminderFieldsWritten() check makes intent
+        // explicit and catches any future rule regression.
+        allow create, update: if isOwner(uid) &&
+            validReminderDoc() &&
+            hasNoServerOnlyReminderFieldsWritten();
         allow delete: if isOwner(uid);
       }
 
@@ -609,6 +740,31 @@ service cloud.firestore {
         allow write: if false;
       }
 
+      // Consentimientos de cobro recurrente (auto-vaciado). Los escribe SOLO
+      // la CF recordAutoEmptyConsent con el admin SDK, que se saltea estas
+      // reglas. El cliente no puede escribir ni borrar: si pudiera, el
+      // registro dejaría de servir como evidencia en una disputa, que es su
+      // única razón de existir. El dueño y los admins pueden leerlo.
+      match /consents/{consentId} {
+        allow read: if isOwner(uid) || isAdmin();
+        allow write: if false;
+      }
+
+    }
+
+    // Collection-group read para /users/*/transactions — powers el
+    // widget "Donaciones en vivo" del dashboard del Rab (onSnapshot en
+    // pushka_admin). Firestore requiere un rule separado para
+    // collectionGroup queries; el rule del subcollection de arriba solo
+    // aplica a direct-path reads. Stricter que el subcollection: la tx
+    // DEBE tener tenantId (legacy tenantless docs no matchean el
+    // where(tenantId==X) filter igualmente). Sin escritura — writes
+    // siguen gated en el rule de arriba.
+    match /{path=**}/transactions/{transactionId} {
+      allow read: if isAdmin() ||
+        (isTenantMember() &&
+         'tenantId' in resource.data &&
+         resource.data.tenantId == callerTenantId());
     }
   }
 }

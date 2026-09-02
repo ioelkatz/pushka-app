@@ -87,10 +87,12 @@ class _JewishConfettiState extends State<JewishConfetti>
         );
         final frame = await codec.getNextFrame();
         loaded.add(frame.image);
-      } catch (_) {
-        // If one fails (corrupted asset, wrong path), skip — the others
-        // still work and we silently fall back to fewer variants instead
-        // of crashing the whole celebration.
+      } catch (e) {
+        // Log with the path so we can distinguish a single bad asset from
+        // a total load failure (which would leave the confetti with only
+        // colored shapes — the user's report of "missing celebration
+        // images" on PWA points at silent failures here).
+        debugPrint('[JewishConfetti] failed to load $path: $e');
       }
     }
     if (!mounted) return;
@@ -98,6 +100,7 @@ class _JewishConfettiState extends State<JewishConfetti>
       _images = loaded;
       _imagesReady = loaded.isNotEmpty;
     });
+    debugPrint('[JewishConfetti] loaded ${loaded.length}/${_imageAssets.length} images, ready=$_imagesReady');
   }
 
   void _tick() { if (_active) setState(() {}); }

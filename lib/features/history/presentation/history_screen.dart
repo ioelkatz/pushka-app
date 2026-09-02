@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:intl/intl.dart' hide TextDirection;
 
 import '../../../app/theme/app_tokens.dart';
 import '../../../core/format_utils.dart';
@@ -36,23 +37,21 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
     _tr = S.of(context);
   }
 
-  String _currencySymbol(String code) {
-    const symbols = {
-      'usd': 'US\$', 'eur': '€', 'gbp': '£', 'cad': 'CA\$',
-      'mxn': 'MX\$', 'ars': 'ARS\$', 'brl': 'R\$', 'ils': '₪',
-      'clp': 'CL\$', 'cop': 'CO\$',
-    };
-    return symbols[code.toLowerCase()] ?? '\$';
-  }
+  // Round-7 regression fix: delegate to the shared shortCurrencySymbol so
+  // the tx list uses the SAME symbol table as the rest of the app. The
+  // old local map covered only 10 currencies (mislabelling ARS as 'ARS$'
+  // — one S redundant with the 'AR$' convention used everywhere else)
+  // and let AUD/NZD/UYU/JPY/CNY/KRW/INR/RUB/TRY/CHF fall through to a
+  // plain '$' which lied about the currency.
+  String _currencySymbol(String code) => shortCurrencySymbol(code);
 
   @override
   Widget build(BuildContext context) {
     final transactionsAsync = ref.watch(userTransactionsProvider);
-    final profile = ref.watch(userProfileProvider).valueOrNull;
-    final currencySymbol = _currencySymbol(
-      ((profile?['currencyCode'] as String?) ?? 'USD').toLowerCase(),
-    );
-
+    // Symbol per-tx is derived from `transaction.currencyCode` inside the
+    // row/detail builders — the user's ACTIVE currency is irrelevant to
+    // historical transactions (a USD donation from yesterday must stay
+    // "$1.00 USD" today even if the user just switched to MXN).
     final cs = Theme.of(context).colorScheme;
 
     return Column(
@@ -160,7 +159,13 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
                       curve: Curves.easeInOut,
                       alignment: Alignment.topCenter,
                       child: _chartExpanded
-                          ? DonationChart(transactions: transactions)
+                          ? DonationChart(
+                              transactions: transactions,
+                              activeCurrency: (ref
+                                      .watch(userProfileProvider)
+                                      .valueOrNull?['currencyCode'] as String?) ??
+                                  'USD',
+                            )
                           : const SizedBox(width: double.infinity),
                     ),
                   ),
@@ -182,13 +187,15 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
                         child: Builder(
                           builder: (_) {
                             final currentLimit = ref.watch(historyLimitProvider);
-                            // Show the "Cargar más" affordance only when:
-                            //   1. the unfiltered list reached the current limit
-                            //      (more pages may exist), AND
-                            //   2. the user isn't filtering — pagination is on
-                            //      the underlying stream, not the filtered view.
-                            final showLoadMore = selectedFilter == _HistoryFilter.all &&
-                                transactions.length >= currentLimit;
+                            // Round-8 audit HIGH fix: previously the "Cargar
+                            // más" affordance was hidden whenever ANY filter
+                            // was active — a user with only Tzedakah txs on
+                            // this page but more Pushka-empty behind it saw
+                            // no way to expand. Now we ALWAYS show the button
+                            // when the underlying stream has reached the
+                            // current page limit; pagination is per-stream,
+                            // not per-filter-view.
+                            final showLoadMore = transactions.length >= currentLimit;
                             return ListView.builder(
                               padding: const EdgeInsets.fromLTRB(18, 4, 18, 18),
                               itemCount: filtered.length + (showLoadMore ? 1 : 0),
@@ -222,8 +229,8 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
                                 }
                                 return GestureDetector(
                                   onTap: () => _showTransactionDetail(
-                                      context, filtered[index], currencySymbol),
-                                  child: _buildTransactionItem(filtered[index], cs.onSurface, currencySymbol),
+                                      context, filtered[index]),
+                                  child: _buildTransactionItem(filtered[index], cs.onSurface),
                                 );
                               },
                             );
@@ -272,13 +279,16 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
     );
   }
 
-  void _showTransactionDetail(BuildContext context, Transaction t, String currencySymbol) {
+  void _showTransactionDetail(BuildContext context, Transaction t) {
     final cs = Theme.of(context).colorScheme;
     final amount = t.amount;
     final isNeg = amount < 0;
+    // Per-tx currency: never renormalize a historical donation to the
+    // user's CURRENT currency. Amount + code stay as they were charged.
+    final currencySymbol = _currencySymbol(t.currencyCode.toLowerCase());
     final amountLabel = isNeg
-        ? '-${formatMoney(amount.abs(), symbol: currencySymbol)}'
-        : formatMoney(amount, symbol: currencySymbol);
+        ? '-${formatMoney(amount.abs(), symbol: currencySymbol)} ${t.currencyCode.toUpperCase()}'
+        : '${formatMoney(amount, symbol: currencySymbol)} ${t.currencyCode.toUpperCase()}';
     final amountColor = isNeg ? const Color(0xFFE05A4F) : cs.onSurface;
 
     final (typeIcon, typeColor) = switch (t.type) {
@@ -345,7 +355,16 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
               // backend-default "Donación Stripe"/"Vaciado de Pushka (Stripe)"
               // is redundant with the type label rendered under the amount.
               if (t.donorMessage != null && t.donorMessage!.isNotEmpty)
-                _detailRow(_tr.historyDescription, t.donorMessage!),
+                // maxLines=5 + ellipsis prevents a pathological long donor
+                // message from stretching the bottom sheet past the screen
+                // (Flexible only widens; without maxLines it wraps
+                // unbounded). 5 lines matches the visual weight of the other
+                // detail rows.
+                _detailRow(
+                  _tr.historyDescription,
+                  t.donorMessage!,
+                  maxLines: 5,
+                ),
               _detailRow(_tr.historyMethod, _methodLabel(t.paymentMethod)),
               _detailRow(
                 _tr.historyStatus,
@@ -359,7 +378,7 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
     );
   }
 
-  Widget _detailRow(String label, String value) {
+  Widget _detailRow(String label, String value, {int? maxLines}) {
     final cs = Theme.of(context).colorScheme;
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 8),
@@ -371,6 +390,8 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
             child: Text(
               value,
               textAlign: TextAlign.end,
+              maxLines: maxLines,
+              overflow: maxLines != null ? TextOverflow.ellipsis : null,
               style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: cs.onSurface),
             ),
           ),
@@ -460,12 +481,16 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
     );
   }
 
-  Widget _buildTransactionItem(Transaction transaction, Color primaryColor, String currencySymbol) {
+  Widget _buildTransactionItem(Transaction transaction, Color primaryColor) {
     final cs = Theme.of(context).colorScheme;
     final amount = transaction.amount;
+    // Per-tx currency (see _showTransactionDetail comment). The tx row
+    // shows the original amount + code, e.g. "US$1.00 USD" even if the
+    // user has since switched their active currency to MXN.
+    final currencySymbol = _currencySymbol(transaction.currencyCode.toLowerCase());
     final amountLabel = amount < 0
-        ? '-${formatMoney(amount.abs(), symbol: currencySymbol)}'
-        : formatMoney(amount, symbol: currencySymbol);
+        ? '-${formatMoney(amount.abs(), symbol: currencySymbol)} ${transaction.currencyCode.toUpperCase()}'
+        : '${formatMoney(amount, symbol: currencySymbol)} ${transaction.currencyCode.toUpperCase()}';
     final amountColor = amount < 0 ? const Color(0xFFE05A4F) : primaryColor;
 
     final showMethodBadge = transaction.paymentMethod != PaymentMethod.card &&
@@ -561,11 +586,12 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
       _tr.monthSep, _tr.monthOct, _tr.monthNov, _tr.monthDec,
     ];
     final month = months[dt.month - 1];
-    final hour = dt.hour;
-    final minute = dt.minute;
-    final period = hour >= 12 ? 'PM' : 'AM';
-    final displayHour = hour > 12 ? hour - 12 : (hour == 0 ? 12 : hour);
-    return '$month. ${dt.day} - $displayHour:${minute.toString().padLeft(2, '0')}$period';
+    // Locale-aware time. Was hardcoded English "AM"/"PM", which read wrong
+    // in French/Hebrew/Spanish and forced a 12-hour clock even where 24h is
+    // standard. DateFormat.jm picks 12h vs 24h per locale.
+    final locale = Localizations.localeOf(context).toString();
+    final timeStr = DateFormat.jm(locale).format(dt);
+    return '$month. ${dt.day} - $timeStr';
   }
 
   String _typeLabel(TransactionType type) {

@@ -4,6 +4,8 @@ import 'package:go_router/go_router.dart';
 
 import '../../../core/l10n/s.dart';
 import '../../auth/providers/auth_controller.dart';
+import '../data/tenant_repository.dart';
+import 'account_switcher_sheet.dart';
 
 class TenantSuspendedScreen extends ConsumerWidget {
   const TenantSuspendedScreen({super.key});
@@ -13,6 +15,13 @@ class TenantSuspendedScreen extends ConsumerWidget {
     final cs = Theme.of(context).colorScheme;
     final tt = Theme.of(context).textTheme;
     final tr = S.of(context);
+
+    // If the user is a member of more than one tenant, offer a way out
+    // of the suspended tenant without forcing a full sign-out+sign-in.
+    // Without this, being in ANY suspended tenant locks the user out of
+    // ALL their other organizations too.
+    final summaries = ref.watch(userTenantSummariesProvider).valueOrNull ?? const [];
+    final hasOtherTenants = summaries.length > 1;
 
     return Scaffold(
       body: SafeArea(
@@ -36,6 +45,13 @@ class TenantSuspendedScreen extends ConsumerWidget {
                 textAlign: TextAlign.center,
               ),
               const SizedBox(height: 40),
+              if (hasOtherTenants) ...[
+                FilledButton(
+                  onPressed: () => showAccountSwitcher(context),
+                  child: Text(tr.switchOrganization),
+                ),
+                const SizedBox(height: 12),
+              ],
               OutlinedButton(
                 onPressed: () async {
                   await ref.read(authControllerProvider).signOut();

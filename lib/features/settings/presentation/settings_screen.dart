@@ -3,15 +3,21 @@ import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:country_picker/country_picker.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:local_auth/local_auth.dart';
+import 'package:sign_in_with_apple/sign_in_with_apple.dart';
 
 import '../../auth/providers/auth_controller.dart';
+import '../../notifications/notification_service.dart';
+import '../../notifications/web_platform_stub.dart'
+    if (dart.library.html) '../../notifications/web_platform_web.dart';
 import '../../users/data/user_repository.dart';
 import '../../users/presentation/user_profile_provider.dart';
 import '../../tenant/data/tenant_repository.dart';
+import '../../../core/format_utils.dart' show shortCurrencySymbol;
 import '../../../core/l10n/locale_provider.dart';
 import '../../../core/widgets/option_picker_sheet.dart';
 import 'package:go_router/go_router.dart';
@@ -47,7 +53,19 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   bool _loadedProfile = false;
   bool _uploadingPhoto = false;
   bool _avatarLoadFailed = false;
+  // Bump on every successful photo upload — appended as ?v=N query param
+  // to the NetworkImage URL. Firebase Storage returns the same download URL
+  // for the same path across uploads (the token is derived from the path),
+  // so without this cache-bust Flutter serves the OLD bytes and the user
+  // sees "photo updated!" toast + the old avatar still on screen.
+  int _photoBustKey = 0;
   List<double>? _localPresets;
+  // Tracks the tenant whose state seeded our local mirrors. When the user
+  // switches tenants (AccountSwitcherSheet, invite link, etc.) the
+  // userProfile emits with a different tenantId and we must re-sync the
+  // pushka goal / currency / presets from the new tenant's state instead
+  // of showing the old tenant's values until the screen remounts.
+  String? _loadedForTenantId;
 
   // One persistent controller per preset slot — same pattern as the
   // Tzedaká config (Mi Pushka), so the field is ALWAYS a TextField (no
@@ -70,14 +88,10 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   final FocusNode _pushkaGoalFocus = FocusNode();
   bool _pushkaGoalCtrlInited = false;
 
-  String _shortCurrencySymbol(String code) {
-    const symbols = {
-      'usd': '\$', 'eur': '€', 'gbp': '£', 'cad': 'C\$',
-      'mxn': '\$', 'ars': '\$', 'brl': 'R\$', 'ils': '₪',
-      'clp': '\$', 'cop': '\$',
-    };
-    return symbols[code.toLowerCase()] ?? '\$';
-  }
+  // Removed local map: use `shortCurrencySymbol()` from format_utils.
+  // Old map ambiguously rendered MXN/ARS/CLP/COP as `$` (indistinguishable
+  // from USD in a user's currency picker); the central one uses MX$/AR$/
+  // CL$/CO$ so no user confuses their local currency with dollars.
 
   @override
   void initState() {
@@ -161,6 +175,21 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       return null;
     }
 
+    // Re-sync from remote when the active tenant changes (e.g. user
+    // switched via AccountSwitcherSheet). Without this the local mirrors
+    // (pushkaGoal, presets, currency) stay pinned to the previous tenant
+    // until the settings screen is remounted.
+    final activeTenantId = userProfile?['tenantId'] as String?;
+    if (_loadedProfile &&
+        activeTenantId != null &&
+        activeTenantId.isNotEmpty &&
+        activeTenantId != _loadedForTenantId) {
+      _loadedProfile = false;
+      _presetCtrlsInited = false;
+      _pushkaGoalCtrlInited = false;
+      _localPresets = null;
+    }
+
     if (!_loadedProfile && userProfile != null && tenantState != null) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
@@ -185,8 +214,13 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               getProfileString('currencyCountry') ?? selectedCountry;
           selectedCurrency =
               getProfileString('currencyCode') ?? selectedCurrency;
-          selectedFlag = _flagForCountry(selectedCountry);
+          // Flag must key off the currency code (source of truth): tenants
+          // can persist arbitrary country strings like "CDMX" via
+          // defaultCountry, which would fall through _flagForCurrency's
+          // default. The currency code is always canonical (MXN/USD/...).
+          selectedFlag = _flagForCurrency(selectedCurrency);
           _loadedProfile = true;
+          _loadedForTenantId = activeTenantId;
         });
       });
     }
@@ -243,7 +277,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 color: cs.onSurface,
               ),
               decoration: InputDecoration(
-                prefixText: '${_shortCurrencySymbol(selectedCurrency)} ',
+                prefixText: '${shortCurrencySymbol(selectedCurrency)} ',
                 prefixStyle: TextStyle(
                   fontSize: 16,
                   color: cs.onSurfaceVariant,
@@ -306,8 +340,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           _buildLabel(tr.currency),
           const SizedBox(height: 6),
           _buildCurrencySelector(
-            country: selectedCountry,
-            currency: '\$ $selectedCurrency',
+            currency: selectedCurrency,
             onTap: () => _showCurrencyDialog(),
           ),
           const SizedBox(height: 18),
@@ -324,7 +357,15 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           _buildPushkaStyleSelector(ref),
           const SizedBox(height: 18),
 
-          // APPEARANCE
+          // APPEARANCE — widget custom con animación "bounce" (va a la
+          // izquierda y vuelve a la derecha). A diferencia de un Switch
+          // ON/OFF, ambos estados dejan el thumb DEL LADO DERECHO —
+          // simplemente cambia el color (naranja/azul) y el icono
+          // (sol/luna) al llegar al medio de la animación.
+          //
+          // Colores + tamaño idénticos al SwitchTheme del app (definido
+          // en app_theme.dart) para consistencia visual con los otros
+          // 4 toggles.
           Row(
             children: [
               Expanded(
@@ -344,39 +385,44 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           ),
           const SizedBox(height: 18),
 
-          // SOUND
+          // SOUND: gates audio + haptic. FeedbackService.init() now works
+          // on web too (audioplayers_web); the first play() after cold-start
+          // fails silently by browser autoplay policy, but any user-gesture-
+          // triggered play (donate, coin drop) succeeds. Haptic APIs are
+          // native-only — noop on web (transparent to the user).
           _buildToggleRow(
             tr.sound,
             soundEnabled,
             onChanged: (value) {
-              setState(() => soundEnabled = value);
-              _updateSettingsSilent(user, soundEnabled: value);
+              setState(() {
+                soundEnabled = value;
+                vibrationEnabled = value;
+              });
+              _updateSettingsSilent(
+                user,
+                soundEnabled: value,
+                vibrationEnabled: value,
+              );
             },
           ),
           const SizedBox(height: 18),
 
-          // VIBRATION
-          _buildToggleRow(
-            tr.vibration,
-            vibrationEnabled,
-            onChanged: (value) {
-              setState(() => vibrationEnabled = value);
-              _updateSettingsSilent(user, vibrationEnabled: value);
-            },
-          ),
-          const SizedBox(height: 18),
-
-          // AMBIENT MUSIC
-          _buildToggleRow(
-            tr.ambientMusic,
-            ambientEnabled,
-            onChanged: (value) {
-              setState(() => ambientEnabled = value);
-              FeedbackService.instance.updatePreferences(ambient: value);
-              _updateSettingsSilent(user, ambientEnabled: value);
-            },
-          ),
-          const SizedBox(height: 18),
+          // AMBIENT MUSIC: still hidden on web — the loop pulls from
+          // Firebase Storage via URL and needs CORS + HTMLAudioElement
+          // playback that's unreliable without a persistent user gesture.
+          // Native-only for now.
+          if (!kIsWeb) ...[
+            _buildToggleRow(
+              tr.ambientMusic,
+              ambientEnabled,
+              onChanged: (value) {
+                setState(() => ambientEnabled = value);
+                FeedbackService.instance.updatePreferences(ambient: value);
+                _updateSettingsSilent(user, ambientEnabled: value);
+              },
+            ),
+            const SizedBox(height: 18),
+          ],
 
           // PARTIAL PAYMENTS
           _buildToggleRow(
@@ -389,45 +435,60 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           ),
           const SizedBox(height: 18),
 
-          _buildToggleRow(
-            tr.biometricAuth,
-            biometricAuthenticationEnabled,
-            onChanged: (value) async {
-              final messenger = ScaffoldMessenger.of(context);
-              if (value) {
-                final success = await _authenticateWithBiometrics();
-                if (!success || !mounted) return;
-              }
-              setState(() => biometricAuthenticationEnabled = value);
-              _updateSettingsSilent(user, biometricAuthenticationEnabled: value);
-              if (value) {
-                if (!mounted) return;
-                messenger.showSnackBar(
-                  SnackBar(content: Text(tr.biometricActivated)),
-                );
-              }
-            },
-          ),
-          if (biometricAuthenticationEnabled)
-            Padding(
-              padding: const EdgeInsetsDirectional.only(top: 8, start: 4),
-              child: FutureBuilder<List<BiometricType>>(
-                future: LocalAuthentication().getAvailableBiometrics(),
-                builder: (context, snapshot) {
-                  final biometrics = snapshot.data ?? [];
-                  if (biometrics.isEmpty) return const SizedBox.shrink();
-                  return Wrap(spacing: 8, runSpacing: 6, children: [
-                    if (biometrics.contains(BiometricType.fingerprint))
-                      _biometricChip(Icons.fingerprint, tr.fingerprint),
-                    if (biometrics.contains(BiometricType.face))
-                      _biometricChip(Icons.face, tr.faceRecognition),
-                    if (biometrics.contains(BiometricType.strong) || biometrics.contains(BiometricType.weak))
-                      _biometricChip(Icons.lock_outline, tr.pinPattern),
-                  ]);
-                },
-              ),
+          // Biometric: hidden entirely in PWA. local_auth has no web
+          // implementation (WebAuthn/Passkey would be the equivalent — big
+          // Stage TODO). Prevents the "your device does not support biometrics"
+          // dialog from misleading users about their hardware.
+          if (!kIsWeb) ...[
+            _buildToggleRow(
+              tr.biometricAuth,
+              biometricAuthenticationEnabled,
+              onChanged: (value) async {
+                final messenger = ScaffoldMessenger.of(context);
+                if (value) {
+                  final success = await _authenticateWithBiometrics();
+                  if (!success || !mounted) return;
+                }
+                setState(() => biometricAuthenticationEnabled = value);
+                _updateSettingsSilent(user, biometricAuthenticationEnabled: value);
+                if (value) {
+                  if (!mounted) return;
+                  messenger.showSnackBar(
+                    SnackBar(content: Text(tr.biometricActivated)),
+                  );
+                }
+              },
             ),
-          const SizedBox(height: 18),
+            if (biometricAuthenticationEnabled)
+              Padding(
+                padding: const EdgeInsetsDirectional.only(top: 8, start: 4),
+                child: FutureBuilder<List<BiometricType>>(
+                  future: LocalAuthentication().getAvailableBiometrics(),
+                  builder: (context, snapshot) {
+                    final biometrics = snapshot.data ?? [];
+                    if (biometrics.isEmpty) return const SizedBox.shrink();
+                    return Wrap(spacing: 8, runSpacing: 6, children: [
+                      if (biometrics.contains(BiometricType.fingerprint))
+                        _biometricChip(Icons.fingerprint, tr.fingerprint),
+                      if (biometrics.contains(BiometricType.face))
+                        _biometricChip(Icons.face, tr.faceRecognition),
+                      if (biometrics.contains(BiometricType.strong) || biometrics.contains(BiometricType.weak))
+                        _biometricChip(Icons.lock_outline, tr.pinPattern),
+                    ]);
+                  },
+                ),
+              ),
+            const SizedBox(height: 18),
+          ],
+
+          // Web push notifications — only shown in PWA. Native builds route
+          // through the flutter_local_notifications channels above. The
+          // toggle triggers a user-gesture-scoped permission prompt (browsers
+          // reject requestPermission() without one).
+          if (kIsWeb) ...[
+            _buildWebPushToggle(user, tr),
+            const SizedBox(height: 18),
+          ],
           Container(
             height: 5,
             width: double.infinity,
@@ -557,6 +618,16 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     );
   }
 
+  /// Appends ?v={_photoBustKey} (or &v={_photoBustKey}) to the photo URL so
+  /// Flutter's NetworkImage cache treats it as a distinct URL after each
+  /// successful upload. When _photoBustKey == 0 (first render, never uploaded
+  /// in this session) we return the raw URL to preserve CDN caching benefit.
+  String _bustedPhotoUrl(String url) {
+    if (_photoBustKey == 0) return url;
+    final sep = url.contains('?') ? '&' : '?';
+    return '$url${sep}v=$_photoBustKey';
+  }
+
   Widget _buildProfileNameRow(String name, String? uid, S tr, String? photoURL) {
     final blue = Theme.of(context).colorScheme.primary;
     final avatar = GestureDetector(
@@ -571,7 +642,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             // letter fallback. Combine with onForegroundImageError to swap to
             // initial-letter mode if the URL 404s or the network fails.
             foregroundImage: (photoURL != null && photoURL.isNotEmpty && !_avatarLoadFailed)
-                ? NetworkImage(photoURL)
+                ? NetworkImage(_bustedPhotoUrl(photoURL))
                 : null,
             onForegroundImageError: (photoURL != null && photoURL.isNotEmpty)
                 ? (_, _) {
@@ -696,11 +767,23 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     if (!mounted) return;
     setState(() => _uploadingPhoto = true);
     try {
-      await ref.read(userRepositoryProvider).uploadProfilePhoto(
+      final newUrl = await ref.read(userRepositoryProvider).uploadProfilePhoto(
         uid: uid,
         bytes: bytes,
       );
+      // Evict the cached bytes for the old URL so subsequent renders that
+      // read the same URL (before the Firestore snapshot propagates) still
+      // fetch fresh. Also bump _photoBustKey so this render + all future
+      // ones append ?v=N to the URL — bypasses Flutter's NetworkImage cache
+      // because Firebase Storage returns the SAME download URL for the same
+      // path across uploads. And reset _avatarLoadFailed in case a previous
+      // upload had 404'd (would otherwise persist as the letter fallback).
+      try { await NetworkImage(newUrl).evict(); } catch (_) {}
       if (!mounted) return;
+      setState(() {
+        _photoBustKey++;
+        _avatarLoadFailed = false;
+      });
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(tr.photoUpdated)),
       );
@@ -714,7 +797,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       final mb = (e.actualBytes / (1024 * 1024)).toStringAsFixed(1);
       final maxMb = (e.maxBytes / (1024 * 1024)).toStringAsFixed(0);
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Imagen demasiado grande (${mb}MB). Máximo permitido: ${maxMb}MB.')),
+        SnackBar(content: Text(tr.imageTooLarge(mb, maxMb))),
       );
     } on ProfilePhotoEmptyException {
       debugPrint('uploadProfilePhoto empty bytes');
@@ -859,8 +942,13 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   /// + tr.noSavedCards label when the user has no default PaymentMethod.
   Widget _buildSavedCardPreview(Map<String, dynamic>? profile, S tr) {
     final cs = Theme.of(context).colorScheme;
-    final brand = profile?['stripeDefaultPaymentMethodBrand'] as String?;
-    final last4 = profile?['stripeDefaultPaymentMethodLast4'] as String?;
+    // Direct Charges: read default PM from tenantState (per-tenant scope),
+    // NOT the deprecated user-doc fields. The user-doc profile is passed
+    // in for backwards signature compat but ignored — the new schema is
+    // `stripeConnectDefault*` on `users/{uid}/tenantState/{tid}`.
+    final tenantState = ref.watch(tenantStateProvider).valueOrNull;
+    final brand = tenantState?['stripeConnectDefaultPaymentMethodBrand'] as String?;
+    final last4 = tenantState?['stripeConnectDefaultPaymentMethodLast4'] as String?;
     final hasCard = brand != null && brand.isNotEmpty && last4 != null && last4.isNotEmpty;
 
     return InkWell(
@@ -1021,7 +1109,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     }
     // Use local copy while editing so we can show pending changes instantly
     final presets = _localPresets ?? remotePresets;
-    final sym = _shortCurrencySymbol(selectedCurrency);
+    final sym = shortCurrencySymbol(selectedCurrency);
     final cs = Theme.of(context).colorScheme;
 
     // Sync controllers from the source-of-truth presets list, but only
@@ -1088,7 +1176,23 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   void _commitPreset(int idx) {
     final raw = _presetCtrls[idx].text.trim().replaceAll(',', '.');
     final parsed = double.tryParse(raw);
-    final basePresets = _localPresets ?? _presetsForCurrency(selectedCurrency);
+    // Base MUST reflect the current source-of-truth for the OTHER two slots.
+    // BUG (fixed): previously read presetAmounts from userProfileProvider
+    // (root user doc). But presetAmounts is per-tenant → lives in
+    // tenantStateProvider, not the root profile. Reading from the wrong
+    // source returned null → basePresets fell back to currency defaults →
+    // editing one slot silently reset the OTHER two to defaults.
+    // Now correctly reads from tenantState.
+    final rawPresets =
+        ref.read(tenantStateProvider).valueOrNull?['presetAmounts'];
+    List<double>? tenantPresets;
+    if (rawPresets is List && rawPresets.length >= 3) {
+      final converted = rawPresets.whereType<num>().map((e) => e.toDouble()).toList();
+      final valid = converted.where((v) => v > 0).toList();
+      if (valid.length >= 3) tenantPresets = valid.take(3).toList();
+    }
+    final basePresets =
+        _localPresets ?? tenantPresets ?? _presetsForCurrency(selectedCurrency);
     if (parsed == null || parsed <= 0) {
       // Invalid → restore the controller text from the previous value
       _presetCtrls[idx].text = _formatPresetVal(basePresets[idx]);
@@ -1137,7 +1241,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   }
 
   Widget _buildCurrencySelector({
-    required String country,
     required String currency,
     required VoidCallback onTap,
   }) {
@@ -1153,27 +1256,15 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         ),
         child: Row(
           children: [
-            Text(selectedFlag, style: const TextStyle(fontSize: 22)),
+            Text(_flagForCurrency(currency), style: const TextStyle(fontSize: 22)),
             const SizedBox(width: 12),
             Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    country,
-                    style: const TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w500,
-                    ),
-                  ),
-                  Text(
-                    currency,
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: Theme.of(context).colorScheme.onSurfaceVariant,
-                    ),
-                  ),
-                ],
+              child: Text(
+                currency,
+                style: const TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w500,
+                ),
               ),
             ),
             Icon(Icons.keyboard_arrow_down, color: Theme.of(context).colorScheme.onSurfaceVariant),
@@ -1275,6 +1366,71 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     );
   }
 
+  /// Web push toggle: opts the user in/out of PWA push notifications. This
+  /// is the ONLY place we invoke Notification.requestPermission() (browsers
+  /// require a user gesture; cold-start calls would silently deny). iOS
+  /// Safari has an extra constraint: push only works inside a standalone
+  /// PWA (Add-to-Home-Screen'd), so if the user is browsing in Safari tab
+  /// we surface an explanation instead of asking for permission.
+  Widget _buildWebPushToggle(User? user, S tr) {
+    final enabled = NotificationService.instance.webPushIsEnabled();
+    final ua = kIsWeb ? _webUserAgent() : '';
+    final isIOS = RegExp(r'iPad|iPhone|iPod').hasMatch(ua);
+    // Safari standalone (Add-to-Home-Screen) sets navigator.standalone=true;
+    // matchMedia display-mode:standalone also flags installed PWA on Chrome.
+    final isStandalone = _webIsStandalone();
+    // If the user is on iOS Safari NOT installed as PWA, push is impossible
+    // — Apple only wires webpush inside the installed-PWA context.
+    final iosBlocked = isIOS && !isStandalone;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _buildToggleRow(
+          tr.pushNotifications,
+          enabled,
+          onChanged: iosBlocked || user == null
+              ? (_) {}
+              : (value) => _onWebPushToggle(user, value, tr),
+        ),
+        const SizedBox(height: 6),
+        Text(
+          iosBlocked
+              ? tr.pushRequiresInstalledPwa
+              : tr.pushNotificationsSubtitle,
+          style: TextStyle(
+            fontSize: 13,
+            color: Theme.of(context).colorScheme.onSurfaceVariant,
+            height: 1.35,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Future<void> _onWebPushToggle(User user, bool enable, S tr) async {
+    final messenger = ScaffoldMessenger.of(context);
+    if (enable) {
+      final ok = await NotificationService.instance.enableWebPush(user.uid);
+      if (!mounted) return;
+      if (ok) {
+        setState(() {}); // refresh toggle state from Hive
+        messenger.showSnackBar(SnackBar(content: Text(tr.pushEnabled)));
+      } else {
+        messenger.showSnackBar(SnackBar(content: Text(tr.pushPermissionDenied)));
+      }
+    } else {
+      await NotificationService.instance.disableWebPush(user.uid);
+      if (!mounted) return;
+      setState(() {});
+    }
+  }
+
+  // Conditional-import helpers (see top of file): webUserAgent() +
+  // webIsStandalonePwa() are stubs on native, real dart:html reads on web.
+  String _webUserAgent() => webUserAgent();
+  bool _webIsStandalone() => webIsStandalonePwa();
+
   Widget _buildProfileField(String label, String value) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 2),
@@ -1315,42 +1471,114 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   Future<bool> _authenticateWithBiometrics() async {
     final tr = S.of(context);
     final auth = LocalAuthentication();
+    // Show a DIALOG (not snackbar) with the specific failure reason. Snackbars
+    // auto-dismiss in 4s and users miss them — critical to distinguish
+    // "hardware missing" vs "no fingerprint enrolled" vs "user canceled" so
+    // the donor knows what to do (enroll in system Settings vs contact support).
+    Future<void> showBiometricError(String message) async {
+      if (!mounted) return;
+      await showModalBottomSheet<void>(
+        context: context,
+        isScrollControlled: true,
+        useSafeArea: true,
+        backgroundColor: Theme.of(context).colorScheme.surface,
+        shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
+        ),
+        builder: (ctx) => SafeArea(
+          top: false,
+          child: Padding(
+            padding: EdgeInsets.only(bottom: MediaQuery.of(ctx).viewInsets.bottom),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Center(
+                    child: Container(
+                      width: 36,
+                      height: 4,
+                      margin: const EdgeInsets.only(bottom: 16),
+                      decoration: BoxDecoration(
+                        color: Theme.of(ctx).colorScheme.outlineVariant,
+                        borderRadius: BorderRadius.circular(2),
+                      ),
+                    ),
+                  ),
+                  Text(
+                    tr.biometricAuth,
+                    style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 14),
+                  Text(
+                    message,
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      fontSize: 14,
+                      color: Theme.of(ctx).colorScheme.onSurfaceVariant,
+                      height: 1.4,
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+                  SizedBox(
+                    width: double.infinity,
+                    height: 48,
+                    child: ElevatedButton(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppTokens.primaryBlue,
+                        foregroundColor: Colors.white,
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      ),
+                      onPressed: () => Navigator.of(ctx).pop(),
+                      child: Text(tr.commonUnderstood, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
     try {
-      final canAuth = await auth.canCheckBiometrics || await auth.isDeviceSupported();
-      if (!canAuth) {
-        if (!mounted) return false;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(tr.noBiometric)),
-        );
+      final canCheck = await auth.canCheckBiometrics;
+      final isSupported = await auth.isDeviceSupported();
+      if (!canCheck && !isSupported) {
+        await showBiometricError(tr.noBiometric);
         return false;
       }
 
       final biometrics = await auth.getAvailableBiometrics();
       if (biometrics.isEmpty) {
-        if (!mounted) return false;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(tr.configureDeviceSecurity),
-              duration: const Duration(seconds: 4)),
-        );
+        // Hardware exists but no fingerprint/face enrolled. Common on S25 when
+        // user never set up screen lock beyond a PIN, OR when only PIN is
+        // enrolled without fingerprint. Direct them to system Settings.
+        await showBiometricError(tr.configureDeviceSecurity);
         return false;
       }
 
-      return await auth.authenticate(
+      final ok = await auth.authenticate(
         localizedReason: tr.biometricReasonEnable,
       );
-    } catch (e) {
-      final msg = e.toString();
-      if (!mounted) return false;
-      if (msg.contains('NoCredentialSet') || msg.contains('notEnrolled') || msg.contains('notAvailable')) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(tr.configureDeviceSecurity),
-              duration: const Duration(seconds: 4)),
-        );
-      } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(tr.authCouldNotComplete)),
-        );
+      if (!ok) {
+        // User canceled the prompt or auth failed. Silent — no dialog needed;
+        // user knows they hit cancel. Toggle stays off.
+        return false;
       }
+      return true;
+    } catch (e, st) {
+      debugPrint('_authenticateWithBiometrics error: $e\n$st');
+      final msg = e.toString();
+      final friendly = (msg.contains('NoCredentialSet') ||
+              msg.contains('notEnrolled') ||
+              msg.contains('notAvailable') ||
+              msg.contains('LockedOut'))
+          ? tr.configureDeviceSecurity
+          : '${tr.authCouldNotComplete}\n\n(${msg.length > 200 ? msg.substring(0, 200) : msg})';
+      await showBiometricError(friendly);
       return false;
     }
   }
@@ -1391,73 +1619,102 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
     String? result;
     try {
-      result = await showDialog<String>(
+      result = await showModalBottomSheet<String>(
       context: context,
-      barrierDismissible: true,
+      isScrollControlled: true,
+      useSafeArea: true,
+      backgroundColor: Theme.of(context).colorScheme.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
+      ),
       builder: (ctx) {
         String? errorText;
 
         return StatefulBuilder(
-          builder: (ctx, setDialogState) => AlertDialog(
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(22)),
-            scrollable: true,
-            contentPadding: const EdgeInsets.fromLTRB(20, 22, 20, 0),
-            actionsPadding: const EdgeInsets.fromLTRB(20, 10, 20, 18),
-            content: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text(title, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
-              const SizedBox(height: 14),
-              if (isPhone) ...[
-                Row(children: [
-                  OutlinedButton(
-                    onPressed: () {
-                      showCountryPicker(context: ctx, showPhoneCode: true,
-                        countryListTheme: CountryListThemeData(inputDecoration: InputDecoration(labelText: S.of(context).searchCountry, hintText: S.of(context).nameOrCode, prefixIcon: const Icon(Icons.search))),
-                        onSelect: (Country country) { setDialogState(() { phonePrefix = '+${country.phoneCode}'; phoneFlag = country.flagEmoji; }); },
-                      );
-                    },
-                    child: Text('$phoneFlag $phonePrefix'),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(child: TextField(
-                    controller: controller,
-                    autofocus: true,
-                    keyboardType: TextInputType.phone,
-                    decoration: InputDecoration(hintText: S.of(context).phoneHint, errorText: errorText,
-                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                      focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: AppTokens.primaryBlue, width: 1.6)),
+          builder: (ctx, setSheetState) => SafeArea(
+            top: false,
+            child: Padding(
+              padding: EdgeInsets.only(bottom: MediaQuery.of(ctx).viewInsets.bottom),
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Center(
+                      child: Container(
+                        width: 36,
+                        height: 4,
+                        margin: const EdgeInsets.only(bottom: 16),
+                        decoration: BoxDecoration(
+                          color: Theme.of(ctx).colorScheme.outlineVariant,
+                          borderRadius: BorderRadius.circular(2),
+                        ),
+                      ),
                     ),
-                    onChanged: (_) { if (errorText != null) setDialogState(() => errorText = null); },
-                  )),
-                ]),
-              ] else ...[
-                TextField(
-                  controller: controller,
-                  autofocus: true,
-                  keyboardType: _keyboardTypeForKey(fieldKey),
-                  decoration: InputDecoration(hintText: S.of(context).enterField(title.toLowerCase()), errorText: errorText,
-                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                    focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: AppTokens.primaryBlue, width: 1.6)),
-                  ),
-                  onChanged: (_) { if (errorText != null) setDialogState(() => errorText = null); },
+                    Text(title, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700), textAlign: TextAlign.center),
+                    const SizedBox(height: 14),
+                    if (isPhone) ...[
+                      Row(children: [
+                        OutlinedButton(
+                          onPressed: () {
+                            showCountryPicker(context: ctx, showPhoneCode: true,
+                              countryListTheme: CountryListThemeData(inputDecoration: InputDecoration(labelText: S.of(context).searchCountry, hintText: S.of(context).nameOrCode, prefixIcon: const Icon(Icons.search))),
+                              onSelect: (Country country) { setSheetState(() { phonePrefix = '+${country.phoneCode}'; phoneFlag = country.flagEmoji; }); },
+                            );
+                          },
+                          child: Text('$phoneFlag $phonePrefix'),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(child: TextField(
+                          controller: controller,
+                          autofocus: true,
+                          keyboardType: TextInputType.phone,
+                          decoration: InputDecoration(hintText: S.of(context).phoneHint, errorText: errorText,
+                            border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                            focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: AppTokens.primaryBlue, width: 1.6)),
+                          ),
+                          onChanged: (_) { if (errorText != null) setSheetState(() => errorText = null); },
+                        )),
+                      ]),
+                    ] else ...[
+                      TextField(
+                        controller: controller,
+                        autofocus: true,
+                        keyboardType: _keyboardTypeForKey(fieldKey),
+                        decoration: InputDecoration(hintText: S.of(context).enterField(title.toLowerCase()), errorText: errorText,
+                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                          focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: AppTokens.primaryBlue, width: 1.6)),
+                        ),
+                        onChanged: (_) { if (errorText != null) setSheetState(() => errorText = null); },
+                      ),
+                    ],
+                    const SizedBox(height: 20),
+                    SizedBox(width: double.infinity, height: 48, child: ElevatedButton(
+                      style: ElevatedButton.styleFrom(backgroundColor: AppTokens.primaryBlue, foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
+                      onPressed: () {
+                        final typed = controller.text.trim();
+                        // For phone, only prepend the country prefix when the user
+                        // actually typed a number. Empty input must stay empty so
+                        // the field can be cleared (not submitted as "+1").
+                        final value = isPhone
+                            ? (typed.isEmpty ? '' : '$phonePrefix $typed'.trim())
+                            : typed;
+                        final validationError = _validateByKey(fieldKey, value);
+                        if (validationError != null) { setSheetState(() => errorText = validationError); return; }
+                        Navigator.pop(ctx, value);
+                      },
+                      child: Text(S.of(context).save, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+                    )),
+                    const SizedBox(height: 8),
+                    SizedBox(width: double.infinity, height: 44, child: TextButton(
+                      onPressed: () => Navigator.pop(ctx),
+                      child: Text(S.of(context).cancel, style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant, fontWeight: FontWeight.w500)),
+                    )),
+                  ],
                 ),
-              ],
-            ]),
-            actions: [
-              SizedBox(width: double.infinity, height: 48, child: ElevatedButton(
-                style: ElevatedButton.styleFrom(backgroundColor: AppTokens.primaryBlue, foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
-                onPressed: () {
-                  final value = isPhone ? '$phonePrefix ${controller.text.trim()}'.trim() : controller.text.trim();
-                  final validationError = _validateByKey(fieldKey, value);
-                  if (validationError != null) { setDialogState(() => errorText = validationError); return; }
-                  Navigator.pop(ctx, value);
-                },
-                child: Text(S.of(context).save, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
-              )),
-              SizedBox(width: double.infinity, height: 44, child: TextButton(
-                onPressed: () => Navigator.pop(ctx),
-                child: Text(S.of(context).cancel, style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant, fontWeight: FontWeight.w500)),
-              )),
-            ],
+              ),
+            ),
           ),
         );
       },
@@ -1596,7 +1853,14 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       // for compliance retention, then deletes the Firebase Auth user. The
       // client's `currentUser?.delete()` would only kill the Auth record,
       // leaving Firestore + Stripe data orphaned indefinitely.
-      final callable = FirebaseFunctions.instance.httpsCallable('deleteAccount');
+      // Round-5 audit HIGH fix: client timeout must exceed the server's
+      // timeoutSeconds (300s) so a user in ~15 tenants with active recurring
+      // subs doesn't hit the client's 60s default while the server continues
+      // to completion. Extended to 330s with margin.
+      final callable = FirebaseFunctions.instance.httpsCallable(
+        'deleteAccount',
+        options: HttpsCallableOptions(timeout: const Duration(seconds: 330)),
+      );
       await callable.call();
       // Auth user is gone — GoRouter refresh stream detects sign-out and
       // redirects to /login. Force-reload to clear any in-memory Riverpod
@@ -1621,9 +1885,14 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     final tr = S.of(context);
     final confirmWord = tr.deleteConfirmWord;
 
-    final result = await showDialog<bool>(
+    final result = await showModalBottomSheet<bool>(
       context: context,
-      barrierDismissible: true,
+      isScrollControlled: true,
+      useSafeArea: true,
+      backgroundColor: Theme.of(context).colorScheme.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
+      ),
       builder: (ctx) => _DeleteConfirmDialog(
         confirmWord: confirmWord,
         title: tr.deleteAccountTitle,
@@ -1645,6 +1914,14 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     final providers = user.providerData.map((p) => p.providerId).toSet();
     final isGoogle = providers.contains('google.com');
     final isPassword = providers.contains('password');
+    // Apple Sign-In is the third supported provider (see auth_controller
+    // signInWithApple). Without an Apple re-auth branch, users who signed
+    // up via Apple would be stuck with no way to satisfy deleteAccount's
+    // recent-login requirement — the dialog would show only Google + a
+    // password field they don't have. Only surface on non-web (Apple SDK
+    // gated to iOS/macOS/Android WKWebView; sign_in_with_apple throws on
+    // web with the plugin config we ship).
+    final isApple = providers.contains('apple.com') && !kIsWeb;
 
     final ctrl = TextEditingController();
     String? errorText;
@@ -1652,55 +1929,70 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
     bool? result;
     try {
-      result = await showDialog<bool>(
+      result = await showModalBottomSheet<bool>(
       context: context,
-      barrierDismissible: true,
+      isScrollControlled: true,
+      useSafeArea: true,
+      backgroundColor: Theme.of(context).colorScheme.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
+      ),
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setSS) {
           final cs = Theme.of(ctx).colorScheme;
-          return AlertDialog(
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-            contentPadding: const EdgeInsets.fromLTRB(24, 24, 24, 0),
-            actionsPadding: const EdgeInsets.fromLTRB(24, 8, 24, 20),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(tr.verifyIdentityTitle, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
-                const SizedBox(height: 8),
-                Text(tr.verifyIdentityBody, style: TextStyle(fontSize: 14, color: cs.onSurfaceVariant, height: 1.4)),
-                if (isPassword) ...[
-                  const SizedBox(height: 16),
-                  TextField(
-                    controller: ctrl,
-                    autofocus: !isGoogle,
-                    obscureText: true,
-                    decoration: InputDecoration(
-                      labelText: tr.passwordField,
-                      errorText: errorText,
-                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                      focusedBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12),
-                        borderSide: BorderSide(color: AppTokens.primaryBlue, width: 2),
+          return SafeArea(
+            top: false,
+            child: Padding(
+              padding: EdgeInsets.only(bottom: MediaQuery.of(ctx).viewInsets.bottom),
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Center(
+                      child: Container(
+                        width: 36,
+                        height: 4,
+                        margin: const EdgeInsets.only(bottom: 16),
+                        decoration: BoxDecoration(
+                          color: cs.outlineVariant,
+                          borderRadius: BorderRadius.circular(2),
+                        ),
                       ),
                     ),
-                    onChanged: (_) { if (errorText != null) setSS(() => errorText = null); },
-                    onSubmitted: (_) => _reAuthWithPassword(user, ctrl, tr, setSS, ctx, () => loading, (v) => loading = v, (v) => errorText = v),
-                  ),
-                ],
-              ],
-            ),
-            actions: [
+                    Text(tr.verifyIdentityTitle, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700), textAlign: TextAlign.center),
+                    const SizedBox(height: 14),
+                    Text(tr.verifyIdentityBody, textAlign: TextAlign.center, style: TextStyle(fontSize: 14, color: cs.onSurfaceVariant, height: 1.4)),
+                    if (isPassword) ...[
+                      const SizedBox(height: 16),
+                      TextField(
+                        controller: ctrl,
+                        autofocus: !isGoogle && !isApple,
+                        obscureText: true,
+                        decoration: InputDecoration(
+                          labelText: tr.passwordField,
+                          errorText: errorText,
+                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                          focusedBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(12),
+                            borderSide: BorderSide(color: AppTokens.primaryBlue, width: 2),
+                          ),
+                        ),
+                        onChanged: (_) { if (errorText != null) setSS(() => errorText = null); },
+                        onSubmitted: (_) => _reAuthWithPassword(user, ctrl, tr, setSS, ctx, () => loading, (v) => loading = v, (v) => errorText = v),
+                      ),
+                    ],
+                    const SizedBox(height: 20),
               if (isPassword)
                 SizedBox(
                   width: double.infinity,
                   height: 48,
                   child: ElevatedButton(
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFFB91C1C),
+                      backgroundColor: Theme.of(ctx).colorScheme.error,
                       foregroundColor: Colors.white,
                       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                      elevation: 0,
                     ),
                     onPressed: loading ? null : () => _reAuthWithPassword(user, ctrl, tr, setSS, ctx, () => loading, (v) => loading = v, (v) => errorText = v),
                     child: loading && !isGoogle
@@ -1724,15 +2016,34 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     onPressed: loading ? null : () async {
                       setSS(() => loading = true);
                       try {
-                        final googleUser = await GoogleSignIn().signIn();
-                        if (googleUser == null) { setSS(() => loading = false); return; }
-                        final googleAuth = await googleUser.authentication;
+                        // google_sign_in v7 (Credential Manager): singleton
+                        // + authenticate() returns non-null or throws.
+                        // GoogleSignIn.instance.initialize() ran at app boot
+                        // (app_initializer._performDeferredInit).
+                        final googleUser = await GoogleSignIn.instance.authenticate(
+                          scopeHint: const ['email', 'profile'],
+                        );
+                        final googleAuth = googleUser.authentication;
+                        final idToken = googleAuth.idToken;
+                        if (idToken == null) {
+                          if (ctx.mounted) setSS(() { loading = false; errorText = tr.reAuthFailed; });
+                          return;
+                        }
                         final credential = GoogleAuthProvider.credential(
-                          accessToken: googleAuth.accessToken,
-                          idToken: googleAuth.idToken,
+                          // v7 exposes only idToken (accessToken split off
+                          // to authorizationClient). Firebase Auth accepts
+                          // idToken-only credentials.
+                          idToken: idToken,
                         );
                         await user.reauthenticateWithCredential(credential);
                         if (ctx.mounted) Navigator.pop(ctx, true);
+                      } on GoogleSignInException catch (e) {
+                        // Silent on user cancel — match Apple re-auth pattern.
+                        if (e.code == GoogleSignInExceptionCode.canceled) {
+                          if (ctx.mounted) setSS(() => loading = false);
+                          return;
+                        }
+                        if (ctx.mounted) setSS(() { loading = false; errorText = tr.reAuthFailed; });
                       } catch (_) {
                         if (ctx.mounted) setSS(() { loading = false; errorText = tr.reAuthFailed; });
                       }
@@ -1740,7 +2051,63 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   ),
                 ),
               ],
-              const SizedBox(height: 4),
+              if (isApple) ...[
+                if (isPassword || isGoogle) const SizedBox(height: 8),
+                SizedBox(
+                  width: double.infinity,
+                  height: 48,
+                  child: OutlinedButton.icon(
+                    icon: loading && isApple && !isPassword && !isGoogle
+                        ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
+                        : const Icon(Icons.apple, size: 22),
+                    label: Text(tr.continueApple, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
+                    style: OutlinedButton.styleFrom(
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    ),
+                    onPressed: loading ? null : () async {
+                      setSS(() => loading = true);
+                      try {
+                        // Mirrors AuthController.signInWithApple: request an
+                        // identity token from Apple, wrap it in an OAuth
+                        // credential for the apple.com provider, and re-auth
+                        // Firebase with it. This refreshes auth_time so the
+                        // deleteAccount CF's recent-login gate passes.
+                        final appleCredential = await SignInWithApple.getAppleIDCredential(
+                          scopes: [
+                            AppleIDAuthorizationScopes.email,
+                            AppleIDAuthorizationScopes.fullName,
+                          ],
+                        );
+                        final identityToken = appleCredential.identityToken;
+                        if (identityToken == null) {
+                          // Apple returned a credential without an identity
+                          // token — cannot build a Firebase OAuth credential.
+                          throw StateError('apple-reauth: missing identityToken');
+                        }
+                        final credential = OAuthProvider('apple.com').credential(
+                          idToken: identityToken,
+                          accessToken: appleCredential.authorizationCode,
+                        );
+                        await user.reauthenticateWithCredential(credential);
+                        if (ctx.mounted) Navigator.pop(ctx, true);
+                      } on SignInWithAppleAuthorizationException catch (e) {
+                        // User taps Cancel on Apple's sheet → do NOT surface
+                        // "verification failed". Just reset the button.
+                        if (e.code == AuthorizationErrorCode.canceled) {
+                          if (ctx.mounted) setSS(() => loading = false);
+                          return;
+                        }
+                        debugPrint('apple re-auth error: ${e.code} ${e.message}');
+                        if (ctx.mounted) setSS(() { loading = false; errorText = tr.reAuthFailed; });
+                      } catch (e, st) {
+                        debugPrint('apple re-auth error: $e\n$st');
+                        if (ctx.mounted) setSS(() { loading = false; errorText = tr.reAuthFailed; });
+                      }
+                    },
+                  ),
+                ),
+              ],
+              const SizedBox(height: 8),
               SizedBox(
                 width: double.infinity,
                 height: 44,
@@ -1749,7 +2116,10 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   child: Text(tr.cancel, style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant, fontWeight: FontWeight.w500)),
                 ),
               ),
-            ],
+                  ],
+                ),
+              ),
+            ),
           );
         },
       ),
@@ -1770,8 +2140,12 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     void Function(bool) setLoading,
     void Function(String?) setError,
   ) async {
-    final password = ctrl.text.trim();
-    if (password.isEmpty) { setSS(() => setError(tr.enterYourPassword)); return; }
+    // Do NOT .trim() — login_screen.dart doesn't trim either, and users with
+    // legitimate leading/trailing whitespace in their password would get a
+    // "wrong password" here while login works. Keep only the isEmpty guard
+    // for the blank-field case, applied to the trimmed view.
+    final password = ctrl.text;
+    if (password.trim().isEmpty) { setSS(() => setError(tr.enterYourPassword)); return; }
     final email = user.email;
     if (email == null || email.isEmpty) {
       // Apple Sign-In hides the email after the first sign-in, so reauth via
@@ -1796,21 +2170,77 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   }
 
   Future<void> _showLogoutDialog() async {
-    final result = await showDialog<bool>(
+    final result = await showModalBottomSheet<bool>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: Text(S.of(context).logoutTitle),
-        content: Text(S.of(context).logoutConfirm),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: Text(S.of(context).cancel),
+      isScrollControlled: true,
+      useSafeArea: true,
+      backgroundColor: Theme.of(context).colorScheme.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
+      ),
+      builder: (ctx) => SafeArea(
+        top: false,
+        child: Padding(
+          padding: EdgeInsets.only(bottom: MediaQuery.of(ctx).viewInsets.bottom),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Center(
+                  child: Container(
+                    width: 36,
+                    height: 4,
+                    margin: const EdgeInsets.only(bottom: 16),
+                    decoration: BoxDecoration(
+                      color: Theme.of(ctx).colorScheme.outlineVariant,
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                ),
+                Text(
+                  S.of(ctx).logoutTitle,
+                  style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 14),
+                Text(
+                  S.of(ctx).logoutConfirm,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 14,
+                    color: Theme.of(ctx).colorScheme.onSurfaceVariant,
+                    height: 1.4,
+                  ),
+                ),
+                const SizedBox(height: 20),
+                SizedBox(
+                  width: double.infinity,
+                  height: 48,
+                  child: ElevatedButton(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Theme.of(ctx).colorScheme.error,
+                      foregroundColor: Colors.white,
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    ),
+                    onPressed: () => Navigator.pop(ctx, true),
+                    child: Text(S.of(ctx).logoutTitle, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                SizedBox(
+                  width: double.infinity,
+                  height: 44,
+                  child: TextButton(
+                    onPressed: () => Navigator.pop(ctx, false),
+                    child: Text(S.of(ctx).cancel, style: TextStyle(color: Theme.of(ctx).colorScheme.onSurfaceVariant, fontWeight: FontWeight.w500)),
+                  ),
+                ),
+              ],
+            ),
           ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: Text(S.of(context).logoutTitle),
-          ),
-        ],
+        ),
       ),
     );
 
@@ -1832,42 +2262,35 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   }
 
   Future<void> _showCurrencyDialog() async {
-    // Currency metadata used to render flag + country label per code.
-    // Anything not listed here falls through to a generic globe + the
-    // raw 3-letter code, so adding new locals only requires updating
-    // this map.
-    const allCurrencies = <String, Map<String, String>>{
-      'USD': {'country': 'Estados Unidos', 'flag': '🇺🇸'},
-      'EUR': {'country': 'Eurozona', 'flag': '🇪🇺'},
-      'ILS': {'country': 'Israel', 'flag': '🇮🇱'},
-      'MXN': {'country': 'México', 'flag': '🇲🇽'},
-      'ARS': {'country': 'Argentina', 'flag': '🇦🇷'},
-      'BRL': {'country': 'Brasil', 'flag': '🇧🇷'},
-      'CLP': {'country': 'Chile', 'flag': '🇨🇱'},
-      'COP': {'country': 'Colombia', 'flag': '🇨🇴'},
-      'GBP': {'country': 'Reino Unido', 'flag': '🇬🇧'},
-      'CAD': {'country': 'Canadá', 'flag': '🇨🇦'},
-      'UYU': {'country': 'Uruguay', 'flag': '🇺🇾'},
-      'PEN': {'country': 'Perú', 'flag': '🇵🇪'},
-      'BOB': {'country': 'Bolivia', 'flag': '🇧🇴'},
-      'GTQ': {'country': 'Guatemala', 'flag': '🇬🇹'},
-      'DOP': {'country': 'Rep. Dominicana', 'flag': '🇩🇴'},
-      'AUD': {'country': 'Australia', 'flag': '🇦🇺'},
+    // Flag-per-currency map. MUST stay in sync with the server-side
+    // SUPPORTED_CURRENCIES set (functions/index.js:105 CURRENCY_MINIMUMS
+    // keys) — Round-4 audit fix: exposing UYU/PEN/BOB/GTQ/DOP/AUD here
+    // let users pick a currency the server rejected on every subsequent
+    // donation with a generic "Moneda no soportada" error. Add a currency
+    // here ONLY after adding it to CURRENCY_MINIMUMS + CURRENCY_MAX_AMOUNTS
+    // + defaultGoalForCurrency + buildCurrencySnapshot on the backend.
+    const allCurrencies = <String, String>{
+      'USD': '🇺🇸',
+      'EUR': '🇪🇺',
+      'ILS': '🇮🇱',
+      'MXN': '🇲🇽',
+      'ARS': '🇦🇷',
+      'BRL': '🇧🇷',
+      'CLP': '🇨🇱',
+      'COP': '🇨🇴',
+      'GBP': '🇬🇧',
+      'CAD': '🇨🇦',
     };
 
-    // Shortlist = USD + EUR + ILS + MXN (universally-relevant baseline
-    // for Pushka's primary markets) plus two contextual additions:
+    // Shortlist = USD + EUR + ILS (universally-relevant baseline) plus
+    // two contextual additions:
     //   - the tenant's default currency (so the local org currency is
     //     always reachable from the picker)
     //   - the user's currently-selected currency (so switching away from
     //     a currency doesn't make it vanish from the list — they can
     //     switch back later)
-    // Without the last one, a user that picked their local currency
-    // would see it only as long as they kept it; a single switch to USD
-    // would hide the local forever (the original bug report).
     final cfg = ref.read(tenantConfigProvider).valueOrNull;
     final tenantCurrency = cfg?.defaultCurrency?.toUpperCase();
-    final tenantCountry = cfg?.defaultCountry;
     final shortlist = <String>['USD', 'EUR', 'ILS'];
     if (tenantCurrency != null && !shortlist.contains(tenantCurrency)) {
       shortlist.add(tenantCurrency);
@@ -1878,16 +2301,10 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     }
 
     final currencies = shortlist.map((code) {
-      final meta = allCurrencies[code] ?? const {'country': '', 'flag': '🌐'};
-      // For the local currency, prefer the tenant-provided country label
-      // (e.g. tenant set country: 'Cdmx' instead of generic 'México').
-      final country = (code == tenantCurrency && tenantCountry != null && tenantCountry.isNotEmpty)
-          ? tenantCountry
-          : (meta['country']!.isNotEmpty ? meta['country']! : code);
+      final flag = allCurrencies[code] ?? '🌐';
       return {
         'currency': code,
-        'country': country,
-        'flag': meta['flag']!,
+        'flag': flag,
       };
     }).toList();
 
@@ -1898,7 +2315,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         for (final c in currencies)
           (
             value: c['currency']!,
-            label: '${c['flag']}  ${c['country']}  ·  ${c['currency']!}',
+            label: '${c['flag']}  ${c['currency']!}',
           ),
       ],
     );
@@ -1909,66 +2326,93 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
     // Confirmation modal
     final tr = S.of(context);
-    final confirmed = await showDialog<bool>(
+    final confirmed = await showModalBottomSheet<bool>(
       context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      backgroundColor: Theme.of(context).colorScheme.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
+      ),
       builder: (ctx) {
         final cs = Theme.of(ctx).colorScheme;
-        return AlertDialog(
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-          contentPadding: const EdgeInsets.fromLTRB(24, 24, 24, 0),
-          actionsPadding: const EdgeInsets.fromLTRB(24, 8, 24, 20),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(tr.changeCurrencyTitle, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
-              const SizedBox(height: 14),
-              Row(
+        return SafeArea(
+          top: false,
+          child: Padding(
+            padding: EdgeInsets.only(bottom: MediaQuery.of(ctx).viewInsets.bottom),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  Text(selectedFlag, style: const TextStyle(fontSize: 26)),
-                  const SizedBox(width: 6),
-                  Text(selectedCurrency, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 10),
-                    child: Icon(Icons.arrow_forward_rounded, size: 18, color: cs.onSurfaceVariant),
+                  Center(
+                    child: Container(
+                      width: 36,
+                      height: 4,
+                      margin: const EdgeInsets.only(bottom: 16),
+                      decoration: BoxDecoration(
+                        color: cs.outlineVariant,
+                        borderRadius: BorderRadius.circular(2),
+                      ),
+                    ),
                   ),
-                  Text(selected['flag']!, style: const TextStyle(fontSize: 26)),
-                  const SizedBox(width: 6),
-                  Text(selected['currency']!, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+                  Text(tr.changeCurrencyTitle, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700), textAlign: TextAlign.center),
+                  const SizedBox(height: 14),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      // "From" — derive flag from currency at render time so it
+                      // can never drift from selectedCurrency (previous bug: the
+                      // state var selectedFlag could stay 🇺🇸 while
+                      // selectedCurrency was 'EUR', producing a mismatched
+                      // display and a confirm dialog showing the same flag on
+                      // both sides after switching from EUR → USD).
+                      Text(_flagForCurrency(selectedCurrency), style: const TextStyle(fontSize: 26)),
+                      const SizedBox(width: 6),
+                      Text(selectedCurrency, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 10),
+                        child: Icon(Icons.arrow_forward_rounded, size: 18, color: cs.onSurfaceVariant),
+                      ),
+                      Text(_flagForCurrency(selected['currency']!), style: const TextStyle(fontSize: 26)),
+                      const SizedBox(width: 6),
+                      Text(selected['currency']!, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  Text(
+                    tr.currencyChangeConfirmBody,
+                    style: TextStyle(fontSize: 14, color: cs.onSurfaceVariant, height: 1.4),
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 20),
+                  SizedBox(
+                    width: double.infinity,
+                    height: 48,
+                    child: ElevatedButton(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppTokens.primaryBlue,
+                        foregroundColor: Colors.white,
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      ),
+                      onPressed: () => Navigator.pop(ctx, true),
+                      child: Text(tr.continueLabel, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  SizedBox(
+                    width: double.infinity,
+                    height: 44,
+                    child: TextButton(
+                      onPressed: () => Navigator.pop(ctx, false),
+                      child: Text(tr.cancel, style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant, fontWeight: FontWeight.w500)),
+                    ),
+                  ),
                 ],
               ),
-              const SizedBox(height: 12),
-              Text(
-                tr.currencyChangeConfirmBody,
-                style: TextStyle(fontSize: 14, color: cs.onSurfaceVariant, height: 1.4),
-              ),
-            ],
+            ),
           ),
-          actions: [
-            SizedBox(
-              width: double.infinity,
-              height: 48,
-              child: ElevatedButton(
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: cs.primary,
-                  foregroundColor: cs.onPrimary,
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                  elevation: 0,
-                ),
-                onPressed: () => Navigator.pop(ctx, true),
-                child: Text(tr.continueLabel, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
-              ),
-            ),
-            const SizedBox(height: 4),
-            SizedBox(
-              width: double.infinity,
-              height: 44,
-              child: TextButton(
-                onPressed: () => Navigator.pop(ctx, false),
-                child: Text(tr.cancel, style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant, fontWeight: FontWeight.w500)),
-              ),
-            ),
-          ],
         );
       },
     );
@@ -1977,65 +2421,81 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
     final newCurrency = selected['currency']!;
     final newGoal = UserRepository.defaultGoalForCurrency(newCurrency);
-    final user = ref.read(currentUserProvider);
+    final newPresets = _presetsForCurrency(newCurrency);
+
+    // Round-4 audit CRITICAL fix: snapshot previous state BEFORE mutating
+    // so we can revert local UI if the atomic CF fails. The old flow
+    // fired three fire-and-forget writes that could partially fail and
+    // desync users/{uid}.currencyCode from tenantState top-off — cron
+    // then charged in the wrong currency.
+    final prevCountry = selectedCountry;
+    final prevCurrency = selectedCurrency;
+    final prevFlag = selectedFlag;
+    final prevGoal = pushkaGoal;
+    final prevPresets = _localPresets;
+
     setState(() {
-      selectedCountry = selected['country']!;
+      // selectedCountry kept as raw currency code for back-compat with the
+      // persisted `currencyCountry` field; UI no longer surfaces it.
+      selectedCountry = newCurrency;
       selectedCurrency = newCurrency;
-      selectedFlag = selected['flag'] ?? _flagForCountry(selectedCountry);
+      selectedFlag = selected['flag'] ?? _flagForCurrency(newCurrency);
       pushkaGoal = newGoal;
-      _localPresets = _presetsForCurrency(newCurrency); // show immediately, no stream dependency
+      _localPresets = newPresets; // show immediately, no stream dependency
       // Force the preset controllers to re-sync from the new currency's
       // defaults on the next build (otherwise the prior controller texts
       // would stick with the old-currency preset values).
       _presetCtrlsInited = false;
     });
-    final uid = user?.uid;
-    final tenantId = ref.read(userProfileProvider).valueOrNull?['tenantId'] as String?;
-    if (uid != null && tenantId != null && tenantId.isNotEmpty) {
-      ref.read(userRepositoryProvider).updatePushkaAmount(uid: uid, tenantId: tenantId, amount: 0)
-          .catchError((Object e) => debugPrint('resetPushkaAmount error: $e'));
-      // Currency changed → any saved auto-empty top-off amount is now in
-      // the wrong currency (e.g. saved as 100 MXN, user switches to USD,
-      // cron would charge $100 instead of ~$5). Clear it so the user
-      // re-enters in the new currency before the next cron tick.
-      ref.read(userRepositoryProvider).updateTenantState(
-            uid: uid,
-            tenantId: tenantId,
-            autoEmptyTopOffAmount: 0,
-            autoEmptyTopOffEnabled: false,
-          ).catchError((Object e) => debugPrint('clearTopOff on currency change error: $e'));
+
+    try {
+      await FirebaseFunctions.instance
+          .httpsCallable('changeUserCurrency')
+          .call<Map<Object?, Object?>>({
+        'currencyCode': newCurrency,
+        'currencyCountry': newCurrency,
+        'pushkaGoal': newGoal,
+        'presetAmounts': newPresets,
+      });
+    } catch (e, st) {
+      debugPrint('changeUserCurrency failed: $e\n$st');
+      if (!mounted) return;
+      // Revert local UI so it stays in lockstep with server state.
+      setState(() {
+        selectedCountry = prevCountry;
+        selectedCurrency = prevCurrency;
+        selectedFlag = prevFlag;
+        pushkaGoal = prevGoal;
+        _localPresets = prevPresets;
+        _presetCtrlsInited = false;
+      });
+      final tr = S.of(context);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(tr.saveError)),
+      );
     }
-    final newPresets = _presetsForCurrency(newCurrency);
-    _updateSettings(
-      user,
-      currencyCountry: selected['country']!,
-      currencyCode: newCurrency,
-      pushkaGoal: newGoal,
-      presetAmounts: newPresets,
-    ).catchError((Object e) => debugPrint('currency updateSettings error: $e'));
   }
 
 
-  String _flagForCountry(String country) {
-    switch (country) {
-      case 'México':        return '🇲🇽';
-      case 'España':        return '🇪🇸';
-      case 'Argentina':     return '🇦🇷';
-      case 'Brasil':        return '🇧🇷';
-      case 'Israel':        return '🇮🇱';
-      case 'Chile':         return '🇨🇱';
-      case 'Colombia':      return '🇨🇴';
-      case 'Reino Unido':   return '🇬🇧';
-      case 'Canadá':        return '🇨🇦';
-      case 'Uruguay':       return '🇺🇾';
-      case 'Perú':          return '🇵🇪';
-      case 'Bolivia':       return '🇧🇴';
-      case 'Guatemala':     return '🇬🇹';
-      case 'Rep. Dominicana': return '🇩🇴';
-      case 'Australia':     return '🇦🇺';
-      case 'Eurozona':      return '🇪🇺';
-      case 'Estados Unidos':
-      default:              return '🇺🇸';
+  String _flagForCurrency(String currency) {
+    switch (currency.toUpperCase()) {
+      case 'MXN': return '🇲🇽';
+      case 'EUR': return '🇪🇺';
+      case 'ILS': return '🇮🇱';
+      case 'ARS': return '🇦🇷';
+      case 'BRL': return '🇧🇷';
+      case 'CLP': return '🇨🇱';
+      case 'COP': return '🇨🇴';
+      case 'GBP': return '🇬🇧';
+      case 'CAD': return '🇨🇦';
+      case 'UYU': return '🇺🇾';
+      case 'PEN': return '🇵🇪';
+      case 'BOB': return '🇧🇴';
+      case 'GTQ': return '🇬🇹';
+      case 'DOP': return '🇩🇴';
+      case 'AUD': return '🇦🇺';
+      case 'USD':
+      default:    return '🇺🇸';
     }
   }
 
@@ -2048,7 +2508,13 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   }
 
   String? _validateByKey(String key, String value) {
-    if (value.isEmpty) return S.of(context).fieldRequired;
+    // billingEmail / phone / mailingAddress are all OPTIONAL — an empty
+    // submission is how the user clears the field. Only validate the format
+    // when the user actually typed something.
+    const optionalKeys = {'billingEmail', 'phone', 'mailingAddress'};
+    if (value.isEmpty) {
+      return optionalKeys.contains(key) ? null : S.of(context).fieldRequired;
+    }
     switch (key) {
       case 'billingEmail':
         final isValid = RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$').hasMatch(value);
@@ -2095,72 +2561,93 @@ class _DeleteConfirmDialogState extends State<_DeleteConfirmDialog> {
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
-    return AlertDialog(
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-      contentPadding: const EdgeInsets.fromLTRB(24, 24, 24, 0),
-      actionsPadding: const EdgeInsets.fromLTRB(24, 8, 24, 20),
-      content: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(widget.title, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
-          const SizedBox(height: 10),
-          Text(widget.body, style: TextStyle(fontSize: 14, color: cs.onSurfaceVariant, height: 1.4)),
-          const SizedBox(height: 16),
-          Text(widget.instruction, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500)),
-          const SizedBox(height: 8),
-          TextField(
-            controller: _ctrl,
-            autofocus: true,
-            autocorrect: false,
-            textCapitalization: TextCapitalization.characters,
-            decoration: InputDecoration(
-              hintText: widget.confirmWord,
-              border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-              focusedBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
-                borderSide: BorderSide(color: AppTokens.primaryBlue, width: 2),
-              ),
-            ),
-          ),
-        ],
-      ),
-      actions: [
-        ValueListenableBuilder<TextEditingValue>(
-          valueListenable: _ctrl,
-          builder: (_, value, _) {
-            final matches = value.text.trim() == widget.confirmWord;
-            return SizedBox(
-              width: double.infinity,
-              height: 48,
-              child: ElevatedButton(
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: matches ? const Color(0xFFB91C1C) : cs.surfaceContainerHighest,
-                  foregroundColor: matches ? Colors.white : cs.onSurfaceVariant,
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                  elevation: 0,
+    return SafeArea(
+      top: false,
+      child: Padding(
+        padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Center(
+                child: Container(
+                  width: 36,
+                  height: 4,
+                  margin: const EdgeInsets.only(bottom: 16),
+                  decoration: BoxDecoration(
+                    color: cs.outlineVariant,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
                 ),
-                onPressed: matches ? () => Navigator.pop(context, true) : null,
-                child: Text(widget.continueLabel, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
               ),
-            );
-          },
-        ),
-        const SizedBox(height: 4),
-        SizedBox(
-          width: double.infinity,
-          height: 44,
-          child: TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: Text(widget.cancelLabel, style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant, fontWeight: FontWeight.w500)),
+              Text(widget.title, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700), textAlign: TextAlign.center),
+              const SizedBox(height: 10),
+              Text(widget.body, style: TextStyle(fontSize: 14, color: cs.onSurfaceVariant, height: 1.4)),
+              const SizedBox(height: 16),
+              Text(widget.instruction, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500)),
+              const SizedBox(height: 8),
+              TextField(
+                controller: _ctrl,
+                autofocus: true,
+                autocorrect: false,
+                textCapitalization: TextCapitalization.characters,
+                decoration: InputDecoration(
+                  hintText: widget.confirmWord,
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: BorderSide(color: AppTokens.primaryBlue, width: 2),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 20),
+              ValueListenableBuilder<TextEditingValue>(
+                valueListenable: _ctrl,
+                builder: (_, value, _) {
+                  final matches = value.text.trim() == widget.confirmWord;
+                  return SizedBox(
+                    width: double.infinity,
+                    height: 48,
+                    child: ElevatedButton(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: matches ? cs.error : cs.surfaceContainerHighest,
+                        foregroundColor: matches ? Colors.white : cs.onSurfaceVariant,
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      ),
+                      onPressed: matches ? () => Navigator.pop(context, true) : null,
+                      child: Text(widget.continueLabel, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+                    ),
+                  );
+                },
+              ),
+              const SizedBox(height: 8),
+              SizedBox(
+                width: double.infinity,
+                height: 44,
+                child: TextButton(
+                  onPressed: () => Navigator.pop(context, false),
+                  child: Text(widget.cancelLabel, style: TextStyle(color: cs.onSurfaceVariant, fontWeight: FontWeight.w500)),
+                ),
+              ),
+            ],
           ),
         ),
-      ],
+      ),
     );
   }
 }
 
 
+/// Theme toggle con animación bounce (izq → vuelve a der).
+/// A diferencia de un Switch estándar, AMBOS estados dejan el thumb del
+/// lado DERECHO — cambia solo el color (naranja=light, azul=dark) y el
+/// ícono (sol/luna) al llegar al medio del bounce.
+///
+/// Colores + dimensiones idénticos al SwitchTheme del app (app_theme.dart)
+/// para que se vea igual que los otros 4 toggles de Settings. Sin sombra
+/// extra en el thumb (Material default es suave; sin BoxShadow custom).
 class _ThemeToggle extends StatefulWidget {
   final bool isDark;
   final ValueChanged<bool> onChanged;
@@ -2217,13 +2704,14 @@ class _ThemeToggleState extends State<_ThemeToggle> with SingleTickerProviderSta
 
   @override
   Widget build(BuildContext context) {
+    // Dimensiones estándar Material Switch para matchear los otros 4 toggles.
     const trackW = 52.0;
     const trackH = 32.0;
     const thumbD = 24.0;
     const pad = 4.0;
     const travel = trackW - thumbD - pad * 2;
 
-    // Colores idénticos al SwitchTheme activo definido en AppTheme
+    // Colores idénticos al SwitchTheme del app.
     const orange = Color(0xFFFF9500);
     const skyBlue = Color(0xFF60A5FA);
     final trackColor = _showDark
@@ -2241,7 +2729,8 @@ class _ThemeToggleState extends State<_ThemeToggle> with SingleTickerProviderSta
             animation: _ctrl,
             builder: (_, _) {
               final t = _ctrl.value;
-              // 1 → 0 → 1: sale a la izq y vuelve a la der
+              // Bounce: t=0 → pos=1 (der); t=0.5 → pos=0 (izq, flip
+              // color+icono); t=1 → pos=1 (vuelve a der).
               final pos = t < 0.5 ? 1.0 - t * 2.0 : (t - 0.5) * 2.0;
               return SizedBox(
                 width: trackW,
@@ -2266,9 +2755,9 @@ class _ThemeToggleState extends State<_ThemeToggle> with SingleTickerProviderSta
                         decoration: BoxDecoration(
                           shape: BoxShape.circle,
                           color: thumbColor,
-                          boxShadow: const [
-                            BoxShadow(color: Colors.black26, blurRadius: 4, offset: Offset(0, 2)),
-                          ],
+                          // Sin BoxShadow extra — Material default es
+                          // suave; agregar shadow custom rompía la
+                          // consistencia visual con los otros 4 Switches.
                         ),
                         child: Icon(
                           _showDark ? Icons.dark_mode_outlined : Icons.light_mode_outlined,
@@ -2287,4 +2776,3 @@ class _ThemeToggleState extends State<_ThemeToggle> with SingleTickerProviderSta
     );
   }
 }
-
