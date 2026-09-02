@@ -13,9 +13,10 @@ La misión que define este texto está en la memoria del proyecto
    que sonar a persona, no a hoja de especificaciones. Esta regla se agregó el
    2026-09-02 y es la que más cuesta respetar: cada revisión de cumplimiento
    tiende a devolver el texto a formato formulario.
-5. **Español de México.** No "asado" sino *carne asada*; no "chicos" sino
-   *chavos*; no "se viene" sino *se acerca*; "apuro" en México es aprieto, no
-   prisa. Cero voseo.
+5. **Español de México.** No "chicos" sino *chavos*; no "se viene" sino *se
+   acerca*; no "nafta" sino *gasolina*; "apuro" en México es aprieto, no prisa.
+   Cero voseo. **Excepción decidida por Ioel: "asado", no "carne asada"** —
+   se lo propuse y prefirió su palabra.
 
 ---
 
@@ -38,15 +39,16 @@ pegar desde WhatsApp el "—" se convierte en dos guiones.
 La pushka de Jabad en Campus: la alcancía de siempre, en tu teléfono.
 ```
 
-## Descripción completa — 3014 de 4000 caracteres
+## Descripción completa — 2963 de 4000 caracteres
 
 > Play muestra solo las **tres primeras líneas** antes del botón "Más
-> información". El primer párrafo mide 240 caracteres, así que entra entero:
-> quien no toca nada ya leyó marca, ciudad, misión, tzedaká y la palabra
-> pushka.
+> información". El primer párrafo mide 189 caracteres, así que entra entero.
+> La palabra "pushka" ya no aparece ahí — Ioel prefirió cerrar el párrafo en la
+> misión — pero sí está en la descripción corta, que Play muestra siempre
+> arriba de todo.
 
 ```
-En Jabad en Campus trabajamos con jóvenes judíos de Ciudad de México que crecieron lejos de sus raíces. Los invitamos a un Shabat, a una carne asada, a ponerse tefilín. Nada de eso se cobra: lo paga la tzedaká, y esta app es nuestra pushka.
+En Jabad en Campus trabajamos con jóvenes judíos de Ciudad de México que crecieron lejos de sus raíces. Los invitamos a un Shabat, a un asado, a ponerse tefilín, a conectar con su judaísmo.
 
 Un viernes cualquiera hay jalá en la mesa, ensaladas, dos que discuten de futbol y alguien acomodando sillas de más. Siempre faltan sillas. Nadie pregunta hace cuánto no pisan una sinagoga. Hay chavos que vienen una vez y ya; otros llegaron porque un amigo les insistió, todavía no saben bien a qué, y a las once de la noche siguen ahí.
 
@@ -125,15 +127,6 @@ por *data safety mismatch*.
 
 La redacción actual es precisa y no más débil: la tarjeta se escribe en la
 pantalla de Stripe y queda de su lado.
-
-## Dos afirmaciones que el Rab tiene que confirmar
-
-- **"Nada de eso se cobra"** — asume que los Shabatot y las comidas de Jabad en
-  Campus son gratis para quien va. Es lo habitual en Jabad, pero es un hecho
-  sobre su organización, no mío.
-- **"lo que entra acá va a Jabad en Campus y a nadie más"** — cierto
-  técnicamente (Direct Charges a la cuenta Connect del Rab), pero conviene que
-  lo lea.
 
 ## Datos del formulario
 
