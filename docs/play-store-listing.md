@@ -1,132 +1,136 @@
-# Ficha de Google Play — borrador para aprobar con el Rab
+# Ficha de Google Play — Jabad en Campus
 
-Textos propuestos y material gráfico necesario. **Todo esto se puede cambiar
-después de publicar**, así que no bloquea subir el binario.
+Estado: **borrador listo para que lo apruebe el Rab.**
+Última revisión: 2026-09-02.
+
+La misión que define este texto está en la memoria del proyecto
+(`project_mision_jabad_en_campus`). Tres reglas fijas, decididas por Ioel:
+
+1. **"Jabad en Campus" va presente y notorio**, no como pie de página.
+2. **No se menciona deducción de impuestos** ni ningún beneficio fiscal.
+3. **No se sugiere que otras organizaciones vayan a usar la app.**
 
 ---
 
-## Nombre de la app — máx. 30 caracteres
-
-Tres opciones, de más a menos recomendada:
+## Nombre de la app (máx. 30) — 26 caracteres
 
 ```
-Pushka — Jabad en Campus          24    ← recomendada
-Pushka                             6
-Pushka Tzedaká                    14
+Jabad en Campus — Pushka
 ```
 
-La primera gana porque un donante que busca "Jabad en Campus" la encuentra, y
-quien ya conoce la app la reconoce por "Pushka". Sola, "Pushka" es demasiado
-genérica y no compite bien en búsquedas.
+> Decisión pendiente del Rab. El nombre pone la marca primero porque en la
+> lista de resultados de Play se ve el nombre solo, sin la descripción.
+> Alternativas: `Pushka — Jabad en Campus`, `Jabad en Campus CDMX`.
 
-## Descripción corta — máx. 80 caracteres
-
-```
-Tu alcancía de tzedaká digital. Doná cuando quieras, desde el celular.
-```
-69 caracteres. Es lo primero que se lee bajo el título; tiene que decir qué es
-en una línea.
-
-Alternativa más directa:
-```
-Acumulá tzedaká en tu pushka digital y doná a Jabad en Campus.
-```
-
-## Descripción larga — máx. 4000 caracteres
+## Descripción corta (máx. 80) — 72 caracteres
 
 ```
-Pushka es la alcancía de tzedaká de Jabad en Campus, ahora en tu celular.
+La pushka de Jabad en Campus: tzedaká diaria de los jóvenes de la CDMX
+```
 
-La mitzvá de dar tzedaká acompaña el día a día. Esta app te permite
-mantener ese hábito con la misma sencillez de echar una moneda en la
-alcancía, estés donde estés.
+## Descripción completa (máx. 4000) — 1794 caracteres
+
+> **Lo importante del formato:** Play muestra solo las **tres primeras
+> líneas** antes del botón "Más información". Casi nadie lo toca. Por eso el
+> primer párrafo tiene que llevar la marca y la misión completas — y las
+> lleva: "Jabad en Campus" aparece en el carácter 3.
+
+```
+En Jabad en Campus trabajamos todos los días con jóvenes judíos de Ciudad de México que crecieron lejos de sus raíces. Los invitamos a un Shabat, a un asado, a ponerse tefilín por primera vez.
+
+Chicos y chicas que se acercan sin apuro y sin que nadie los juzgue, encuentran una comunidad y vuelven a conectarse con lo suyo y con Hashem.
+
+Todo eso se sostiene con tzedaká. Esta app es la pushka de Jabad en Campus: la alcancía de siempre, ahora en tu teléfono.
 
 CÓMO FUNCIONA
 
-Tocá los montos predefinidos para ir acumulando en tu pushka. Cuando
-quieras, vaciás la alcancía y el monto acumulado se dona a la
-organización. También podés programar el vaciado automático: semanal,
-mensual o en Erev Rosh Jodesh.
+Tocas un monto y lo vas guardando en tu pushka, como quien deja una moneda antes de salir. Cuando quieres, la vacías y lo que juntaste se dona a Jabad en Campus.
+
+Si prefieres no estar pendiente, puedes programar el vaciado automático: cada semana, cada mes o en Erev Rosh Jodesh.
 
 QUÉ VAS A ENCONTRAR
 
-• Tu pushka personal, para acumular de a poco
-• Metas de donación y racha de días consecutivos
-• Vaciado automático con la frecuencia que elijas
-• Recordatorios para no perder el hábito
+• Tu pushka personal, con montos predefinidos para dar en un toque
+• Una meta de donación y una racha de días consecutivos dando
+• Vaciado automático: semanal, mensual o en Erev Rosh Jodesh
+• Recordatorios para sostener el hábito
 • Historial completo de tus donaciones
 • Segulot y rezos
 • Avisos de las festividades del calendario judío
 • Disponible en español, inglés, francés y hebreo
 
-DONACIONES SEGURAS
+En la tzedaká lo que cuenta es la constancia, no el monto.
 
-Los pagos se procesan con Stripe, líder mundial en pagos en línea. La app
-nunca almacena los datos de tu tarjeta.
+POR QUÉ TE PIDE UN CÓDIGO
 
-Jabad en Campus opera bajo JYM Inc, organización sin fines de lucro
-reconocida por el IRS bajo la sección 501(c)(3). Tus donaciones son
-deducibles de impuestos en Estados Unidos.
+Porque esta no es una app abierta a cualquiera. Es de Jabad en Campus y es para la gente de Jabad en Campus. El código te lo da el Rab.
 
-PARA EMPEZAR
+SOBRE LOS PAGOS
 
-Necesitás el código de invitación que comparte tu Rab. Si no lo tenés,
-escribinos y te ayudamos.
+Las donaciones se procesan con Stripe. La app nunca almacena los datos de tu tarjeta.
+
+Cada vez que vacías tu pushka estás sosteniendo eso: un Shabat que se arma, una mesa que se llena, un joven que se pone tefilín por primera vez. No es una app de finanzas: es una forma concreta de sostener lo que Jabad en Campus hace en Ciudad de México.
 ```
 
-⚠️ **Revisar con el Rab antes de publicar.** Dos puntos concretos:
+### Por qué está redactada así
 
-1. La frase sobre deducción de impuestos es una afirmación fiscal. Es cierta
-   —la carta del IRS dice `Contribution Deductibility: Yes`— pero que la
-   apruebe él.
-2. Confirmar si quiere mencionar "Jabad en Campus" o prefiere una redacción
-   más general, pensando en que la app es multi-organización.
+- **Abre con la gente, no con la app.** Los primeros 190 caracteres son los
+  chicos y las actividades. La app recién aparece en el tercer párrafo, como
+  lo que es: el medio, no el fin.
+- **"Cada vez que vacías tu pushka estás sosteniendo eso"**, y no *"hay un
+  Shabat que se arma"*. La segunda forma promete una relación uno a uno entre
+  cada donación y un evento concreto, que no es cierta y que Play puede leer
+  como afirmación engañosa.
+- **La pantalla del código está explicada.** Es lo primero que ve el revisor
+  de Google al abrir la app, y una app que pide un código sin decir por qué
+  es un motivo clásico de rechazo. La sección "POR QUÉ TE PIDE UN CÓDIGO"
+  existe para eso tanto como para el usuario.
+- **Sin promesas de resultado espiritual ni presión.** "En la tzedaká lo que
+  cuenta es la constancia, no el monto" invita sin culpar.
 
 ---
 
-## Material gráfico
+## Datos del formulario
 
-| Qué | Medidas | Formato | Estado |
-|---|---|---|---|
-| Ícono | 512 × 512 | PNG 32-bit, sin transparencia | Se puede reusar `assets/images/app_icon.png` (el 770) |
-| Gráfico destacado | 1024 × 500 | PNG o JPG, sin transparencia | **Falta** |
-| Capturas de teléfono | mín. 320 px, máx. 3840 px de lado | PNG o JPG | **Faltan** — mínimo 2, idealmente 4-8 |
+| Campo | Valor |
+|---|---|
+| Categoría | Estilo de vida |
+| Etiquetas | Donaciones, Comunidad, Religión |
+| Tipo | App (no juego) |
+| Precio | **Gratis** — las donaciones son pagos a un tercero por Stripe, no compras dentro de la app, así que no hay Google Play Billing de por medio |
+| Clasificación | Todos |
+| Email de contacto | jymmexico@gmail.com |
+| Política de privacidad | https://pushka-landing.web.app/privacidad/ |
+| Borrado de cuenta | https://pushka-landing.web.app/delete-account/ |
+| Público objetivo | 18+ |
+| Anuncios | No contiene |
 
-El gráfico destacado es el banner que se ve arriba de la ficha. Se puede armar
-con el 770 sobre el degradé de la app y el nombre.
+## Recursos gráficos
 
-### Capturas sugeridas, en este orden
+| Recurso | Archivo | Estado |
+|---|---|---|
+| Ícono 512×512 | `docs/store-assets/play-icon-512.png` | listo, sin canal alfa |
+| Gráfico destacado 1024×500 | `docs/store-assets/play-feature-graphic-1024x500.png` | listo |
+| Capturas de teléfono (mín. 2, máx. 8) | `docs/store-assets/screenshots/` | ver abajo |
 
-1. La pushka con monto acumulado — es la pantalla que define la app
-2. Los montos predefinidos, mostrando el gesto de acumular
-3. El historial de donaciones
-4. La configuración de vaciado automático
-5. Segulot y rezos
+### Capturas
 
-Sacarlas del S25 con la app en producción y datos realistas: montos redondos,
-no de prueba, y nada de "Test" ni cuentas de desarrollo a la vista.
+Play pide un mínimo de 2; conviene mandar 4. En orden:
 
----
+1. **Pushka principal** con saldo acumulado — es la pantalla que define la app
+2. **Vaciar la pushka** con los montos predefinidos
+3. **Historial** de donaciones
+4. **Segulot y rezos**
 
-## Otros campos de la ficha
+Requisitos: PNG o JPEG, entre 320 px y 3840 px de lado, relación entre 16:9 y
+9:16. Un screenshot nativo del S25 (1080×2340) cumple todo.
 
-```
-Categoría              Estilo de vida       ← NO "Finanzas"
-Etiquetas              donaciones, comunidad, religión
-Correo de contacto     apps@jabadencampus.com
-Sitio web              https://jabadencampus.com
-Política de privacidad https://chabad-admin.web.app/privacy
-```
+## Antes de enviar
 
-**"Estilo de vida" y no "Finanzas" a propósito**: la categoría Finanzas activa
-políticas y revisiones más estrictas que no corresponden, porque la app no
-ofrece un servicio financiero — recibe donaciones para una entidad exenta.
-
----
-
-## Traducciones
-
-La ficha se puede publicar en varios idiomas. La app ya soporta español,
-inglés, francés y hebreo. Conviene al menos español (principal) e inglés.
-
-Cuando el Rab apruebe los textos en español, se traducen.
+- [ ] El Rab aprueba el nombre y el texto
+- [ ] Cuenta de prueba para el revisor cargada en "Acceso a la app"
+      (`googleplay.review@jabadencampus.com` / código de invitación JYM-770)
+- [ ] Formulario de Data Safety completo — respuestas en
+      `docs/play-store-data-safety.md`
+- [ ] Build de tienda: `flutter build appbundle --flavor prod` **sin**
+      `APP_CHECK_PROVIDER=debug` (ver la advertencia en `CLAUDE.md`)
