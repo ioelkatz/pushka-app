@@ -1128,6 +1128,11 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
     });
 
     final userProfile = ref.watch(userProfileProvider).valueOrNull;
+    // Se observa para que la pantalla repinte apenas cambia la moneda, sin
+    // esperar los 2-3 segundos del stream del perfil. El valor se lee con
+    // `ref.read` en _currencyCodeFromProfile, que ya devuelve el nuevo una vez
+    // que este watch disparó el rebuild.
+    ref.watch(activeCurrencyProvider);
     final tenantState = ref.watch(tenantStateProvider).valueOrNull;
     final pushkaStyle = ref.watch(pushkaStyleProvider);
     final tenantId = userProfile?['tenantId'] as String?;
@@ -2900,14 +2905,14 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
     return null;
   }
 
-  String _currencyCodeFromProfile() {
-    final profile = ref.read(userProfileProvider).valueOrNull;
-    final code = profile?['currencyCode'] as String?;
-    if (code != null && code.trim().isNotEmpty) {
-      return code;
-    }
-    return 'usd';
-  }
+  /// La moneda vigente, incluida la que todavía está viajando al servidor.
+  ///
+  /// Lee de `activeCurrencyProvider` y no del perfil directo: el cambio de
+  /// moneda lo escribe una Cloud Function del lado del servidor, así que el
+  /// stream del perfil tarda 2-3 segundos en reflejarlo. Antes esta pantalla
+  /// seguía mostrando la moneda vieja durante esa ventana mientras Ajustes ya
+  /// mostraba la nueva.
+  String _currencyCodeFromProfile() => ref.read(activeCurrencyProvider);
 
   bool _partialPaymentsEnabled() {
     final profile = ref.read(userProfileProvider).valueOrNull;

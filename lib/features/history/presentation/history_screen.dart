@@ -13,11 +13,7 @@ import '../providers/transactions_provider.dart';
 import '../../users/presentation/user_profile_provider.dart';
 import 'donation_chart.dart';
 
-enum _HistoryFilter {
-  all,
-  tzedaka,
-  pushkaEmpty,
-}
+enum _HistoryFilter { all, tzedaka, pushkaEmpty }
 
 class HistoryScreen extends ConsumerStatefulWidget {
   const HistoryScreen({super.key});
@@ -108,10 +104,14 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
                 children: [
                   // Chart accordion header
                   GestureDetector(
-                    onTap: () => setState(() => _chartExpanded = !_chartExpanded),
+                    onTap: () =>
+                        setState(() => _chartExpanded = !_chartExpanded),
                     child: Container(
                       margin: const EdgeInsets.fromLTRB(18, 0, 18, 8),
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 14,
+                      ),
                       decoration: BoxDecoration(
                         color: cs.surface,
                         borderRadius: BorderRadius.circular(12),
@@ -119,11 +119,17 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
                       ),
                       child: Row(
                         children: [
-                          Icon(Icons.bar_chart_rounded, size: 20, color: cs.onSurface),
+                          Icon(
+                            Icons.bar_chart_rounded,
+                            size: 20,
+                            color: cs.onSurface,
+                          ),
                           const SizedBox(width: 10),
                           Expanded(
                             child: Text(
-                              _chartExpanded ? _tr.chartHideGraph : _tr.chartShowGraph,
+                              _chartExpanded
+                                  ? _tr.chartHideGraph
+                                  : _tr.chartShowGraph,
                               style: TextStyle(
                                 color: cs.onSurface,
                                 fontSize: 16,
@@ -134,7 +140,10 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
                           AnimatedRotation(
                             turns: _chartExpanded ? 0.5 : 0,
                             duration: const Duration(milliseconds: 250),
-                            child: Icon(Icons.keyboard_arrow_down, color: cs.onSurfaceVariant),
+                            child: Icon(
+                              Icons.keyboard_arrow_down,
+                              color: cs.onSurfaceVariant,
+                            ),
                           ),
                         ],
                       ),
@@ -161,10 +170,12 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
                       child: _chartExpanded
                           ? DonationChart(
                               transactions: transactions,
-                              activeCurrency: (ref
-                                      .watch(userProfileProvider)
-                                      .valueOrNull?['currencyCode'] as String?) ??
-                                  'USD',
+                              // activeCurrencyProvider y no el perfil directo:
+                              // incluye la moneda recién elegida que todavía
+                              // viaja hacia el servidor.
+                              activeCurrency: ref
+                                  .watch(activeCurrencyProvider)
+                                  .toUpperCase(),
                             )
                           : const SizedBox(width: double.infinity),
                     ),
@@ -186,7 +197,9 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
                             ref.invalidate(userTransactionsProvider),
                         child: Builder(
                           builder: (_) {
-                            final currentLimit = ref.watch(historyLimitProvider);
+                            final currentLimit = ref.watch(
+                              historyLimitProvider,
+                            );
                             // Round-8 audit HIGH fix: previously the "Cargar
                             // más" affordance was hidden whenever ANY filter
                             // was active — a user with only Tzedakah txs on
@@ -195,23 +208,36 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
                             // when the underlying stream has reached the
                             // current page limit; pagination is per-stream,
                             // not per-filter-view.
-                            final showLoadMore = transactions.length >= currentLimit;
+                            final showLoadMore =
+                                transactions.length >= currentLimit;
                             return ListView.builder(
                               padding: const EdgeInsets.fromLTRB(18, 4, 18, 18),
-                              itemCount: filtered.length + (showLoadMore ? 1 : 0),
+                              itemCount:
+                                  filtered.length + (showLoadMore ? 1 : 0),
                               itemBuilder: (context, index) {
                                 if (showLoadMore && index == filtered.length) {
                                   return Padding(
-                                    padding: const EdgeInsets.only(top: 12, bottom: 12),
+                                    padding: const EdgeInsets.only(
+                                      top: 12,
+                                      bottom: 12,
+                                    ),
                                     child: Center(
                                       child: OutlinedButton.icon(
-                                        icon: const Icon(Icons.expand_more, size: 18),
+                                        icon: const Icon(
+                                          Icons.expand_more,
+                                          size: 18,
+                                        ),
                                         label: Text(_tr.loadMore),
                                         style: OutlinedButton.styleFrom(
-                                          foregroundColor: AppTokens.primaryBlue,
-                                          side: const BorderSide(color: AppTokens.primaryBlue),
+                                          foregroundColor:
+                                              AppTokens.primaryBlue,
+                                          side: const BorderSide(
+                                            color: AppTokens.primaryBlue,
+                                          ),
                                           shape: RoundedRectangleBorder(
-                                            borderRadius: BorderRadius.circular(10),
+                                            borderRadius: BorderRadius.circular(
+                                              10,
+                                            ),
                                           ),
                                         ),
                                         onPressed: () {
@@ -220,8 +246,14 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
                                           // on the new query; existing items
                                           // remain rendered while the older
                                           // ones stream in.
-                                          ref.read(historyLimitProvider.notifier).state =
-                                              currentLimit + TransactionRepository.pageSize;
+                                          ref
+                                                  .read(
+                                                    historyLimitProvider
+                                                        .notifier,
+                                                  )
+                                                  .state =
+                                              currentLimit +
+                                              TransactionRepository.pageSize;
                                         },
                                       ),
                                     ),
@@ -229,8 +261,13 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
                                 }
                                 return GestureDetector(
                                   onTap: () => _showTransactionDetail(
-                                      context, filtered[index]),
-                                  child: _buildTransactionItem(filtered[index], cs.onSurface),
+                                    context,
+                                    filtered[index],
+                                  ),
+                                  child: _buildTransactionItem(
+                                    filtered[index],
+                                    cs.onSurface,
+                                  ),
                                 );
                               },
                             );
@@ -248,7 +285,11 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Icon(Icons.cloud_off_rounded, size: 48, color: cs.onSurfaceVariant),
+                    Icon(
+                      Icons.cloud_off_rounded,
+                      size: 48,
+                      color: cs.onSurfaceVariant,
+                    ),
                     const SizedBox(height: 12),
                     Text(
                       _tr.errorLoadingHistory,
@@ -292,8 +333,14 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
     final amountColor = isNeg ? const Color(0xFFE05A4F) : cs.onSurface;
 
     final (typeIcon, typeColor) = switch (t.type) {
-      TransactionType.tzedaka     => (Icons.volunteer_activism_rounded, const Color(0xFF2563EB)),
-      TransactionType.pushkaEmpty => (Icons.monetization_on_rounded,            const Color(0xFF059669)),
+      TransactionType.tzedaka => (
+        Icons.volunteer_activism_rounded,
+        const Color(0xFF2563EB),
+      ),
+      TransactionType.pushkaEmpty => (
+        Icons.monetization_on_rounded,
+        const Color(0xFF059669),
+      ),
     };
 
     showModalBottomSheet<void>(
@@ -314,7 +361,8 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
             children: [
               // Handle bar
               Container(
-                width: 40, height: 4,
+                width: 40,
+                height: 4,
                 decoration: BoxDecoration(
                   color: sheetCs.outlineVariant,
                   borderRadius: BorderRadius.circular(2),
@@ -323,7 +371,8 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
               const SizedBox(height: 24),
               // Icon
               Container(
-                width: 64, height: 64,
+                width: 64,
+                height: 64,
                 decoration: BoxDecoration(
                   color: typeColor.withValues(alpha: 0.1),
                   shape: BoxShape.circle,
@@ -385,14 +434,21 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Text(label, style: TextStyle(fontSize: 14, color: cs.onSurfaceVariant)),
+          Text(
+            label,
+            style: TextStyle(fontSize: 14, color: cs.onSurfaceVariant),
+          ),
           Flexible(
             child: Text(
               value,
               textAlign: TextAlign.end,
               maxLines: maxLines,
               overflow: maxLines != null ? TextOverflow.ellipsis : null,
-              style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: cs.onSurface),
+              style: TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+                color: cs.onSurface,
+              ),
             ),
           ),
         ],
@@ -431,12 +487,30 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Center(child: Container(width: 36, height: 4, margin: const EdgeInsets.only(bottom: 16), decoration: BoxDecoration(color: cs.outlineVariant, borderRadius: BorderRadius.circular(2)))),
+                Center(
+                  child: Container(
+                    width: 36,
+                    height: 4,
+                    margin: const EdgeInsets.only(bottom: 16),
+                    decoration: BoxDecoration(
+                      color: cs.outlineVariant,
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                ),
                 _filterTile(sheetCtx, _HistoryFilter.all, _tr.filterAll),
                 const SizedBox(height: 8),
-                _filterTile(sheetCtx, _HistoryFilter.tzedaka, _tr.filterTzedaka),
+                _filterTile(
+                  sheetCtx,
+                  _HistoryFilter.tzedaka,
+                  _tr.filterTzedaka,
+                ),
                 const SizedBox(height: 8),
-                _filterTile(sheetCtx, _HistoryFilter.pushkaEmpty, _tr.filterPushkaEmpty),
+                _filterTile(
+                  sheetCtx,
+                  _HistoryFilter.pushkaEmpty,
+                  _tr.filterPushkaEmpty,
+                ),
               ],
             ),
           ),
@@ -457,8 +531,12 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
         decoration: BoxDecoration(
-          color: selected ? AppTokens.primaryBlue.withValues(alpha: 0.12) : cs.surface,
-          border: Border.all(color: selected ? AppTokens.primaryBlue : cs.outline),
+          color: selected
+              ? AppTokens.primaryBlue.withValues(alpha: 0.12)
+              : cs.surface,
+          border: Border.all(
+            color: selected ? AppTokens.primaryBlue : cs.outline,
+          ),
           borderRadius: BorderRadius.circular(12),
         ),
         child: Row(
@@ -487,19 +565,28 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
     // Per-tx currency (see _showTransactionDetail comment). The tx row
     // shows the original amount + code, e.g. "US$1.00 USD" even if the
     // user has since switched their active currency to MXN.
-    final currencySymbol = _currencySymbol(transaction.currencyCode.toLowerCase());
+    final currencySymbol = _currencySymbol(
+      transaction.currencyCode.toLowerCase(),
+    );
     final amountLabel = amount < 0
         ? '-${formatMoney(amount.abs(), symbol: currencySymbol)} ${transaction.currencyCode.toUpperCase()}'
         : '${formatMoney(amount, symbol: currencySymbol)} ${transaction.currencyCode.toUpperCase()}';
     final amountColor = amount < 0 ? const Color(0xFFE05A4F) : primaryColor;
 
-    final showMethodBadge = transaction.paymentMethod != PaymentMethod.card &&
+    final showMethodBadge =
+        transaction.paymentMethod != PaymentMethod.card &&
         transaction.paymentMethod != PaymentMethod.auto;
     final showStatusBadge = transaction.isPending;
 
     final (typeIcon, typeColor) = switch (transaction.type) {
-      TransactionType.tzedaka      => (Icons.volunteer_activism_rounded, const Color(0xFF2563EB)),
-      TransactionType.pushkaEmpty  => (Icons.monetization_on_rounded,            const Color(0xFF059669)),
+      TransactionType.tzedaka => (
+        Icons.volunteer_activism_rounded,
+        const Color(0xFF2563EB),
+      ),
+      TransactionType.pushkaEmpty => (
+        Icons.monetization_on_rounded,
+        const Color(0xFF059669),
+      ),
     };
 
     return Container(
@@ -543,24 +630,35 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
                 ),
                 if (showMethodBadge || showStatusBadge) ...[
                   const SizedBox(height: 5),
-                  Row(children: [
-                    if (showMethodBadge)
-                      _buildBadge(
-                        _methodLabel(transaction.paymentMethod),
-                        _iconForMethod(transaction.paymentMethod),
-                        cs.onSurfaceVariant,
-                      ),
-                    if (showMethodBadge && showStatusBadge) const SizedBox(width: 6),
-                    if (showStatusBadge)
-                      _buildBadge(_tr.pending, Icons.schedule, Colors.orange.shade700),
-                  ]),
+                  Row(
+                    children: [
+                      if (showMethodBadge)
+                        _buildBadge(
+                          _methodLabel(transaction.paymentMethod),
+                          _iconForMethod(transaction.paymentMethod),
+                          cs.onSurfaceVariant,
+                        ),
+                      if (showMethodBadge && showStatusBadge)
+                        const SizedBox(width: 6),
+                      if (showStatusBadge)
+                        _buildBadge(
+                          _tr.pending,
+                          Icons.schedule,
+                          Colors.orange.shade700,
+                        ),
+                    ],
+                  ),
                 ],
               ],
             ),
           ),
           Text(
             amountLabel,
-            style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: amountColor),
+            style: TextStyle(
+              fontSize: 15,
+              fontWeight: FontWeight.w700,
+              color: amountColor,
+            ),
           ),
         ],
       ),
@@ -570,20 +668,42 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
   Widget _buildBadge(String label, IconData icon, Color color) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
-      decoration: BoxDecoration(color: color.withValues(alpha: 0.1), borderRadius: BorderRadius.circular(6)),
-      child: Row(mainAxisSize: MainAxisSize.min, children: [
-        Icon(icon, size: 12, color: color),
-        const SizedBox(width: 3),
-        Text(label, style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: color)),
-      ]),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 12, color: color),
+          const SizedBox(width: 3),
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+              color: color,
+            ),
+          ),
+        ],
+      ),
     );
   }
 
   String _formatDate(DateTime dt) {
     final months = [
-      _tr.monthJan, _tr.monthFeb, _tr.monthMar, _tr.monthApr,
-      _tr.monthMay, _tr.monthJun, _tr.monthJul, _tr.monthAug,
-      _tr.monthSep, _tr.monthOct, _tr.monthNov, _tr.monthDec,
+      _tr.monthJan,
+      _tr.monthFeb,
+      _tr.monthMar,
+      _tr.monthApr,
+      _tr.monthMay,
+      _tr.monthJun,
+      _tr.monthJul,
+      _tr.monthAug,
+      _tr.monthSep,
+      _tr.monthOct,
+      _tr.monthNov,
+      _tr.monthDec,
     ];
     final month = months[dt.month - 1];
     // Locale-aware time. Was hardcoded English "AM"/"PM", which read wrong
@@ -632,5 +752,4 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
         return Icons.autorenew;
     }
   }
-
 }

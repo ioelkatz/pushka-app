@@ -2448,6 +2448,14 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       _presetCtrlsInited = false;
     });
 
+    // Publica la moneda nueva para TODA la app, no solo para esta pantalla.
+    //
+    // Sin esto, el `setState` de arriba solo arreglaba Ajustes: la pantalla
+    // principal, el historial y las suscripciones leen del stream del perfil,
+    // que tarda 2-3 segundos porque la escritura la hace la Cloud Function del
+    // lado del servidor y no hay eco optimista de Firestore.
+    ref.read(pendingCurrencyProvider.notifier).state = newCurrency;
+
     try {
       await FirebaseFunctions.instance
           .httpsCallable('changeUserCurrency')
@@ -2459,6 +2467,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       });
     } catch (e, st) {
       debugPrint('changeUserCurrency failed: $e\n$st');
+      // Se descarta la moneda optimista: el servidor nunca la aceptó, así que
+      // toda la app tiene que volver a la del perfil.
+      ref.read(pendingCurrencyProvider.notifier).state = null;
       if (!mounted) return;
       // Revert local UI so it stays in lockstep with server state.
       setState(() {
