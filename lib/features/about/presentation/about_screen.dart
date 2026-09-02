@@ -1,22 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:package_info_plus/package_info_plus.dart';
 
+import '../../../core/app_version.dart';
 import '../../../core/l10n/s.dart';
 import '../../legal/presentation/legal_screen.dart';
 import '../../tenant/data/tenant_repository.dart';
-
-/// Versión + build leídos del paquete instalado, no de una constante en el
-/// código.
-///
-/// Importa que salga del APK real: la app se distribuye por sideload, así que
-/// no hay una store que garantice que el usuario tenga la última. Cuando el
-/// Rab reporte algo, lo primero es saber qué build tiene puesto, y una
-/// constante hardcodeada puede mentir si alguien la olvidó actualizar.
-final appVersionProvider = FutureProvider<String>((ref) async {
-  final info = await PackageInfo.fromPlatform();
-  return '${info.version} (${info.buildNumber})';
-});
 
 class AboutScreen extends ConsumerWidget {
   const AboutScreen({super.key});
@@ -39,6 +27,7 @@ class AboutScreen extends ConsumerWidget {
           // Párrafo 1
           Text(
             tr.aboutP1,
+            textAlign: TextAlign.center,
             style: TextStyle(
               fontSize: 16,
               height: 1.6,
@@ -52,6 +41,7 @@ class AboutScreen extends ConsumerWidget {
           // Párrafo 2
           Text(
             tr.aboutP2,
+            textAlign: TextAlign.center,
             style: TextStyle(
               fontSize: 16,
               height: 1.6,
@@ -65,6 +55,7 @@ class AboutScreen extends ConsumerWidget {
           // Párrafo 3
           Text(
             tr.aboutP3,
+            textAlign: TextAlign.center,
             style: TextStyle(
               fontSize: 16,
               height: 1.6,

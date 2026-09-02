@@ -39,12 +39,4 @@ class AppTokens {
 
   // Sizes
   static const double buttonHeight = 48;
-
-  // App version — must match `version:` in pubspec.yaml.
-  //
-  // TODO: replace with PackageInfo.fromPlatform().version (package_info_plus)
-  // so the constant can't drift. The async API would force support_screen +
-  // app_drawer to load the version asynchronously, so deferring to its own PR.
-  // For now: update this constant any time pubspec.yaml's version bumps.
-  static const String appVersion = '1.0.0';
 }

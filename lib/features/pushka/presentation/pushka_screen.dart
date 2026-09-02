@@ -406,6 +406,10 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
         final authenticated = await BiometricService.instance.authenticate(
           reason: tr.biometricReasonEmpty,
         );
+        // El prompt biométrico es un await largo con la app en segundo plano:
+        // si la pantalla se desmontó mientras tanto, el `context` que se le
+        // pasa abajo al sheet de Stripe ya no sirve.
+        if (!mounted) return;
         if (!authenticated) {
           _showError(tr.authRequired);
           return;
