@@ -89,6 +89,25 @@ service cloud.firestore {
                         'stripeCustomerIdPending']);
     }
 
+    function hasNoDenormFields() {
+      // Espejo de hasNoStripeFields() para el create: los denormalizados estan
+      // en el hasOnly de validUserDoc solo para que el merge del cliente los
+      // arrastre sin romperse, no para que el cliente los siembre. Sin esto,
+      // un usuario nuevo podria crear su doc con transactionCount: 9999.
+      return !('transactionCount' in request.resource.data) &&
+             !('lastDonationAt' in request.resource.data);
+    }
+
+    function denormFieldsNotChanged() {
+      // transactionCount y lastDonationAt los escribe onTransactionCreated con
+      // Admin SDK. Estan en el hasOnly de validUserDoc para que el merge del
+      // cliente no falle al arrastrarlos, pero el cliente no puede tocarlos:
+      // sin este guard, cualquiera podria inflar su propio contador de
+      // donaciones o falsear la fecha de la ultima.
+      return !request.resource.data.diff(resource.data).affectedKeys()
+          .hasAny(['transactionCount', 'lastDonationAt']);
+    }
+
     function isBlockedNotChanged() {
       // isBlocked is written exclusively by Cloud Functions (Admin SDK bypasses rules).
       // Clients may not change this field — only read it.
@@ -279,7 +298,18 @@ service cloud.firestore {
             'tenantId',
             'tenantIds',
             '_lastPmDedupePassAt',
-            'timezone'
+            'timezone',
+            // Denormalizados que estampa onTransactionCreated con Admin SDK
+            // (functions/index.js) en cada tzedaka y cada vaciado de pushka.
+            // Estaban fuera de esta lista, y como el cliente escribe el doc con
+            // set(merge:true), request.resource.data es el documento RESULTANTE:
+            // apenas el usuario donaba una vez, TODA escritura posterior suya
+            // —nombre, foto, idioma, moneda, meta, cualquier switch— fallaba con
+            // PERMISSION_DENIED. Es el mismo caso que ya documenta el comentario
+            // de arriba sobre los campos de Stripe. Escribirlos desde el cliente
+            // lo bloquea denormFieldsNotChanged().
+            'transactionCount',
+            'lastDonationAt'
           ]) &&
           request.resource.data.uid is string &&
           request.resource.data.uid == uid &&
@@ -691,6 +721,7 @@ service cloud.firestore {
           validUserDoc(uid) &&
           hasNoStripeFieldsWritten() &&
           isBlockedNotChanged() &&
+          denormFieldsNotChanged() &&
           hasNoMembershipFieldsWritten();
       allow delete: if false;
 
