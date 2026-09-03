@@ -26,7 +26,6 @@ import 'auto_empty_action_row.dart';
 import 'auto_empty_screen.dart';
 import 'card_brand_box.dart';
 import '../../../core/l10n/s.dart';
-import '../../feedback/feedback_service.dart';
 import '../../../core/pushka_style_provider.dart';
 import '../../../core/theme_provider.dart';
 import '../../../app/theme/app_tokens.dart';
@@ -407,22 +406,11 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           ),
           const SizedBox(height: 18),
 
-          // AMBIENT MUSIC: still hidden on web — the loop pulls from
-          // Firebase Storage via URL and needs CORS + HTMLAudioElement
-          // playback that's unreliable without a persistent user gesture.
-          // Native-only for now.
-          if (!kIsWeb) ...[
-            _buildToggleRow(
-              tr.ambientMusic,
-              ambientEnabled,
-              onChanged: (value) {
-                setState(() => ambientEnabled = value);
-                FeedbackService.instance.updatePreferences(ambient: value);
-                _updateSettingsSilent(user, ambientEnabled: value);
-              },
-            ),
-            const SizedBox(height: 18),
-          ],
+          // MÚSICA AMBIENTAL: el toggle se retiró el 2026-09-02, antes de
+          // publicar en Play. El loop era una grabación con derechos de
+          // terceros. La melodía (un nigún) es tradicional, la grabación no.
+          // Para volver a habilitarlo hace falta una grabación propia o con
+          // licencia: ver `docs/musica-ambiental.md`.
 
           // PARTIAL PAYMENTS
           _buildToggleRow(
