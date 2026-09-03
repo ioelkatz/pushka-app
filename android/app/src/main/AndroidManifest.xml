@@ -1,8 +1,28 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
     <uses-permission android:name="android.permission.INTERNET" />
-    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
+
+    <!-- ID de publicidad: lo inyecta Firebase Analytics al fusionar manifests,
+         no lo pedimos nosotros. La app no muestra anuncios, no hace campañas
+         y en Seguridad de los datos declaramos que no hay publicidad ni
+         marketing. Recopilar el identificador seria juntar un dato que no
+         le sirve a nadie, y ademas obliga a declarar en Play Console que la
+         app usa ID de publicidad. Analytics sigue funcionando sin el; solo
+         pierde la atribucion de campañas, que no usamos. -->
+    <uses-permission android:name="com.google.android.gms.permission.AD_ID"
+        tools:node="remove" />
+    <uses-permission android:name="android.permission.ACCESS_ADSERVICES_AD_ID"
+        tools:node="remove" />
+
+    <!-- READ_MEDIA_IMAGES se retiro: image_picker usa el Photo Picker de
+         Android en 13+, que no necesita ningun permiso porque el sistema
+         entrega solo la foto elegida. El permiso daba acceso a TODA la
+         galeria para subir un avatar, y encima obliga a justificarlo en la
+         declaracion "Permisos de fotos y videos" de Play Console.
+         READ_EXTERNAL_STORAGE queda acotado a Android 12 y anteriores, donde
+         el plugin cae al selector clasico. -->
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
     <uses-permission android:name="android.permission.USE_BIOMETRIC" />
     <uses-permission android:name="android.permission.USE_FINGERPRINT" />
@@ -46,11 +66,18 @@
             </intent-filter>
             <!-- HTTPS App Links: all trusted hosts must autoVerify to true.
                  Round-5 audit HIGH fix: only pushka-app-ioel.web.app was
-                 verified; primary launch domain pushkapp.cc + pushka-pwa.*
-                 were skipped so App Links from those origins bounced to a
-                 chooser dialog ("Open with browser or app?") instead of
-                 direct-to-app. All hosts in _trustedHttpsHosts of
-                 deep_link_handler.dart must be enumerated here. -->
+                 verified; the other origins bounced to a chooser dialog
+                 ("Open with browser or app?") instead of direct-to-app.
+
+                 2026-09-03: se cambiaron los tres hosts de pushkapp.cc por
+                 app.jabadencampus.com. pushkapp.cc NUNCA se compro — el plan
+                 cambio a un subdominio del cliente — asi que la app declaraba
+                 tres dominios inexistentes y NO declaraba el unico que se usa
+                 de verdad. Los links de invitacion abrian el navegador.
+
+                 Cada host de aca tiene que servir /.well-known/assetlinks.json
+                 con el SHA-256 de Play App Signing, y tiene que coincidir con
+                 _trustedHttpsHosts de lib/core/deep_link_handler.dart. -->
             <intent-filter android:autoVerify="true">
                 <action android:name="android.intent.action.VIEW"/>
                 <category android:name="android.intent.category.DEFAULT"/>
@@ -58,9 +85,8 @@
                 <data android:scheme="https" android:host="pushka-app-ioel.web.app" android:pathPrefix="/join/"/>
                 <data android:scheme="https" android:host="pushka-pwa.web.app" android:pathPrefix="/join/"/>
                 <data android:scheme="https" android:host="pushka-pwa.firebaseapp.com" android:pathPrefix="/join/"/>
-                <data android:scheme="https" android:host="pushkapp.cc" android:pathPrefix="/join/"/>
-                <data android:scheme="https" android:host="www.pushkapp.cc" android:pathPrefix="/join/"/>
-                <data android:scheme="https" android:host="app.pushkapp.cc" android:pathPrefix="/join/"/>
+                <data android:scheme="https" android:host="app.jabadencampus.com" android:pathPrefix="/join/"/>
+                <data android:scheme="https" android:host="www.app.jabadencampus.com" android:pathPrefix="/join/"/>
             </intent-filter>
         </activity>
         <!-- Don't delete the meta-data below.
