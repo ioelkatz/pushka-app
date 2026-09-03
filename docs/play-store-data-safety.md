@@ -14,10 +14,18 @@ documento y el formulario**: declarar de menos es motivo de suspensión.
 Las tres están vivas y verificadas:
 
 ```
-Política de privacidad   https://chabad-admin.web.app/privacy
-Términos                 https://chabad-admin.web.app/terms
-Borrado de cuenta        https://chabad-admin.web.app/delete-account
+Política de privacidad   https://pushka-app-ioel.web.app/privacy
+Términos                 https://pushka-app-ioel.web.app/terms
+Borrado de cuenta        https://pushka-app-ioel.web.app/delete-account
 ```
+
+⚠️ **Existen DOS copias de estas páginas y divergieron.** El panel de
+administración sirve las suyas en `chabad-admin.web.app/privacy|terms|delete-account`
+(repo `pushka_admin`), y responden 200, pero están desactualizadas: se titulan
+"Chabad Pushka" y a la de borrado le falta la sección "¿Qué se conserva?" que se
+agregó el 2026-09-02 para cumplir el requisito de Play. **Las buenas son las de
+`pushka-app-ioel.web.app`**, que salen de `public/` en este repo. Unificar
+cuando se pueda.
 
 ⚠️ Cuando el sitio institucional esté completo conviene moverlas a
 `jabadencampus.com`. Google exige que la política de privacidad sea accesible
@@ -86,6 +94,17 @@ acá no tiene costo; declarar de menos, sí.
 | Dato | Recopilado | Obligatorio | Propósito |
 |---|---|---|---|
 | Interacciones con la app | Sí | **No** | Estadísticas — eventos de Firebase Analytics |
+
+| Otro contenido generado por el usuario | Sí | **No** | Funciones de la app |
+
+"Contenido generado por el usuario" en el vocabulario de Google son *"biografías,
+notas o respuestas abiertas"*. En Pushka son tres campos de texto libre: la
+**dedicatoria** de una donación, la **etiqueta** de un recordatorio ("Antes de
+Shabat") y el **apodo** de una tarjeta guardada ("BBVA"). Los dos primeros
+viven en Firestore; el apodo, en `metadata.nickname` de Stripe.
+
+No es "Mensajes": esa categoría es para funciones de mensajería entre personas,
+que la app no tiene.
 
 Eventos que se registran: `purchase`, `pushka_empty`, `donation_initiated`,
 `donation_failed`, `donation_canceled`. Los parámetros son monto, moneda,
