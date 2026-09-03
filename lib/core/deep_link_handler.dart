@@ -40,9 +40,14 @@ const _trustedHttpsHosts = <String>{
   'pushka-app-ioel.firebaseapp.com',
   'pushka-pwa.web.app',
   'pushka-pwa.firebaseapp.com',
-  'pushkapp.cc',
-  'www.pushkapp.cc',
-  'app.pushkapp.cc',
+  // Dominio productivo del tenant. `pushkapp.cc` estuvo aca hasta el
+  // 2026-09-03 y NUNCA se compro: el plan cambio a un subdominio del cliente.
+  // Un host que no existe en esta lista no rompe nada, pero el que SI se usa y
+  // falta hace que el link de invitacion se rechace en silencio y el usuario
+  // caiga en el navegador. Tiene que coincidir con el intent-filter de App
+  // Links del AndroidManifest y con hostnameTenantMap.
+  'app.jabadencampus.com',
+  'www.app.jabadencampus.com',
 };
 
 String? _slugFromUri(Uri uri) {
