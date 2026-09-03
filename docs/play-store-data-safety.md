@@ -47,6 +47,20 @@ cuando se pueda.
 
 ## Tipos de datos a declarar
 
+> ⚠️ **"Obligatorio" NO significa "importante": significa que el usuario no lo
+> puede desactivar.** Es la pregunta literal de Google
+> (*"los usuarios no pueden desactivar esta opción"*).
+>
+> Analytics y Crashlytics **se declaran obligatorios en Android**. El opt-out
+> existe solo en iOS, vía el prompt de App Tracking Transparency en
+> `app_initializer.dart`; en Android no hay ningún interruptor. Esta ficha es
+> de Android.
+>
+> Quedan opcionales solo los que el usuario puede efectivamente no dar:
+> teléfono, dirección postal, foto de perfil y los textos libres
+> (dedicatorias, etiquetas de recordatorios, apodos de tarjetas).
+
+
 Para cada uno: **recopilado sí**, **compartido no**, salvo donde se aclare.
 "Compartido" en el vocabulario de Google significa transferir a un tercero
 *independiente* — un proveedor que procesa por cuenta tuya (Firebase, Stripe)
@@ -93,7 +107,7 @@ acá no tiene costo; declarar de menos, sí.
 
 | Dato | Recopilado | Obligatorio | Propósito |
 |---|---|---|---|
-| Interacciones con la app | Sí | **No** | Estadísticas — eventos de Firebase Analytics |
+| Interacciones con la app | Sí | **Sí** | Estadísticas — eventos de Firebase Analytics |
 
 | Otro contenido generado por el usuario | Sí | **No** | Funciones de la app |
 
@@ -115,14 +129,14 @@ personales** en los parámetros.
 
 | Dato | Recopilado | Obligatorio | Propósito |
 |---|---|---|---|
-| Registros de fallos | Sí | **No** | Estadísticas — Firebase Crashlytics |
-| Diagnósticos | Sí | **No** | Estadísticas — Crashlytics + Analytics |
+| Registros de fallos | Sí | **Sí** | Estadísticas — Firebase Crashlytics |
+| Diagnósticos | Sí | **Sí** | Estadísticas — Crashlytics + Analytics |
 
 ### Identificadores del dispositivo
 
 | Dato | Recopilado | Obligatorio | Propósito |
 |---|---|---|---|
-| ID del dispositivo | Sí | **No** | Funciones de la app (token FCM para notificaciones), estadísticas |
+| ID del dispositivo | Sí | **Sí** | Funciones de la app (token FCM para notificaciones), estadísticas |
 
 ---
 
