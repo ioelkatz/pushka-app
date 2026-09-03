@@ -138,8 +138,8 @@ pantalla de Stripe y queda de su lado.
 | Precio | **Gratis** — las donaciones son pagos a un tercero por Stripe, no compras dentro de la app |
 | Clasificación | Todos |
 | Email de contacto | jymmexico@gmail.com |
-| Política de privacidad | https://pushka-landing.web.app/privacidad/ |
-| Borrado de cuenta | https://pushka-landing.web.app/delete-account/ |
+| Política de privacidad | https://pushka-app-ioel.web.app/privacy/ |
+| Borrado de cuenta | https://pushka-app-ioel.web.app/delete-account/ |
 | Público objetivo | 18+ |
 | Anuncios | No contiene |
 
