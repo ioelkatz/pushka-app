@@ -39,36 +39,37 @@ pegar desde WhatsApp el "—" se convierte en dos guiones.
 La pushka de Jabad en Campus: la alcancía de siempre, en tu teléfono.
 ```
 
-## Descripción completa — 2963 de 4000 caracteres
+## Descripción completa — 2884 de 4000 caracteres
 
 > Play muestra solo las **tres primeras líneas** antes del botón "Más
-> información". El primer párrafo mide 189 caracteres, así que entra entero.
+> información". El primer párrafo mide 223 caracteres: Play va a cortarlo cerca del final y
+> mostrar "Más información".
 > La palabra "pushka" ya no aparece ahí — Ioel prefirió cerrar el párrafo en la
 > misión — pero sí está en la descripción corta, que Play muestra siempre
 > arriba de todo.
 
 ```
-En Jabad en Campus trabajamos con jóvenes judíos de Ciudad de México que crecieron lejos de sus raíces. Los invitamos a un Shabat, a un asado, a ponerse tefilín, a conectar con su judaísmo.
+En Jabad en Campus trabajamos con jóvenes judíos de Ciudad de México que crecieron un poco lejos de sus raíces. Los invitamos a un Shabat, a un asado, a ponerse tefilín, a conocer gente, a volver a conectar con su judaísmo.
 
-Un viernes cualquiera hay jalá en la mesa, ensaladas, dos que discuten de futbol y alguien acomodando sillas de más. Siempre faltan sillas. Nadie pregunta hace cuánto no pisan una sinagoga. Hay chavos que vienen una vez y ya; otros llegaron porque un amigo les insistió, todavía no saben bien a qué, y a las once de la noche siguen ahí.
+Cada Shabat hay jalá en la mesa, ensaladas, risas e historias fascinantes. Siempre terminan faltando sillas. Vienes una vez y te quedas por siempre. Muchos llegan porque un amigo los invitó, sin saber muy bien qué esperar, pero a las doce de la noche siguen ahí, pasando un momento increíble.
 
-Una pushka es la alcancía de tzedaká que hay en toda casa judía. Se echa una moneda antes de salir, y el viernes antes de que entre Shabat. También cuando nace un sobrino o alguien sale bien de una operación.
+La pushka es la alcancía de tzedaká que está en tantas casas judías. En ella puedes poner una moneda antes de salir, el viernes antes de que empiece Shabat, cuando nace un hijo, alguien se recupera de una operación o simplemente tienes ganas de dar.
 
-La de la app funciona igual que la de la cocina. Tocas uno de los montos que ya están puestos, o los cambias por los tuyos, y se va juntando ahí adentro. No se te cobra nada en ese momento. El día que tú decides, vacías la pushka y se hace un solo cargo por el total, que se dona a Jabad en Campus.
+La aplicación funciona de manera sencilla: seleccionas el monto que prefieras y el importe se acumula en la pushka. En ese momento no se realiza ningún cargo. Cuando tú lo decidas, puedes vaciarla y se hará un único cargo por el total acumulado, que será donado a Jabad en Campus.
 
-Si prefieres no estar pendiente, puedes programar que se vacíe sola cada semana, cada mes o en Erev Rosh Jodesh, que es cuando muchos ya tienen la costumbre de dar. Ahí sí hay un cobro automático a la tarjeta que elijas: te llega el aviso cada vez que pasa, y puedes cambiarlo o apagarlo cuando quieras desde Ajustes. O te mandamos nada más un recordatorio y la vacías tú.
+Y si prefieres no estar pendiente, puedes programar que se vacíe sola cada semana, cada mes o en Erev Rosh Jodesh, cuando muchos ya tienen la costumbre de dar. En ese caso sí se hace un cobro automático a la tarjeta que elijas: te avisamos cada vez que pasa y puedes cambiarlo o apagarlo cuando quieras desde Ajustes. O, si prefieres, te mandamos solamente un recordatorio y la vacías tú.
 
-La app cuenta los días seguidos que llevas dando, y puedes ponerte una meta al mes y ver cuánto te falta. Todo lo que diste queda en el historial, con comprobante por correo de cada donación. El Rab lo dice así: en la tzedaká cuenta la constancia, no el monto.
+La app también cuenta los días seguidos que llevas dando. Puedes ponerte una meta mensual, ver cuánto llevas y cuánto te falta, y consultar todo en tu historial. Cada donación queda registrada y recibes su comprobante por correo. El Rab lo dice así: en la tzedaká importa la constancia, no el monto.
 
-Adentro hay también tefilot y segulot para leer, y un aviso cuando se acerca una festividad, por si el calendario hebreo te toma desprevenido. Puedes dar en pesos, dólares, shékels u otras monedas, y pedir huella o reconocimiento facial antes de donar o de vaciar. Está en español, inglés, francés y hebreo, para que cada quien la use en el idioma en que reza.
+Adentro hay también tefilot y segulot para leer, y avisos cuando se acerca una festividad. Puedes dar en pesos, dólares, shékels u otras monedas, y pedir huella o reconocimiento facial antes de donar o de vaciar la pushka. Está en español, inglés, francés y hebreo, para que cada quien pueda usarla en el idioma en que reza.
 
-Por qué la app te pide un código
+¿Por qué la app te pide un código?
 
-Porque es la pushka de una comunidad, no una app de donaciones abierta al público: lo que entra acá va a Jabad en Campus y a nadie más, y quien da tiene derecho a saber exactamente a dónde va. El código de invitación te lo da el Rab, y es gratis, igual que la app. Si llegaste hasta aquí y no lo tienes, escríbele y te lo pasa.
+Porque esta es la pushka de una comunidad, no una app de donaciones abierta al público. El código de invitación es JYM-770. Las donaciones van directamente a Jabad en Campus, y siempre sabrás a dónde va tu dinero.
 
-Los pagos los procesa Stripe. Tu tarjeta se escribe en la pantalla de Stripe y queda de su lado: en la app solo se ven la marca y los últimos cuatro dígitos, y puedes borrarla, o borrar tu cuenta entera, cuando quieras.
+Los pagos los procesa Stripe. Tu tarjeta se guarda directamente en la pantalla de Stripe dentro de la app, y puedes borrarla o incluso eliminar tu cuenta entera cuando quieras.
 
-Jabad en Campus es una organización judía sin fines de lucro. Las donaciones son voluntarias y no desbloquean funciones ni contenido dentro de la app. Lo que se junta entre todos ayuda a sostener el trabajo en Ciudad de México: los Shabatot, las comidas del viernes, ir a buscar a quien no tiene cómo llegar. Y las sillas, que siempre faltan.
+Jabad en Campus es una organización judía sin fines de lucro. Las donaciones son voluntarias y no desbloquean funciones ni contenido dentro de la app. Lo que juntamos entre todos ayuda a sostener el trabajo en Ciudad de México: Shabatot, viajes, asados y eventos; todo para que un judío más conecte con su esencia, con su neshamá.
 ```
 
 ---
