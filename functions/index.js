@@ -1017,6 +1017,11 @@ exports.createPaymentIntent = onCall(
   }
   // 10 payment attempts per 10 minutes per user
   await enforceRateLimit(request.auth.uid, "createPaymentIntent", 10, 600);
+  // Segunda capa, por IP. El limite por uid de arriba no acota el volumen
+  // total: crear cuentas de Firebase es gratis, asi que un atacante rota
+  // uids. 120/hora por IP deja pasar una jornada de donaciones en la
+  // Wi-Fi compartida de la casa de Jabad y corta el card testing industrial.
+  await enforceRateLimitByIp(request, "createPaymentIntent", 120, 3600);
   if (!stripeSecret.value()) {
     throw new HttpsError("failed-precondition", "Stripe no configurado.");
   }
@@ -1792,6 +1797,11 @@ exports.createDonationSubscription = onCall(
       throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
     }
     await enforceRateLimit(request.auth.uid, "createDonationSubscription", 10, 600);
+    // Segunda capa, por IP. El limite por uid de arriba no acota el volumen
+    // total: crear cuentas de Firebase es gratis, asi que un atacante rota
+    // uids. 40/hora por IP deja pasar una jornada de donaciones en la
+    // Wi-Fi compartida de la casa de Jabad y corta el card testing industrial.
+    await enforceRateLimitByIp(request, "createDonationSubscription", 40, 3600);
     if (!stripeSecret.value()) {
       throw new HttpsError("failed-precondition", "Stripe no configurado.");
     }
@@ -2509,6 +2519,11 @@ exports.createSetupIntent = onCall(
       throw new HttpsError("failed-precondition", "Stripe no configurado.");
     }
     await enforceRateLimit(request.auth.uid, "createSetupIntent", 20, 3600);
+    // Segunda capa, por IP. El limite por uid de arriba no acota el volumen
+    // total: crear cuentas de Firebase es gratis, asi que un atacante rota
+    // uids. 60/hora por IP deja pasar una jornada de donaciones en la
+    // Wi-Fi compartida de la casa de Jabad y corta el card testing industrial.
+    await enforceRateLimitByIp(request, "createSetupIntent", 60, 3600);
 
     // Client-supplied correlation ID — scopes the Stripe idempotency key to a
     // single attempt so retries within the same minute don't reuse a key whose
@@ -7651,6 +7666,16 @@ exports.joinTenant = onCall(
     // por red lenta + cambio entre 2-3 tenants).
     if (!callerIsSuperAdmin(request)) {
       await enforceRateLimit(request.auth.uid, "joinTenant", 30, 3600);
+      // Tope POR IP, no por uid. Desde que el codigo de invitacion JYM-770
+      // quedo publicado en la ficha de Play, el limite por uid no acota nada:
+      // crear cuentas de Firebase es gratis e ilimitado, asi que un atacante
+      // rota uids y sigue. Este es el cuello de botella real del abuso —
+      // para llegar a la pantalla de pago hay que unirse al tenant primero.
+      //
+      // 40/hora aguanta el caso legitimo mas denso que existe: un Shabat en
+      // el que varios chavos se dan de alta en la misma Wi-Fi de la casa de
+      // Jabad, con reintentos. Lo que corta es el alta masiva automatizada.
+      await enforceRateLimitByIp(request, "joinTenant", 40, 3600);
     }
 
     const uid = request.auth.uid;
@@ -11575,6 +11600,11 @@ exports.createCheckoutSession = onCall(
       throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
     }
     await enforceRateLimit(request.auth.uid, "createCheckoutSession", 10, 600);
+    // Segunda capa, por IP. El limite por uid de arriba no acota el volumen
+    // total: crear cuentas de Firebase es gratis, asi que un atacante rota
+    // uids. 120/hora por IP deja pasar una jornada de donaciones en la
+    // Wi-Fi compartida de la casa de Jabad y corta el card testing industrial.
+    await enforceRateLimitByIp(request, "createCheckoutSession", 120, 3600);
     if (!stripeSecret.value()) {
       throw new HttpsError("failed-precondition", "Stripe no configurado.");
     }

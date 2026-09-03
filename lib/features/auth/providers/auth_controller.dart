@@ -41,10 +41,20 @@ class AuthController {
       email: email,
       password: password,
     );
-    await _userRepository.ensureUserDocument(
-      user: credential.user,
-      displayName: credential.user?.displayName,
-    );
+    // Sin try/catch, cualquier PERMISSION_DENIED de Firestore tumbaba el login
+    // entero: la sesion de Auth ya estaba abierta pero la excepcion subia hasta
+    // la pantalla y el usuario veia un error de credenciales que no era tal.
+    // El doc se vuelve a asegurar en el proximo arranque, asi que fallar aca no
+    // deja al usuario en un estado del que no pueda salir.
+    try {
+      await _userRepository.ensureUserDocument(
+        user: credential.user,
+        displayName: credential.user?.displayName,
+      );
+    } catch (e, st) {
+      _recordNonFatal(e, st,
+          op: 'signIn.ensureUserDocument', uid: credential.user?.uid);
+    }
     final user = credential.user;
     if (user != null) {
       try {
@@ -343,10 +353,17 @@ class AuthController {
       }
     }
 
-    await _userRepository.ensureUserDocument(
-      user: result.user,
-      displayName: result.user?.displayName,
-    );
+    // Mismo blindaje que en signIn(): el alta del doc no puede tumbar un login
+    // ya exitoso. Ver el comentario de arriba.
+    try {
+      await _userRepository.ensureUserDocument(
+        user: result.user,
+        displayName: result.user?.displayName,
+      );
+    } catch (e, st) {
+      _recordNonFatal(e, st,
+          op: 'signInWithGoogle.ensureUserDocument', uid: result.user?.uid);
+    }
     final user = result.user;
     if (user != null) {
       try {

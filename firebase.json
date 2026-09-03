@@ -35,9 +35,9 @@
       ],
       "redirects": [
         {
-          "//": "Round-5 audit HIGH fix: previous redirect was 302 → /get on this same host, but /get does not exist on the assetlinks target (which only serves /.well-known/assetlinks.json). Users clicking pushka-app-ioel.web.app/join/xxx from a browser used to hit /get and see a broken page. Now redirect to the PWA target which HAS the /join/:slug route.",
+          "//": "Round-5 audit HIGH fix: previous redirect was 302 → /get on this same host, but /get does not exist on the assetlinks target (which only serves /.well-known/assetlinks.json). Users clicking pushka-app-ioel.web.app/join/xxx from a browser used to hit /get and see a broken page. Now redirect to the PWA target which HAS the /join/:slug route. 2026-09-03: el destino era https://pushkapp.cc, un dominio que nunca se compro — el link de invitacion terminaba en un error de DNS. Ahora va al dominio productivo real.",
           "source": "/join/:slug",
-          "destination": "https://pushkapp.cc/join/:slug",
+          "destination": "https://app.jabadencampus.com/join/:slug",
           "type": 302
         }
       ]
