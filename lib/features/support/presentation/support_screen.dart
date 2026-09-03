@@ -5,6 +5,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../../app/theme/app_tokens.dart';
+import '../../../core/app_version.dart';
 import '../../../core/l10n/s.dart';
 import '../../pushka/presentation/building_770_widget.dart';
 import '../../tenant/data/tenant_repository.dart';
@@ -113,7 +114,9 @@ class SupportScreen extends ConsumerWidget {
           ),
           const SizedBox(height: 8),
           Text(
-            AppTokens.appVersion,
+            ref
+                .watch(appVersionProvider)
+                .maybeWhen(data: (v) => v, orElse: () => ''),
             style: TextStyle(
               fontSize: 18,
               fontWeight: FontWeight.w600,

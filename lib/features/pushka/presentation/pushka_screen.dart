@@ -29,6 +29,7 @@ import '../../tenant/data/tenant_repository.dart';
 import '../../users/data/user_repository.dart';
 import '../../users/presentation/user_profile_provider.dart';
 import '../../../config/stripe_config.dart';
+import '../domain/streak.dart';
 
 /// Holds the callback that opens the Pushka settings sheet, exposed so the
 /// home AppBar (defined in router.dart) can trigger it without us moving
@@ -92,6 +93,13 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
   String? _lastSyncedFingerprintTenantId;
   String? _lastLoadedCacheTenantId;
 
+  /// uid del que se cargó el caché actualmente pintado.
+  ///
+  /// Va SIEMPRE junto a `_lastLoadedCacheTenantId`. La identidad de lo que se
+  /// muestra en esta pantalla es el par (uid, tenantId): mirar solo el tenant
+  /// deja pasar dos cuentas distintas dentro de la misma organización.
+  String? _lastLoadedCacheUid;
+
   // Reference to OUR callback so dispose can compare-and-clear instead of
   // unconditionally nulling — fixes a subtle race where a fast back+forward
   // navigation leaves Screen A's pending dispose-microtask nulling Screen
@@ -122,12 +130,21 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
   }
 
   /// Reads the (uid, tenantId)-scoped cached pushka amount + goal into
-  /// local state. Called on first mount AND whenever the active tenantId
-  /// changes (via the listener wired in build()), so switching tenants
-  /// repaints from the new tenant's cache instead of leaking the old
-  /// tenant's numbers onto the screen.
+  /// local state. Called on first mount AND cuando cambia el usuario o la
+  /// organización activa (via el listener de build()), para repintar desde
+  /// el caché correcto en vez de dejar en pantalla los números del anterior.
+  ///
+  /// La guarda compara uid Y tenantId. Antes miraba solo el tenantId, y eso
+  /// dejaba pasar el caso real de dos cuentas distintas en la MISMA
+  /// organización: cerrar sesión e iniciar con otro usuario no reseteaba
+  /// nada, y quedaban en pantalla el monto, la meta y la racha del usuario
+  /// anterior hasta que la pantalla se destruyera. En un celular compartido
+  /// eso es mostrarle a alguien el saldo de otra persona.
   void _loadFromCacheFor(String uid, String tenantId) {
-    if (_lastLoadedCacheTenantId == tenantId) return;
+    if (_lastLoadedCacheUid == uid && _lastLoadedCacheTenantId == tenantId) {
+      return;
+    }
+    _lastLoadedCacheUid = uid;
     _lastLoadedCacheTenantId = tenantId;
     double? cached;
     double? cachedGoal;
@@ -219,26 +236,20 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
       lastDate = lastDateRaw.toDate();
     }
 
-    if (lastDate != null) {
-      final lastDay = DateTime(lastDate.year, lastDate.month, lastDate.day);
-      if (lastDay == today) return;
-
-      DateTime prevWeekday = today.subtract(const Duration(days: 1));
-      while (prevWeekday.weekday == DateTime.saturday ||
-          prevWeekday.weekday == DateTime.sunday) {
-        prevWeekday = prevWeekday.subtract(const Duration(days: 1));
-      }
-
-      if (lastDay == prevWeekday || lastDay.isAfter(prevWeekday)) {
-        final authoritative =
-            (tenantState['streakCount'] as num?)?.toInt() ?? _streakCount;
-        _streakCount = (authoritative > 0 ? authoritative : 1) + 1;
-      } else {
-        _streakCount = 1;
-      }
-    } else {
-      _streakCount = 1;
+    // Si ya se contó hoy no hay nada que escribir: evita una escritura por
+    // cada monto que el usuario agregue en el día.
+    if (lastDate != null &&
+        DateTime(lastDate.year, lastDate.month, lastDate.day) == today) {
+      return;
     }
+
+    final stored =
+        (tenantState['streakCount'] as num?)?.toInt() ?? _streakCount;
+    _streakCount = streakAfterActivity(
+      stored: stored,
+      lastActivity: lastDate,
+      today: today,
+    );
 
     if (mounted) setState(() {});
     try {
@@ -395,6 +406,10 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
         final authenticated = await BiometricService.instance.authenticate(
           reason: tr.biometricReasonEmpty,
         );
+        // El prompt biométrico es un await largo con la app en segundo plano:
+        // si la pantalla se desmontó mientras tanto, el `context` que se le
+        // pasa abajo al sheet de Stripe ya no sirve.
+        if (!mounted) return;
         if (!authenticated) {
           _showError(tr.authRequired);
           return;
@@ -1069,10 +1084,11 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
     final cs = theme.colorScheme;
     final isDark = theme.brightness == Brightness.dark;
 
-    // React to tenant switches: when userProfile.tenantId changes (via
-    // account_switcher_sheet → switchTenant), repaint from the new
-    // tenant's local cache so we don't display the previous tenant's
-    // pushka amount + goal during the network refresh window.
+    // Reacciona a los cambios de IDENTIDAD: cambio de usuario (cerrar sesión
+    // e iniciar con otra cuenta) o cambio de organización (switchTenant desde
+    // el selector de cuentas). En los dos casos hay que repintar desde el
+    // caché correcto para no dejar en pantalla los números del anterior
+    // mientras llega la red.
     ref.listen<AsyncValue<Map<String, dynamic>?>>(userProfileProvider, (
       prev,
       next,
@@ -1080,25 +1096,34 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
       final newTenantId = next.valueOrNull?['tenantId'] as String?;
       final uid = ref.read(currentUserProvider)?.uid;
       if (uid != null && newTenantId != null && newTenantId.isNotEmpty) {
-        // Round-7 regression fix: when the tenant actually changes, drop
-        // any in-flight recent-write guard and clear the sync fingerprint
-        // so the incoming tenantState for the new tenant always applies
-        // (even if its numeric fingerprint coincidentally matches the old
-        // one). Belt-and-suspenders together with the per-tenant tagging
-        // added to the fingerprint/stopwatch checks.
-        if (_lastLoadedCacheTenantId != newTenantId) {
+        // Round-7 regression fix: cuando cambia la identidad, se descarta
+        // cualquier guarda de escritura reciente y se limpia la huella de
+        // sincronización, para que el tenantState entrante siempre se
+        // aplique — aunque su huella numérica coincida por casualidad con
+        // la anterior.
+        //
+        // La comparación incluye el UID, no solo el tenantId. Antes miraba
+        // solo el tenant, y eso dejaba pasar el caso real: dos cuentas
+        // distintas DENTRO DE LA MISMA organización. Cerrar sesión e
+        // iniciar con otra cuenta no reseteaba nada y quedaban pintados el
+        // monto, la meta y la racha del usuario anterior hasta que la
+        // pantalla se destruyera. Reportado con la cuenta de prueba de
+        // Google Play: una cuenta recién creada mostraba racha de 1 día.
+        final identityChanged =
+            _lastLoadedCacheUid != uid ||
+            _lastLoadedCacheTenantId != newTenantId;
+        if (identityChanged) {
           _localWriteStopwatch.reset();
           _localWriteTenantId = null;
           _lastSyncedTenantStateFingerprint = null;
           _lastSyncedFingerprintTenantId = null;
-          // Round-9 regression fix: streakCount is gated behind
-          // `if (!_loadedRemote)` in the fingerprint sync block, which
-          // makes it a one-shot on first snapshot per screen instance.
-          // Without resetting `_loadedRemote` here, the streak banner
-          // keeps painting the previous tenant's streakCount until the
-          // user donates (which re-reads via _updateStreak) or the
-          // screen is remounted. Clear `_streakCount` too so we don't
-          // flash the old value before the incoming snapshot lands.
+          // Round-9 regression fix: streakCount está detrás de
+          // `if (!_loadedRemote)` en el bloque de sincronización, lo que lo
+          // convierte en un one-shot por instancia de pantalla. Sin
+          // reiniciar `_loadedRemote` acá, el banner sigue pintando la
+          // racha anterior hasta que el usuario done o se destruya la
+          // pantalla. Se limpia `_streakCount` para no mostrar el valor
+          // viejo mientras llega el snapshot nuevo.
           _loadedRemote = false;
           setState(() => _streakCount = 0);
         }
@@ -1107,6 +1132,11 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
     });
 
     final userProfile = ref.watch(userProfileProvider).valueOrNull;
+    // Se observa para que la pantalla repinte apenas cambia la moneda, sin
+    // esperar los 2-3 segundos del stream del perfil. El valor se lee con
+    // `ref.read` en _currencyCodeFromProfile, que ya devuelve el nuevo una vez
+    // que este watch disparó el rebuild.
+    ref.watch(activeCurrencyProvider);
     final tenantState = ref.watch(tenantStateProvider).valueOrNull;
     final pushkaStyle = ref.watch(pushkaStyleProvider);
     final tenantId = userProfile?['tenantId'] as String?;
@@ -1130,7 +1160,26 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
     final fingerprintMatches =
         tenantStateFingerprint == _lastSyncedTenantStateFingerprint &&
         tenantId == _lastSyncedFingerprintTenantId;
-    if (tenantState != null && !fingerprintMatches) {
+
+    // Cinturón de seguridad: NUNCA pintar un snapshot que no sea del usuario
+    // logueado. `tenantState` lleva el campo `uid` de su dueño (lo exige
+    // validTenantStateFields en firestore.rules), así que se puede comprobar
+    // directamente en vez de confiar en que los providers se invaliden en el
+    // orden correcto.
+    //
+    // Sin esto, quedaba una ventana entre que cambia el usuario y que el
+    // provider de tenantState emite el documento nuevo, durante la cual se
+    // pintaban los datos del usuario anterior. Con dos cuentas en la misma
+    // organización ese estado podía quedar pegado indefinidamente.
+    final currentUid = ref.watch(currentUserProvider)?.uid;
+    final snapshotUid = tenantState?['uid'] as String?;
+    final snapshotBelongsToCurrentUser =
+        currentUid != null &&
+        (snapshotUid == null || snapshotUid == currentUid);
+
+    if (tenantState != null &&
+        !fingerprintMatches &&
+        snapshotBelongsToCurrentUser) {
       _lastSyncedTenantStateFingerprint = tenantStateFingerprint;
       _lastSyncedFingerprintTenantId = tenantId;
       final uid = ref.read(currentUserProvider)?.uid;
@@ -1227,7 +1276,18 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
             final activeHoliday = _HolidayInfo.getActiveHoliday();
             final bool isFull = pushkaGoal > 0 && pushkaAmount >= pushkaGoal;
 
-            final int bannerStreak = _streakCount;
+            // La racha que se MUESTRA no es la guardada: es la vigente hoy.
+            //
+            // `streakCount` en Firestore es el valor de la última vez que
+            // hubo actividad y no caduca solo. Pintarlo tal cual hacía que
+            // alguien que dejó de dar hace semanas siguiera viendo su racha
+            // vieja intacta, hasta que volviera a agregar un monto.
+            final int bannerStreak = currentStreak(
+              stored: _streakCount,
+              lastActivity: (tenantState?['lastStreakDate'] as Timestamp?)
+                  ?.toDate(),
+              today: DateTime.now(),
+            );
             final _HolidayInfo? bannerHoliday = activeHoliday;
 
             final content = Column(
@@ -2849,14 +2909,14 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
     return null;
   }
 
-  String _currencyCodeFromProfile() {
-    final profile = ref.read(userProfileProvider).valueOrNull;
-    final code = profile?['currencyCode'] as String?;
-    if (code != null && code.trim().isNotEmpty) {
-      return code;
-    }
-    return 'usd';
-  }
+  /// La moneda vigente, incluida la que todavía está viajando al servidor.
+  ///
+  /// Lee de `activeCurrencyProvider` y no del perfil directo: el cambio de
+  /// moneda lo escribe una Cloud Function del lado del servidor, así que el
+  /// stream del perfil tarda 2-3 segundos en reflejarlo. Antes esta pantalla
+  /// seguía mostrando la moneda vieja durante esa ventana mientras Ajustes ya
+  /// mostraba la nueva.
+  String _currencyCodeFromProfile() => ref.read(activeCurrencyProvider);
 
   bool _partialPaymentsEnabled() {
     final profile = ref.read(userProfileProvider).valueOrNull;

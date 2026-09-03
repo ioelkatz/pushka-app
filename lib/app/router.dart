@@ -71,7 +71,22 @@ final router = GoRouter(
       // signs out between the loggedIn check above and this Firestore read.
       final uid = _auth.currentUser?.uid;
       if (uid == null) return '/login';
-      final snap = await _firestore.collection('users').doc(uid).get();
+      // Este es el primer read despues de iniciar sesion, o sea el momento
+      // exacto en que alguien con mala senal se lo come. Firestore tira
+      // `unavailable` y, sin este try, la excepcion escapa del redirect de
+      // go_router y tumba la app: llegaba a Crashlytics como fatal en
+      // FirebaseFirestoreHostApi.documentReferenceGet.
+      //
+      // Regla: ante un read fallido NUNCA decidimos un destino a partir de
+      // datos que no tenemos. Mandamos a '/' --que tiene cache Hive y sus
+      // propios estados de carga-- y la siguiente pasada del redirect
+      // resuelve bien cuando vuelva la red.
+      final DocumentSnapshot<Map<String, dynamic>> snap;
+      try {
+        snap = await _firestore.collection('users').doc(uid).get();
+      } catch (_) {
+        return '/';
+      }
       // Re-check: user may have signed out during the Firestore read.
       if (_auth.currentUser?.uid != uid) return '/login';
       final done = snap.data()?['onboardingCompleted'] as bool? ?? false;
@@ -114,7 +129,20 @@ final router = GoRouter(
         // Use cache to avoid a Firestore read on every navigation event.
         // Cache is invalidated when uid changes (login/logout).
         if (_cachedTenantCheckUid != uid) {
-          final snap = await _firestore.collection('users').doc(uid).get();
+          // Mismo riesgo que el read de arriba, pero acá la degradación
+          // correcta es la contraria: NO redirigir. Si mandaramos a
+          // /tenant-setup porque el read fallo, un miembro real se quedaria
+          // mirando la pantalla del codigo de invitacion sin ningun motivo.
+          // Devolvemos null (se queda donde esta) y, sobre todo, NO tocamos
+          // _cachedTenantCheckUid: envenenar el cache con un fallo
+          // transitorio dejaria la decision congelada hasta el proximo
+          // login.
+          final DocumentSnapshot<Map<String, dynamic>> snap;
+          try {
+            snap = await _firestore.collection('users').doc(uid).get();
+          } catch (_) {
+            return null;
+          }
           if (_auth.currentUser?.uid != uid) return '/login';
           // Defensa en profundidad: invariante "Auth user vivo => doc en
           // users/{uid}". Se rompe si vaciamos prod, hay race en signUp,

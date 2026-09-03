@@ -27,8 +27,18 @@ class FeedbackService {
   static const _ambientDuck   = 0.12;
   static const _ambientNormal = 0.85;
 
-  static const _ambientUrl =
-      'https://storage.googleapis.com/pushka-app-ioel.firebasestorage.app/ambient/nigunim.mp3';
+  // MÚSICA AMBIENTAL — DESACTIVADA (2026-09-02, antes de publicar en Play).
+  //
+  // El loop era un MP3 de un nigún bajado de YouTube. La melodía es
+  // tradicional y de dominio público, pero ESA grabación tiene derechos de
+  // quien la grabó, y distribuirla desde la app es infracción. La cuenta de
+  // Play está a nombre de Jym Inc: un reclamo de derechos no termina en
+  // "sacá el audio", termina en una advertencia contra la organización.
+  //
+  // El archivo se bajó del bucket y se archivó fuera del repo, y se borró de
+  // Firebase Storage. Cómo volver a habilitar la función:
+  // ver `docs/musica-ambiental.md`.
+  static const _ambientUrl = '';
 
   Future<void> init() async {
     if (_initialized) return;
@@ -80,17 +90,21 @@ class FeedbackService {
     } else if (vibration != null) {
       vibrationEnabled = vibration;
     }
-    if (ambient != null && ambient != ambientEnabled) {
-      ambientEnabled = ambient;
-      if (ambient) {
-        startAmbient();
-      } else {
-        stopAmbient();
-      }
+    // El parámetro `ambient` se ignora mientras la función esté desactivada.
+    // No alcanza con esconder el toggle en Configuración: quien ya tenga
+    // `ambientEnabled: true` guardado en su perfil lo sigue arrastrando, y
+    // app.dart llama a startAmbient() al abrir la app leyendo ese valor.
+    // Se corta acá, que es el único punto por el que pasan todos.
+    if (ambient != null && ambientEnabled) {
+      ambientEnabled = false;
+      stopAmbient();
     }
   }
 
   Future<void> startAmbient() async {
+    // Desactivada — ver la nota en _ambientUrl. Sin esto, un usuario con la
+    // preferencia heredada en true seguiría reproduciendo el audio.
+    if (_ambientUrl.isEmpty) return;
     if (kIsWeb) return;
     ambientEnabled = true;
     _ambientVolume = _ambientNormal;

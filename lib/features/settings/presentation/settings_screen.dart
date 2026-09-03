@@ -26,7 +26,6 @@ import 'auto_empty_action_row.dart';
 import 'auto_empty_screen.dart';
 import 'card_brand_box.dart';
 import '../../../core/l10n/s.dart';
-import '../../feedback/feedback_service.dart';
 import '../../../core/pushka_style_provider.dart';
 import '../../../core/theme_provider.dart';
 import '../../../app/theme/app_tokens.dart';
@@ -407,22 +406,11 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           ),
           const SizedBox(height: 18),
 
-          // AMBIENT MUSIC: still hidden on web — the loop pulls from
-          // Firebase Storage via URL and needs CORS + HTMLAudioElement
-          // playback that's unreliable without a persistent user gesture.
-          // Native-only for now.
-          if (!kIsWeb) ...[
-            _buildToggleRow(
-              tr.ambientMusic,
-              ambientEnabled,
-              onChanged: (value) {
-                setState(() => ambientEnabled = value);
-                FeedbackService.instance.updatePreferences(ambient: value);
-                _updateSettingsSilent(user, ambientEnabled: value);
-              },
-            ),
-            const SizedBox(height: 18),
-          ],
+          // MÚSICA AMBIENTAL: el toggle se retiró el 2026-09-02, antes de
+          // publicar en Play. El loop era una grabación con derechos de
+          // terceros. La melodía (un nigún) es tradicional, la grabación no.
+          // Para volver a habilitarlo hace falta una grabación propia o con
+          // licencia: ver `docs/musica-ambiental.md`.
 
           // PARTIAL PAYMENTS
           _buildToggleRow(
@@ -2448,6 +2436,14 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       _presetCtrlsInited = false;
     });
 
+    // Publica la moneda nueva para TODA la app, no solo para esta pantalla.
+    //
+    // Sin esto, el `setState` de arriba solo arreglaba Ajustes: la pantalla
+    // principal, el historial y las suscripciones leen del stream del perfil,
+    // que tarda 2-3 segundos porque la escritura la hace la Cloud Function del
+    // lado del servidor y no hay eco optimista de Firestore.
+    ref.read(pendingCurrencyProvider.notifier).state = newCurrency;
+
     try {
       await FirebaseFunctions.instance
           .httpsCallable('changeUserCurrency')
@@ -2459,6 +2455,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       });
     } catch (e, st) {
       debugPrint('changeUserCurrency failed: $e\n$st');
+      // Se descarta la moneda optimista: el servidor nunca la aceptó, así que
+      // toda la app tiene que volver a la del perfil.
+      ref.read(pendingCurrencyProvider.notifier).state = null;
       if (!mounted) return;
       // Revert local UI so it stays in lockstep with server state.
       setState(() {

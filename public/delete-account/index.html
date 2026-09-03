@@ -143,7 +143,7 @@
     </div>
 
     <h1 data-i18n="title">Eliminar tu cuenta</h1>
-    <p class="subtitle" data-i18n="subtitle">Esta acción es irreversible. Todos tus datos personales, transacciones e historial de donaciones serán eliminados permanentemente.</p>
+    <p class="subtitle" data-i18n="subtitle">Pushka es la app de tzedaká de Jabad en Campus. Esta acción es irreversible: todos tus datos personales, transacciones e historial de donaciones se eliminan de forma permanente.</p>
 
     <div class="warning">
       <strong data-i18n="warningTitle">¿Qué se elimina?</strong>
@@ -155,9 +155,17 @@
       </ul>
     </div>
 
+    <div class="warning">
+      <strong data-i18n="keptTitle">¿Qué se conserva?</strong>
+      <ul style="margin-top: 8px; padding-left: 20px;">
+        <li data-i18n="kept1">Un registro anónimo con la fecha de eliminación, sin ningún dato personal tuyo. Jabad en Campus lo conserva por obligaciones contables y legales.</li>
+        <li data-i18n="kept2">Stripe, que procesa los pagos, conserva sus propios registros de las transacciones por sus obligaciones legales. Eso no depende de la app.</li>
+      </ul>
+    </div>
+
     <!-- Sign-in stage -->
     <div id="stage-signin">
-      <p class="muted" data-i18n="signinIntro">Iniciá sesión con la cuenta que querés eliminar:</p>
+      <p class="muted" data-i18n="signinIntro">Inicia sesión con la cuenta que quieres eliminar:</p>
 
       <label for="email" data-i18n="emailLabel">Email</label>
       <input type="email" id="email" autocomplete="email" placeholder="tu@email.com">
@@ -184,7 +192,7 @@
       <label for="reason" data-i18n="reasonLabel">Motivo de eliminación (opcional)</label>
       <textarea id="reason" placeholder="Contanos por qué te vas — nos ayuda a mejorar."></textarea>
 
-      <label for="confirm-text" data-i18n="confirmTextLabel">Para confirmar, escribí ELIMINAR</label>
+      <label for="confirm-text" data-i18n="confirmTextLabel">Para confirmar, escribe ELIMINAR</label>
       <input type="text" id="confirm-text" autocomplete="off" spellcheck="false" placeholder="ELIMINAR">
 
       <button class="btn btn-primary" id="btn-delete" disabled>
@@ -198,7 +206,7 @@
     <div id="stage-success" class="hidden">
       <div class="success">
         <strong data-i18n="successTitle">Tu cuenta fue eliminada.</strong>
-        <p style="margin-top: 8px;" data-i18n="successBody">Todos tus datos personales fueron eliminados. Las suscripciones activas fueron canceladas. Si querés volver a usar Pushka, tendrás que crear una cuenta nueva.</p>
+        <p style="margin-top: 8px;" data-i18n="successBody">Todos tus datos personales fueron eliminados. Las suscripciones activas fueron canceladas. Si quieres volver a usar Pushka, tendrás que crear una cuenta nueva.</p>
       </div>
     </div>
 
@@ -227,37 +235,43 @@
     const strings = {
       es: {
         title: 'Eliminar tu cuenta',
-        subtitle: 'Esta acción es irreversible. Todos tus datos personales, transacciones e historial de donaciones serán eliminados permanentemente.',
+        subtitle: 'Pushka es la app de tzedaká de Jabad en Campus. Esta acción es irreversible: todos tus datos personales, transacciones e historial de donaciones se eliminan de forma permanente.',
         warningTitle: '¿Qué se elimina?',
         warning1: 'Tu perfil, email y datos personales',
         warning2: 'Tu historial de donaciones',
         warning3: 'Tus tarjetas guardadas y suscripciones activas (se cancelan automáticamente)',
         warning4: 'Todos tus recordatorios y configuraciones',
-        signinIntro: 'Iniciá sesión con la cuenta que querés eliminar:',
+        keptTitle: '¿Qué se conserva?',
+        kept1: 'Un registro anónimo con la fecha de eliminación, sin ningún dato personal tuyo. Jabad en Campus lo conserva por obligaciones contables y legales.',
+        kept2: 'Stripe, que procesa los pagos, conserva sus propios registros de las transacciones por sus obligaciones legales. Eso no depende de la app.',
+        signinIntro: 'Inicia sesión con la cuenta que quieres eliminar:',
         emailLabel: 'Email',
         passwordLabel: 'Contraseña',
         signinBtn: 'Iniciar sesión y continuar',
         orDivider: 'o iniciar sesión con',
         confirmIntro: 'Sesión iniciada como:',
         reasonLabel: 'Motivo de eliminación (opcional)',
-        confirmTextLabel: 'Para confirmar, escribí ELIMINAR',
+        confirmTextLabel: 'Para confirmar, escribe ELIMINAR',
         deleteBtn: 'Eliminar mi cuenta permanentemente',
         successTitle: 'Tu cuenta fue eliminada.',
-        successBody: 'Todos tus datos personales fueron eliminados. Las suscripciones activas fueron canceladas. Si querés volver a usar Pushka, tendrás que crear una cuenta nueva.',
+        successBody: 'Todos tus datos personales fueron eliminados. Las suscripciones activas fueron canceladas. Si quieres volver a usar Pushka, tendrás que crear una cuenta nueva.',
         privacyLink: 'Política de privacidad',
         confirmWord: 'ELIMINAR',
-        errorSignin: 'No pudimos iniciar sesión. Verificá el email y la contraseña.',
-        errorReauth: 'Por seguridad, cerrá sesión y volvé a iniciar sesión antes de eliminar la cuenta.',
-        errorDelete: 'Hubo un problema al eliminar la cuenta. Intentá de nuevo o escribinos.',
+        errorSignin: 'No pudimos iniciar sesión. Verifica el correo y la contraseña.',
+        errorReauth: 'Por seguridad, cierra sesión y vuelve a iniciar sesión antes de eliminar la cuenta.',
+        errorDelete: 'Hubo un problema al eliminar la cuenta. Intenta de nuevo o escríbenos.',
       },
       en: {
         title: 'Delete your account',
-        subtitle: 'This action is irreversible. All your personal data, transactions, and donation history will be permanently deleted.',
+        subtitle: 'Pushka is the tzedakah app of Jabad en Campus. This action is irreversible: all your personal data, transactions, and donation history are permanently deleted.',
         warningTitle: 'What gets deleted?',
         warning1: 'Your profile, email, and personal data',
         warning2: 'Your donation history',
         warning3: 'Your saved cards and active subscriptions (auto-cancelled)',
         warning4: 'All your reminders and settings',
+        keptTitle: 'What is kept?',
+        kept1: 'An anonymous record with the deletion date and no personal data of yours. Jabad en Campus keeps it for accounting and legal obligations.',
+        kept2: 'Stripe, which processes the payments, keeps its own transaction records for its legal obligations. That is outside the app.',
         signinIntro: 'Sign in with the account you want to delete:',
         emailLabel: 'Email',
         passwordLabel: 'Password',

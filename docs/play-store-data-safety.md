@@ -14,10 +14,18 @@ documento y el formulario**: declarar de menos es motivo de suspensión.
 Las tres están vivas y verificadas:
 
 ```
-Política de privacidad   https://chabad-admin.web.app/privacy
-Términos                 https://chabad-admin.web.app/terms
-Borrado de cuenta        https://chabad-admin.web.app/delete-account
+Política de privacidad   https://pushka-app-ioel.web.app/privacy
+Términos                 https://pushka-app-ioel.web.app/terms
+Borrado de cuenta        https://pushka-app-ioel.web.app/delete-account
 ```
+
+⚠️ **Existen DOS copias de estas páginas y divergieron.** El panel de
+administración sirve las suyas en `chabad-admin.web.app/privacy|terms|delete-account`
+(repo `pushka_admin`), y responden 200, pero están desactualizadas: se titulan
+"Chabad Pushka" y a la de borrado le falta la sección "¿Qué se conserva?" que se
+agregó el 2026-09-02 para cumplir el requisito de Play. **Las buenas son las de
+`pushka-app-ioel.web.app`**, que salen de `public/` en este repo. Unificar
+cuando se pueda.
 
 ⚠️ Cuando el sitio institucional esté completo conviene moverlas a
 `jabadencampus.com`. Google exige que la política de privacidad sea accesible
@@ -38,6 +46,20 @@ Borrado de cuenta        https://chabad-admin.web.app/delete-account
 ---
 
 ## Tipos de datos a declarar
+
+> ⚠️ **"Obligatorio" NO significa "importante": significa que el usuario no lo
+> puede desactivar.** Es la pregunta literal de Google
+> (*"los usuarios no pueden desactivar esta opción"*).
+>
+> Analytics y Crashlytics **se declaran obligatorios en Android**. El opt-out
+> existe solo en iOS, vía el prompt de App Tracking Transparency en
+> `app_initializer.dart`; en Android no hay ningún interruptor. Esta ficha es
+> de Android.
+>
+> Quedan opcionales solo los que el usuario puede efectivamente no dar:
+> teléfono, dirección postal, foto de perfil y los textos libres
+> (dedicatorias, etiquetas de recordatorios, apodos de tarjetas).
+
 
 Para cada uno: **recopilado sí**, **compartido no**, salvo donde se aclare.
 "Compartido" en el vocabulario de Google significa transferir a un tercero
@@ -85,7 +107,18 @@ acá no tiene costo; declarar de menos, sí.
 
 | Dato | Recopilado | Obligatorio | Propósito |
 |---|---|---|---|
-| Interacciones con la app | Sí | **No** | Estadísticas — eventos de Firebase Analytics |
+| Interacciones con la app | Sí | **Sí** | Estadísticas — eventos de Firebase Analytics |
+
+| Otro contenido generado por el usuario | Sí | **No** | Funciones de la app |
+
+"Contenido generado por el usuario" en el vocabulario de Google son *"biografías,
+notas o respuestas abiertas"*. En Pushka son tres campos de texto libre: la
+**dedicatoria** de una donación, la **etiqueta** de un recordatorio ("Antes de
+Shabat") y el **apodo** de una tarjeta guardada ("BBVA"). Los dos primeros
+viven en Firestore; el apodo, en `metadata.nickname` de Stripe.
+
+No es "Mensajes": esa categoría es para funciones de mensajería entre personas,
+que la app no tiene.
 
 Eventos que se registran: `purchase`, `pushka_empty`, `donation_initiated`,
 `donation_failed`, `donation_canceled`. Los parámetros son monto, moneda,
@@ -96,14 +129,14 @@ personales** en los parámetros.
 
 | Dato | Recopilado | Obligatorio | Propósito |
 |---|---|---|---|
-| Registros de fallos | Sí | **No** | Estadísticas — Firebase Crashlytics |
-| Diagnósticos | Sí | **No** | Estadísticas — Crashlytics + Analytics |
+| Registros de fallos | Sí | **Sí** | Estadísticas — Firebase Crashlytics |
+| Diagnósticos | Sí | **Sí** | Estadísticas — Crashlytics + Analytics |
 
 ### Identificadores del dispositivo
 
 | Dato | Recopilado | Obligatorio | Propósito |
 |---|---|---|---|
-| ID del dispositivo | Sí | **No** | Funciones de la app (token FCM para notificaciones), estadísticas |
+| ID del dispositivo | Sí | **Sí** | Funciones de la app (token FCM para notificaciones), estadísticas |
 
 ---
 
@@ -147,14 +180,22 @@ Pushka exige **iniciar sesión y además un código de invitación**. Si no se l
 dan credenciales al revisor, abre la app, choca contra el login y rechaza por
 "no pudimos revisar la funcionalidad".
 
-Hay que declarar que **todas las funciones están restringidas** y entregar:
+Hay que declarar que **todas las funciones están restringidas** y entregar las
+credenciales de la cuenta de prueba.
+
+**La cuenta ya está creada** (2026-09-02) en la app de producción:
 
 ```
-Usuario      una cuenta de prueba REAL creada en producción
-Contraseña   —
-Instrucciones  Iniciar sesión con Google. Cuando pida el código de
-               invitación, ingresar JYM-770.
+Usuario        play-review@jabadencampus.com
+Contraseña     está en la memoria del proyecto, no en el repositorio
+Instrucciones  Iniciar sesión con correo y contraseña (NO con Google).
+               Cuando la app pida el código de invitación, ingresar JYM-770.
 ```
 
-**Crear esa cuenta de prueba antes de enviar a revisión.** Con Google Sign-In
-conviene una cuenta de Google dedicada, no la personal de nadie.
+⚠️ **Que sea con correo y contraseña, no con Google Sign-In.** La app acepta
+los dos, pero si el revisor entra con una cuenta de Google desde los centros de
+datos de Google, salta la verificación de seguridad de la propia Google y queda
+trabado — y termina reportando que la app no funciona.
+
+⚠️ **No borrar esa cuenta**: Google la usa en cada revisión, también en las
+actualizaciones futuras.

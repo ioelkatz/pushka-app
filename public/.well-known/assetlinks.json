@@ -5,7 +5,9 @@
       "namespace": "android_app",
       "package_name": "com.pushka.app",
       "sha256_cert_fingerprints": [
-        "12:71:ED:79:A4:BF:E9:6C:84:C3:F7:7A:29:7C:EE:17:76:89:83:7C:1E:E1:B8:F3:1A:3D:EB:16:A4:26:D1:45"
+        "12:71:ED:79:A4:BF:E9:6C:84:C3:F7:7A:29:7C:EE:17:76:89:83:7C:1E:E1:B8:F3:1A:3D:EB:16:A4:26:D1:45",
+        "9A:70:B7:CE:35:8F:DA:B3:E3:72:B8:BB:45:AB:A0:92:4F:4B:44:B2:F9:D3:60:0E:FF:70:BA:61:36:32:97:B0",
+        "C5:D9:38:61:A0:AF:F1:BC:A9:0D:01:6E:EC:BA:8D:62:26:11:8D:B1:FB:23:48:33:F3:42:E4:1F:94:9B:66:9D"
       ]
     }
   },

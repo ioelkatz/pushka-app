@@ -44,7 +44,9 @@ class _DonationSubscriptionsScreenState
     // we invalidate immediately by rewriting the cache with the fresh
     // list after the CF call.
     final uid = ref.read(currentUserProvider)?.uid;
-    final cached = uid == null ? null : HiveCache.instance.loadSubscriptions(uid);
+    final cached = uid == null
+        ? null
+        : HiveCache.instance.loadSubscriptions(uid);
     if (cached != null) {
       _subs = cached.subs;
       _loading = false;
@@ -59,8 +61,9 @@ class _DonationSubscriptionsScreenState
         _error = null;
       });
     }
-    final callable =
-        FirebaseFunctions.instance.httpsCallable('listDonationSubscriptions');
+    final callable = FirebaseFunctions.instance.httpsCallable(
+      'listDonationSubscriptions',
+    );
     Object? lastError;
     for (var attempt = 0; attempt < 2; attempt++) {
       try {
@@ -68,7 +71,9 @@ class _DonationSubscriptionsScreenState
         if (!mounted) return;
         final data = result.data as Map<dynamic, dynamic>;
         final raw = data['subscriptions'] as List<dynamic>? ?? [];
-        final serverSubs = raw.map((s) => Map<String, dynamic>.from(s as Map)).toList();
+        final serverSubs = raw
+            .map((s) => Map<String, dynamic>.from(s as Map))
+            .toList();
         // Round-10 audit fix (MEDIUM #1): merge server list with any
         // still-pending optimistic entries so a create's optimistic tile
         // doesn't disappear when Stripe list-subs (eventually consistent)
@@ -77,10 +82,15 @@ class _DonationSubscriptionsScreenState
         // dedup — real subs don't carry _optimistic:true).
         final optimisticPending = _subs
             .where((s) => s['_optimistic'] == true)
-            .where((opt) => !serverSubs.any((sv) =>
-                (sv['amount'] as num?)?.toDouble() == (opt['amount'] as num?)?.toDouble() &&
-                sv['currency'] == opt['currency'] &&
-                sv['interval'] == opt['interval']))
+            .where(
+              (opt) => !serverSubs.any(
+                (sv) =>
+                    (sv['amount'] as num?)?.toDouble() ==
+                        (opt['amount'] as num?)?.toDouble() &&
+                    sv['currency'] == opt['currency'] &&
+                    sv['interval'] == opt['interval'],
+              ),
+            )
             .toList();
         final subs = [...serverSubs, ...optimisticPending];
         setState(() {
@@ -125,9 +135,12 @@ class _DonationSubscriptionsScreenState
     final subInterval = sub['interval'] as String? ?? 'month';
     final subTenantAppName = (sub['tenantAppName'] as String?)?.trim();
     final subTenantName = (sub['tenantName'] as String?)?.trim();
-    final subTenantLabel = (subTenantAppName != null && subTenantAppName.isNotEmpty)
+    final subTenantLabel =
+        (subTenantAppName != null && subTenantAppName.isNotEmpty)
         ? subTenantAppName
-        : (subTenantName != null && subTenantName.isNotEmpty ? subTenantName : '');
+        : (subTenantName != null && subTenantName.isNotEmpty
+              ? subTenantName
+              : '');
     final amountLabel = formatStripeUnits(amountUnits, subCurrency);
     final intervalLabel = subInterval == 'week' ? tr.weekly : tr.monthly;
     final details = subTenantLabel.isNotEmpty
@@ -144,7 +157,9 @@ class _DonationSubscriptionsScreenState
       builder: (ctx) => SafeArea(
         top: false,
         child: Padding(
-          padding: EdgeInsets.only(bottom: MediaQuery.of(ctx).viewInsets.bottom),
+          padding: EdgeInsets.only(
+            bottom: MediaQuery.of(ctx).viewInsets.bottom,
+          ),
           child: Padding(
             padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
             child: Column(
@@ -164,13 +179,18 @@ class _DonationSubscriptionsScreenState
                 ),
                 Text(
                   tr.cancelSubscriptionConfirmTitle,
-                  style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
+                  style: const TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.w700,
+                  ),
                   textAlign: TextAlign.center,
                 ),
                 const SizedBox(height: 14),
-                Text(details,
-                    style: const TextStyle(fontWeight: FontWeight.w600),
-                    textAlign: TextAlign.center),
+                Text(
+                  details,
+                  style: const TextStyle(fontWeight: FontWeight.w600),
+                  textAlign: TextAlign.center,
+                ),
                 const SizedBox(height: 8),
                 Text(
                   tr.cancelSubscriptionConfirmBody,
@@ -189,10 +209,18 @@ class _DonationSubscriptionsScreenState
                     style: ElevatedButton.styleFrom(
                       backgroundColor: Theme.of(ctx).colorScheme.error,
                       foregroundColor: Colors.white,
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
                     ),
                     onPressed: () => Navigator.of(ctx).pop(true),
-                    child: Text(tr.confirm, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+                    child: Text(
+                      tr.confirm,
+                      style: const TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
                   ),
                 ),
                 const SizedBox(height: 8),
@@ -201,7 +229,13 @@ class _DonationSubscriptionsScreenState
                   height: 44,
                   child: TextButton(
                     onPressed: () => Navigator.of(ctx).pop(false),
-                    child: Text(tr.cancel, style: TextStyle(color: Theme.of(ctx).colorScheme.onSurfaceVariant, fontWeight: FontWeight.w500)),
+                    child: Text(
+                      tr.cancel,
+                      style: TextStyle(
+                        color: Theme.of(ctx).colorScheme.onSurfaceVariant,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
                   ),
                 ),
               ],
@@ -217,13 +251,14 @@ class _DonationSubscriptionsScreenState
       _cancelingId = sub['id'] as String?;
     });
     try {
-      final callable = FirebaseFunctions.instance
-          .httpsCallable('cancelDonationSubscription');
+      final callable = FirebaseFunctions.instance.httpsCallable(
+        'cancelDonationSubscription',
+      );
       await callable.call({'subscriptionId': sub['id']});
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(tr.subscriptionCanceled)),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(tr.subscriptionCanceled)));
       // Round-7 regression fix: optimistically remove the canceled sub
       // from local + Hive cache BEFORE the silent reload. If the reload
       // fails (network hiccup post-cancel) the user shouldn't see the
@@ -243,9 +278,9 @@ class _DonationSubscriptionsScreenState
       await _load(silent: true);
     } catch (_) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(tr.subscriptionCancelFailed)),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(tr.subscriptionCancelFailed)));
     } finally {
       if (mounted) {
         setState(() {
@@ -289,27 +324,25 @@ class _DonationSubscriptionsScreenState
               child: _loading
                   ? const Center(child: CircularProgressIndicator())
                   : _error != null && _subs.isEmpty
-                      ? _buildErrorState(tr)
-                      : _subs.isEmpty
-                          ? _buildEmptyState(tr)
-                          : RefreshIndicator(
-                              onRefresh: _load,
-                              child: ListView.separated(
-                                padding:
-                                    const EdgeInsets.fromLTRB(16, 8, 16, 8),
-                                itemCount: _subs.length,
-                                separatorBuilder: (_, _) => Divider(
-                                  height: 18,
-                                  thickness: 1,
-                                  color: Theme.of(context).brightness ==
-                                          Brightness.dark
-                                      ? Colors.white.withValues(alpha: 0.08)
-                                      : Colors.grey.shade200,
-                                ),
-                                itemBuilder: (context, index) =>
-                                    _buildSubTile(_subs[index], tr),
-                              ),
-                            ),
+                  ? _buildErrorState(tr)
+                  : _subs.isEmpty
+                  ? _buildEmptyState(tr)
+                  : RefreshIndicator(
+                      onRefresh: _load,
+                      child: ListView.separated(
+                        padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+                        itemCount: _subs.length,
+                        separatorBuilder: (_, _) => Divider(
+                          height: 18,
+                          thickness: 1,
+                          color: Theme.of(context).brightness == Brightness.dark
+                              ? Colors.white.withValues(alpha: 0.08)
+                              : Colors.grey.shade200,
+                        ),
+                        itemBuilder: (context, index) =>
+                            _buildSubTile(_subs[index], tr),
+                      ),
+                    ),
             ),
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
@@ -319,7 +352,10 @@ class _DonationSubscriptionsScreenState
                   onPressed: (_loading || _processingId)
                       ? null
                       : _openCreateRecurringSheet,
-                  icon: const Icon(Icons.favorite_outline, color: Color(0xFFCC2936)),
+                  icon: const Icon(
+                    Icons.favorite_outline,
+                    color: Color(0xFFCC2936),
+                  ),
                   label: Text(
                     tr.donate.toUpperCase(),
                     style: const TextStyle(
@@ -349,11 +385,9 @@ class _DonationSubscriptionsScreenState
     String interval = 'month';
     String? error;
 
-    final profile = ref.read(userProfileProvider).valueOrNull;
-    final currency =
-        ((profile?['currencyCode'] as String?)?.trim().isNotEmpty ?? false)
-            ? (profile!['currencyCode'] as String)
-            : 'usd';
+    // activeCurrencyProvider y no el perfil directo: incluye la moneda recién
+    // elegida que todavía no llegó por el stream.
+    final currency = ref.read(activeCurrencyProvider);
     // Round-7 regression fix: shortCurrencySymbol renders unambiguous
     // MX$/AR$/CL$/CO$/US$ prefixes (matches settings_screen / pushka_screen /
     // auto_empty_screen). The generic currencySymbol() falls back to '$'
@@ -361,7 +395,8 @@ class _DonationSubscriptionsScreenState
     final symbol = shortCurrencySymbol(currency);
     final tenantConfig = ref.read(tenantConfigProvider).valueOrNull;
     final merchantDisplayName = tenantConfig?.appName ?? 'Pushka';
-    final activeTenantId = profile?['tenantId'] as String?;
+    final activeTenantId =
+        ref.read(userProfileProvider).valueOrNull?['tenantId'] as String?;
 
     // Round-4 audit MEDIUM fix: warn if the user already has an active
     // sub in this tenant — otherwise they'd end up double-billed and
@@ -369,9 +404,9 @@ class _DonationSubscriptionsScreenState
     final existingSubHere = activeTenantId == null
         ? null
         : _subs.cast<Map<String, dynamic>?>().firstWhere(
-              (s) => s?['tenantId'] == activeTenantId,
-              orElse: () => null,
-            );
+            (s) => s?['tenantId'] == activeTenantId,
+            orElse: () => null,
+          );
     if (existingSubHere != null && mounted) {
       final proceed = await showModalBottomSheet<bool>(
         context: context,
@@ -384,7 +419,9 @@ class _DonationSubscriptionsScreenState
         builder: (ctx) => SafeArea(
           top: false,
           child: Padding(
-            padding: EdgeInsets.only(bottom: MediaQuery.of(ctx).viewInsets.bottom),
+            padding: EdgeInsets.only(
+              bottom: MediaQuery.of(ctx).viewInsets.bottom,
+            ),
             child: Padding(
               padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
               child: Column(
@@ -404,7 +441,10 @@ class _DonationSubscriptionsScreenState
                   ),
                   Text(
                     tr.recurringAlreadyActiveTitle,
-                    style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
+                    style: const TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.w700,
+                    ),
                     textAlign: TextAlign.center,
                   ),
                   const SizedBox(height: 14),
@@ -425,10 +465,18 @@ class _DonationSubscriptionsScreenState
                       style: ElevatedButton.styleFrom(
                         backgroundColor: AppTokens.primaryBlue,
                         foregroundColor: Colors.white,
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
                       ),
                       onPressed: () => Navigator.pop(ctx, true),
-                      child: Text(tr.continueLabel, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+                      child: Text(
+                        tr.continueLabel,
+                        style: const TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
                     ),
                   ),
                   const SizedBox(height: 8),
@@ -437,7 +485,13 @@ class _DonationSubscriptionsScreenState
                     height: 44,
                     child: TextButton(
                       onPressed: () => Navigator.pop(ctx, false),
-                      child: Text(tr.cancel, style: TextStyle(color: Theme.of(ctx).colorScheme.onSurfaceVariant, fontWeight: FontWeight.w500)),
+                      child: Text(
+                        tr.cancel,
+                        style: TextStyle(
+                          color: Theme.of(ctx).colorScheme.onSurfaceVariant,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
                     ),
                   ),
                 ],
@@ -491,8 +545,8 @@ class _DonationSubscriptionsScreenState
                 children: [
                   Expanded(
                     child: _IntervalChip(
-                      label: tr.weekly[0].toUpperCase() +
-                          tr.weekly.substring(1),
+                      label:
+                          tr.weekly[0].toUpperCase() + tr.weekly.substring(1),
                       selected: interval == 'week',
                       onTap: () => setSheetState(() => interval = 'week'),
                     ),
@@ -500,8 +554,8 @@ class _DonationSubscriptionsScreenState
                   const SizedBox(width: 10),
                   Expanded(
                     child: _IntervalChip(
-                      label: tr.monthly[0].toUpperCase() +
-                          tr.monthly.substring(1),
+                      label:
+                          tr.monthly[0].toUpperCase() + tr.monthly.substring(1),
                       selected: interval == 'month',
                       onTap: () => setSheetState(() => interval = 'month'),
                     ),
@@ -536,33 +590,37 @@ class _DonationSubscriptionsScreenState
                         borderSide: BorderSide(color: cs.outline),
                       ),
                     ),
-                    child: Row(children: [
-                      Expanded(
-                        child: Text(
-                          selectedReason ?? tr.donationReasonNone,
-                          style: TextStyle(
-                            fontSize: 16,
-                            color: selectedReason == null
-                                ? cs.onSurfaceVariant
-                                : cs.onSurface,
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            selectedReason ?? tr.donationReasonNone,
+                            style: TextStyle(
+                              fontSize: 16,
+                              color: selectedReason == null
+                                  ? cs.onSurfaceVariant
+                                  : cs.onSurface,
+                            ),
                           ),
                         ),
-                      ),
-                      Icon(Icons.keyboard_arrow_down_rounded,
-                          color: cs.onSurfaceVariant),
-                    ]),
+                        Icon(
+                          Icons.keyboard_arrow_down_rounded,
+                          color: cs.onSurfaceVariant,
+                        ),
+                      ],
+                    ),
                   ),
                 ),
               ],
               const SizedBox(height: 14),
               TextField(
                 controller: amountCtrl,
-                keyboardType:
-                    const TextInputType.numberWithOptions(decimal: true),
+                keyboardType: const TextInputType.numberWithOptions(
+                  decimal: true,
+                ),
                 decoration: InputDecoration(
                   labelText: tr.amount,
-                  floatingLabelStyle:
-                      TextStyle(color: cs.onSurfaceVariant),
+                  floatingLabelStyle: TextStyle(color: cs.onSurfaceVariant),
                   hintText: '0',
                   prefixText: '$symbol ',
                   errorText: error,
@@ -628,8 +686,7 @@ class _DonationSubscriptionsScreenState
         },
       );
     } finally {
-      Future.delayed(
-          const Duration(milliseconds: 400), amountCtrl.dispose);
+      Future.delayed(const Duration(milliseconds: 400), amountCtrl.dispose);
     }
 
     if (result == null || !mounted) return;
@@ -668,7 +725,11 @@ class _DonationSubscriptionsScreenState
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           // Round-4 audit fix: symbol matches the sub currency, not $ default.
-          content: Text(tr.donationProcessed(formatCurrencyAmount(donationAmount, currency))),
+          content: Text(
+            tr.donationProcessed(
+              formatCurrencyAmount(donationAmount, currency),
+            ),
+          ),
         ),
       );
       // Round-9 regression fix (LOW #8): optimistically append the new sub
@@ -682,14 +743,19 @@ class _DonationSubscriptionsScreenState
         'amount': donationAmount,
         'currency': currency,
         'interval': chosenInterval,
-        'donationReason': (donationReason == null || donationReason.isEmpty) ? null : donationReason,
+        'donationReason': (donationReason == null || donationReason.isEmpty)
+            ? null
+            : donationReason,
         'status': 'active',
         '_optimistic': true,
       };
       final newList = [..._subs, optimisticSub];
       setState(() => _subs = newList);
       if (uidOptimistic != null) {
-        await HiveCache.instance.saveSubscriptions(uid: uidOptimistic, subs: newList);
+        await HiveCache.instance.saveSubscriptions(
+          uid: uidOptimistic,
+          subs: newList,
+        );
       }
       // Silent refresh — the current list already shows the correct state
       // optimistically (cancel: sub removed / create: appended above) so
@@ -705,9 +771,9 @@ class _DonationSubscriptionsScreenState
       });
     } on FirebaseFunctionsException catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(e.message ?? tr.error)),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(e.message ?? tr.error)));
     } on StripeServiceException catch (e) {
       if (e.code == 'canceled') return;
       if (!mounted) return;
@@ -724,14 +790,14 @@ class _DonationSubscriptionsScreenState
         'network-error' => tr.errorPaymentServer,
         _ => tr.error,
       };
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(message)),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(message)));
     } catch (_) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(tr.error)),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(tr.error)));
     } finally {
       if (mounted) setState(() => _processingId = false);
     }
@@ -745,7 +811,11 @@ class _DonationSubscriptionsScreenState
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(Icons.favorite_outline, size: 56, color: const Color(0xFFCC2936)),
+            Icon(
+              Icons.favorite_outline,
+              size: 56,
+              color: const Color(0xFFCC2936),
+            ),
             const SizedBox(height: 14),
             Text(
               tr.noActiveSubscriptions,
@@ -811,8 +881,8 @@ class _DonationSubscriptionsScreenState
     final orgLabel = tenantAppName.isNotEmpty
         ? tenantAppName
         : tenantName.isNotEmpty
-            ? tenantName
-            : '';
+        ? tenantName
+        : '';
     final periodEnd = (sub['currentPeriodEnd'] as num?)?.toInt();
 
     final amount = stripeUnitsToAmount(amountUnits, currency);
@@ -867,10 +937,7 @@ class _DonationSubscriptionsScreenState
                     orgLabel.isNotEmpty
                         ? '$amountStr · $intervalLabel'
                         : intervalLabel,
-                    style: TextStyle(
-                      fontSize: 13,
-                      color: cs.onSurfaceVariant,
-                    ),
+                    style: TextStyle(fontSize: 13, color: cs.onSurfaceVariant),
                   ),
                   if (periodEnd != null) ...[
                     const SizedBox(height: 2),

@@ -124,6 +124,19 @@ class _PushkaAppState extends ConsumerState<PushkaApp>
       final profile = next.valueOrNull;
       if (profile == null) return;
 
+      // El cambio de moneda se muestra de inmediato vía pendingCurrencyProvider
+      // mientras viaja la escritura de la Cloud Function. Cuando el perfil ya
+      // trae la moneda nueva, se descarta el valor optimista para que vuelva a
+      // mandar el servidor — que es la única fuente de verdad.
+      final pending = ref.read(pendingCurrencyProvider);
+      if (pending != null) {
+        final fromProfile = (profile['currencyCode'] as String?)?.trim();
+        if (fromProfile != null &&
+            fromProfile.toLowerCase() == pending.toLowerCase()) {
+          ref.read(pendingCurrencyProvider.notifier).state = null;
+        }
+      }
+
       // If an admin blocked this user while they were active, sign them out immediately.
       // Use AuthController.signOut so FCM tokens are revoked too — otherwise the
       // blocked user keeps receiving push notifications on this device.
