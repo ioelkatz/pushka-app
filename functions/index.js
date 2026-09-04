@@ -112,6 +112,99 @@ async function enforceRateLimitByIp(request, action, maxCalls, windowSeconds) {
   await enforceRateLimit(`ip:${trustedCallerIp(request)}`, action, maxCalls, windowSeconds);
 }
 
+// ---------------------------------------------------------------------------
+// Correo verificado para poder pagar
+// ---------------------------------------------------------------------------
+/**
+ * Solo las cuentas creadas DESPUES de este instante necesitan el correo
+ * verificado para donar.
+ *
+ * La app manda el mail de verificacion al registrarse pero nunca lo exigio, asi
+ * que la enorme mayoria de los donantes actuales —el Rab incluido— nunca lo
+ * clickeo. Exigirlo hacia atras los dejaria sin poder donar de un dia para el
+ * otro, que es un precio mucho mas alto que el abuso que evita.
+ *
+ * NO tocar esta fecha para "limpiar" cuentas viejas: correrla hacia adelante no
+ * hace nada y correrla hacia atras bloquea gente real sin aviso.
+ */
+const EMAIL_VERIFICATION_CUTOFF_MS = Date.parse("2026-09-04T00:00:00Z");
+
+/**
+ * Exige correo verificado antes de mover plata.
+ *
+ * Se aplica en el pago y no en el login a proposito: el usuario puede entrar,
+ * mirar la app y armar su pushka sin friccion; el freno aparece unicamente
+ * donde el fraude cuesta dinero. Con el codigo de invitacion publicado en la
+ * ficha de Play, crear cuentas es gratis e ilimitado, y esto es lo que le pone
+ * precio real al alta masiva: hace falta un buzon por cuenta.
+ *
+ * Las cuentas de Google entran sin notarlo — Google ya verifico el correo y el
+ * token llega con email_verified true, asi que ni siquiera se consulta a Auth.
+ *
+ * Falla ABIERTO si Auth no responde: bloquear una donacion legitima por una
+ * caida de infraestructura es peor que dejar pasar un intento. Las otras
+ * defensas (tope por uid, tope por IP, Radar) siguen en pie.
+ */
+async function requireVerifiedEmailForPayments(request) {
+  // Camino feliz sin costo: el token ya dice que esta verificado.
+  if (request.auth?.token?.email_verified === true) return;
+
+  const uid = request.auth.uid;
+
+  // El token puede estar viejo: si el usuario acaba de verificar y todavia no
+  // lo refresco, diria false. Por eso el rechazo siempre se confirma contra
+  // Auth antes de frenar a nadie.
+  let user;
+  try {
+    user = await admin.auth().getUser(uid);
+  } catch (err) {
+    console.warn("requireVerifiedEmailForPayments: getUser fallo, se deja pasar",
+        String(err?.message || err));
+    return;
+  }
+
+  if (user.emailVerified) return;
+  // Sin correo no hay nada que verificar (proveedores sin email).
+  if (!user.email) return;
+
+  const createdMs = Date.parse(user.metadata?.creationTime || "");
+  if (!Number.isFinite(createdMs) || createdMs < EMAIL_VERIFICATION_CUTOFF_MS) return;
+
+  // Reenvio en el momento. Sin esto el usuario cuyo enlace vencio queda
+  // trabado sin salida: la app instalada no tiene boton de reenviar, y este
+  // cambio es server-only justamente para que aplique a los binarios que ya
+  // estan en la calle. El tope de 1 cada 10 minutos evita que un atacante
+  // convierta esta rama en un generador de correo.
+  let resent = false;
+  try {
+    await enforceRateLimit(uid, "resendVerificationEmail", 1, 600);
+    const link = await admin.auth().generateEmailVerificationLink(user.email);
+    await sendEmail({
+      to: user.email,
+      subject: "Confirma tu correo para poder donar",
+      html: `<p>Hola,</p>
+<p>Para poder donar en la pushka de Jabad en Campus necesitamos confirmar que este correo es tuyo.</p>
+<p><a href="${_escapeHtmlForEmail(link)}">Confirmar mi correo</a></p>
+<p>Después de confirmarlo, vuelve a la app e intenta la donación otra vez.</p>
+<p>Si no fuiste tú quien intentó donar, puedes ignorar este mensaje.</p>`,
+    });
+    resent = true;
+  } catch (err) {
+    // Rate limit propio, SendGrid caido o link no generable: seguimos al
+    // rechazo igual, con el mensaje que no promete un correo que no salio.
+    console.warn("requireVerifiedEmailForPayments: no se pudo reenviar",
+        String(err?.message || err));
+  }
+
+  throw new HttpsError(
+    "failed-precondition",
+    resent
+      ? `Te enviamos un enlace a ${user.email} para confirmar tu correo. Ábrelo y vuelve a intentar la donación.`
+      : `Confirma tu correo electrónico (${user.email}) para poder donar. Revisa tu bandeja de entrada y la carpeta de spam.`,
+    { reason: "email-not-verified", email: user.email }
+  );
+}
+
 // Exhaustive list of currencies accepted by the app and their Stripe minimum
 // charge amounts (in the smallest currency unit, e.g. cents).
 // Any currency NOT in this map is rejected before reaching Stripe.
@@ -1010,7 +1103,7 @@ exports.sendTestNotification = onCall({ enforceAppCheck: false }, async (request
 });
 
 exports.createPaymentIntent = onCall(
-  { secrets: [stripeSecret], enforceAppCheck: false },
+  { secrets: [stripeSecret, sendgridApiKey], enforceAppCheck: false },
   async (request) => {
   if (!request.auth?.uid) {
     throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
@@ -1022,6 +1115,9 @@ exports.createPaymentIntent = onCall(
   // uids. 120/hora por IP deja pasar una jornada de donaciones en la
   // Wi-Fi compartida de la casa de Jabad y corta el card testing industrial.
   await enforceRateLimitByIp(request, "createPaymentIntent", 120, 3600);
+  // Correo verificado antes de mover plata. Solo afecta cuentas creadas
+  // despues del corte; las de Google ni consultan a Auth.
+  await requireVerifiedEmailForPayments(request);
   if (!stripeSecret.value()) {
     throw new HttpsError("failed-precondition", "Stripe no configurado.");
   }
@@ -1791,7 +1887,7 @@ exports.releaseManualPushkaEmptyLock = onCall(
 // `application_fee_percent` (subs use percent, not amount) + transfer_data
 // so each invoice routes to the tenant.
 exports.createDonationSubscription = onCall(
-  { secrets: [stripeSecret], enforceAppCheck: false },
+  { secrets: [stripeSecret, sendgridApiKey], enforceAppCheck: false },
   async (request) => {
     if (!request.auth?.uid) {
       throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
@@ -1802,6 +1898,9 @@ exports.createDonationSubscription = onCall(
     // uids. 40/hora por IP deja pasar una jornada de donaciones en la
     // Wi-Fi compartida de la casa de Jabad y corta el card testing industrial.
     await enforceRateLimitByIp(request, "createDonationSubscription", 40, 3600);
+    // Correo verificado antes de mover plata. Solo afecta cuentas creadas
+    // despues del corte; las de Google ni consultan a Auth.
+    await requireVerifiedEmailForPayments(request);
     if (!stripeSecret.value()) {
       throw new HttpsError("failed-precondition", "Stripe no configurado.");
     }
@@ -2510,7 +2609,7 @@ exports.cancelDonationSubscription = onCall(
 // ---------------------------------------------------------------------------
 
 exports.createSetupIntent = onCall(
-  { secrets: [stripeSecret], enforceAppCheck: false },
+  { secrets: [stripeSecret, sendgridApiKey], enforceAppCheck: false },
   async (request) => {
     if (!request.auth?.uid) {
       throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
@@ -2524,6 +2623,9 @@ exports.createSetupIntent = onCall(
     // uids. 60/hora por IP deja pasar una jornada de donaciones en la
     // Wi-Fi compartida de la casa de Jabad y corta el card testing industrial.
     await enforceRateLimitByIp(request, "createSetupIntent", 60, 3600);
+    // Correo verificado antes de mover plata. Solo afecta cuentas creadas
+    // despues del corte; las de Google ni consultan a Auth.
+    await requireVerifiedEmailForPayments(request);
 
     // Client-supplied correlation ID — scopes the Stripe idempotency key to a
     // single attempt so retries within the same minute don't reuse a key whose
@@ -11594,7 +11696,7 @@ exports.getDonationReasonStats = onCall(
 // vuelven al app.pushkapp.cc / app.pushkapp.cc/cancel.
 // ---------------------------------------------------------------------------
 exports.createCheckoutSession = onCall(
-  { secrets: [stripeSecret], enforceAppCheck: false },
+  { secrets: [stripeSecret, sendgridApiKey], enforceAppCheck: false },
   async (request) => {
     if (!request.auth?.uid) {
       throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
@@ -11605,6 +11707,9 @@ exports.createCheckoutSession = onCall(
     // uids. 120/hora por IP deja pasar una jornada de donaciones en la
     // Wi-Fi compartida de la casa de Jabad y corta el card testing industrial.
     await enforceRateLimitByIp(request, "createCheckoutSession", 120, 3600);
+    // Correo verificado antes de mover plata. Solo afecta cuentas creadas
+    // despues del corte; las de Google ni consultan a Auth.
+    await requireVerifiedEmailForPayments(request);
     if (!stripeSecret.value()) {
       throw new HttpsError("failed-precondition", "Stripe no configurado.");
     }
