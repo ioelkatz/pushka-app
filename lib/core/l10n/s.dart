@@ -1688,6 +1688,67 @@ class S {
     'Erreur de connexion Google. Vérifiez les services Google Play et réessayez',
     'שגיאת כניסה עם Google. בדוק את שירותי Google Play ונסה שוב',
   );
+  // --- Verificacion de correo con codigo de 6 digitos (2026-09-04) ---
+  String get verifyEmailTitle => _t(
+    'Confirma tu correo',
+    'Confirm your email',
+    'Confirmez votre e-mail',
+    'אשר את הדוא"ל שלך',
+  );
+  String verifyEmailSubtitle(String email) => _t(
+    'Te enviamos un código de 6 dígitos a $email. Escríbelo aquí abajo.',
+    'We sent a 6-digit code to $email. Enter it below.',
+    'Nous avons envoyé un code à 6 chiffres à $email. Saisissez-le ci-dessous.',
+    'שלחנו קוד בן 6 ספרות אל $email. הזן אותו כאן.',
+  );
+  String get verifyEmailCodeSent => _t(
+    'Código enviado. Revisa tu bandeja de entrada y la carpeta de spam.',
+    'Code sent. Check your inbox and your spam folder.',
+    'Code envoyé. Vérifiez votre boîte de réception et vos spams.',
+    'הקוד נשלח. בדוק את תיבת הדואר ואת תיקיית הספאם.',
+  );
+  String get verifyEmailResend => _t(
+    'Enviar otro código',
+    'Send another code',
+    'Envoyer un autre code',
+    'שלח קוד נוסף',
+  );
+  String verifyEmailResendIn(int seconds) => _t(
+    'Puedes pedir otro código en $seconds s',
+    'You can request another code in $seconds s',
+    'Vous pourrez demander un autre code dans $seconds s',
+    'אפשר לבקש קוד נוסף בעוד $seconds שניות',
+  );
+  String get verifyEmailTooManyRequests => _t(
+    'Demasiados intentos. Espera un momento y vuelve a probar.',
+    'Too many attempts. Wait a moment and try again.',
+    'Trop de tentatives. Patientez un instant et réessayez.',
+    'יותר מדי ניסיונות. המתן רגע ונסה שוב.',
+  );
+  String get verifyEmailWrongAddress => _t(
+    'Ese no es mi correo',
+    'That is not my email',
+    "Ce n'est pas mon e-mail",
+    'זה לא הדוא"ל שלי',
+  );
+  String get verifyEmailWrongTitle => _t(
+    '¿Escribiste mal tu correo?',
+    'Did you mistype your email?',
+    'Avez-vous mal saisi votre e-mail ?',
+    'הקלדת את הדוא"ל בטעות?',
+  );
+  String get verifyEmailWrongBody => _t(
+    'Vamos a borrar esta cuenta para que puedas registrarte otra vez con la dirección correcta. Todavía no tienes donaciones ni historial, así que no se pierde nada.',
+    'We will delete this account so you can sign up again with the right address. You have no donations or history yet, so nothing is lost.',
+    "Nous allons supprimer ce compte pour que vous puissiez vous inscrire avec la bonne adresse. Vous n'avez encore ni dons ni historique, rien ne sera perdu.",
+    'נמחק את החשבון כדי שתוכל להירשם שוב עם הכתובת הנכונה. אין לך עדיין תרומות או היסטוריה, כך שלא ייאבד דבר.',
+  );
+  String get verifyEmailWrongConfirm => _t(
+    'Borrar y empezar de nuevo',
+    'Delete and start over',
+    'Supprimer et recommencer',
+    'מחק והתחל מחדש',
+  );
   /// Fila del vaciado automatico cuando el ultimo cobro off-session fallo.
   String get autoEmptyLastChargeFailed => _t(
     'El último cobro falló — revisa tu tarjeta',

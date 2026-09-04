@@ -159,21 +159,16 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
 
     setState(() => _isLoading = true);
     try {
-      // Round-5 audit HIGH fix: signUp() returns true ONLY when the verification
-      // email was actually dispatched. Previously we always claimed "email sent"
-      // even when Firebase rate-limited or the SMTP path failed, leaving the
-      // user waiting for a verification that never arrived.
-      final emailSent = await ref.read(authControllerProvider).signUp(
+      await ref.read(authControllerProvider).signUp(
             name: name,
             email: email,
             password: password,
           );
+      // Ya no se muestra ningun aviso de "te mandamos un correo": el router
+      // manda solo a VerifyEmailScreen, que pide el codigo al abrirse y
+      // reporta ahi mismo si salio o no. Prometerlo desde aca era justamente
+      // lo que dejaba al usuario esperando un correo que a veces no llegaba.
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(emailSent
-              ? _tr.verificationEmailSent(email)
-              : _tr.verificationEmailFailed)),
-        );
         Navigator.pop(context);
       }
     } on FirebaseAuthException catch (e) {

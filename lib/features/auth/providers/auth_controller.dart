@@ -72,11 +72,10 @@ class AuthController {
     }
   }
 
-  /// Creates the account and returns `true` if the verification email was
-  /// dispatched successfully. Returns `false` when `sendEmailVerification`
-  /// fails (rate limit, SMTP hiccup, network) — callers should NOT claim
-  /// "we sent you a verification email" in that case.
-  Future<bool> signUp({
+  /// Crea la cuenta. La confirmacion del correo la maneja VerifyEmailScreen,
+  /// a la que el router manda solo despues del alta: pide el codigo de 6
+  /// digitos apenas se abre, asi que aca no se manda ningun correo.
+  Future<void> signUp({
     required String name,
     required String email,
     required String password,
@@ -106,17 +105,16 @@ class AuthController {
       } catch (_) { /* orphan will need manual cleanup */ }
       rethrow;
     }
-    // Send verification email — non-blocking for account creation, but we
-    // MUST track whether it actually went out so the register screen doesn't
-    // lie to the user (previously the try/catch was silent and the UI always
-    // said "email sent" even when Firebase rate-limited or SMTP failed).
-    var emailVerificationSent = false;
-    try {
-      await credential.user?.sendEmailVerification();
-      emailVerificationSent = credential.user != null;
-    } catch (e, st) {
-      _recordNonFatal(e, st, op: 'signUp.sendEmailVerification', uid: credential.user?.uid);
-    }
+    // Aca se mandaba el mail de verificacion NATIVO de Firebase, que es un
+    // enlace. Salio el 2026-09-04, reemplazado por el codigo de 6 digitos de
+    // VerifyEmailScreen, que la pantalla pide sola al abrirse.
+    //
+    // Dos razones para el cambio. La primera es que el enlace no se exigia
+    // nunca: se mandaba, el usuario lo ignoraba, y quedaba usando la app con un
+    // correo sin confirmar — o directamente mal escrito, sin enterarse jamas de
+    // que sus comprobantes de donacion viajaban a un buzon inexistente. La
+    // segunda es que dejar los dos activos le llegaban DOS correos distintos
+    // por el mismo tramite, cada uno pidiendole algo diferente.
     final user = credential.user;
     if (user != null) {
       try {
@@ -132,7 +130,6 @@ class AuthController {
         }
       }
     }
-    return emailVerificationSent;
   }
 
   Future<void> signOut() async {
