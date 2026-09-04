@@ -1,0 +1,28 @@
+<es-419>
+Primera versión de la pushka de Jabad en Campus en Google Play.
+
+Juntas tu tzedaká durante la semana y la vacías cuando tú quieras, en un solo cargo. También puedes programar que se vacíe sola cada semana, cada mes o en Erev Rosh Jodesh, con aviso cada vez.
+
+Adentro hay tefilot y segulot, recordatorios, historial con comprobante por correo, y un aviso cuando se acerca una festividad.
+</es-419>
+<en-US>
+First release of the Jabad en Campus pushka on Google Play.
+
+Collect your tzedakah through the week and empty it whenever you want, in a single charge. You can also schedule it to empty on its own every week, every month, or on Erev Rosh Chodesh, with a notice each time.
+
+Inside there are tefillot and segulot, reminders, a full history with an emailed receipt, and a heads-up when a holiday is coming.
+</en-US>
+<fr-FR>
+Première version de la pushka de Jabad en Campus sur Google Play.
+
+Vous rassemblez votre tsedaka pendant la semaine et vous la videz quand vous le souhaitez, en un seul prélèvement. Vous pouvez aussi programmer un vidage automatique chaque semaine, chaque mois ou à Erev Roch Hodech, avec un avis à chaque fois.
+
+À l'intérieur : des tefilot et des segoulot, des rappels, un historique complet avec reçu par courriel, et une alerte à l'approche d'une fête.
+</fr-FR>
+<iw-IL>
+הגרסה הראשונה של הפושקע של חב"ד בקמפוס בגוגל פליי.
+
+אוספים צדקה במשך השבוע ומרוקנים מתי שרוצים, בחיוב אחד. אפשר גם לתזמן ריקון אוטומטי כל שבוע, כל חודש או בערב ראש חודש, עם הודעה בכל פעם.
+
+בפנים יש תפילות וסגולות, תזכורות, היסטוריה מלאה עם קבלה במייל, והתראה כשמתקרב חג.
+</iw-IL>
