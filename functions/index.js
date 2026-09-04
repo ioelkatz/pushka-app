@@ -2445,7 +2445,13 @@ exports.listDonationSubscriptions = onCall(
     if (tenantIds.length === 0) return { subscriptions: [] };
 
     const stripe = require("stripe")(stripeSecret.value(), { timeout: 15000 });
-    const ACTIVE_STATUSES = new Set(["active", "trialing", "past_due"]);
+    // `unpaid` entro el 2026-09-04. Es el estado al que Stripe manda la
+    // suscripcion cuando termina de reintentar y se rinde. Estaba afuera, asi
+    // que la fila DESAPARECIA de "Mis donaciones" sin ninguna explicacion: el
+    // donante veia su donacion mensual un dia y al siguiente no estaba, sin
+    // enterarse de que habia dejado de dar. Ahora se muestra con el aviso de
+    // cobro fallido para que pueda actualizar la tarjeta.
+    const ACTIVE_STATUSES = new Set(["active", "trialing", "past_due", "unpaid"]);
 
     // Resolve per-tenant customerId + connect account for each tenant the
     // user belongs to. Skip tenants without an active connect account
@@ -3139,7 +3145,7 @@ exports.deletePaymentMethod = onCall(
     // Last-card + active-recurring guard: if detaching this PM would leave
     // the customer with ZERO cards AND they have an active donation
     // subscription, the next invoice cycle silently fails
-    // (invoice.payment_failed → cleanupIncompleteDonationSubscriptions
+    // (invoice.payment_failed → aviso al donante + cleanupIncompleteDonationSubscriptions
     // eventually cancels, but the donor never realizes their recurring
     // giving stopped). Block the delete and tell them to cancel the sub
     // first from the "Mis donaciones" screen.
@@ -3322,7 +3328,10 @@ exports.setDefaultPaymentMethod = onCall(
 );
 
 exports.stripeWebhook = onRequest(
-  { secrets: [stripeSecret, stripeWebhookSecret] },
+  // sendgridApiKey entro el 2026-09-04: el webhook ahora avisa por correo
+  // cuando falla un cobro recurrente. Sin el secreto, sendEmail se saltea en
+  // silencio y el aviso no sale.
+  { secrets: [stripeSecret, stripeWebhookSecret, sendgridApiKey] },
   async (req, res) => {
   if (!stripeSecret.value()) {
     console.error("stripeWebhook: STRIPE_SECRET_KEY is missing");
@@ -3414,6 +3423,21 @@ exports.stripeWebhook = onRequest(
       // pushka_auto_empty: state already updated by the scheduled CF that
       // confirmed the charge. Just mark the event as processed.
       if (uid && purpose === "pushka_auto_empty") {
+        // Un cobro exitoso borra la marca de fallo anterior, para que la
+        // pantalla de Cartera deje de mostrar el aviso rojo apenas la tarjeta
+        // nueva funciona. Sin esto el aviso quedaria pegado para siempre.
+        const tenantIdOk = intent.metadata?.tenantId
+          ? String(intent.metadata.tenantId)
+          : null;
+        if (tenantIdOk) {
+          await db.collection("users").doc(uid)
+            .collection("tenantState").doc(tenantIdOk)
+            .set({
+              autoEmptyLastFailureAt: admin.firestore.FieldValue.delete(),
+              updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            }, { merge: true })
+            .catch(() => {});
+        }
         await finalizeWebhookEvent(eventRef, {
           status: "processed",
           uid,
@@ -3657,6 +3681,61 @@ exports.stripeWebhook = onRequest(
           message: reason,
           livemode: !!event.livemode,
         });
+      }
+
+      // Cobro OFF-SESSION fallido: el usuario no estaba mirando nada, asi que
+      // si no le avisamos no se entera nunca. Es el mismo agujero que el de la
+      // donacion recurrente (audit 2026-09-04): el vaciado automatico podia
+      // llevar meses fallando mientras la pantalla de Cartera seguia diciendo
+      // "Mensual · 12 de octubre".
+      //
+      // Solo para `pushka_auto_empty`. En una donacion manual el usuario esta
+      // mirando la hoja de pago y ya ve el rechazo ahi mismo: mandarle push y
+      // correo seria ruido duplicado.
+      if (uid && purpose === "pushka_auto_empty") {
+        const currencyCode = String(intent.currency || "usd").toUpperCase();
+        const montoTexto = `${currencyCode} ${amount.toFixed(2)}`;
+
+        // Marca para que la pantalla de Cartera pueda dejar de mentir. Sin
+        // esto la fila seguia diciendo "Mensual · 12 de octubre" aunque el
+        // cobro llevara meses fallando. Se limpia sola en el proximo cobro
+        // exitoso (ver payment_intent.succeeded).
+        if (tenantIdMeta) {
+          await db.collection("users").doc(uid)
+            .collection("tenantState").doc(tenantIdMeta)
+            .set({
+              autoEmptyLastFailureAt: admin.firestore.FieldValue.serverTimestamp(),
+              updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            }, { merge: true })
+            .catch((err) => console.warn("auto_empty failure flag", String(err?.message || err)));
+        }
+        try {
+          await sendToUser(uid, {
+            title: "No pudimos vaciar tu pushka",
+            body: `El cobro automático de ${montoTexto} no se realizó. Revisa tu tarjeta.`,
+            data: { type: "auto_empty_failed" },
+          });
+        } catch (err) {
+          console.warn("payment_intent.payment_failed: push fallo", String(err?.message || err));
+        }
+        try {
+          const userSnap = await db.collection("users").doc(uid).get();
+          const userData = userSnap.data() || {};
+          const to = String(userData.billingEmail || userData.email || "").trim();
+          if (to) {
+            await sendEmail({
+              to,
+              subject: "No pudimos vaciar tu pushka",
+              html: `<p>Hola,</p>
+<p>Llegó el día de vaciar tu pushka automáticamente, pero el cobro de <b>${_escapeHtmlForEmail(montoTexto)}</b> no se pudo procesar.</p>
+<p>Lo más común es que la tarjeta haya vencido o que el banco la haya rechazado. <b>Tu pushka sigue llena</b>: nada se perdió. Entra a la app, actualiza tu tarjeta en <b>Tarjetas guardadas</b> y podrás vaciarla cuando quieras.</p>
+<p>El vaciado automático vuelve a intentarlo en la próxima fecha programada.</p>
+<p>Gracias por tu tzedaká.</p>`,
+            });
+          }
+        } catch (err) {
+          console.warn("payment_intent.payment_failed: correo fallo", String(err?.message || err));
+        }
       }
 
       // Release the manual pushka_empty lock on failure too — otherwise a
@@ -4592,6 +4671,52 @@ exports.stripeWebhook = onRequest(
               ?? "payment_failed",
             livemode: !!event.livemode,
           });
+
+          // AVISARLE AL DONANTE. Hasta el audit del 2026-09-04 esta rama
+          // escribia el payment_event y nada mas: no mandaba push, no mandaba
+          // correo, y la coleccion donde escribe no la lee ninguna pantalla de
+          // la app. El resultado era el peor caso posible en una app de
+          // tzedaka — alguien con la tarjeta vencida seguia viendo su donacion
+          // mensual listada como sana, con su proxima fecha de cobro, mientras
+          // hacia meses que no daba nada. Y los Terminos que la app muestra
+          // prometen por escrito que se le avisa.
+          //
+          // Van los DOS canales a proposito: el push depende de un permiso que
+          // mucha gente no da (y que en iOS se revoca de a ratos), asi que el
+          // correo es el que tiene que llegar si o si.
+          const currencyCode = String(invoice.currency || "usd").toUpperCase();
+          const montoTexto = `${currencyCode} ${amount.toFixed(2)}`;
+          try {
+            await sendToUser(uid, {
+              title: "No pudimos procesar tu donación",
+              body: `El cobro de ${montoTexto} no se realizó. Revisa tu tarjeta para que tu donación siga activa.`,
+              data: { type: "donation_recurring_failed", subscriptionId: subId || "" },
+            });
+          } catch (err) {
+            console.warn("invoice.payment_failed: push fallo", String(err?.message || err));
+          }
+
+          try {
+            const userSnap = await db.collection("users").doc(uid).get();
+            const userData = userSnap.data() || {};
+            const to = String(userData.billingEmail || userData.email || "").trim();
+            if (to) {
+              await sendEmail({
+                to,
+                subject: "No pudimos procesar tu donación mensual",
+                html: `<p>Hola,</p>
+<p>Intentamos cobrar tu donación mensual de <b>${_escapeHtmlForEmail(montoTexto)}</b> a Jabad en Campus y el pago no se pudo procesar.</p>
+<p>Lo más común es que la tarjeta haya vencido o que el banco la haya rechazado. Entra a la app, ve a <b>Tarjetas guardadas</b> y actualiza tu medio de pago para que tu donación siga activa.</p>
+<p>Vamos a reintentar el cobro durante unos días. Si no lo logramos, la donación mensual se cancela sola y tendrás que volver a crearla.</p>
+<p>Si prefieres no continuar, no tienes que hacer nada.</p>
+<p>Gracias por tu tzedaká.</p>`,
+              });
+            } else {
+              console.warn("invoice.payment_failed: usuario sin correo", { uid });
+            }
+          } catch (err) {
+            console.warn("invoice.payment_failed: correo fallo", String(err?.message || err));
+          }
         }
         await finalizeWebhookEvent(eventRef, {
           status: "processed",
@@ -4869,9 +4994,13 @@ exports.resetMonthlyActiveUsers = onSchedule(
  * "incomplete" first-invoice payment. Default Stripe behavior is to leave
  * them in "incomplete" forever — the donor sees nothing happen, the org
  * sees nothing collect, and the subscription rots. We sweep daily and
- * cancel anything that's been incomplete for more than 7 days. The
- * webhook for invoice.payment_failed already notifies the user; this
- * cleans up the trail.
+ * cancel anything that's been incomplete for more than 7 days.
+ *
+ * Este comentario decia que el webhook de invoice.payment_failed ya avisaba al
+ * usuario. Era FALSO hasta el 2026-09-04: esa rama solo escribia un
+ * payment_event que ninguna pantalla leia. Ahora si manda push y correo, asi
+ * que la afirmacion vale — pero quedo escrita aca la advertencia, porque el
+ * comentario mentiroso es lo que hizo que el agujero sobreviviera tres audits.
  *
  * Scoped to subscriptions with metadata.purpose === "donation_recurring"
  * so we don't touch SaaS billing subscriptions.
@@ -13067,4 +13196,135 @@ exports.backfillRemindersNextTriggerAt = onCall(
       nextStartAfter: done ? null : nextStartAfter,
     };
   },
+);
+
+// ---------------------------------------------------------------------------
+// Verificacion de correo con codigo de 6 digitos
+// ---------------------------------------------------------------------------
+// Firebase Auth solo trae verificacion por ENLACE. El codigo se construye aca
+// porque el enlace tiene dos problemas concretos en esta app: saca al usuario
+// de la pantalla justo en medio del alta, y no le avisa nada al que se
+// equivoco escribiendo su correo — que es el caso que mas duele, porque el
+// comprobante de cada donacion viaja a esa direccion.
+//
+// El documento vive en _emailVerifications/{uid} y es server-only (ver
+// firestore.rules): guarda el HASH del codigo, nunca el codigo.
+
+const EMAIL_CODE_TTL_MS = 15 * 60 * 1000;
+const EMAIL_CODE_MAX_ATTEMPTS = 5;
+
+function _hashEmailCode(uid, code) {
+  // El uid entra al hash como sal: dos usuarios con el mismo codigo dan
+  // hashes distintos, asi que un dump de la coleccion no permite construir
+  // una tabla inversa de 10^6 entradas y resolver todos los codigos de una.
+  return require("crypto").createHash("sha256").update(`${uid}:${code}`).digest("hex");
+}
+
+/** Oculta el correo para poder loguearlo o devolverlo sin exponerlo entero. */
+function _maskEmail(email) {
+  const [local, domain] = String(email || "").split("@");
+  if (!local || !domain) return "";
+  const head = local.slice(0, 2);
+  return `${head}${"*".repeat(Math.max(1, local.length - 2))}@${domain}`;
+}
+
+exports.sendEmailVerificationCode = onCall(
+  { secrets: [sendgridApiKey], enforceAppCheck: false },
+  async (request) => {
+    if (!request.auth?.uid) throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
+    const uid = request.auth.uid;
+
+    // Un codigo por minuto y seis por hora: alcanza para el que no recibio el
+    // primero y no para el que quiere usar la app como generador de correo.
+    await enforceRateLimit(uid, "sendEmailVerificationCode", 1, 60);
+    await enforceRateLimit(uid, "sendEmailVerificationCodeHourly", 6, 3600);
+    await enforceRateLimitByIp(request, "sendEmailVerificationCode", 30, 3600);
+
+    const user = await admin.auth().getUser(uid);
+    if (user.emailVerified) return { alreadyVerified: true };
+    if (!user.email) {
+      throw new HttpsError("failed-precondition", "Tu cuenta no tiene un correo asociado.");
+    }
+
+    const code = String(require("crypto").randomInt(0, 1000000)).padStart(6, "0");
+    const now = Date.now();
+
+    await db.collection("_emailVerifications").doc(uid).set({
+      codeHash: _hashEmailCode(uid, code),
+      email: user.email,
+      expiresAt: now + EMAIL_CODE_TTL_MS,
+      attempts: 0,
+      createdAt: now,
+    });
+
+    await sendEmail({
+      to: user.email,
+      subject: `${code} es tu código de verificación`,
+      html: `<p>Hola,</p>
+<p>Tu código para confirmar el correo en la pushka de Jabad en Campus es:</p>
+<p style="font-size:32px;font-weight:bold;letter-spacing:6px;margin:24px 0">${code}</p>
+<p>Vence en 15 minutos.</p>
+<p>Si no fuiste tú quien creó una cuenta, puedes ignorar este mensaje.</p>`,
+    });
+
+    console.info("sendEmailVerificationCode: enviado", { uid, email: _maskEmail(user.email) });
+    return { sent: true, email: _maskEmail(user.email) };
+  }
+);
+
+exports.confirmEmailVerificationCode = onCall(
+  { enforceAppCheck: false },
+  async (request) => {
+    if (!request.auth?.uid) throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
+    const uid = request.auth.uid;
+
+    // Tope global de intentos aparte del contador por codigo: sin esto, pedir
+    // un codigo nuevo reseteaba los intentos y se podia probar de a 5 por
+    // minuto indefinidamente.
+    await enforceRateLimit(uid, "confirmEmailVerificationCode", 20, 3600);
+    await enforceRateLimitByIp(request, "confirmEmailVerificationCode", 60, 3600);
+
+    const raw = String(request.data?.code || "").replace(/\D/g, "");
+    if (raw.length !== 6) {
+      throw new HttpsError("invalid-argument", "El código debe tener 6 dígitos.");
+    }
+
+    const ref = db.collection("_emailVerifications").doc(uid);
+    const snap = await ref.get();
+    if (!snap.exists) {
+      throw new HttpsError("failed-precondition", "Pide un código nuevo.");
+    }
+    const data = snap.data();
+
+    if (Date.now() > (data.expiresAt || 0)) {
+      await ref.delete().catch(() => {});
+      throw new HttpsError("failed-precondition", "El código venció. Pide uno nuevo.");
+    }
+
+    if ((data.attempts || 0) >= EMAIL_CODE_MAX_ATTEMPTS) {
+      await ref.delete().catch(() => {});
+      throw new HttpsError("failed-precondition", "Demasiados intentos. Pide un código nuevo.");
+    }
+
+    if (_hashEmailCode(uid, raw) !== data.codeHash) {
+      const attempts = (data.attempts || 0) + 1;
+      await ref.update({ attempts });
+      const left = EMAIL_CODE_MAX_ATTEMPTS - attempts;
+      throw new HttpsError(
+        "invalid-argument",
+        left > 0
+          ? `Código incorrecto. Te quedan ${left} intento${left === 1 ? "" : "s"}.`
+          : "Código incorrecto. Pide un código nuevo.",
+        { reason: "code-invalid", attemptsLeft: left }
+      );
+    }
+
+    await admin.auth().updateUser(uid, { emailVerified: true });
+    await ref.delete().catch(() => {});
+    console.info("confirmEmailVerificationCode: verificado", { uid });
+    // El cliente TIENE que refrescar el id token despues de esto: el claim
+    // email_verified viaja en el token y sin refrescarlo las CFs de pago
+    // seguirian viendolo en false.
+    return { verified: true };
+  }
 );

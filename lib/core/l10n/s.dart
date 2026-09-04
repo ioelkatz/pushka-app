@@ -1688,6 +1688,21 @@ class S {
     'Erreur de connexion Google. Vérifiez les services Google Play et réessayez',
     'שגיאת כניסה עם Google. בדוק את שירותי Google Play ונסה שוב',
   );
+  /// Fila del vaciado automatico cuando el ultimo cobro off-session fallo.
+  String get autoEmptyLastChargeFailed => _t(
+    'El último cobro falló — revisa tu tarjeta',
+    'Last charge failed — check your card',
+    'Le dernier prélèvement a échoué — vérifiez votre carte',
+    'החיוב האחרון נכשל — בדוק את הכרטיס',
+  );
+  /// Fila de una donacion mensual cuyo cobro fallo. Antes del audit del
+  /// 2026-09-04 estas se dibujaban identicas a una sana.
+  String get subscriptionPaymentFailed => _t(
+    'Cobro fallido — actualiza tu tarjeta',
+    'Payment failed — update your card',
+    'Paiement échoué — mettez à jour votre carte',
+    'החיוב נכשל — עדכן את הכרטיס',
+  );
   String get signInCanceled => _t(
     'Inicio de sesión cancelado',
     'Sign in canceled',
