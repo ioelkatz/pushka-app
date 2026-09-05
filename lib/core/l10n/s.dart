@@ -1688,6 +1688,75 @@ class S {
     'Erreur de connexion Google. Vérifiez les services Google Play et réessayez',
     'שגיאת כניסה עם Google. בדוק את שירותי Google Play ונסה שוב',
   );
+  // --- Motivos de rechazo de tarjeta (antes hardcodeados en español) ---
+  String get declineInsufficientFunds => _t(
+    'Fondos insuficientes en la tarjeta.',
+    'Insufficient funds on the card.',
+    'Fonds insuffisants sur la carte.',
+    'אין מספיק כספים בכרטיס.',
+  );
+  String get declineExpiredCard => _t(
+    'La tarjeta expiró. Prueba con otra.',
+    'The card has expired. Try another one.',
+    'La carte a expiré. Essayez-en une autre.',
+    'הכרטיס פג תוקף. נסה כרטיס אחר.',
+  );
+  String get declineIncorrectCvc => _t(
+    'Código CVC incorrecto.',
+    'Incorrect CVC code.',
+    'Code CVC incorrect.',
+    'קוד CVC שגוי.',
+  );
+  String get declineIncorrectNumber => _t(
+    'Número de tarjeta incorrecto.',
+    'Incorrect card number.',
+    'Numéro de carte incorrect.',
+    'מספר כרטיס שגוי.',
+  );
+  String get declineAuthenticationRequired => _t(
+    'La tarjeta requiere autenticación adicional. Intenta de nuevo.',
+    'The card requires additional authentication. Try again.',
+    'La carte nécessite une authentification supplémentaire. Réessayez.',
+    'הכרטיס דורש אימות נוסף. נסה שוב.',
+  );
+  String get declineByBank => _t(
+    'La tarjeta fue rechazada por el banco. Prueba con otra.',
+    'The bank declined the card. Try another one.',
+    'La banque a refusé la carte. Essayez-en une autre.',
+    'הבנק דחה את הכרטיס. נסה כרטיס אחר.',
+  );
+  String get declineProcessingError => _t(
+    'Error procesando la tarjeta. Intenta de nuevo en unos minutos.',
+    'Error processing the card. Try again in a few minutes.',
+    'Erreur lors du traitement de la carte. Réessayez dans quelques minutes.',
+    'שגיאה בעיבוד הכרטיס. נסה שוב בעוד כמה דקות.',
+  );
+  String get declineGeneric => _t(
+    'La tarjeta fue rechazada. Prueba con otra tarjeta.',
+    'The card was declined. Try another card.',
+    'La carte a été refusée. Essayez une autre carte.',
+    'הכרטיס נדחה. נסה כרטיס אחר.',
+  );
+  String declineWithReason(String reason) => _t(
+    'Tarjeta rechazada: $reason',
+    'Card declined: $reason',
+    'Carte refusée : $reason',
+    'הכרטיס נדחה: $reason',
+  );
+  /// Aviso legal de la pantalla de registro. Se parte en dos para poder
+  /// enlazar Terminos y Privacidad por separado dentro de la misma frase.
+  String get registerLegalPrefix => _t(
+    'Al crear tu cuenta aceptas los ',
+    'By creating your account you accept the ',
+    'En créant votre compte, vous acceptez les ',
+    'ביצירת החשבון אתה מסכים ל',
+  );
+  String get registerLegalAnd => _t(
+    ' y la ',
+    ' and the ',
+    ' et la ',
+    ' ול',
+  );
   String get processingPayment => _t(
     'Procesando tu donación…',
     'Processing your donation…',

@@ -39,6 +39,10 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
   // The frequency value that was already saved in Firestore when the screen opened.
   // Used to decide whether to show the consent dialog (only when enabling for first time).
   String _savedFrequency = 'manual';
+  // Guardan los terminos que el usuario YA autorizo, para detectar cuando
+  // cambian y volver a pedir consentimiento.
+  bool _savedTopOffEnabled = false;
+  double? _savedTopOffAmount;
 
   String _frequency = 'manual';
   int _weekday = DateTime.monday;
@@ -148,6 +152,8 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
               (tenantState['autoEmptyTopOffEnabled'] as bool?) ?? false;
           _topOffAmount = (tenantState['autoEmptyTopOffAmount'] as num?)
               ?.toDouble();
+          _savedTopOffEnabled = _topOffEnabled;
+          _savedTopOffAmount = _topOffAmount;
           // Field is now ALWAYS visible (disabled when toggle is off). Show
           // the last saved amount if any, else default to "0" so the user
           // sees a concrete starting value instead of an empty field.
@@ -450,13 +456,24 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
                           }
                           final messenger = ScaffoldMessenger.of(context);
                           final navigator = Navigator.of(context);
-                          // Require explicit consent only when switching FROM manual
-                          // (i.e., enabling auto-empty for the first time or re-enabling).
-                          // No consent re-prompt when simply changing day/frequency of
-                          // an already-active schedule.
-                          final needsConsent =
-                              _frequency != 'manual' &&
-                              _savedFrequency == 'manual';
+                          // Se vuelve a pedir consentimiento cuando cambian los
+                          // TERMINOS ECONOMICOS de la autorizacion, no solo al
+                          // activarla por primera vez.
+                          //
+                          // Antes solo se pedia al salir de 'manual', asi que el
+                          // registro guardado podia decir que el donante autorizo
+                          // 50 cuando el cargo real era 500. Ese registro existe
+                          // para exhibirlo en una disputa de Stripe: desactualizado
+                          // no solo no defiende, acredita lo contrario.
+                          //
+                          // Cambiar solo el dia o la frecuencia no vuelve a
+                          // preguntar: no altera cuanto se cobra.
+                          final termsChanged =
+                              _topOffEnabled != _savedTopOffEnabled ||
+                              (_topOffEnabled &&
+                                  _topOffAmount != _savedTopOffAmount);
+                          final needsConsent = _frequency != 'manual' &&
+                              (_savedFrequency == 'manual' || termsChanged);
                           if (needsConsent) {
                             final accepted = await _showConsentDialog();
                             if (!accepted || !mounted) return;

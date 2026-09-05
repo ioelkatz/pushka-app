@@ -7515,9 +7515,15 @@ exports.deleteAccount = onCall(
     }
 
     // ---- 2. Firestore subcollection delete (recursive batch) ----
+    // "consents" entro el 2026-09-04. Los registros de autorizacion de cobro
+    // sobrevivian al borrado de cuenta, con la IP del donante y su uid adentro,
+    // indefinidamente — mientras la politica que la app le muestra dice que se
+    // borran sus datos personales identificables. Stripe conserva sus propios
+    // registros de mandato para una eventual disputa, asi que retenerlos aca no
+    // aportaba defensa y si contradecia la promesa.
     const subCollections = [
       "transactions", "reminders", "fcmTokens", "tenantState",
-      "paymentEvents", "savedCards",
+      "paymentEvents", "savedCards", "consents",
     ];
     let docsDeleted = 0;
     for (const subName of subCollections) {
@@ -7841,8 +7847,11 @@ exports.exportUserData = onCall(
       };
     }
 
+    // "consents" entro el 2026-09-04: el donante nunca podia ver ni llevarse
+    // la autorizacion de cobro recurrente que el mismo habia dado.
     const subCollectionNames = [
       "transactions", "reminders", "fcmTokens", "tenantState", "paymentEvents", "savedCards",
+      "consents",
     ];
     const subcollections = {};
     for (const subName of subCollectionNames) {

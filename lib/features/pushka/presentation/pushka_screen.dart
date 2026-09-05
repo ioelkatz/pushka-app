@@ -2809,7 +2809,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
           // Spanish so the donor knows whether to retry, use another card,
           // or complete 3-D Secure. Fall back to the generic server error
           // when the message doesn't look like a decline.
-          final declineMsg = _translateStripeDeclineReason(error.message);
+          final declineMsg = _translateStripeDeclineReason(error.message, tr);
           if (declineMsg != null) return declineMsg;
           return tr.errorPaymentServer;
         case 'unavailable':
@@ -2861,7 +2861,15 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
   /// The `error.message` string from a Cloud Function `HttpsError('internal',
   /// ...)` is the raw Stripe error message the CF forwarded, which may be
   /// either the machine code or the English description.
-  String? _translateStripeDeclineReason(String? raw) {
+  /// Traduce el motivo de rechazo de Stripe al idioma del usuario.
+  ///
+  /// Estos mensajes estaban escritos a mano EN ESPAÑOL, y encima con voseo, en
+  /// una app que corre en cuatro idiomas: un donante en ingles, frances o
+  /// hebreo veia una sola frase en español dentro de un dialogo por lo demas
+  /// traducido — en hebreo ademas metida en un layout de derecha a izquierda.
+  /// No entendia si el problema era la tarjeta, el monto o la app. Audit de
+  /// producto del 2026-09-04.
+  String? _translateStripeDeclineReason(String? raw, S tr) {
     if (raw == null) return null;
     final msg = raw.trim();
     if (msg.isEmpty) return null;
@@ -2870,41 +2878,39 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
     // Match by decline code / keyword — order matters (specific → generic).
     if (lower.contains('insufficient_funds') ||
         lower.contains('insufficient funds')) {
-      return 'Fondos insuficientes en la tarjeta.';
+      return tr.declineInsufficientFunds;
     }
     if (lower.contains('expired_card') || lower.contains('expired card')) {
-      return 'La tarjeta expiró. Probá con otra.';
+      return tr.declineExpiredCard;
     }
     if (lower.contains('incorrect_cvc') ||
         lower.contains('cvc') && lower.contains('incorrect')) {
-      return 'Código CVC incorrecto.';
+      return tr.declineIncorrectCvc;
     }
     if (lower.contains('incorrect_number') ||
         (lower.contains('card number') && lower.contains('incorrect'))) {
-      return 'Número de tarjeta incorrecto.';
+      return tr.declineIncorrectNumber;
     }
     if (lower.contains('authentication_required') ||
         lower.contains('authentication required')) {
-      return 'La tarjeta requiere autenticación adicional. Intenta de nuevo.';
+      return tr.declineAuthenticationRequired;
     }
-    if (lower.contains('do_not_honor') || lower.contains('generic_decline')) {
-      return 'La tarjeta fue rechazada por el banco. Probá con otra.';
-    }
-    if (lower.contains('lost_card') || lower.contains('stolen_card')) {
-      return 'La tarjeta fue rechazada por el banco. Probá con otra.';
+    if (lower.contains('do_not_honor') || lower.contains('generic_decline') ||
+        lower.contains('lost_card') || lower.contains('stolen_card')) {
+      return tr.declineByBank;
     }
     if (lower.contains('processing_error')) {
-      return 'Error procesando la tarjeta. Intenta de nuevo en unos minutos.';
+      return tr.declineProcessingError;
     }
     if (lower.contains('card_declined') || lower.contains('card declined')) {
-      return 'La tarjeta fue rechazada. Probá con otra tarjeta.';
+      return tr.declineGeneric;
     }
     // Generic "declin..." catch-all — surface the original message so the
     // donor at least sees the specific reason.
     if (lower.contains('declin')) {
       final sanitized = _sanitizeUserFacingError(msg);
-      if (sanitized != null) return 'Tarjeta rechazada: $sanitized';
-      return 'La tarjeta fue rechazada. Probá con otra tarjeta.';
+      if (sanitized != null) return tr.declineWithReason(sanitized);
+      return tr.declineGeneric;
     }
     return null;
   }
