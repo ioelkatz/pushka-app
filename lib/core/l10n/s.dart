@@ -1688,6 +1688,27 @@ class S {
     'Erreur de connexion Google. Vérifiez les services Google Play et réessayez',
     'שגיאת כניסה עם Google. בדוק את שירותי Google Play ונסה שוב',
   );
+  String get processingPayment => _t(
+    'Procesando tu donación…',
+    'Processing your donation…',
+    'Traitement de votre don…',
+    'מעבד את התרומה שלך…',
+  );
+  /// Se muestra a los 20 segundos, cuando ya se puede cerrar el dialogo.
+  String get paymentTakingLonger => _t(
+    'Está tardando más de lo normal. Puedes cerrar esta ventana: si el cobro se realizó, te llegará el comprobante por correo.',
+    'This is taking longer than usual. You can close this window: if the charge went through, you will get the receipt by email.',
+    "Cela prend plus de temps que d'habitude. Vous pouvez fermer cette fenêtre : si le paiement a été effectué, vous recevrez le reçu par e-mail.",
+    'זה לוקח יותר זמן מהרגיל. אפשר לסגור את החלון: אם החיוב בוצע, הקבלה תגיע במייל.',
+  );
+  /// Aviso cuando un interruptor de Ajustes no se pudo guardar. Antes esto
+  /// fallaba en silencio y el usuario veia la confirmacion igual.
+  String get settingCouldNotBeSaved => _t(
+    'No se pudo guardar el cambio. Revisa tu conexión e inténtalo otra vez.',
+    'Could not save the change. Check your connection and try again.',
+    "Impossible d'enregistrer la modification. Vérifiez votre connexion et réessayez.",
+    'לא הצלחנו לשמור את השינוי. בדוק את החיבור ונסה שוב.',
+  );
   // --- Verificacion de correo con codigo de 6 digitos (2026-09-04) ---
   String get verifyEmailTitle => _t(
     'Confirma tu correo',
