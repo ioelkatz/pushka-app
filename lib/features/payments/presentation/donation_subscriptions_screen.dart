@@ -884,6 +884,13 @@ class _DonationSubscriptionsScreenState
         ? tenantName
         : '';
     final periodEnd = (sub['currentPeriodEnd'] as num?)?.toInt();
+    // La CF ya devolvia `status` y esta pantalla lo tiraba a la basura, asi que
+    // una suscripcion con el cobro fallido (`past_due`) se dibujaba EXACTAMENTE
+    // igual que una sana, con su "proximo cobro el <fecha>". El donante con la
+    // tarjeta vencida seguia creyendo que daba tzedaka todos los meses.
+    // Audit de producto del 2026-09-04.
+    final status = (sub['status'] as String? ?? '').toLowerCase();
+    final isPastDue = status == 'past_due' || status == 'unpaid';
 
     final amount = stripeUnitsToAmount(amountUnits, currency);
     // Round-4 audit fix: use central formatter — was missing JPY/KRW/CHF/BHD
@@ -939,7 +946,29 @@ class _DonationSubscriptionsScreenState
                         : intervalLabel,
                     style: TextStyle(fontSize: 13, color: cs.onSurfaceVariant),
                   ),
-                  if (periodEnd != null) ...[
+                  if (isPastDue) ...[
+                    const SizedBox(height: 6),
+                    Row(
+                      children: [
+                        Icon(
+                          Icons.error_outline,
+                          size: 15,
+                          color: cs.error,
+                        ),
+                        const SizedBox(width: 5),
+                        Expanded(
+                          child: Text(
+                            tr.subscriptionPaymentFailed,
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                              color: cs.error,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ] else if (periodEnd != null) ...[
                     const SizedBox(height: 2),
                     Text(
                       tr.nextChargeOn(_formatDate(periodEnd)),

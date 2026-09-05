@@ -8,6 +8,7 @@ import 'package:go_router/go_router.dart';
 import '../../../app/router.dart';
 import '../../../app/theme/app_tokens.dart';
 import '../../../core/l10n/s.dart';
+import '../../auth/providers/auth_controller.dart';
 import '../../users/presentation/user_profile_provider.dart';
 import '../data/tenant_repository.dart';
 import '../domain/tenant_config.dart';
@@ -102,6 +103,21 @@ class _JoinViaLinkScreenState extends ConsumerState<JoinViaLinkScreen> {
     }
   }
 
+  /// Escotilla de salida. En el dominio productivo el redirect del router
+  /// manda a `/join/<slug>` a todo usuario sin tenant, asi que "Cancelar" e "Ir
+  /// al inicio" rebotaban contra esta misma pantalla y no habia forma de
+  /// salir sin borrar los datos del navegador. Audit de producto 2026-09-04.
+  ///
+  /// Va por authController y no por FirebaseAuth.instance directo, para que se
+  /// revoque el token de notificaciones de este dispositivo antes de cerrar la
+  /// sesion: despues del signOut las reglas rechazan el borrado y el telefono
+  /// se queda recibiendo push del usuario anterior.
+  Future<void> _signOutAndBack() async {
+    try {
+      await ref.read(authControllerProvider).signOut();
+    } catch (_) {}
+  }
+
   @override
   Widget build(BuildContext context) {
     final tt = Theme.of(context).textTheme;
@@ -138,8 +154,12 @@ class _JoinViaLinkScreenState extends ConsumerState<JoinViaLinkScreen> {
                     OutlinedButton(onPressed: _validate, child: Text(tr.retry)),
                     const SizedBox(height: AppTokens.spaceMd),
                     TextButton(
-                      onPressed: () => context.go('/'),
+                      onPressed: () => context.go('/tenant-setup'),
                       child: Text(tr.goHome),
+                    ),
+                    TextButton(
+                      onPressed: _signOutAndBack,
+                      child: Text(tr.logout),
                     ),
                   ],
                 ),
@@ -193,8 +213,12 @@ class _JoinViaLinkScreenState extends ConsumerState<JoinViaLinkScreen> {
                     ),
                     const SizedBox(height: AppTokens.spaceSm),
                     TextButton(
-                      onPressed: () => context.go('/'),
+                      onPressed: () => context.go('/tenant-setup'),
                       child: Text(tr.cancel),
+                    ),
+                    TextButton(
+                      onPressed: _signOutAndBack,
+                      child: Text(tr.logout),
                     ),
                   ],
                 ),

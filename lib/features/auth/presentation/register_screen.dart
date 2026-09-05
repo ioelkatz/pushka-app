@@ -1,9 +1,11 @@
+import 'package:flutter/gestures.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/l10n/s.dart';
 import '../providers/auth_controller.dart';
+import '../../legal/presentation/legal_screen.dart';
 
 class RegisterScreen extends ConsumerStatefulWidget {
   const RegisterScreen({super.key});
@@ -111,6 +113,14 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
                       : Text(_tr.createAccount),
                 ),
               ),
+
+              // Los Terminos afirman que al registrarte los aceptaste, pero
+              // hasta el 2026-09-04 esta pantalla no los mostraba ni los
+              // enlazaba: el donante entregaba nombre, correo y despues una
+              // tarjeta sin haber tenido delante que se hace con sus datos,
+              // quien cobra, ni que hay comision. Audit de producto.
+              const SizedBox(height: 18),
+              _LegalNotice(tr: _tr),
             ],
           ),
         ),
@@ -159,21 +169,16 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
 
     setState(() => _isLoading = true);
     try {
-      // Round-5 audit HIGH fix: signUp() returns true ONLY when the verification
-      // email was actually dispatched. Previously we always claimed "email sent"
-      // even when Firebase rate-limited or the SMTP path failed, leaving the
-      // user waiting for a verification that never arrived.
-      final emailSent = await ref.read(authControllerProvider).signUp(
+      await ref.read(authControllerProvider).signUp(
             name: name,
             email: email,
             password: password,
           );
+      // Ya no se muestra ningun aviso de "te mandamos un correo": el router
+      // manda solo a VerifyEmailScreen, que pide el codigo al abrirse y
+      // reporta ahi mismo si salio o no. Prometerlo desde aca era justamente
+      // lo que dejaba al usuario esperando un correo que a veces no llegaba.
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(emailSent
-              ? _tr.verificationEmailSent(email)
-              : _tr.verificationEmailFailed)),
-        );
         Navigator.pop(context);
       }
     } on FirebaseAuthException catch (e) {
@@ -232,5 +237,54 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
       default:
         return _tr.createAccountErrorCode(code);
     }
+  }
+}
+
+/// Aviso de aceptacion con los dos documentos enlazados y abribles ANTES de
+/// crear la cuenta. Se abren con el navegador raiz para que la pantalla legal
+/// se monte con su propio AppBar por encima del registro.
+class _LegalNotice extends StatelessWidget {
+  const _LegalNotice({required this.tr});
+
+  final S tr;
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final base = TextStyle(fontSize: 12, color: cs.onSurfaceVariant);
+    final link = base.copyWith(
+      color: cs.primary,
+      decoration: TextDecoration.underline,
+      decorationColor: cs.primary,
+    );
+    void open(LegalSectionTarget section) {
+      Navigator.of(context, rootNavigator: true).push(
+        MaterialPageRoute(builder: (_) => LegalScreen(section: section)),
+      );
+    }
+
+    return Text.rich(
+      TextSpan(
+        style: base,
+        children: [
+          TextSpan(text: tr.registerLegalPrefix),
+          TextSpan(
+            text: tr.termsOfService,
+            style: link,
+            recognizer: TapGestureRecognizer()
+              ..onTap = () => open(LegalSectionTarget.terms),
+          ),
+          TextSpan(text: tr.registerLegalAnd),
+          TextSpan(
+            text: tr.privacyPolicy,
+            style: link,
+            recognizer: TapGestureRecognizer()
+              ..onTap = () => open(LegalSectionTarget.privacy),
+          ),
+          const TextSpan(text: '.'),
+        ],
+      ),
+      textAlign: TextAlign.center,
+    );
   }
 }

@@ -44,7 +44,15 @@ const String _lastUpdatedLabelHe = 'עדכון אחרון: 7 במאי 2026';
 // of this literal across the legal text gets rewritten to the tenant-specific
 // address. Picked a unique-looking string so the replacement can't collide
 // with user-generated content.
-const String _contactEmail = 'support@pushkaapp.com';
+// 2026-09-04: era support@pushkaapp.com, un dominio que el proyecto NUNCA
+// registro. Un donante que escribia para que le borraran los datos, para
+// reclamar un cargo o para pedir su exportacion, le escribia a un buzon de un
+// tercero o a ninguno — y el plazo de 30 dias que la propia politica promete
+// corria igual, sin que nadie se enterara del pedido.
+//
+// Este es el default de plataforma: cada tenant que configure su contactEmail
+// lo pisa (ver legalContentFor).
+const String _contactEmail = 'apps@jabadencampus.com';
 
 /// Returns the legal content (privacy + terms) for the given language code,
 /// optionally rewriting the default Pushka support email to the tenant's
