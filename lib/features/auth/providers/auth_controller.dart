@@ -256,8 +256,12 @@ class AuthController {
       //     the idToken, so we ignore access tokens entirely.
       //
       // Reference: https://pub.dev/packages/google_sign_in (v7 migration guide)
-      const webOAuthClientId =
-          '846580817724-flf3up2e57c80cjb00u0ce8tf012ae90.apps.googleusercontent.com';
+      // Etiqueta para los mensajes de error, no el valor real. El cliente web
+      // lo resuelve el plugin desde el recurso default_web_client_id, que
+      // Gradle genera por flavor (ver _initGoogleSignIn). Antes aca habia un
+      // id fijo de produccion y el mensaje de error mentia en dev, diciendo un
+      // cliente distinto del que se usaba de verdad.
+      const webOAuthClientId = 'default_web_client_id (por flavor)';
 
       // ACA NO VA UN signOut(). Se quito el 2026-09-22 y no hay que reponerlo.
       //
@@ -336,7 +340,7 @@ class AuthController {
         _recordNonFatal(
           Exception(
             'v7: googleAuth.idToken was null despite authenticate() succeeding. '
-            'serverClientId=$webOAuthClientId — likely SHA-1 not registered in '
+            'serverClientId=$webOAuthClientId — revisar SHA-1 registrado en '
             'Firebase Console for this signing key.',
           ),
           StackTrace.current,
