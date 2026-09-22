@@ -94,13 +94,24 @@ final router = GoRouter(
     // resolverlo. Ver needsEmailVerification para por que esto solo
     // alcanza a las cuentas de correo y contrasena creadas despues del
     // corte — las de Google llegan con el correo ya verificado.
-    if (loggedIn && loc != '/verify-email' && !goingToAuth &&
-        needsEmailVerification(_auth.currentUser)) {
-      return '/verify-email';
+    if (loggedIn && !goingToAuth && needsEmailVerification(_auth.currentUser)) {
+      // CORTAR ACA cuando ya esta en la pantalla, devolviendo null.
+      //
+      // La primera version usaba `loc != '/verify-email'` en la condicion y
+      // dejaba seguir: estando en /verify-email el gate no disparaba, la
+      // ejecucion caia a los gates de abajo (tenant y onboarding), esos
+      // devolvian /tenant-setup, y /tenant-setup volvia a entrar a este gate.
+      // Bucle infinito: go_router lo corta con "redirect loop detected" y la
+      // app muestra Page Not Found en la cara del usuario que acaba de crear
+      // su cuenta.
+      //
+      // La pantalla de verificacion es TERMINAL hasta que se resuelva: ningun
+      // otro gate debe opinar mientras el correo siga sin confirmar.
+      return loc == '/verify-email' ? null : '/verify-email';
     }
-    // Ya verifico y quedo parado en la pantalla: lo sacamos.
-    if (loc == '/verify-email' &&
-        (!loggedIn || !needsEmailVerification(_auth.currentUser))) {
+    // Si llegamos aca, el usuario NO necesita verificar (el gate de arriba
+    // habria cortado). Asi que si esta parado en la pantalla, lo sacamos.
+    if (loc == '/verify-email') {
       return loggedIn ? '/' : '/login';
     }
     if (loggedIn && goingToAuth) {
