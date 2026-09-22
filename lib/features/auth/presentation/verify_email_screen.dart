@@ -207,15 +207,23 @@ class _VerifyEmailScreenState extends ConsumerState<VerifyEmailScreen> {
 
   String _messageFor(FirebaseFunctionsException e) {
     final tr = S.of(context);
-    // El backend manda mensajes accionables y ya traducidos al español para
-    // estos dos codigos ("te quedan 3 intentos", "el codigo venció"). Los
-    // preferimos sobre un texto generico.
-    if (e.code == 'invalid-argument' || e.code == 'failed-precondition') {
+    // El backend manda mensajes accionables y ya traducidos al español: "te
+    // quedan 3 intentos", "el codigo venció", "no pudimos enviarte el código".
+    // Los preferimos sobre cualquier texto generico.
+    //
+    // `unavailable` entro el 2026-09-22: cuando el proveedor de correo falla,
+    // el backend lo manda con ese codigo y un mensaje util, pero el cliente
+    // caia al fallback y mostraba "El servidor de PAGOS no está disponible" —
+    // en una pantalla donde no hay ningun pago, y sin decirle al usuario que el
+    // problema era el envio del correo.
+    if (e.code == 'invalid-argument' ||
+        e.code == 'failed-precondition' ||
+        e.code == 'unavailable') {
       final msg = (e.message ?? '').trim();
       if (msg.isNotEmpty && msg.length <= 200) return msg;
     }
     if (e.code == 'resource-exhausted') return tr.verifyEmailTooManyRequests;
-    return tr.errorServerUnavailable;
+    return tr.verifyEmailSendFailed;
   }
 
   void _onCellChanged(int index, String value) {
