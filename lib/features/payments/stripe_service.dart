@@ -9,6 +9,7 @@ import 'package:flutter_stripe/flutter_stripe.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../config/stripe_config.dart';
+import '../../core/l10n/s.dart';
 import '../../core/network_status_provider.dart';
 import '../../firebase_options.dart';
 import 'express_checkout_sheet.dart';
@@ -1029,27 +1030,89 @@ class StripeService {
 // express confirmPayment call is in flight. Prevents the user from tapping
 // Donar again on the (fully-enabled) pushka screen during the network
 // round-trip / 3DS challenge. Non-interactive.
-class _ExpressProgressDialog extends StatelessWidget {
+/// Barrera modal mientras se confirma el pago express.
+///
+/// Era una rueda pelada, sin texto, con el boton Atras anulado y sin ninguna
+/// salida. Si el cierre no llegaba a correr — la app pasa a segundo plano
+/// porque entra una notificacion, el contexto se desmonta — el usuario volvia
+/// y se encontraba girando para siempre, sin saber si le habian cobrado, y la
+/// unica salida era matar la app. Audit de producto 2026-09-04.
+///
+/// Ahora dice que esta pasando y, pasados 20 segundos, se puede cerrar
+/// avisando que el cobro pudo haberse hecho igual — que es la verdad: el
+/// PaymentIntent ya viajo y el webhook manda el comprobante aunque la pantalla
+/// se haya perdido.
+class _ExpressProgressDialog extends StatefulWidget {
   const _ExpressProgressDialog();
 
   @override
+  State<_ExpressProgressDialog> createState() => _ExpressProgressDialogState();
+}
+
+class _ExpressProgressDialogState extends State<_ExpressProgressDialog> {
+  static const _escapeAfter = Duration(seconds: 20);
+  Timer? _timer;
+  bool _canEscape = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _timer = Timer(_escapeAfter, () {
+      if (mounted) setState(() => _canEscape = true);
+    });
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final tr = S.of(context);
+    final cs = Theme.of(context).colorScheme;
     return PopScope(
-      canPop: false,
+      canPop: _canEscape,
       child: Dialog(
         backgroundColor: Colors.transparent,
         elevation: 0,
         child: Center(
           child: Container(
+            constraints: const BoxConstraints(maxWidth: 300),
             padding: const EdgeInsets.all(24),
             decoration: BoxDecoration(
-              color: Theme.of(context).colorScheme.surface,
+              color: cs.surface,
               borderRadius: BorderRadius.circular(16),
             ),
-            child: const SizedBox(
-              width: 48,
-              height: 48,
-              child: CircularProgressIndicator(strokeWidth: 3),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const SizedBox(
+                  width: 48,
+                  height: 48,
+                  child: CircularProgressIndicator(strokeWidth: 3),
+                ),
+                const SizedBox(height: 18),
+                Text(
+                  tr.processingPayment,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(fontSize: 14, color: cs.onSurface),
+                ),
+                if (_canEscape) ...[
+                  const SizedBox(height: 14),
+                  Text(
+                    tr.paymentTakingLonger,
+                    textAlign: TextAlign.center,
+                    style: TextStyle(fontSize: 12.5, color: cs.onSurfaceVariant),
+                  ),
+                  const SizedBox(height: 6),
+                  TextButton(
+                    onPressed: () => Navigator.of(context).maybePop(),
+                    child: Text(tr.close),
+                  ),
+                ],
+              ],
             ),
           ),
         ),

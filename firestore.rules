@@ -641,6 +641,13 @@ service cloud.firestore {
     match /_tenantSlugs/{slug} {
       allow read, write: if false;
     }
+    match /_emailVerifications/{uid} {
+      // Codigo de verificacion de correo: hash del codigo, vencimiento e
+      // intentos. Server-only y sin excepcion para el dueno del uid — poder
+      // leer su propio documento alcanzaria para saltearse la verificacion
+      // entera, y poder escribirlo alcanzaria para resetear los intentos.
+      allow read, write: if false;
+    }
     match /_stripeConnectOAuth/{stateToken} {
       // Stripe Connect OAuth state tokens (CSRF nonce → tenantId +
       // callerUid + 24h expiry). Server-only: previously stored on

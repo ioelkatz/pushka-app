@@ -12,6 +12,7 @@ import '../features/shell/presentation/app_shell.dart';
 import '../features/shell/presentation/app_drawer.dart';
 import '../features/auth/presentation/login_screen.dart';
 import '../features/auth/presentation/register_screen.dart';
+import '../features/auth/presentation/verify_email_screen.dart';
 import '../features/onboarding/presentation/onboarding_screen.dart';
 import '../features/splash/presentation/splash_screen.dart';
 import '../features/tenant/presentation/tenant_code_screen.dart';
@@ -52,6 +53,29 @@ void invalidateTenantCache() {
   _cachedHasTenant = null;
 }
 
+/// Cuentas creadas a partir de este instante deben confirmar el correo antes
+/// de poder usar la app. TIENE que coincidir con EMAIL_VERIFICATION_CUTOFF_MS
+/// en functions/index.js.
+///
+/// El corte existe porque la app mandaba el mail de verificacion al
+/// registrarse pero nunca lo exigio: casi ningun donante actual lo clickeo.
+/// Exigirlo hacia atras los dejaria afuera de un dia para el otro.
+final _emailVerificationCutoff = DateTime.utc(2026, 9, 4);
+
+/// Solo aplica al alta con correo y contrasena. Las cuentas de Google llegan
+/// con el correo ya verificado por Google, asi que nunca ven la pantalla.
+bool needsEmailVerification(User? user) {
+  if (user == null) return false;
+  if (user.emailVerified) return false;
+  if ((user.email ?? '').isEmpty) return false;
+  final isPassword =
+      user.providerData.any((p) => p.providerId == 'password');
+  if (!isPassword) return false;
+  final created = user.metadata.creationTime;
+  if (created == null) return false;
+  return created.isAfter(_emailVerificationCutoff);
+}
+
 final router = GoRouter(
   navigatorKey: navigatorKey,
   initialLocation: '/splash',
@@ -66,6 +90,19 @@ final router = GoRouter(
     if (loc == '/splash') return null;
     final goingToAuth = loc == '/login' || loc == '/register';
     if (!loggedIn && !goingToAuth) return '/login';
+    // Correo sin confirmar: no se llega a ninguna otra pantalla hasta
+    // resolverlo. Ver needsEmailVerification para por que esto solo
+    // alcanza a las cuentas de correo y contrasena creadas despues del
+    // corte — las de Google llegan con el correo ya verificado.
+    if (loggedIn && loc != '/verify-email' && !goingToAuth &&
+        needsEmailVerification(_auth.currentUser)) {
+      return '/verify-email';
+    }
+    // Ya verifico y quedo parado en la pantalla: lo sacamos.
+    if (loc == '/verify-email' &&
+        (!loggedIn || !needsEmailVerification(_auth.currentUser))) {
+      return loggedIn ? '/' : '/login';
+    }
     if (loggedIn && goingToAuth) {
       // Capture uid before async gap — currentUser can become null if the user
       // signs out between the loggedIn check above and this Firestore read.
@@ -214,6 +251,10 @@ final router = GoRouter(
     GoRoute(
       path: '/register',
       pageBuilder: (context, state) => _slidePage(state, const RegisterScreen()),
+    ),
+    GoRoute(
+      path: '/verify-email',
+      pageBuilder: (context, state) => _fadePage(state, const VerifyEmailScreen()),
     ),
     GoRoute(
       path: '/onboarding',

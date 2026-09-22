@@ -401,6 +401,10 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 user,
                 soundEnabled: value,
                 vibrationEnabled: value,
+                onFailure: () {
+                  soundEnabled = !value;
+                  vibrationEnabled = !value;
+                },
               );
             },
           ),
@@ -418,7 +422,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             partialPaymentsEnabled,
             onChanged: (value) {
               setState(() => partialPaymentsEnabled = value);
-              _updateSettingsSilent(user, partialPaymentsEnabled: value);
+              _updateSettingsSilent(user, partialPaymentsEnabled: value,
+                  onFailure: () => partialPaymentsEnabled = !value);
             },
           ),
           const SizedBox(height: 18),
@@ -433,12 +438,20 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               biometricAuthenticationEnabled,
               onChanged: (value) async {
                 final messenger = ScaffoldMessenger.of(context);
-                if (value) {
-                  final success = await _authenticateWithBiometrics();
-                  if (!success || !mounted) return;
-                }
+                // Se pide huella para prender Y PARA APAGAR. Antes solo para
+                // prender, con lo cual la proteccion no protegia nada: quien
+                // tuviera el telefono desbloqueado en la mano entraba a Ajustes,
+                // apagaba el candado en dos toques y ya podia vaciar la pushka o
+                // donar con la tarjeta guardada. Audit de producto 2026-09-04.
+                //
+                // No hay riesgo de dejar a nadie encerrado: authenticate() se
+                // llama sin biometricOnly, asi que el sistema acepta el PIN o el
+                // patron del telefono como alternativa.
+                final success = await _authenticateWithBiometrics();
+                if (!success || !mounted) return;
                 setState(() => biometricAuthenticationEnabled = value);
-                _updateSettingsSilent(user, biometricAuthenticationEnabled: value);
+                _updateSettingsSilent(user, biometricAuthenticationEnabled: value,
+                    onFailure: () => biometricAuthenticationEnabled = !value);
                 if (value) {
                   if (!mounted) return;
                   messenger.showSnackBar(
@@ -1802,13 +1815,23 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     await Future.wait(futures);
   }
 
-  /// Fire-and-forget wrapper for toggle switches. Logs errors silently.
+  /// Guarda el cambio de un interruptor y, si falla, DESHACE el estado local
+  /// y se lo dice al usuario.
+  ///
+  /// Antes esto era fire-and-forget con un debugPrint: si Firestore rechazaba
+  /// la escritura, el interruptor se quedaba prendido en pantalla y el usuario
+  /// leia la confirmacion igual. Prendia la biometria, leia "biometria
+  /// activada", y sus donaciones no pedian huella nunca. Al cerrar la app todo
+  /// volvia al valor viejo sin ninguna explicacion. Audit de producto
+  /// 2026-09-04 — y es exactamente el sintoma que tapo durante meses el bug de
+  /// las reglas de Firestore que encontramos hoy.
   void _updateSettingsSilent(User? user, {
     bool? soundEnabled,
     bool? vibrationEnabled,
     bool? ambientEnabled,
     bool? partialPaymentsEnabled,
     bool? biometricAuthenticationEnabled,
+    VoidCallback? onFailure,
   }) {
     _updateSettings(
       user,
@@ -1817,7 +1840,14 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       ambientEnabled: ambientEnabled,
       partialPaymentsEnabled: partialPaymentsEnabled,
       biometricAuthenticationEnabled: biometricAuthenticationEnabled,
-    ).catchError((Object e) => debugPrint('toggle updateSettings error: $e'));
+    ).catchError((Object e) {
+      debugPrint('toggle updateSettings error: $e');
+      if (!mounted) return;
+      setState(() => onFailure?.call());
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(S.of(context).settingCouldNotBeSaved)),
+      );
+    });
   }
 
   String _formatPresetVal(double v) =>

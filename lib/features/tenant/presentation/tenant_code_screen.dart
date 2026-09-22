@@ -9,6 +9,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../../app/router.dart';
 import '../../../app/theme/app_tokens.dart';
 import '../../../core/l10n/s.dart';
+import '../../auth/providers/auth_controller.dart';
 import '../../users/presentation/user_profile_provider.dart';
 import '../data/tenant_repository.dart';
 import 'tenant_switch_reset.dart';
@@ -203,7 +204,13 @@ class _TenantCodeScreenState extends ConsumerState<TenantCodeScreen> {
   // El router (authStateChanges listener) redirige a /login automáticamente.
   Future<void> _signOut() async {
     try {
-      await FirebaseAuth.instance.signOut();
+      // Por authController y no por FirebaseAuth directo: el controller revoca
+      // el token de notificaciones de ESTE dispositivo antes de cerrar sesion.
+      // Despues del signOut las reglas de Firestore rechazan ese borrado, asi
+      // que el token quedaba vivo hasta 90 dias y el telefono seguia recibiendo
+      // los push del usuario anterior — justo en la pantalla que usa el que se
+      // equivoco de cuenta. Audit de producto 2026-09-04.
+      await ref.read(authControllerProvider).signOut();
     } catch (_) {}
   }
 

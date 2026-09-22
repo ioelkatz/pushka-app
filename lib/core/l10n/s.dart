@@ -1688,6 +1688,172 @@ class S {
     'Erreur de connexion Google. Vérifiez les services Google Play et réessayez',
     'שגיאת כניסה עם Google. בדוק את שירותי Google Play ונסה שוב',
   );
+  // --- Motivos de rechazo de tarjeta (antes hardcodeados en español) ---
+  String get declineInsufficientFunds => _t(
+    'Fondos insuficientes en la tarjeta.',
+    'Insufficient funds on the card.',
+    'Fonds insuffisants sur la carte.',
+    'אין מספיק כספים בכרטיס.',
+  );
+  String get declineExpiredCard => _t(
+    'La tarjeta expiró. Prueba con otra.',
+    'The card has expired. Try another one.',
+    'La carte a expiré. Essayez-en une autre.',
+    'הכרטיס פג תוקף. נסה כרטיס אחר.',
+  );
+  String get declineIncorrectCvc => _t(
+    'Código CVC incorrecto.',
+    'Incorrect CVC code.',
+    'Code CVC incorrect.',
+    'קוד CVC שגוי.',
+  );
+  String get declineIncorrectNumber => _t(
+    'Número de tarjeta incorrecto.',
+    'Incorrect card number.',
+    'Numéro de carte incorrect.',
+    'מספר כרטיס שגוי.',
+  );
+  String get declineAuthenticationRequired => _t(
+    'La tarjeta requiere autenticación adicional. Intenta de nuevo.',
+    'The card requires additional authentication. Try again.',
+    'La carte nécessite une authentification supplémentaire. Réessayez.',
+    'הכרטיס דורש אימות נוסף. נסה שוב.',
+  );
+  String get declineByBank => _t(
+    'La tarjeta fue rechazada por el banco. Prueba con otra.',
+    'The bank declined the card. Try another one.',
+    'La banque a refusé la carte. Essayez-en une autre.',
+    'הבנק דחה את הכרטיס. נסה כרטיס אחר.',
+  );
+  String get declineProcessingError => _t(
+    'Error procesando la tarjeta. Intenta de nuevo en unos minutos.',
+    'Error processing the card. Try again in a few minutes.',
+    'Erreur lors du traitement de la carte. Réessayez dans quelques minutes.',
+    'שגיאה בעיבוד הכרטיס. נסה שוב בעוד כמה דקות.',
+  );
+  String get declineGeneric => _t(
+    'La tarjeta fue rechazada. Prueba con otra tarjeta.',
+    'The card was declined. Try another card.',
+    'La carte a été refusée. Essayez une autre carte.',
+    'הכרטיס נדחה. נסה כרטיס אחר.',
+  );
+  String declineWithReason(String reason) => _t(
+    'Tarjeta rechazada: $reason',
+    'Card declined: $reason',
+    'Carte refusée : $reason',
+    'הכרטיס נדחה: $reason',
+  );
+  /// Aviso legal de la pantalla de registro. Se parte en dos para poder
+  /// enlazar Terminos y Privacidad por separado dentro de la misma frase.
+  String get registerLegalPrefix => _t(
+    'Al crear tu cuenta aceptas los ',
+    'By creating your account you accept the ',
+    'En créant votre compte, vous acceptez les ',
+    'ביצירת החשבון אתה מסכים ל',
+  );
+  String get registerLegalAnd => _t(
+    ' y la ',
+    ' and the ',
+    ' et la ',
+    ' ול',
+  );
+  String get processingPayment => _t(
+    'Procesando tu donación…',
+    'Processing your donation…',
+    'Traitement de votre don…',
+    'מעבד את התרומה שלך…',
+  );
+  /// Se muestra a los 20 segundos, cuando ya se puede cerrar el dialogo.
+  String get paymentTakingLonger => _t(
+    'Está tardando más de lo normal. Puedes cerrar esta ventana: si el cobro se realizó, te llegará el comprobante por correo.',
+    'This is taking longer than usual. You can close this window: if the charge went through, you will get the receipt by email.',
+    "Cela prend plus de temps que d'habitude. Vous pouvez fermer cette fenêtre : si le paiement a été effectué, vous recevrez le reçu par e-mail.",
+    'זה לוקח יותר זמן מהרגיל. אפשר לסגור את החלון: אם החיוב בוצע, הקבלה תגיע במייל.',
+  );
+  /// Aviso cuando un interruptor de Ajustes no se pudo guardar. Antes esto
+  /// fallaba en silencio y el usuario veia la confirmacion igual.
+  String get settingCouldNotBeSaved => _t(
+    'No se pudo guardar el cambio. Revisa tu conexión e inténtalo otra vez.',
+    'Could not save the change. Check your connection and try again.',
+    "Impossible d'enregistrer la modification. Vérifiez votre connexion et réessayez.",
+    'לא הצלחנו לשמור את השינוי. בדוק את החיבור ונסה שוב.',
+  );
+  // --- Verificacion de correo con codigo de 6 digitos (2026-09-04) ---
+  String get verifyEmailTitle => _t(
+    'Confirma tu correo',
+    'Confirm your email',
+    'Confirmez votre e-mail',
+    'אשר את הדוא"ל שלך',
+  );
+  String verifyEmailSubtitle(String email) => _t(
+    'Te enviamos un código de 6 dígitos a $email. Escríbelo aquí abajo.',
+    'We sent a 6-digit code to $email. Enter it below.',
+    'Nous avons envoyé un code à 6 chiffres à $email. Saisissez-le ci-dessous.',
+    'שלחנו קוד בן 6 ספרות אל $email. הזן אותו כאן.',
+  );
+  String get verifyEmailCodeSent => _t(
+    'Código enviado. Revisa tu bandeja de entrada y la carpeta de spam.',
+    'Code sent. Check your inbox and your spam folder.',
+    'Code envoyé. Vérifiez votre boîte de réception et vos spams.',
+    'הקוד נשלח. בדוק את תיבת הדואר ואת תיקיית הספאם.',
+  );
+  String get verifyEmailResend => _t(
+    'Enviar otro código',
+    'Send another code',
+    'Envoyer un autre code',
+    'שלח קוד נוסף',
+  );
+  String verifyEmailResendIn(int seconds) => _t(
+    'Puedes pedir otro código en $seconds s',
+    'You can request another code in $seconds s',
+    'Vous pourrez demander un autre code dans $seconds s',
+    'אפשר לבקש קוד נוסף בעוד $seconds שניות',
+  );
+  String get verifyEmailTooManyRequests => _t(
+    'Demasiados intentos. Espera un momento y vuelve a probar.',
+    'Too many attempts. Wait a moment and try again.',
+    'Trop de tentatives. Patientez un instant et réessayez.',
+    'יותר מדי ניסיונות. המתן רגע ונסה שוב.',
+  );
+  String get verifyEmailWrongAddress => _t(
+    'Ese no es mi correo',
+    'That is not my email',
+    "Ce n'est pas mon e-mail",
+    'זה לא הדוא"ל שלי',
+  );
+  String get verifyEmailWrongTitle => _t(
+    '¿Escribiste mal tu correo?',
+    'Did you mistype your email?',
+    'Avez-vous mal saisi votre e-mail ?',
+    'הקלדת את הדוא"ל בטעות?',
+  );
+  String get verifyEmailWrongBody => _t(
+    'Vamos a borrar esta cuenta para que puedas registrarte otra vez con la dirección correcta. Todavía no tienes donaciones ni historial, así que no se pierde nada.',
+    'We will delete this account so you can sign up again with the right address. You have no donations or history yet, so nothing is lost.',
+    "Nous allons supprimer ce compte pour que vous puissiez vous inscrire avec la bonne adresse. Vous n'avez encore ni dons ni historique, rien ne sera perdu.",
+    'נמחק את החשבון כדי שתוכל להירשם שוב עם הכתובת הנכונה. אין לך עדיין תרומות או היסטוריה, כך שלא ייאבד דבר.',
+  );
+  String get verifyEmailWrongConfirm => _t(
+    'Borrar y empezar de nuevo',
+    'Delete and start over',
+    'Supprimer et recommencer',
+    'מחק והתחל מחדש',
+  );
+  /// Fila del vaciado automatico cuando el ultimo cobro off-session fallo.
+  String get autoEmptyLastChargeFailed => _t(
+    'El último cobro falló — revisa tu tarjeta',
+    'Last charge failed — check your card',
+    'Le dernier prélèvement a échoué — vérifiez votre carte',
+    'החיוב האחרון נכשל — בדוק את הכרטיס',
+  );
+  /// Fila de una donacion mensual cuyo cobro fallo. Antes del audit del
+  /// 2026-09-04 estas se dibujaban identicas a una sana.
+  String get subscriptionPaymentFailed => _t(
+    'Cobro fallido — actualiza tu tarjeta',
+    'Payment failed — update your card',
+    'Paiement échoué — mettez à jour votre carte',
+    'החיוב נכשל — עדכן את הכרטיס',
+  );
   String get signInCanceled => _t(
     'Inicio de sesión cancelado',
     'Sign in canceled',

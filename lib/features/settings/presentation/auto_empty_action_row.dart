@@ -38,6 +38,15 @@ class AutoEmptyActionRow extends ConsumerWidget {
         ? _formatNextRun(nextRun, tr.locale.languageCode)
         : null;
 
+    // El ultimo cobro automatico fallo y todavia no hubo uno bueno despues.
+    // Lo estampa el webhook (payment_intent.payment_failed con
+    // purpose=pushka_auto_empty) y lo borra el primer cobro exitoso.
+    //
+    // Sin esto la fila decia "Mensual · 12 de octubre" aunque el cobro llevara
+    // meses fallando: el donante seguia metiendo monedas en su pushka creyendo
+    // que se vaciaba sola. Audit de producto del 2026-09-04.
+    final hasFailure = tenantState?['autoEmptyLastFailureAt'] != null;
+
     final textStyle = TextStyle(
       fontSize: 16,
       fontWeight: FontWeight.w500,
@@ -56,7 +65,11 @@ class AutoEmptyActionRow extends ConsumerWidget {
         child: Row(
           children: [
             Expanded(
-              child: Text.rich(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text.rich(
                 TextSpan(
                   style: textStyle,
                   children: [
@@ -80,6 +93,27 @@ class AutoEmptyActionRow extends ConsumerWidget {
                     ],
                   ],
                 ),
+              ),
+                  if (hasFailure) ...[
+                    const SizedBox(height: 5),
+                    Row(
+                      children: [
+                        Icon(Icons.error_outline, size: 15, color: cs.error),
+                        const SizedBox(width: 5),
+                        Expanded(
+                          child: Text(
+                            tr.autoEmptyLastChargeFailed,
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                              color: cs.error,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ],
               ),
             ),
             Icon(Icons.chevron_right, color: cs.onSurfaceVariant),
