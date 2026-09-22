@@ -80,8 +80,22 @@ class _DonationSubscriptionsScreenState
         // returns without it. Drop optimistic entries once the server
         // reports a real sub matching amount+currency+interval (best-effort
         // dedup — real subs don't carry _optimistic:true).
+        // Las filas optimistas VENCEN. Sin esto, cualquier entrada que el
+        // dedup no logre emparejar queda pegada para siempre — es lo que paso
+        // con el bug de unidades de arriba, y limpiarla requeria borrar los
+        // datos de la app. 90 segundos alcanzan de sobra para la consistencia
+        // eventual de Stripe, que tarda segundos.
+        final ahora = DateTime.now().millisecondsSinceEpoch;
+        bool optimisticVigente(Map<String, dynamic> s) {
+          final id = s['id'] as String? ?? '';
+          final ts = int.tryParse(id.replaceFirst('optimistic_', ''));
+          if (ts == null) return false;
+          return ahora - ts < 90000;
+        }
+
         final optimisticPending = _subs
             .where((s) => s['_optimistic'] == true)
+            .where(optimisticVigente)
             .where(
               (opt) => !serverSubs.any(
                 (sv) =>
@@ -740,7 +754,17 @@ class _DonationSubscriptionsScreenState
       final uidOptimistic = ref.read(currentUserProvider)?.uid;
       final optimisticSub = <String, dynamic>{
         'id': 'optimistic_${DateTime.now().millisecondsSinceEpoch}',
-        'amount': donationAmount,
+        // amountCents, NO donationAmount. El servidor devuelve el monto en
+        // unidades MENORES de Stripe (1000 = US$10) y esta pantalla lo divide
+        // por 100 al pintarlo. Guardando aca el valor en unidades mayores se
+        // rompian DOS cosas a la vez:
+        //   1. La fila mostraba US$0,10 en vez de US$10.
+        //   2. El dedup de _load compara amount contra amount, asi que 10
+        //      nunca igualaba a 1000: la fila optimista NO se borraba cuando
+        //      llegaba la real, quedaban las dos, y encima se persistia en
+        //      Hive — sobrevivia a cerrar la app.
+        // Encontrado probando una donacion mensual real el 2026-09-22.
+        'amount': amountCents,
         'currency': currency,
         'interval': chosenInterval,
         'donationReason': (donationReason == null || donationReason.isEmpty)
