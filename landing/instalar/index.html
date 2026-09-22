@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="robots" content="noindex, nofollow">
-  <title>Instalar Pushka — Jabad en Campus</title>
+  <title>Pushka — Jabad en Campus</title>
   <link rel="icon" href="/favicon.png">
   <style>
     :root {
@@ -16,6 +16,8 @@
       --text: #2A2118;
       --text-muted: #6E6259;
       --border: #E5DED2;
+      --warn-bg: #FDF3E7;
+      --warn-border: #E8C89A;
     }
     @media (prefers-color-scheme: dark) {
       :root {
@@ -27,6 +29,8 @@
         --text: #F5EDDF;
         --text-muted: #B8A995;
         --border: #3A2E24;
+        --warn-bg: #2E2317;
+        --warn-border: #5A4423;
       }
     }
     * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -39,180 +43,91 @@
       -webkit-font-smoothing: antialiased;
     }
     .wrap { max-width: 520px; margin: 0 auto; }
-
-    header { text-align: center; margin-bottom: 32px; }
+    header { text-align: center; margin-bottom: 28px; }
     .mark {
       font-family: Georgia, 'Times New Roman', serif;
-      font-size: 44px;
-      color: var(--gold);
-      line-height: 1;
-      margin-bottom: 12px;
+      font-size: 44px; color: var(--gold); line-height: 1; margin-bottom: 12px;
     }
     h1 {
       font-family: Georgia, 'Times New Roman', serif;
-      font-size: 28px;
-      font-weight: 400;
-      letter-spacing: -0.01em;
+      font-size: 27px; font-weight: 400; letter-spacing: -0.01em; margin-bottom: 8px;
     }
-    .sub { color: var(--text-muted); font-size: 15px; margin-top: 6px; }
-
-    .cta {
-      display: block;
-      background: var(--primary);
-      color: #fff;
-      text-decoration: none;
-      text-align: center;
-      font-size: 18px;
-      font-weight: 600;
-      padding: 18px 24px;
-      border-radius: 14px;
-      margin: 28px 0 8px;
-      box-shadow: 0 4px 14px rgba(184, 90, 46, 0.28);
+    .sub { color: var(--text-muted); font-size: 15px; }
+    .card {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 14px; padding: 22px; margin-bottom: 18px;
     }
-    .cta:active { background: var(--primary-hover); }
-    .cta-note { text-align: center; color: var(--text-muted); font-size: 13px; margin-bottom: 36px; }
-
-    h2 {
-      font-family: Georgia, serif;
-      font-size: 19px;
-      font-weight: 400;
-      margin: 36px 0 14px;
-      padding-bottom: 8px;
-      border-bottom: 1px solid var(--border);
+    .warn {
+      background: var(--warn-bg); border: 1px solid var(--warn-border);
+      border-radius: 14px; padding: 20px; margin-bottom: 22px;
     }
-
-    ol { list-style: none; counter-reset: step; }
-    ol li {
-      counter-increment: step;
-      position: relative;
-      padding: 0 0 20px 46px;
-      font-size: 16px;
+    .warn strong { display: block; margin-bottom: 6px; }
+    h2 { font-size: 16px; margin-bottom: 10px; }
+    p { margin-bottom: 12px; }
+    p:last-child { margin-bottom: 0; }
+    .btn {
+      display: block; text-align: center; background: var(--primary);
+      color: #fff; text-decoration: none; padding: 15px 20px;
+      border-radius: 11px; font-weight: 600; font-size: 16px; margin-top: 4px;
     }
-    ol li::before {
-      content: counter(step);
-      position: absolute;
-      left: 0; top: 1px;
-      width: 30px; height: 30px;
-      background: var(--surface);
-      border: 1.5px solid var(--gold);
-      color: var(--gold);
-      border-radius: 50%;
-      display: flex; align-items: center; justify-content: center;
-      font-size: 14px; font-weight: 600;
-      font-family: -apple-system, sans-serif;
+    .btn:hover { background: var(--primary-hover); }
+    .btn.ghost {
+      background: transparent; color: var(--primary);
+      border: 1.5px solid var(--border);
     }
-    ol li b { font-weight: 600; }
-    .hint { display: block; color: var(--text-muted); font-size: 14px; margin-top: 2px; }
-
-    .callout {
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-left: 3px solid var(--gold);
-      border-radius: 10px;
-      padding: 16px 18px;
-      margin: 24px 0;
-      font-size: 15px;
+    .code {
+      font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+      font-size: 21px; font-weight: 700; letter-spacing: 3px;
+      color: var(--primary); text-align: center; display: block; margin: 10px 0;
     }
-    .callout b { display: block; margin-bottom: 4px; }
-    .callout p { color: var(--text-muted); }
-
-    footer {
-      margin-top: 44px;
-      padding-top: 20px;
-      border-top: 1px solid var(--border);
-      text-align: center;
-      color: var(--text-muted);
-      font-size: 13px;
-    }
-    footer a { color: var(--primary); }
+    small { color: var(--text-muted); font-size: 13.5px; }
   </style>
 </head>
 <body>
   <div class="wrap">
     <header>
       <div class="mark">770</div>
-      <h1>Instalar Pushka</h1>
-      <p class="sub">Tu alcancía de tzedaká — Jabad en Campus</p>
+      <h1>La pushka ya está en Google&nbsp;Play</h1>
+      <p class="sub">Jabad en Campus</p>
     </header>
 
-    <!-- Bloque iOS: oculto por defecto, lo revela el script del final. Un APK
-         no se puede instalar en iPhone, asi que ahi se ofrece la PWA. -->
-    <div id="ios" hidden>
-      <a class="cta" href="https://app.jabadencampus.com">Abrir la app</a>
-      <p class="cta-note">iPhone · se agrega a la pantalla de inicio</p>
-
-      <h2>Cómo agregarla a tu iPhone</h2>
-      <ol>
-        <li>Tocá <b>Abrir la app</b>. Se abre en Safari.
-          <span class="hint">Tiene que ser Safari. Desde Chrome en iPhone no se puede agregar a la pantalla de inicio.</span></li>
-        <li>Tocá el botón <b>Compartir</b>, el cuadradito con la flecha hacia arriba, abajo en el centro.</li>
-        <li>Bajá en la lista y elegí <b>Agregar a inicio</b>.</li>
-        <li>Tocá <b>Agregar</b> arriba a la derecha.</li>
-        <li>Listo — ya tenés el ícono de <b>Pushka</b> en la pantalla de inicio. Abrila desde ahí e iniciá sesión con tu cuenta de Google.</li>
-      </ol>
-
-      <div class="callout">
-        <b>Abrila siempre desde el ícono</b>
-        <p>Si entrás desde el navegador funciona igual, pero se ve con la barra de Safari encima y no llegan las notificaciones. Desde el ícono se abre a pantalla completa.</p>
-      </div>
+    <div class="warn">
+      <strong>Si ya tenías la app instalada, desinstálala primero.</strong>
+      <p>La versión que se descargaba desde esta página no se puede actualizar
+      a la de Google Play, así que hay que desinstalarla antes de instalar la
+      nueva.</p>
+      <p><small>No pierdes nada: tu cuenta, tu historial y lo que tengas
+      juntado en la pushka están guardados. Solo vuelves a iniciar
+      sesión.</small></p>
     </div>
 
-    <div id="android">
-    <!-- Ruta ABSOLUTA obligatoria: el target `landing` tiene trailingSlash:false, asi que
-         /instalar/ redirige 301 a /instalar y un href relativo resolveria a /pushka.apk (404). -->
-    <a class="cta" href="/instalar/pushka.apk" download="pushka.apk">Descargar la app</a>
-    <p class="cta-note">Android · 62 MB · versión 1.0.2</p>
-
-    <h2>Cómo instalarla</h2>
-    <ol>
-      <li>Tocá <b>Descargar la app</b>. Si el teléfono avisa que el archivo puede ser peligroso, elegí <b>Descargar de todas formas</b>.
-        <span class="hint">Es el aviso estándar de Chrome para cualquier app que no venga de Play Store.</span></li>
-      <li>Cuando termine, tocá la notificación de descarga (o entrá a <b>Mis archivos → Descargas</b> y tocá <b>pushka.apk</b>).</li>
-      <li>Va a aparecer <b>“Por seguridad, tu teléfono no puede instalar apps desconocidas de esta fuente”</b>. Tocá <b>Configuración</b> y activá <b>Permitir de esta fuente</b>. Después volvé atrás.</li>
-      <li>Tocá <b>Instalar</b>.</li>
-      <li>Si Play Protect dice que no reconoce al desarrollador, tocá <b>Instalar de todas formas</b>.</li>
-      <li>Listo — abrí <b>Pushka</b> desde el menú de aplicaciones e iniciá sesión con tu cuenta de Google.</li>
-    </ol>
-
-    <div class="callout">
-      <b>Si Samsung bloquea la instalación</b>
-      <p>Algunos Galaxy traen activado <b>Auto Blocker</b>, que impide instalar apps fuera de Play Store. Andá a <b>Ajustes → Seguridad y privacidad → Auto Blocker</b> y desactivalo. Después repetí el paso 2.</p>
+    <div class="card">
+      <h2>Android</h2>
+      <p>Descárgala desde Google Play:</p>
+      <a class="btn" href="https://play.google.com/store/apps/details?id=com.pushka.app">Abrir en Google Play</a>
     </div>
 
-    <div class="callout">
-      <b>Si dice “La aplicación no está instalada”</b>
-      <p>Puede ser un teléfono viejo, de 32 bits. En ese caso descargá <a href="/instalar/pushka-32bits.apk" download="pushka-32bits.apk">esta otra versión</a> y repetí los mismos pasos.</p>
+    <div class="card">
+      <h2>iPhone</h2>
+      <p>Todavía no está en App Store. Mientras tanto se usa desde el
+      navegador y funciona igual:</p>
+      <a class="btn ghost" href="https://app.jabadencampus.com">Abrir la pushka</a>
+      <p style="margin-top:12px"><small>Ábrelo en Safari, toca el botón de
+      compartir y elige <em>Agregar a pantalla de inicio</em>. Te queda como
+      una app más.</small></p>
     </div>
 
-    </div><!-- /#android -->
-
-    <div class="callout">
-      <b>Vas a necesitar el código de invitación</b>
-      <p>La primera vez que entres te lo va a pedir. Es <b>JYM-770</b>.</p>
+    <div class="card">
+      <h2>El código de invitación</h2>
+      <span class="code">JYM-770</span>
+      <p><small>La primera vez que entres te lo va a pedir. Se escribe
+      J&nbsp;Y&nbsp;M&nbsp;7&nbsp;7&nbsp;0 — el guion es solo para leerlo
+      mejor, no se escribe.</small></p>
     </div>
 
-    <!-- El pie NO enlaza a app.jabadencampus.com a proposito. En Android ese
-         link se lleva al usuario a la version web y termina instalando la PWA
-         en vez del APK, que es justo lo que esta pagina viene a evitar. La
-         version web solo se ofrece en el bloque de iPhone, donde es la unica
-         opcion que existe. -->
-    <footer>
-      Jabad en Campus · Ciudad de México
-    </footer>
+    <p style="text-align:center;margin-top:26px">
+      <small>¿Algún problema? Escríbele al Rab.</small>
+    </p>
   </div>
-
-  <script>
-    // Un .apk no se instala en iOS, asi que ahi mostramos el camino de la PWA.
-    // iPadOS 13+ se declara como Macintosh en el userAgent, por eso el chequeo
-    // extra de maxTouchPoints: sin eso un iPad recibe el APK.
-    (function () {
-      var ua = navigator.userAgent || '';
-      var isIOS = /iPad|iPhone|iPod/.test(ua) ||
-                  (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1);
-      if (!isIOS) return;
-      document.getElementById('android').hidden = true;
-      document.getElementById('ios').hidden = false;
-    })();
-  </script>
 </body>
 </html>
