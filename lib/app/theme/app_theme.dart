@@ -1,9 +1,11 @@
 ﻿import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
 
 import 'app_tokens.dart';
 
 class AppTheme {
+  /// Tiene que coincidir EXACTO con el `family:` del pubspec.
+  static const String _fontFamily = 'Plus Jakarta Sans';
+
   const AppTheme._();
 
   /// Builds light + dark themes using a custom primary color from the tenant.
@@ -63,9 +65,11 @@ class AppTheme {
   }
 
   static ThemeData dark() {
-    final textTheme = GoogleFonts.plusJakartaSansTextTheme(
-      ThemeData(brightness: Brightness.dark).textTheme,
-    );
+    // Familia nativa, NO google_fonts: se carga del bundle al arrancar y la
+    // tipografia correcta esta desde el primer frame. Ver la nota del pubspec.
+    final textTheme = ThemeData(brightness: Brightness.dark)
+        .textTheme
+        .apply(fontFamily: _fontFamily);
 
     const surfaceDark  = Color(0xFF0F172A);
     const cardDark     = Color(0xFF1E293B);
@@ -233,7 +237,8 @@ class AppTheme {
   }
 
   static ThemeData light() {
-    final textTheme = GoogleFonts.plusJakartaSansTextTheme();
+    // Familia nativa, NO google_fonts. Ver la nota del pubspec.
+    final textTheme = ThemeData.light().textTheme.apply(fontFamily: _fontFamily);
 
     final base = ThemeData(
       useMaterial3: true,
