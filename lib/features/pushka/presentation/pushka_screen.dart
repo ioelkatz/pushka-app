@@ -199,10 +199,32 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
 
   // Centralized non-fatal error reporter so caught exceptions in this screen
   // surface in production Crashlytics with uid/tenantId context.
+  /// Reporta un error a Crashlytics. **Nunca puede tirar una excepcion.**
+  ///
+  /// Se llama desde los catch de toda la pantalla, asi que si falla convierte
+  /// un error manejado en un crash — y encima pierde el error original.
+  ///
+  /// Es lo que paso en la 1.0.8: los dos `ref.read` estaban FUERA del try, y
+  /// cuando la pantalla ya se habia destruido —el usuario navego, o la
+  /// operacion asincrona termino despues del dispose— tiraban
+  /// `Bad state: Cannot use "ref" after the widget was disposed`. Crashlytics
+  /// lo registro como fatal: el reportador de errores crasheando.
   void _reportError(Object error, StackTrace st, {required String op}) {
-    final uid = ref.read(currentUserProvider)?.uid;
-    final tenantId =
-        ref.read(userProfileProvider).valueOrNull?['tenantId'] as String?;
+    String? uid;
+    String? tenantId;
+    // `ref` solo vale mientras el widget viva. Y `mounted` NO alcanza por si
+    // solo: entre el chequeo y el read puede correr un dispose. De ahi el
+    // try/catch adicional — perder el uid no es motivo para perder el reporte,
+    // que es justamente la informacion que sirve para entender el error.
+    if (mounted) {
+      try {
+        uid = ref.read(currentUserProvider)?.uid;
+        tenantId =
+            ref.read(userProfileProvider).valueOrNull?['tenantId'] as String?;
+      } catch (_) {
+        // Sin contexto, pero el reporte igual sale.
+      }
+    }
     try {
       FirebaseCrashlytics.instance.recordError(
         error,
