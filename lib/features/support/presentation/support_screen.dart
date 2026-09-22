@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:google_fonts/google_fonts.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../../app/theme/app_tokens.dart';
@@ -196,7 +195,10 @@ class SupportScreen extends ConsumerWidget {
           const SizedBox(height: 12),
           Text(
             'Ioel Katz',
-            style: GoogleFonts.ibmPlexSans(
+            // Familia nativa, NO google_fonts: sin carga diferida ni cambio
+            // de fuente a los segundos. Ver la nota del pubspec.
+            style: TextStyle(
+              fontFamily: 'IBM Plex Sans',
               fontSize: 18,
               fontWeight: FontWeight.w300,
               color: cs.onSurface,

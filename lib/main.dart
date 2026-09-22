@@ -2,7 +2,6 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:google_fonts/google_fonts.dart';
 import 'package:flutter_stripe/flutter_stripe.dart';
 import 'package:flutter_web_plugins/url_strategy.dart';
 import 'package:firebase_core/firebase_core.dart';
@@ -28,18 +27,6 @@ bool _isExpectedBusinessException(Object error) {
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Las fuentes van EMPAQUETADAS (ver la seccion fonts del pubspec), asi que
-  // se apaga la descarga en tiempo de ejecucion.
-  //
-  // Sin esto, google_fonts bajaba Plus Jakarta Sans de fonts.gstatic.com en
-  // cada instalacion nueva, y si la descarga fallaba tiraba una excepcion que
-  // Crashlytics registro como FATAL el 2026-09-22:
-  //   Exception: Failed to load font with url: https://fonts.gstatic.com/...
-  //
-  // Con las fuentes en el bundle y esto en false, google_fonts usa el asset
-  // local y nunca toca la red. Si algun dia se usa una familia que no este
-  // empaquetada, cae a la fuente del sistema en silencio en vez de crashear.
-  GoogleFonts.config.allowRuntimeFetching = false;
 
   // Use clean URLs on web (pushkapp.cc/join/slug instead of pushkapp.cc/#/join/slug).
   // Required for App Links / Universal Links to match the go_router path. On

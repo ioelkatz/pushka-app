@@ -3,31 +3,33 @@ import 'package:flutter_test/flutter_test.dart';
 
 /// Blinda las fuentes empaquetadas.
 ///
-/// Existe por una regresion real del 2026-09-22. La app descargaba las
-/// tipografias de fonts.gstatic.com en tiempo de ejecucion y crasheaba cuando
-/// la descarga fallaba. Al empaquetarlas se apago `allowRuntimeFetching`, pero
-/// los archivos se declararon en la seccion `fonts:` del pubspec con nombres
-/// como `PlusJakartaSans-400.ttf`.
+/// Las tipografias se declaran como familias en el pubspec y Flutter las carga
+/// del bundle AL ARRANCAR. Este test verifica que cada archivo este ahi con el
+/// nombre exacto: si falta uno, la familia queda sin ese peso y la app cae a la
+/// fuente del sistema en las pantallas que lo usen, sin ningun error visible.
 ///
-/// Eso NO es como google_fonts busca un asset empaquetado: ignora la
-/// declaracion de familia y busca el archivo por NOMBRE EXACTO dentro de
-/// `assets:`, con la convencion `{Familia}-{Peso}.ttf`. Resultado: dejo de
-/// descargarlas y tampoco las encontraba, asi que tiraba excepcion en cada
-/// arranque — un crash PEOR que el original, porque el anterior solo aparecia
-/// con mala conexion.
+/// Historia, porque explica por que el test existe y como esta escrito:
+///
+/// 1. La app usaba google_fonts, que DESCARGABA las tipografias de
+///    fonts.gstatic.com en cada instalacion. Crashlytics lo reporto como fatal
+///    cuando la descarga fallaba.
+/// 2. Se empaquetaron, pero declaradas en `fonts:` con nombres tipo
+///    PlusJakartaSans-400.ttf. google_fonts ignora esa declaracion y busca por
+///    NOMBRE EXACTO dentro de `assets:`, asi que dejo de descargarlas y tampoco
+///    las encontraba: excepcion en cada arranque, peor que el bug original.
+/// 3. Aun bien empaquetadas, google_fonts las cargaba ASINCRONO: el primer
+///    frame salia con Roboto y la tipografia cambiaba a los segundos. Por eso
+///    se saco la dependencia y se usan familias nativas.
 ///
 /// ⚠️ La primera version de este test llamaba a `GoogleFonts.plusJakartaSans()`
-/// y esperaba `returnsNormally`. **Pasaba igual con el archivo borrado**:
-/// google_fonts falla de forma asincrona, dentro de un future que nadie
-/// espera, asi que la excepcion nunca llega al test. Un test que no puede
-/// fallar es peor que ninguno.
-///
-/// Por eso se verifica el invariante de verdad: que cada archivo este en el
-/// bundle con el nombre exacto. Eso es deterministico y SI falla cuando falta.
+/// esperando `returnsNormally`, y **pasaba igual con el archivo borrado**: la
+/// falla era asincrona y nunca llegaba al test. Un test que no puede fallar es
+/// peor que ninguno. Esta version usa `rootBundle.load`, y se comprobo que
+/// falla de verdad escondiendo un archivo.
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  /// Nombres EXACTOS que google_fonts construye al pedir cada peso.
+  /// Cada archivo declarado en la seccion `fonts:` del pubspec.
   /// Si se agrega una familia o un peso nuevo en el codigo, va aca tambien.
   const fuentesEsperadas = <String>[
     // Plus Jakarta Sans — el TextTheme de toda la app. Se empaqueta el rango
@@ -46,7 +48,7 @@ void main() {
     'assets/fonts/IBMPlexSans-Regular.ttf', // 400
   ];
 
-  group('las fuentes estan empaquetadas con el nombre que google_fonts espera', () {
+  group('cada archivo declarado en el pubspec esta en el bundle', () {
     for (final ruta in fuentesEsperadas) {
       test(ruta.split('/').last, () async {
         final data = await rootBundle.load(ruta);
