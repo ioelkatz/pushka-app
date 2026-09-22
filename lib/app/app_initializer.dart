@@ -223,10 +223,27 @@ Future<void> _performDeferredInit() async {
 
 Future<void> _initGoogleSignIn() async {
   try {
-    await GoogleSignIn.instance.initialize(
-      serverClientId:
-          '846580817724-flf3up2e57c80cjb00u0ce8tf012ae90.apps.googleusercontent.com',
-    );
+    // SIN serverClientId a proposito. No reponer el valor fijo.
+    //
+    // Estaba hardcodeado al cliente web de PRODUCCION
+    // (846580817724-flf3up2e...), asi que el flavor dev le pedia credenciales
+    // al proyecto equivocado: su paquete es com.pushka.app.test, que en el
+    // proyecto de produccion no tiene ningun cliente Android registrado. El
+    // login con Google en dev fallaba SIEMPRE con
+    // "[28444] Developer console is not set up correctly", y nunca habia
+    // podido funcionar.
+    //
+    // Cuando no se pasa nada, el plugin lee el recurso `default_web_client_id`
+    // (GoogleSignInPlugin.java:236-244), que el plugin de Gradle de
+    // google-services genera POR FLAVOR desde el google-services.json
+    // correspondiente. Verificado en build/app/generated/res:
+    //   devDebug     -> 79187279731-esh64bhq...
+    //   prodRelease  -> 846580817724-flf3up2e...
+    // O sea: el mismo valor que estaba a mano para prod, y el correcto para dev.
+    //
+    // En web esto no cambia nada: ahi el login con Google no usa este plugin
+    // sino el popup de Firebase Auth (ver signInWithGoogle en auth_controller).
+    await GoogleSignIn.instance.initialize();
   } catch (e, st) {
     debugPrint('appDeferredInit: GoogleSignIn.initialize failed: $e');
     try {

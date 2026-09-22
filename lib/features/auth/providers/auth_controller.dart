@@ -256,18 +256,36 @@ class AuthController {
       //     the idToken, so we ignore access tokens entirely.
       //
       // Reference: https://pub.dev/packages/google_sign_in (v7 migration guide)
-      const webOAuthClientId =
-          '846580817724-flf3up2e57c80cjb00u0ce8tf012ae90.apps.googleusercontent.com';
+      // Etiqueta para los mensajes de error, no el valor real. El cliente web
+      // lo resuelve el plugin desde el recurso default_web_client_id, que
+      // Gradle genera por flavor (ver _initGoogleSignIn). Antes aca habia un
+      // id fijo de produccion y el mensaje de error mentia en dev, diciendo un
+      // cliente distinto del que se usaba de verdad.
+      const webOAuthClientId = 'default_web_client_id (por flavor)';
 
-      // Sign out any cached Google session first. Same rationale as before
-      // (S25 chooser loop): forces Google to run the full OAuth handshake
-      // instead of silently returning a stale credential that might not
-      // include a fresh idToken.
-      try {
-        await GoogleSignIn.instance.signOut();
-      } catch (_) {
-        // signOut throws if no user was ever signed in — safe to ignore.
-      }
+      // ACA NO VA UN signOut(). Se quito el 2026-09-22 y no hay que reponerlo.
+      //
+      // Estuvo desde la epoca del plugin v6, donde `signIn()` podia devolver en
+      // silencio una credencial cacheada sin idToken fresco: el signOut previo
+      // forzaba el handshake completo y tapaba el bucle del selector en el S25.
+      //
+      // En v7 eso ya no puede pasar. `authenticate()` usa
+      // GetSignInWithGoogleOption, que SIEMPRE corre el flujo completo y
+      // SIEMPRE muestra el selector — no hay camino silencioso que prevenir.
+      //
+      // Y el signOut no era inocuo: se traduce en un `clearCredentialState` que
+      // borra el estado de credenciales del dispositivo. En el logcat del S25
+      // (2026-09-22) se ve la secuencia completa: clearCredentialState a las
+      // 13:11:04, el selector abriendose con credenciales validas a las
+      // 13:11:07, y a las 13:11:08 Google arrancando un AccountReauth que
+      // muere con UNREGISTERED_ON_API_CONSOLE. El usuario solo veia "inicio de
+      // sesion cancelado", porque el plugin mapea ese fallo a `canceled`.
+      //
+      // Descartado antes de llegar aca: las huellas SHA-1 de Play (el log
+      // muestra CREDENTIALS_RECEIVED, o sea que la firma valida), la pantalla
+      // de consentimiento (en produccion, usuarios externos), los seis
+      // clientes OAuth, y el estado de la cuenta (falla con tres cuentas
+      // distintas y sin acciones pendientes en Ajustes).
 
       final GoogleSignInAccount googleUser;
       try {
@@ -322,7 +340,7 @@ class AuthController {
         _recordNonFatal(
           Exception(
             'v7: googleAuth.idToken was null despite authenticate() succeeding. '
-            'serverClientId=$webOAuthClientId — likely SHA-1 not registered in '
+            'serverClientId=$webOAuthClientId — revisar SHA-1 registrado en '
             'Firebase Console for this signing key.',
           ),
           StackTrace.current,

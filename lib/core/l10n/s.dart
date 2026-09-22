@@ -1809,6 +1809,15 @@ class S {
     'Vous pourrez demander un autre code dans $seconds s',
     'אפשר לבקש קוד נוסף בעוד $seconds שניות',
   );
+  /// Fallback de la pantalla de verificacion. Antes caia en
+  /// errorServerUnavailable, que habla del servidor de PAGOS — en una pantalla
+  /// donde no hay ningun pago.
+  String get verifyEmailSendFailed => _t(
+    'No pudimos enviarte el código. Inténtalo de nuevo en unos minutos.',
+    'We could not send you the code. Try again in a few minutes.',
+    "Nous n'avons pas pu vous envoyer le code. Réessayez dans quelques minutes.",
+    'לא הצלחנו לשלוח לך את הקוד. נסה שוב בעוד כמה דקות.',
+  );
   String get verifyEmailTooManyRequests => _t(
     'Demasiados intentos. Espera un momento y vuelve a probar.',
     'Too many attempts. Wait a moment and try again.',
