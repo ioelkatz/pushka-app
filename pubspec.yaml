@@ -130,6 +130,34 @@ flutter:
     - assets/animations/
     - assets/icons/
 
+  # Fuentes EMPAQUETADAS. Antes google_fonts las DESCARGABA de
+  # fonts.gstatic.com en tiempo de ejecucion, en cada instalacion nueva.
+  # Crashlytics reporto el fallo como FATAL el 2026-09-22:
+  #   Exception: Failed to load font with url: https://fonts.gstatic.com/...
+  #
+  # Empaquetarlas arregla tres cosas: la app deja de crashear cuando la
+  # descarga falla, la tipografia deja de depender de la conexion, y cada
+  # usuario deja de mandarle su IP a Google al abrir la app — algo que ni
+  # siquiera estaba declarado en Data Safety.
+  #
+  # Los nombres de familia tienen que ser EXACTOS: google_fonts usa el asset
+  # empaquetado solo si coincide con el nombre que el espera.
+  fonts:
+    - family: Plus Jakarta Sans
+      fonts:
+        - asset: assets/fonts/PlusJakartaSans-400.ttf
+          weight: 400
+        - asset: assets/fonts/PlusJakartaSans-500.ttf
+          weight: 500
+        - asset: assets/fonts/PlusJakartaSans-600.ttf
+          weight: 600
+        - asset: assets/fonts/PlusJakartaSans-700.ttf
+          weight: 700
+    - family: IBM Plex Sans
+      fonts:
+        - asset: assets/fonts/IBMPlexSans-300.ttf
+          weight: 300
+
 
   # To add assets to your application, add an assets section, like this:
   # assets:
