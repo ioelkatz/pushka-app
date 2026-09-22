@@ -9,7 +9,17 @@ const stripeSecret = defineSecret("STRIPE_SECRET_KEY");
 const stripeWebhookSecret = defineSecret("STRIPE_WEBHOOK_SECRET");
 const stripeBillingWebhookSecret = defineSecret("STRIPE_BILLING_WEBHOOK_SECRET");
 const stripeConnectClientId = defineSecret("STRIPE_CONNECT_CLIENT_ID");
-const sendgridApiKey = defineSecret("SENDGRID_API_KEY");
+// SendGrid salio el 2026-09-22: termino el periodo de prueba y la cuenta quedo
+// en 0 correos/mes ("End Of Trial"), sin plan gratuito al que volver. Durante
+// ese lapso NINGUN correo de la app salio — ni comprobantes de donacion, ni
+// avisos de cobro fallido, ni los codigos de verificacion, que ademas dejaban
+// trabado a todo usuario nuevo.
+//
+// Brevo da 300 correos por dia gratis. Se eligio sobre Resend (3.000/mes pero
+// tope de 100/dia) porque el envio de esta app es A RAFAGAS: el cron de
+// vaciado automatico dispara un comprobante por donante en minutos, y en Erev
+// Rosh Jodesh eso pasa de 100 sin esfuerzo.
+const brevoApiKey = defineSecret("BREVO_API_KEY");
 
 admin.initializeApp();
 
@@ -190,7 +200,7 @@ async function requireVerifiedEmailForPayments(request) {
     });
     resent = true;
   } catch (err) {
-    // Rate limit propio, SendGrid caido o link no generable: seguimos al
+    // Rate limit propio, Brevo caido o link no generable: seguimos al
     // rechazo igual, con el mensaje que no promete un correo que no salio.
     console.warn("requireVerifiedEmailForPayments: no se pudo reenviar",
         String(err?.message || err));
@@ -1103,7 +1113,7 @@ exports.sendTestNotification = onCall({ enforceAppCheck: false }, async (request
 });
 
 exports.createPaymentIntent = onCall(
-  { secrets: [stripeSecret, sendgridApiKey], enforceAppCheck: false },
+  { secrets: [stripeSecret, brevoApiKey], enforceAppCheck: false },
   async (request) => {
   if (!request.auth?.uid) {
     throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
@@ -1887,7 +1897,7 @@ exports.releaseManualPushkaEmptyLock = onCall(
 // `application_fee_percent` (subs use percent, not amount) + transfer_data
 // so each invoice routes to the tenant.
 exports.createDonationSubscription = onCall(
-  { secrets: [stripeSecret, sendgridApiKey], enforceAppCheck: false },
+  { secrets: [stripeSecret, brevoApiKey], enforceAppCheck: false },
   async (request) => {
     if (!request.auth?.uid) {
       throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
@@ -2615,7 +2625,7 @@ exports.cancelDonationSubscription = onCall(
 // ---------------------------------------------------------------------------
 
 exports.createSetupIntent = onCall(
-  { secrets: [stripeSecret, sendgridApiKey], enforceAppCheck: false },
+  { secrets: [stripeSecret, brevoApiKey], enforceAppCheck: false },
   async (request) => {
     if (!request.auth?.uid) {
       throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
@@ -3328,10 +3338,10 @@ exports.setDefaultPaymentMethod = onCall(
 );
 
 exports.stripeWebhook = onRequest(
-  // sendgridApiKey entro el 2026-09-04: el webhook ahora avisa por correo
+  // brevoApiKey entro el 2026-09-04: el webhook ahora avisa por correo
   // cuando falla un cobro recurrente. Sin el secreto, sendEmail se saltea en
   // silencio y el aviso no sale.
-  { secrets: [stripeSecret, stripeWebhookSecret, sendgridApiKey] },
+  { secrets: [stripeSecret, stripeWebhookSecret, brevoApiKey] },
   async (req, res) => {
   if (!stripeSecret.value()) {
     console.error("stripeWebhook: STRIPE_SECRET_KEY is missing");
@@ -4041,7 +4051,7 @@ exports.stripeWebhook = onRequest(
       });
 
       // Alerta email crítica a super_admin (Ioel). Fire-and-forget para no
-      // bloquear la escritura del webhook si SendGrid está caído. Los
+      // bloquear la escritura del webhook si Brevo está caído. Los
       // disputes son time-sensitive (7-21 días para responder con evidence)
       // y perder uno = fee $15 + hit al risk score de Stripe.
       try {
@@ -8520,7 +8530,7 @@ function normalizeSlug(slug) {
 // createTenant — super_admin only
 // ---------------------------------------------------------------------------
 exports.createTenant = onCall(
-  { enforceAppCheck: false, secrets: [stripeConnectClientId, sendgridApiKey] },
+  { enforceAppCheck: false, secrets: [stripeConnectClientId, brevoApiKey] },
   async (request) => {
     // Fresh-claims check (not the stale ID token) — a recently-demoted
     // super_admin must NOT be able to create tenants until they re-auth.
@@ -10301,7 +10311,7 @@ exports.handleStripeConnectOAuth = onRequest(
 
       // Notify tenant admin + super_admin of the PENDING account with the
       // details fetched from Stripe so the human can spot a wrong account
-      // BEFORE it goes live. Fire-and-forget: SendGrid outages must not
+      // BEFORE it goes live. Fire-and-forget: Brevo outages must not
       // fail the OAuth redirect.
       try {
         const tenantData = priorTenantData;
@@ -10566,7 +10576,14 @@ exports.rejectStripeConnectAccount = onCall(
 // ===========================================================================
 
 const SUPER_ADMIN_NOTIFICATION_EMAIL = "ioelkatz@gmail.com";
-const SENDGRID_FROM = "ioelkatz@gmail.com";
+// Remitente de todo el correo transaccional. Era ioelkatz@gmail.com, un correo
+// personal: el donante recibia el comprobante de su tzedaka desde un Gmail que
+// no reconocia. Ahora sale del dominio de la organizacion.
+//
+// OJO: esta direccion tiene que estar verificada en Brevo (Senders, Domains &
+// Dedicated IPs). Si no lo esta, Brevo rechaza el envio con 400.
+const EMAIL_FROM = "apps@jabadencampus.com";
+const EMAIL_FROM_NAME = "Jabad en Campus";
 
 // ---------------------------------------------------------------------------
 // buildTenantWelcomeEmail — HTML email sent to new tenant admins on onboarding
@@ -10640,7 +10657,7 @@ function buildTenantWelcomeEmail({ appName, adminEmail, adminPanelUrl, passwordS
 }
 
 // ---------------------------------------------------------------------------
-// sendEmail — internal helper using SendGrid
+// sendEmail — internal helper using Brevo
 // ---------------------------------------------------------------------------
 // Redact email for logging — keep first char + domain so we can correlate
 // without spilling full PII into Cloud Logging.
@@ -10659,29 +10676,30 @@ async function sendEmail({ to, subject, html }) {
   // least one alphanumeric in the local + domain start, and a TLD of 2+
   // alpha chars. Catches "a@-b.com" / "a@b.c" which the loose form let
   // through. Firebase Auth is the canonical email gate; this is defense
-  // in depth before we hit SendGrid (and waste an API call on garbage).
+  // in depth before we hit Brevo (and waste an API call on garbage).
   const emailRegex = /^[A-Za-z0-9._%+\-]+@[A-Za-z0-9][A-Za-z0-9.\-]*\.[A-Za-z]{2,}$/;
   if (!to || to.length > 254 || !emailRegex.test(to)) {
     console.warn("sendEmail: invalid or missing recipient address, skipping:", _redactEmail(to));
     return;
   }
-  const apiKey = sendgridApiKey.value();
+  const apiKey = brevoApiKey.value();
   if (!apiKey || apiKey.startsWith("PLACEHOLDER")) {
-    console.warn("sendEmail: SENDGRID_API_KEY not set, skipping email to", _redactEmail(to));
+    console.warn("sendEmail: BREVO_API_KEY not set, skipping email to", _redactEmail(to));
     return;
   }
   const fetch = (await import("node-fetch")).default;
-  const res = await fetch("https://api.sendgrid.com/v3/mail/send", {
+  const res = await fetch("https://api.brevo.com/v3/smtp/email", {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${apiKey}`,
+      "api-key": apiKey,
+      accept: "application/json",
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      personalizations: [{ to: [{ email: to }] }],
-      from: { email: SENDGRID_FROM, name: "Chabad Pushka" },
+      sender: { email: EMAIL_FROM, name: EMAIL_FROM_NAME },
+      to: [{ email: to }],
       subject,
-      content: [{ type: "text/html", value: html }],
+      htmlContent: html,
     }),
   });
   if (!res.ok) {
@@ -10691,7 +10709,7 @@ async function sendEmail({ to, subject, html }) {
     // `.catch(...)` actually see the failure. Previous silent behavior
     // meant welcome-email failures (createTenant) and dunning notices
     // never surfaced — admin thought the email went out.
-    throw new Error(`SendGrid ${res.status}: ${body.slice(0, 400)}`);
+    throw new Error(`Brevo ${res.status}: ${body.slice(0, 400)}`);
   }
 }
 
@@ -10891,7 +10909,7 @@ exports.createBillingPortalSession = onCall(
 // cancelTenantSubscription — super_admin cancels Stripe Billing subscription
 // ---------------------------------------------------------------------------
 exports.cancelTenantSubscription = onCall(
-  { secrets: [stripeSecret, sendgridApiKey], enforceAppCheck: false },
+  { secrets: [stripeSecret, brevoApiKey], enforceAppCheck: false },
   async (request) => {
     if (!(await callerIsSuperAdminFresh(request))) {
       throw new HttpsError("permission-denied", "Solo el super administrador.");
@@ -11516,7 +11534,7 @@ exports.checkGracePeriods = onSchedule(
   // case for a tenant whose grace ended at midnight is ~24h of overrun
   // before suspension. 12h cuts that in half at negligible cost (job
   // reads a handful of docs).
-  { schedule: "every 12 hours", secrets: [sendgridApiKey] },
+  { schedule: "every 12 hours", secrets: [brevoApiKey] },
   async () => {
     const now = new Date();
 
@@ -11834,7 +11852,7 @@ exports.getDonationReasonStats = onCall(
 // vuelven al app.pushkapp.cc / app.pushkapp.cc/cancel.
 // ---------------------------------------------------------------------------
 exports.createCheckoutSession = onCall(
-  { secrets: [stripeSecret, sendgridApiKey], enforceAppCheck: false },
+  { secrets: [stripeSecret, brevoApiKey], enforceAppCheck: false },
   async (request) => {
     if (!request.auth?.uid) {
       throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
@@ -12084,22 +12102,22 @@ exports.createCheckoutSession = onCall(
 // not deep analytics (getAdminStats already does that on demand) — it's
 // PROACTIVE anomaly detection: if this email stops arriving, or the
 // numbers look wrong, Ioel knows within 7 days that something is broken
-// (SendGrid dead, donations not landing, chargebacks piling up). Without
+// (Brevo dead, donations not landing, chargebacks piling up). Without
 // this, weeks could go by silently before launch monitoring kicks in.
 //
-// Delivery success is itself the healthcheck — SendGrid working, Firestore
+// Delivery success is itself the healthcheck — Brevo working, Firestore
 // readable, function runtime healthy. Every aggregation query is wrapped
 // in .catch() so a single broken query (e.g. missing composite index)
 // zeros out that section instead of nuking the whole email. Fire-and-forget
 // on the sendEmail failure path: we swallow + log so the scheduler doesn't
-// retry and flood the inbox on a transient SendGrid blip.
+// retry and flood the inbox on a transient Brevo blip.
 // ---------------------------------------------------------------------------
 exports.sendWeeklySummary = onSchedule(
   {
     schedule: "every monday 08:00",
     timeZone: "America/Argentina/Buenos_Aires",
     region: "us-central1",
-    secrets: [sendgridApiKey],
+    secrets: [brevoApiKey],
     timeoutSeconds: 300,
   },
   async () => {
@@ -12372,7 +12390,7 @@ exports.sendWeeklySummary = onSchedule(
 
         <div style="${S.footer}">
           Este resumen se env&iacute;a todos los lunes 08:00 ART autom&aacute;ticamente.<br>
-          Si dej&aacute;s de recibirlo, algo puede estar roto (SendGrid, esta CF, o el scheduler de Cloud Functions).
+          Si dej&aacute;s de recibirlo, algo puede estar roto (Brevo, esta CF, o el scheduler de Cloud Functions).
         </div>
       </div>
     `;
@@ -12392,7 +12410,7 @@ exports.sendWeeklySummary = onSchedule(
       });
     } catch (err) {
       // Fire-and-forget: log but don't throw so the scheduler doesn't retry
-      // and flood the inbox on a transient SendGrid glitch.
+      // and flood the inbox on a transient Brevo glitch.
       console.error("sendWeeklySummary: sendEmail threw (non-fatal)", {
         err: err?.message,
       });
@@ -13238,7 +13256,7 @@ function _maskEmail(email) {
 }
 
 exports.sendEmailVerificationCode = onCall(
-  { secrets: [sendgridApiKey], enforceAppCheck: false },
+  { secrets: [brevoApiKey], enforceAppCheck: false },
   async (request) => {
     if (!request.auth?.uid) throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
     const uid = request.auth.uid;
@@ -13266,15 +13284,35 @@ exports.sendEmailVerificationCode = onCall(
       createdAt: now,
     });
 
-    await sendEmail({
-      to: user.email,
-      subject: `${code} es tu código de verificación`,
-      html: `<p>Hola,</p>
+    // Si el correo NO sale, el usuario queda mirando una pantalla que le pide
+    // un codigo que nunca va a llegar. Paso el 2026-09-22 con la cuota de
+    // Brevo agotada: la funcion tiraba un error sin manejar, el cliente
+    // mostraba "servidor no disponible" y no habia forma de entender que el
+    // problema era del envio.
+    //
+    // Se borra el documento para que el codigo muerto no ocupe el lugar del
+    // proximo, y se devuelve un motivo que el cliente puede distinguir.
+    try {
+      await sendEmail({
+        to: user.email,
+        subject: `${code} es tu código de verificación`,
+        html: `<p>Hola,</p>
 <p>Tu código para confirmar el correo en la pushka de Jabad en Campus es:</p>
 <p style="font-size:32px;font-weight:bold;letter-spacing:6px;margin:24px 0">${code}</p>
 <p>Vence en 15 minutos.</p>
 <p>Si no fuiste tú quien creó una cuenta, puedes ignorar este mensaje.</p>`,
-    });
+      });
+    } catch (err) {
+      await db.collection("_emailVerifications").doc(uid).delete().catch(() => {});
+      console.error("sendEmailVerificationCode: no se pudo enviar", {
+        uid, email: _maskEmail(user.email), error: String(err?.message || err),
+      });
+      throw new HttpsError(
+        "unavailable",
+        "No pudimos enviarte el código en este momento. Vuelve a intentarlo en unos minutos.",
+        { reason: "email-send-failed" }
+      );
+    }
 
     console.info("sendEmailVerificationCode: enviado", { uid, email: _maskEmail(user.email) });
     return { sent: true, email: _maskEmail(user.email) };
