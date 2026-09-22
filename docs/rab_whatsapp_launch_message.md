@@ -1,152 +1,131 @@
-# Mensaje de lanzamiento WhatsApp — Jabad en Campus
+# Mensaje de lanzamiento por WhatsApp — Jabad en Campus
 
-Este documento contiene el mensaje listo para copiar y enviar por WhatsApp
-a los ~500 donantes de Jabad en Campus.
+Mensaje listo para copiar y mandar a los donantes de Jabad en Campus.
 
----
-
-## Cómo enviarlo (para el Rab)
-
-1. **Usá una LISTA DE DIFUSIÓN (broadcast list), NO un grupo.**
-   - Cada persona recibe el mensaje en su chat privado, como si se lo mandaras solo a ella.
-   - En un grupo, todos ven a todos y se pierde privacidad (los donantes no querrían aparecer).
-   - En Android: WhatsApp → menú (⋮) → "Nueva difusión".
-   - En iPhone: WhatsApp → arriba a la derecha "Listas de difusión" → "Nueva lista".
-   - **Importante**: solo reciben el mensaje los contactos que te tengan
-     agendado en su celular. Avisales antes por otro medio si hace falta.
-
-2. **Probá primero con 1–2 personas de confianza** antes del blast a 500.
-   - Mandales el mensaje, pediles que instalen y confirmen que llegaron
-     a la pantalla del código 770JYM sin fricción.
-   - Chequeá que el link se previsualice bien (aparezca la imagen y el título).
-
-3. **El link es**: https://pushka-pwa.web.app/get
-   - Esa página muestra los botones de instalación (iPhone y Android),
-     las instrucciones paso a paso, y el código de invitación 770JYM
-     visible bien grande.
-   - No hace falta explicar mucho en el mensaje — la página ya guía.
-
-4. **Momento del envío**: preferí un horario tranquilo (mañana o
-   tarde/noche, evitá viernes tarde). Si sos +100 mensajes en un rato
-   WhatsApp puede marcarte como spam — mandalos en tandas de 100–150 con
-   pausas de unos minutos entre tandas.
+> ⚠️ **Este documento se reescribió el 2026-09-22 para el lanzamiento en Google
+> Play.** La versión anterior era de la época del sideload y tenía dos errores
+> que habrían roto el lanzamiento: el código de invitación estaba **al revés**
+> (`770JYM` en vez de `JYM-770`, que es el único que funciona) y el enlace
+> apuntaba a la página de descarga del APK, que hay que dar de baja.
 
 ---
 
-## Variante 1 — Formal / respetuoso
+## ⚠️ Lo primero, porque afecta a TODOS los que ya tienen la app
+
+Quien haya instalado la app por el enlace viejo —el APK que se bajaba de
+`pushka-landing.web.app/instalar`— **tiene que desinstalarla antes de instalar
+la de Play**.
+
+No es un capricho: Android bloquea la instalación cuando las firmas no
+coinciden, y la app de Play la firma Google con una clave distinta de la que
+usábamos para el APK. Si no desinstalan primero, la instalación falla con un
+error que no explica nada.
+
+**No se pierde nada**: la cuenta, el historial de donaciones y el saldo de la
+pushka viven en el servidor. Solo hay que volver a iniciar sesión.
+
+Por eso el mensaje de abajo lo dice explícitamente. **No lo saques.**
+
+---
+
+## Antes de mandar nada
+
+1. **Dar de baja la página del APK.** Si queda arriba, la gente sigue
+   instalando la versión vieja y el problema se repite indefinidamente.
+
+2. **Usar una LISTA DE DIFUSIÓN, no un grupo.** Cada persona lo recibe en su
+   chat privado. En un grupo todos se ven entre todos, y quién dona tzedaká no
+   es algo que se comparta.
+   - Android: WhatsApp → menú (⋮) → "Nueva difusión".
+   - iPhone: WhatsApp → arriba a la derecha → "Listas de difusión".
+   - Solo lo reciben los contactos que tengan al Rab agendado en su celular.
+
+3. **Probar con dos o tres personas primero.** Que confirmen que pudieron
+   instalar, entrar con el código y donar. Recién después, el envío grande.
+
+4. **Elegir un horario tranquilo.** Evitar el viernes a la tarde.
+
+---
+
+## El mensaje
 
 > B"H
 >
-> Estimados amigos, con gran alegría les comparto la nueva alcancía
-> digital de Jabad en Campus. Una forma sencilla y segura de dar tzedaká
-> desde el celular, todos los días.
+> ¡Hola! Ya está la pushka de Jabad en Campus en Google Play. Es la alcancía de
+> tzedaká, en tu teléfono: juntas durante la semana y la vacías cuando tú
+> quieras.
 >
-> Instalá la app acá:
-> https://pushka-pwa.web.app/get
+> Descárgala aquí:
+> https://play.google.com/store/apps/details?id=com.pushka.app
 >
-> Al abrirla, ingresá el código: *770JYM*
+> Al abrirla te va a pedir un código. Es: *JYM-770*
 >
-> Cualquier duda, escribime.
+> Si ya tenías la app instalada de antes, **desinstálala primero** y luego
+> instala esta. No pierdes nada: tu cuenta y tu historial quedan guardados.
+>
+> Cualquier duda me escribes.
 >
 > Que sea con brajá,
 > Rab Mendy
 
-*(~355 caracteres)*
+---
+
+## Para iPhone
+
+La app todavía **no está en App Store**. A quien tenga iPhone, mandarle esto:
+
+> Por ahora en iPhone se usa desde el navegador, funciona igual:
+> https://app.jabadencampus.com
+>
+> Ábrelo en Safari, toca el botón de compartir (el cuadrito con la flecha) y
+> elige "Agregar a pantalla de inicio". Te queda como una app más.
+>
+> El código es el mismo: *JYM-770*
 
 ---
 
-## Variante 2 — Cálido / familiar *(recomendada por defecto)*
-
-> B"H
->
-> ¡Hola! Te comparto algo lindo: armamos la pushka digital de Jabad en
-> Campus. Podés dar tzedaká desde el celu, cuando quieras, así de fácil.
->
-> Instalala acá (2 minutos):
-> https://pushka-pwa.web.app/get
->
-> Cuando abrás la app, poné el código: *770JYM*
->
-> Cualquier cosa me escribís. Un abrazo grande,
-> Mendy
-
-*(~340 caracteres)*
-
----
-
-## Variante 3 — Corto y directo
-
-> B"H
->
-> Te dejo la pushka digital de Jabad en Campus. Tzedaká desde el celu,
-> en 2 minutos.
->
-> https://pushka-pwa.web.app/get
->
-> Código: *770JYM*
->
-> Dudas, escribime.
-> Mendy
-
-*(~205 caracteres)*
-
----
-
-## Respuestas listas para preguntas frecuentes
-
-Copiá y pegá según haga falta.
+## Respuestas listas para las preguntas de siempre
 
 ### "¿Es seguro?"
 
-> Sí, 100%. Los pagos van por Stripe (la misma plataforma que usan Uber,
-> Shopify y miles de apps). Jabad en Campus nunca ve ni guarda los datos
-> de tu tarjeta — todo lo maneja Stripe directamente.
+> Sí. Los pagos los procesa Stripe, la misma plataforma que usan miles de apps.
+> Tu tarjeta se escribe en la pantalla de Stripe y queda de su lado; en la app
+> solo se ven la marca y los últimos cuatro dígitos, y la puedes borrar cuando
+> quieras.
 
-### "¿Se puede desinstalar?"
+### "No me deja instalar / me da error"
 
-> Claro, como cualquier app. Mantené el dedo apretado sobre el ícono →
-> "Eliminar app" (iPhone) o "Desinstalar" (Android). Ninguna data queda
-> en tu celular después.
+> Es porque tienes la versión vieja instalada. Desinstálala manteniendo el dedo
+> sobre el ícono → "Desinstalar", y después instala la de Google Play. Tu cuenta
+> y tu historial no se pierden.
 
-### "¿En cuánto tiempo llega la donación?"
+### "¿En cuánto llega la donación?"
 
-> Al instante. En cuanto confirmás el pago, el monto ya queda registrado
-> y llega a Jabad en Campus. Te llega también un comprobante por email.
-
-### "No me aparece el botón de instalar en Android"
-
-> Abrí el link en Chrome (no WhatsApp). Si igual no aparece, tocá el
-> menú de los 3 puntitos arriba a la derecha → "Instalar app" o
-> "Agregar a pantalla de inicio". La página
-> https://pushka-pwa.web.app/get tiene las instrucciones con dibujitos.
-
-### "No me aparece 'Agregar a pantalla de inicio' en iPhone"
-
-> Tenés que abrirlo en Safari (no en WhatsApp ni Chrome). Copiá el link
-> y pegalo en Safari. Después el botón de compartir (cuadradito con
-> flecha ↑) tiene la opción "Agregar a pantalla de inicio".
-
-### "¿Puedo donar sin instalar la app?"
-
-> Por ahora la donación va por la app — es más ágil y segura. Instalarla
-> te lleva menos de 2 minutos y después queda en tu pantalla para donar
-> cuando quieras, incluso montos chicos del día a día (tipo alcancía).
+> Al instante. Cuando confirmas el pago queda registrado y llega a Jabad en
+> Campus, y te llega un comprobante por correo.
 
 ### "¿Cuánto tengo que donar?"
 
-> Lo que quieras y cuando quieras. La idea es la costumbre de la
-> tzedaká diaria — puede ser desde 5 pesos. Cada gota suma.
+> Lo que quieras y cuando quieras. La idea es la costumbre, no el monto — puede
+> ser desde cinco pesos. En la tzedaká cuenta la constancia.
+
+### "¿Se puede desinstalar?"
+
+> Claro, como cualquier app. Y si quieres borrar tu cuenta entera, está dentro
+> de Ajustes.
 
 ---
 
-## Nota técnica (para el Rab, no para donantes)
+## Nota técnica — para el Rab y para Ioel, no para donantes
 
-- El link **https://pushka-pwa.web.app/get** es la landing pública.
-  Muestra los botones de instalar iPhone/Android, el código 770JYM
-  bien visible, y detecta si están en WhatsApp para pedirles que abran
-  en el navegador.
-- El código **770JYM** vincula al donante con el tenant "Jabad en Campus"
-  automáticamente al abrir la app por primera vez.
-- Si algún donante técnico quiere el APK nativo (Android), al final de
-  la landing hay un link chiquito "¿Preferís APK nativo? Descargar acá".
-  No lo menciones en el mensaje — es para power users.
+- **El código es `JYM-770`**, y se teclea **J Y M 7 7 0**. El guion es un
+  separador visual, no se escribe. Estuvo publicado al revés (`770JYM`) durante
+  meses y con esa forma la app responde "código no encontrado".
+- El código **también está publicado en la ficha de Google Play**, decisión
+  tomada el 2026-09-02: quien llegue por su cuenta puede entrar sin pedirlo.
+- El enlace de Play es
+  `https://play.google.com/store/apps/details?id=com.pushka.app`. Solo funciona
+  una vez que la app esté publicada en producción — en prueba interna no abre
+  para quien no sea verificador.
+- `app.jabadencampus.com` es la PWA, y **se queda arriba hasta que la app esté
+  aprobada en App Store**. Es lo único que tienen los iPhone hasta entonces.
