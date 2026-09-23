@@ -87,19 +87,19 @@ class SupportScreen extends ConsumerWidget {
                     // logos ship at 2000px+) in memory.
                     cacheWidth: 224,
                     cacheHeight: 224,
-                    errorBuilder: (_, _, _) => _defaultRabHeader(),
+                    errorBuilder: (_, _, _) => _defaultBrandLogo(),
                   ),
                 )
               else
-                _defaultRabHeader(),
-              const SizedBox(height: 40),
+                _defaultBrandLogo(),
+              const SizedBox(height: 64),
               const Center(
                 child: SizedBox(width: 80, height: 80, child: Building770Widget(fillFraction: 0)),
               ),
             ],
           ),
 
-          const SizedBox(height: 32),
+          const SizedBox(height: 16),
 
           // App Version
           Text(
@@ -211,15 +211,17 @@ class SupportScreen extends ConsumerWidget {
     );
   }
 
-  Widget _defaultRabHeader() {
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(12),
-      child: Image.asset(
-        'assets/images/mendy_meer.png',
-        height: 112,
-        fit: BoxFit.cover,
-        alignment: Alignment.topCenter,
-      ),
+  /// Logo de la marca. Antes era la foto del Rab con su hijo; el Rab pidio
+  /// el 2026-09-23 que fuera el logo de Jabad en Campus, el mismo del menu.
+  ///
+  /// Sin ClipRRect ni BoxFit.cover: eso servia para recortar una foto. El
+  /// logo es un PNG transparente con margen propio, asi que va `contain` y
+  /// mas alto que la foto para que la marca se lea del mismo tamano.
+  Widget _defaultBrandLogo() {
+    return Image.asset(
+      'assets/images/jabad_campus_logo.png',
+      height: 140,
+      fit: BoxFit.contain,
     );
   }
 
