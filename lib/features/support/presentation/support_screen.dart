@@ -214,13 +214,18 @@ class SupportScreen extends ConsumerWidget {
   /// Logo de la marca. Antes era la foto del Rab con su hijo; el Rab pidio
   /// el 2026-09-23 que fuera el logo de Jabad en Campus, el mismo del menu.
   ///
-  /// Sin ClipRRect ni BoxFit.cover: eso servia para recortar una foto. El
-  /// logo es un PNG transparente con margen propio, asi que va `contain` y
-  /// mas alto que la foto para que la marca se lea del mismo tamano.
+  /// Sin ClipRRect ni BoxFit.cover: eso servia para recortar una foto.
+  ///
+  /// El PNG venia de 1080x1080 con la marca ocupando solo 1058x707: 17% de
+  /// transparencia arriba y otro tanto abajo, que en pantalla se veian como
+  /// un hueco alrededor del logo. El archivo se recorto a su contenido el
+  /// 2026-09-23, asi que este alto es ahora el alto REAL de la marca y no
+  /// hay que compensar nada. Si alguien vuelve a exportar el logo con
+  /// margenes, el hueco reaparece: recortarlo en el archivo, no aca.
   Widget _defaultBrandLogo() {
     return Image.asset(
       'assets/images/jabad_campus_logo.png',
-      height: 140,
+      height: 96,
       fit: BoxFit.contain,
     );
   }
