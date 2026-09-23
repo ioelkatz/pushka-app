@@ -4656,19 +4656,35 @@ exports.stripeWebhook = onRequest(
             const to = String(userData.billingEmail || userData.email || "").trim();
             if (to) {
               const stripeClient = require("stripe")(stripeSecret.value());
-              // El id del cargo vive en un lugar distinto segun la version de
-              // la API con la que Stripe serializa la factura. Se prueban los
-              // tres en orden en vez de asumir uno: si cambian la version del
-              // endpoint, el comprobante no se cae en silencio.
+              // Donde vive el id del cargo de una factura cambia segun la
+              // version de la API, y en la 2026-03-25 NO viene ninguno en el
+              // payload del webhook: `charge` y `payment_intent` ya no
+              // existen, y `payments` solo aparece si se pide expandido.
+              //
+              // Por eso la primera version de esto no mandaba nada: leia
+              // `invoice.payments` del evento, siempre daba vacio, y el
+              // comprobante moria en el else de abajo. Lo detecto Ioel el
+              // 2026-09-23 probando una recurrente de un dolar.
+              //
+              // Se prueban los campos inline primero (baratos, sirven si
+              // Stripe vuelve a mandarlos) y recien si no hay nada se pide la
+              // factura expandida, que es una llamada de red mas.
               let chargeId = typeof invoice.charge === "string" ? invoice.charge : null;
-              if (!chargeId) {
-                const piId = typeof invoice.payment_intent === "string"
-                  ? invoice.payment_intent
-                  : (invoice.payments?.data?.[0]?.payment?.payment_intent ?? null);
-                if (typeof piId === "string" && piId) {
-                  const pi = await stripeClient.paymentIntents.retrieve(piId, acctReqOpts);
-                  if (typeof pi?.latest_charge === "string") chargeId = pi.latest_charge;
-                }
+              let piId = typeof invoice.payment_intent === "string"
+                ? invoice.payment_intent
+                : (invoice.payments?.data?.[0]?.payment?.payment_intent ?? null);
+              if (!chargeId && !piId) {
+                const full = await stripeClient.invoices.retrieve(
+                  invoice.id, { expand: ["payments"] }, acctReqOpts,
+                );
+                if (typeof full.charge === "string") chargeId = full.charge;
+                piId = typeof full.payment_intent === "string"
+                  ? full.payment_intent
+                  : (full.payments?.data?.[0]?.payment?.payment_intent ?? null);
+              }
+              if (!chargeId && typeof piId === "string" && piId) {
+                const pi = await stripeClient.paymentIntents.retrieve(piId, acctReqOpts);
+                if (typeof pi?.latest_charge === "string") chargeId = pi.latest_charge;
               }
               if (chargeId) {
                 await stripeClient.charges.update(chargeId, { receipt_email: to }, acctReqOpts);
