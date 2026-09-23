@@ -87,6 +87,9 @@ class AboutScreen extends ConsumerWidget {
           Center(
             child: Text(
               tr.copyrightFor(tenantAppName),
+              // El Center centra el BLOQUE; sin esto las dos lineas del
+              // copyright se alinean a la izquierda dentro de el.
+              textAlign: TextAlign.center,
               style: TextStyle(
                 fontSize: 14,
                 color: cs.onSurfaceVariant,
