@@ -230,7 +230,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             ? authDisplayName
             : tr.defaultUser);
     final userEmail = user?.email ?? tr.noEmail;
-    final billingEmail = getProfileString('billingEmail') ?? '-';
     final phoneNumber = getProfileString('phoneNumber') ?? '-';
     final mailingAddress = getProfileString('mailingAddress') ?? '-';
 
@@ -504,18 +503,13 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           const SizedBox(height: 16),
           _buildProfileField(tr.emailLabel, userEmail),
           const SizedBox(height: 16),
-          _buildEditableField(
-            tr.billingEmail,
-            billingEmail,
-            onEdit: () => _showEditDialog(
-              tr.billingEmail,
-              billingEmail == '-' ? '' : billingEmail,
-              (value) => _updateProfileField(
-                user,
-                billingEmail: value,
-              ), fieldKey: 'billingEmail',
-            ),
-          ),
+          // El correo de facturacion es SIEMPRE el de la cuenta y no se edita.
+          // Era un campo libre escrito a mano y las reglas solo validaban que
+          // fuera texto: si alguien ponia cualquier cosa, Stripe rechazaba la
+          // creacion del cargo y se quedaba sin cobro automatico todos los
+          // meses, en silencio. El correo de la cuenta ya paso por el codigo
+          // de 6 digitos al registrarse.
+          _buildProfileField(tr.billingEmail, userEmail),
           const SizedBox(height: 16),
           _buildEditableField(
             tr.phoneLabel,
