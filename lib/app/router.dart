@@ -208,7 +208,6 @@ final router = GoRouter(
                   'displayName': currentUser.displayName ?? '',
                   'createdAt': FieldValue.serverTimestamp(),
                   'lastLoginAt': FieldValue.serverTimestamp(),
-                  'billingEmail': '',
                   'phoneNumber': '',
                   'mailingAddress': '',
                   'pushkaAmount': 0.0,

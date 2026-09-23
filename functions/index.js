@@ -8064,7 +8064,6 @@ exports.joinTenant = onCall(
           uid,
           email: authEmail,
           displayName: authName,
-          billingEmail: "",
           phoneNumber: "",
           mailingAddress: "",
           pushkaAmount: 0,

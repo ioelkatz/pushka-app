@@ -74,7 +74,6 @@ class UserRepository {
       'displayName': displayName ?? user.displayName ?? '',
       'createdAt': FieldValue.serverTimestamp(),
       'lastLoginAt': FieldValue.serverTimestamp(),
-      'billingEmail': '',
       'phoneNumber': '',
       'mailingAddress': '',
       'pushkaAmount': 0.0,
@@ -122,7 +121,6 @@ class UserRepository {
   Future<void> updateProfile({
     required String uid,
     String? displayName,
-    String? billingEmail,
     String? phoneNumber,
     String? mailingAddress,
   }) async {
@@ -142,7 +140,6 @@ class UserRepository {
       }
       data['displayName'] = trimmed;
     }
-    if (billingEmail != null) data['billingEmail'] = billingEmail;
     if (phoneNumber != null) data['phoneNumber'] = phoneNumber;
     if (mailingAddress != null) data['mailingAddress'] = mailingAddress;
 
