@@ -4635,6 +4635,53 @@ exports.stripeWebhook = onRequest(
             });
           // BUG #8 fix: guarded via applyRevenueDeltaOnce (stuck-recovery dedup)
           if (tenantId) await applyRevenueDeltaOnce(eventRef, tenantId, txSnap.amountUSD, "increment");
+
+          // COMPROBANTE. De los tres caminos por los que sale plata, este era
+          // el UNICO que no dejaba rastro en la bandeja del donante:
+          //
+          //   donacion manual   -> receipt_email en el PaymentIntent, Stripe manda
+          //   vaciado automatico -> receipt_email, Stripe manda
+          //   suscripcion       -> NADA
+          //
+          // Y es el peor de los tres para que falte, porque es el que se cobra
+          // solo todos los meses sin que nadie este mirando. Lo detecto Ioel el
+          // 2026-09-23: probo dos donaciones recurrentes y no le llego nada.
+          //
+          // Se manda desde aca en vez de depender de los recibos de Stripe
+          // porque para las facturas de suscripcion esos dependen de una
+          // configuracion del panel de la CUENTA CONECTADA (la del Rab), que no
+          // controlamos desde el codigo y que alguien puede apagar sin saberlo.
+          //
+          // El webhook ya esta deduplicado por eventRef, asi que no puede
+          // mandar dos veces el mismo comprobante.
+          try {
+            const userSnap = await db.collection("users").doc(uid).get();
+            const userData = userSnap.data() || {};
+            const to = String(userData.billingEmail || userData.email || "").trim();
+            if (to) {
+              const montoTexto = `${txCurrency} ${amountPaid.toFixed(2)}`;
+              const destino = subMeta?.donationReason
+                ? String(subMeta.donationReason).trim().slice(0, 80)
+                : null;
+              await sendEmail({
+                to,
+                subject: `Recibimos tu donación de ${montoTexto}`,
+                html: `<p>Hola,</p>
+<p>Recibimos tu donación mensual de <b>${_escapeHtmlForEmail(montoTexto)}</b> a Jabad en Campus. Gracias por tu tzedaká.</p>
+${destino ? `<p>Destino: <b>${_escapeHtmlForEmail(destino)}</b></p>` : ""}
+<p>Queda registrada en el historial de la app, junto con todas tus donaciones.</p>
+<p>Si en algún momento quieres cambiarla o darla de baja, puedes hacerlo desde <b>Mis donaciones</b> dentro de la app.</p>`,
+              });
+            } else {
+              console.warn("invoice.payment_succeeded: usuario sin correo", { uid });
+            }
+          } catch (err) {
+            // El comprobante NO puede tumbar el webhook: la donacion ya se
+            // cobro y ya se registro. Si el correo falla queda en el log.
+            console.error("invoice.payment_succeeded: comprobante fallo", {
+              uid, invoiceId: invoice.id, error: String(err?.message || err),
+            });
+          }
         } else {
           console.warn("stripeWebhook: invoice.payment_succeeded without uid in subscription metadata", {
             invoiceId: invoice.id, subId,
