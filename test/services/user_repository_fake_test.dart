@@ -141,13 +141,6 @@ void main() {
       expect(data['displayName'], 'New Name');
     });
 
-    test('updates billingEmail', () async {
-      await repo.updateProfile(uid: mockUser.uid, billingEmail: 'billing@example.com');
-
-      final data = (await fakeFirestore.collection('users').doc(mockUser.uid).get()).data()!;
-      expect(data['billingEmail'], 'billing@example.com');
-    });
-
     test('updates phoneNumber', () async {
       await repo.updateProfile(uid: mockUser.uid, phoneNumber: '+1-555-0100');
 
@@ -181,14 +174,12 @@ void main() {
       await repo.updateProfile(
         uid: mockUser.uid,
         displayName: 'Full Update',
-        billingEmail: 'b@b.com',
         phoneNumber: '555',
         mailingAddress: '42 Wallaby Way',
       );
 
       final data = (await fakeFirestore.collection('users').doc(mockUser.uid).get()).data()!;
       expect(data['displayName'], 'Full Update');
-      expect(data['billingEmail'], 'b@b.com');
       expect(data['phoneNumber'], '555');
       expect(data['mailingAddress'], '42 Wallaby Way');
     });

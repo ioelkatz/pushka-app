@@ -261,6 +261,13 @@ service cloud.firestore {
             'photoURL',
             'createdAt',
             'lastLoginAt',
+            // billingEmail: el campo se elimino de la app el 2026-09-23 (el
+            // comprobante va siempre al correo de la cuenta). NO sacarlo de
+            // esta lista: los usuarios que ya existen TIENEN el campo en su
+            // doc, y hasOnly evalua el doc RESULTANTE. Si se quita, cualquier
+            // update de ese usuario (donar, cambiar idioma) empieza a fallar.
+            // Ya paso una vez en prod con transactionCount. Sale recien
+            // cuando una CF de migracion lo borre de los docs viejos.
             'billingEmail',
             'phoneNumber',
             'mailingAddress',

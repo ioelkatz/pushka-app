@@ -230,7 +230,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             ? authDisplayName
             : tr.defaultUser);
     final userEmail = user?.email ?? tr.noEmail;
-    final billingEmail = getProfileString('billingEmail') ?? '-';
     final phoneNumber = getProfileString('phoneNumber') ?? '-';
     final mailingAddress = getProfileString('mailingAddress') ?? '-';
 
@@ -503,19 +502,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           _buildProfileField(tr.nameLabel, userName),
           const SizedBox(height: 16),
           _buildProfileField(tr.emailLabel, userEmail),
-          const SizedBox(height: 16),
-          _buildEditableField(
-            tr.billingEmail,
-            billingEmail,
-            onEdit: () => _showEditDialog(
-              tr.billingEmail,
-              billingEmail == '-' ? '' : billingEmail,
-              (value) => _updateProfileField(
-                user,
-                billingEmail: value,
-              ), fieldKey: 'billingEmail',
-            ),
-          ),
           const SizedBox(height: 16),
           _buildEditableField(
             tr.phoneLabel,
@@ -1745,7 +1731,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
   Future<void> _updateProfileField(
     User? user, {
-    String? billingEmail,
     String? phoneNumber,
     String? mailingAddress,
   }) async {
@@ -1754,7 +1739,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     try {
       await ref.read(userRepositoryProvider).updateProfile(
             uid: user.uid,
-            billingEmail: billingEmail,
             phoneNumber: phoneNumber,
             mailingAddress: mailingAddress,
           );
@@ -2530,24 +2514,20 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
   TextInputType _keyboardTypeForKey(String key) {
     switch (key) {
-      case 'billingEmail': return TextInputType.emailAddress;
       case 'phone': return TextInputType.phone;
       default: return TextInputType.text;
     }
   }
 
   String? _validateByKey(String key, String value) {
-    // billingEmail / phone / mailingAddress are all OPTIONAL — an empty
+    // phone / mailingAddress are all OPTIONAL — an empty
     // submission is how the user clears the field. Only validate the format
     // when the user actually typed something.
-    const optionalKeys = {'billingEmail', 'phone', 'mailingAddress'};
+    const optionalKeys = {'phone', 'mailingAddress'};
     if (value.isEmpty) {
       return optionalKeys.contains(key) ? null : S.of(context).fieldRequired;
     }
     switch (key) {
-      case 'billingEmail':
-        final isValid = RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$').hasMatch(value);
-        return isValid ? null : S.of(context).invalidEmail;
       case 'phone':
         final isValid = RegExp(r'^[0-9+\-\s]{7,}$').hasMatch(value);
         return isValid ? null : S.of(context).invalidPhone;

@@ -953,12 +953,6 @@ class S {
   String get profileSection => _t('PERFIL', 'PROFILE', 'PROFIL', 'פרופיל');
   String get nameLabel => _t('NOMBRE', 'NAME', 'NOM', 'שם');
   String get emailLabel => _t('CORREO ELECTRÓNICO', 'EMAIL', 'E-MAIL', 'דוא"ל');
-  String get billingEmail => _t(
-    'CORREO DE FACTURACIÓN',
-    'BILLING EMAIL',
-    'E-MAIL DE FACTURATION',
-    'דוא"ל לחיוב',
-  );
   String get phoneLabel => _t(
     'NÚMERO DE TELÉFONO',
     'PHONE NUMBER',

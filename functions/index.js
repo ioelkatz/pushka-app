@@ -912,6 +912,23 @@ async function writeUserPaymentEvent(uid, eventId, data) {
     );
 }
 
+/// Devuelve el correo si tiene forma de correo, o null.
+///
+/// Existe por un bug real: `billingEmail` lo escribe el usuario desde Ajustes
+/// y las reglas de Firestore solo validan que sea texto de <= 254 caracteres,
+/// NO que sea un correo. Stripe, en cambio, rechaza el parametro
+/// (`Invalid email address: hola`) y con el se cae la creacion del cargo
+/// entera. En el vaciado automatico eso significaba que un donante que
+/// escribiera cualquier cosa en ese campo se quedaba sin cobro todos los
+/// meses, en silencio y sin nadie mirando.
+///
+/// La regla es la misma que usa sendEmail mas abajo.
+function correoValidoONull(x) {
+  const s = String(x ?? "").trim();
+  if (!s || s.length > 254) return null;
+  return /^[A-Za-z0-9._%+\-]+@[A-Za-z0-9][A-Za-z0-9.\-]*\.[A-Za-z]{2,}$/.test(s) ? s : null;
+}
+
 async function writeActivityLog({ type, tenantId, tenantName, severity, requiresAction, data }) {
   // ttlAt: lets us flip on a Firestore TTL policy without code changes.
   // Critical / requires-action entries are kept indefinitely (set null) so
@@ -3731,7 +3748,7 @@ exports.stripeWebhook = onRequest(
         try {
           const userSnap = await db.collection("users").doc(uid).get();
           const userData = userSnap.data() || {};
-          const to = String(userData.billingEmail || userData.email || "").trim();
+          const to = correoValidoONull(userData.email);
           if (to) {
             await sendEmail({
               to,
@@ -4653,7 +4670,7 @@ exports.stripeWebhook = onRequest(
           try {
             const userSnap = await db.collection("users").doc(uid).get();
             const userData = userSnap.data() || {};
-            const to = String(userData.billingEmail || userData.email || "").trim();
+            const to = correoValidoONull(userData.email);
             if (to) {
               const stripeClient = require("stripe")(stripeSecret.value());
               // Donde vive el id del cargo de una factura cambia segun la
@@ -4777,7 +4794,7 @@ exports.stripeWebhook = onRequest(
           try {
             const userSnap = await db.collection("users").doc(uid).get();
             const userData = userSnap.data() || {};
-            const to = String(userData.billingEmail || userData.email || "").trim();
+            const to = correoValidoONull(userData.email);
             if (to) {
               await sendEmail({
                 to,
@@ -5711,9 +5728,12 @@ async function _runPushkaAutoEmptyTick() {
             // tarjeta, que es exactamente el escenario que termina en
             // contracargo. El pago manual ya lo mandaba (createPaymentIntent);
             // este flujo se habia quedado sin el.
-            receiptEmail: String(
-              userData.billingEmail || userData.email || "",
-            ).trim() || null,
+            // Solo el correo de la cuenta: pasa por el codigo de 6 digitos
+            // al registrarse y las reglas lo hacen inmutable. El campo libre
+            // billingEmail se saco porque un valor malformado no dejaba un
+            // recibo sin llegar: hacia que Stripe rechazara la creacion del
+            // cargo ENTERA y el donante se quedaba sin cobro ese mes.
+            receiptEmail: correoValidoONull(userData.email),
             newPushkaAmount,
             normalNextDate,
             tenantId,
@@ -8044,7 +8064,6 @@ exports.joinTenant = onCall(
           uid,
           email: authEmail,
           displayName: authName,
-          billingEmail: "",
           phoneNumber: "",
           mailingAddress: "",
           pushkaAmount: 0,
@@ -12082,6 +12101,10 @@ exports.createCheckoutSession = onCall(
     // connected account (via Stripe-Account header on sessions.create).
     // application_fee_amount still valid — skims platform commission.
     const paymentIntentData = {
+      // Sin esto Checkout dependia de que la cuenta conectada tuviera los
+      // recibos prendidos en su panel, que es justo lo que no controlamos.
+      // Es el unico camino de donacion que se habia quedado sin comprobante.
+      receipt_email: correoValidoONull(customerEmail) || undefined,
       metadata: {
         uid: request.auth.uid,
         tenantId,
