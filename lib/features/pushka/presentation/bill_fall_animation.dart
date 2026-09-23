@@ -181,7 +181,7 @@ class _BillFallAnimationState extends State<BillFallAnimation>
                     child: Transform.translate(
                       offset: Offset(x, 0),
                       child: Image.asset(
-                        'assets/images/rebbe_dollar.png',
+                        'assets/images/770_dollar.png',
                         width: 140,
                         height: 70,
                         fit: BoxFit.contain,

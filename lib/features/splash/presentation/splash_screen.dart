@@ -286,7 +286,7 @@ class _SplashScreenState extends State<SplashScreen>
         child: Transform.rotate(
           angle: rotation,
           child: Image.asset(
-            'assets/images/rebbe_dollar.png',
+            'assets/images/770_dollar.png',
             width:  billW,
             height: billH,
             fit:    BoxFit.contain,
