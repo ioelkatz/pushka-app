@@ -4636,48 +4636,53 @@ exports.stripeWebhook = onRequest(
           // BUG #8 fix: guarded via applyRevenueDeltaOnce (stuck-recovery dedup)
           if (tenantId) await applyRevenueDeltaOnce(eventRef, tenantId, txSnap.amountUSD, "increment");
 
-          // COMPROBANTE. De los tres caminos por los que sale plata, este era
-          // el UNICO que no dejaba rastro en la bandeja del donante:
+          // COMPROBANTE de la donacion recurrente.
+          // Ioel decidio el 2026-09-23 que los comprobantes de TODAS las
+          // donaciones salgan por Stripe, para que las tres se vean iguales
+          // en la bandeja del donante y no haya dos remitentes distintos.
           //
-          //   donacion manual   -> receipt_email en el PaymentIntent, Stripe manda
-          //   vaciado automatico -> receipt_email, Stripe manda
-          //   suscripcion       -> NADA
-          //
-          // Y es el peor de los tres para que falte, porque es el que se cobra
-          // solo todos los meses sin que nadie este mirando. Lo detecto Ioel el
-          // 2026-09-23: probo dos donaciones recurrentes y no le llego nada.
-          //
-          // Se manda desde aca en vez de depender de los recibos de Stripe
-          // porque para las facturas de suscripcion esos dependen de una
-          // configuracion del panel de la CUENTA CONECTADA (la del Rab), que no
-          // controlamos desde el codigo y que alguien puede apagar sin saberlo.
+          // Por que se pide por codigo y no se prende el interruptor del panel
+          // del Rab: `receipt_email` seteado por API fuerza el envio SIN
+          // IMPORTAR la configuracion de emails de la cuenta conectada. El
+          // interruptor arregla una sola cuenta y cualquiera lo puede apagar
+          // sin darse cuenta; esto arregla tambien a los tenants que entren
+          // despues, sin que nadie tenga que configurar nada.
           //
           // El webhook ya esta deduplicado por eventRef, asi que no puede
-          // mandar dos veces el mismo comprobante.
+          // pedir dos veces el mismo recibo.
           try {
             const userSnap = await db.collection("users").doc(uid).get();
             const userData = userSnap.data() || {};
             const to = String(userData.billingEmail || userData.email || "").trim();
             if (to) {
-              const montoTexto = `${txCurrency} ${amountPaid.toFixed(2)}`;
-              const destino = subMeta?.donationReason
-                ? String(subMeta.donationReason).trim().slice(0, 80)
-                : null;
-              await sendEmail({
-                to,
-                subject: `Recibimos tu donación de ${montoTexto}`,
-                html: `<p>Hola,</p>
-<p>Recibimos tu donación mensual de <b>${_escapeHtmlForEmail(montoTexto)}</b> a Jabad en Campus. Gracias por tu tzedaká.</p>
-${destino ? `<p>Destino: <b>${_escapeHtmlForEmail(destino)}</b></p>` : ""}
-<p>Queda registrada en el historial de la app, junto con todas tus donaciones.</p>
-<p>Si en algún momento quieres cambiarla o darla de baja, puedes hacerlo desde <b>Mis donaciones</b> dentro de la app.</p>`,
-              });
+              const stripeClient = require("stripe")(stripeSecret.value());
+              // El id del cargo vive en un lugar distinto segun la version de
+              // la API con la que Stripe serializa la factura. Se prueban los
+              // tres en orden en vez de asumir uno: si cambian la version del
+              // endpoint, el comprobante no se cae en silencio.
+              let chargeId = typeof invoice.charge === "string" ? invoice.charge : null;
+              if (!chargeId) {
+                const piId = typeof invoice.payment_intent === "string"
+                  ? invoice.payment_intent
+                  : (invoice.payments?.data?.[0]?.payment?.payment_intent ?? null);
+                if (typeof piId === "string" && piId) {
+                  const pi = await stripeClient.paymentIntents.retrieve(piId, acctReqOpts);
+                  if (typeof pi?.latest_charge === "string") chargeId = pi.latest_charge;
+                }
+              }
+              if (chargeId) {
+                await stripeClient.charges.update(chargeId, { receipt_email: to }, acctReqOpts);
+              } else {
+                console.error("invoice.payment_succeeded: no se pudo resolver el cargo para el recibo", {
+                  uid, invoiceId: invoice.id,
+                });
+              }
             } else {
               console.warn("invoice.payment_succeeded: usuario sin correo", { uid });
             }
           } catch (err) {
             // El comprobante NO puede tumbar el webhook: la donacion ya se
-            // cobro y ya se registro. Si el correo falla queda en el log.
+            // cobro y ya se registro. Si el recibo falla queda en el log.
             console.error("invoice.payment_succeeded: comprobante fallo", {
               uid, invoiceId: invoice.id, error: String(err?.message || err),
             });
