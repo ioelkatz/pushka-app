@@ -4,7 +4,13 @@
 <dict>
 	<!-- Universal Links — cada dominio de esta lista tiene que servir
 	     /.well-known/apple-app-site-association con NUESTRO Team ID. Los dos
-	     de abajo devuelven 200 y salen del mismo target de Firebase Hosting.
+	     de abajo tienen que servirlo. VERIFICAR EL CONTENIDO, no el codigo
+	     HTTP: Firebase Hosting devuelve 200 con un AASA VACIO
+	     ({"applinks":{"apps":[],"details":[]}}) cuando el sitio no tiene el
+	     archivo, y eso rompe los deep links sin dar ningun error. Asi estaba
+	     app.jabadencampus.com hasta el 2026-09-24, cuando se agrego el archivo
+	     en web/.well-known/. Los dos siguen inservibles hasta que el AASA
+	     lleve el Team ID real, que llega con el alta de Apple.
 
 	     ⚠️ Aca figuraban pushkaapp.com y www.pushkaapp.com. Ese dominio NO es
 	     nuestro: redirige a pushkahub.com, el producto de otra empresa. iOS
