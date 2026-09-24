@@ -2457,7 +2457,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
     final supportEmail =
         (tenantContact != null && tenantContact.trim().isNotEmpty)
         ? tenantContact.trim()
-        : 'support@pushkaapp.com';
+        : 'apps@jabadencampus.com';
 
     await showModalBottomSheet<void>(
       context: context,

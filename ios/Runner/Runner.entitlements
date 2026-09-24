@@ -2,14 +2,19 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<!-- Universal Links — must match a domain serving
-	     /.well-known/apple-app-site-association. Both pushka-app-ioel.web.app
-	     and (when DNS is mapped) pushkaapp.com serve the same AASA file. -->
+	<!-- Universal Links — cada dominio de esta lista tiene que servir
+	     /.well-known/apple-app-site-association con NUESTRO Team ID. Los dos
+	     de abajo devuelven 200 y salen del mismo target de Firebase Hosting.
+
+	     ⚠️ Aca figuraban pushkaapp.com y www.pushkaapp.com. Ese dominio NO es
+	     nuestro: redirige a pushkahub.com, el producto de otra empresa. iOS
+	     habria ido a buscar el AASA ahi, no lo habria encontrado con nuestro
+	     Team ID, y los deep links habrian fallado en silencio. Se sacaron el
+	     2026-09-24. El dominio propio es jabadencampus.com. -->
 	<key>com.apple.developer.associated-domains</key>
 	<array>
+		<string>applinks:app.jabadencampus.com</string>
 		<string>applinks:pushka-app-ioel.web.app</string>
-		<string>applinks:www.pushkaapp.com</string>
-		<string>applinks:pushkaapp.com</string>
 	</array>
 
 	<!-- Apple Pay merchant ID. Must be created in Apple Developer Portal

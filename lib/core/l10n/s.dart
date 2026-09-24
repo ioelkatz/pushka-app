@@ -2080,10 +2080,10 @@ class S {
     'פרטיות ותנאים',
   );
   String get legalContactFooter => _t(
-    'Para cualquier pregunta sobre estos documentos, escríbenos a support@pushkaapp.com',
-    'For any question about these documents, write to support@pushkaapp.com',
-    'Pour toute question concernant ces documents, écrivez-nous à support@pushkaapp.com',
-    'לשאלות בנוגע למסמכים אלה: support@pushkaapp.com',
+    'Para cualquier pregunta sobre estos documentos, escríbenos a apps@jabadencampus.com',
+    'For any question about these documents, write to apps@jabadencampus.com',
+    'Pour toute question concernant ces documents, écrivez-nous à apps@jabadencampus.com',
+    'לשאלות בנוגע למסמכים אלה: apps@jabadencampus.com',
   );
 
   /// BUG-060 fix: copyright line parameterised on tenant brand so each org
