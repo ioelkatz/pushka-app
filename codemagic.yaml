@@ -89,6 +89,16 @@ definitions:
         # Sanity check: classes must be present so the build compiles.
         grep -q "class DevFirebaseOptions"  lib/firebase_options_dev.dart  || { echo "DevFirebaseOptions missing"; exit 1; }
         grep -q "class ProdFirebaseOptions" lib/firebase_options_prod.dart || { echo "ProdFirebaseOptions missing"; exit 1; }
+        # Y que traigan el bloque de iOS. Hasta el 2026-09-24 los dos archivos
+        # tenian solo android y web, y el `default` del switch devolvia el de
+        # ANDROID: en iPhone Firebase arrancaba con el appId equivocado, sin
+        # ningun error de compilacion. El chequeo de arriba pasaba igual
+        # porque solo miraba el nombre de la clase. Este es un build de iOS:
+        # si el archivo no trae iOS, no hay nada que construir.
+        for f in lib/firebase_options_dev.dart lib/firebase_options_prod.dart; do
+          grep -q "TargetPlatform.iOS" "$f" || { echo "$f: falta el case TargetPlatform.iOS"; exit 1; }
+          grep -q "iosBundleId"        "$f" || { echo "$f: falta el bloque FirebaseOptions ios"; exit 1; }
+        done
 
     - &flutter_pub_get
       name: Install Flutter dependencies
