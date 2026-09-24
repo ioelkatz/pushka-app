@@ -14,7 +14,12 @@ import '../../tenant/data/tenant_repository.dart';
 // other than Jabad en Campus. Now reads tenant.appName/name +
 // tenant.contactEmail/Phone from tenantConfigProvider with a Pushka
 // fallback so the support screen stays multi-tenant correct.
-const String _fallbackSupportEmail = 'support@pushkaapp.com';
+// 2026-09-24: era support@pushkaapp.com. Ese dominio NO es del proyecto —
+// redirige a pushkahub.com, producto de otra empresa. El arreglo del
+// 2026-09-04 corrigio legal_content.dart pero se salteo este respaldo, el de
+// pushka_screen, la cadena legalContactFooter de s.dart y las OCHO paginas
+// publicas de privacidad y terminos.
+const String _fallbackSupportEmail = 'apps@jabadencampus.com';
 // Note: "Conoce más" link is hidden when the tenant has no privacyPolicyUrl
 // configured (instead of falling back to a hardcoded URL). When the rab
 // publishes his org's site, set it in the admin web → Branding → "URL de
