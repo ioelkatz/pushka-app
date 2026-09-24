@@ -3000,9 +3000,14 @@ class S {
     'J\'utilise cette incroyable app Pushka de Tsédaka de $brand. Elle fonctionne comme une vraie pushka ! D\'un simple clic, vous pouvez "mettre une pièce" et quand vous êtes prêt, "la vider" pour faire un don.\n\nDécouvrez-la ici : $shareUrl',
     'אני משתמש באפליקציית הפושקה המדהימה לצדקה של $brand. היא עובדת בדיוק כמו פושקה אמיתית! בלחיצה אחת אפשר "להכניס מטבע" וכשמוכנים, "לרוקן אותה" לתרומה.\n\nגלה אותה כאן: $shareUrl',
   );
-  // Legacy getter for any caller that hasn't migrated to the brand-aware version.
-  String get appShareText =>
-      appShareTextFor(colelJabad, 'https://pushkapp.cc/share');
+  // 2026-09-24: aca habia un getter `appShareText` que armaba el mensaje con
+  // `colelJabad` —la organizacion equivocada— y el enlace
+  // https://pushkapp.cc/share, un dominio que nunca fue del proyecto y que
+  // hoy pertenece a un tercero. No lo llamaba nadie, pero el dia que alguien
+  // conectara el boton de compartir, el donante habria mandado a sus amigos
+  // un enlace ajeno con el nombre de otra organizacion.
+  //
+  // Se usa `appShareTextFor(marca, enlace)`, que recibe los dos datos.
 }
 
 // -----------------------------------------------------------------------------

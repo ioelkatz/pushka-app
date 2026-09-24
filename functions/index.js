@@ -11936,7 +11936,7 @@ exports.getDonationReasonStats = onCall(
 // Devuelve una URL de Stripe Checkout que el cliente carga con
 // window.location = url. Stripe maneja Apple Pay web, 3DS/SCA, y toda la
 // PSD2 compliance automáticamente. Callback: success_url + cancel_url
-// vuelven al app.pushkapp.cc / app.pushkapp.cc/cancel.
+// vuelven a app.jabadencampus.com/donation-success o /donation-cancel.
 // ---------------------------------------------------------------------------
 exports.createCheckoutSession = onCall(
   { secrets: [stripeSecret, brevoApiKey], enforceAppCheck: false },
@@ -12040,13 +12040,24 @@ exports.createCheckoutSession = onCall(
     // successUrl=https://evil.com/steal?sid={CHECKOUT_SESSION_ID} podría
     // interceptar el ID de la sesión (aunque no el cargo — Stripe ya
     // capturó los fondos). Igual: mejor cerrar el vector.
+    // 2026-09-24: esta lista tenia pushkapp.cc, www.pushkapp.cc y
+    // app.pushkapp.cc. Ese dominio NUNCA se compro y hoy esta registrado por
+    // un tercero (resuelve a AWS). O sea que la lista blanca que existe
+    // justamente para impedir que el session_id se vaya a un dominio ajeno
+    // tenia tres dominios ajenos adentro, y cualquier usuario autenticado
+    // podia pedir que lo mandaran ahi.
+    //
+    // Y faltaba app.jabadencampus.com, que es a donde el mensaje del Rab
+    // manda a los usuarios de iPhone. Sin el, el donante pagaba y volvia a
+    // pushka-pwa.web.app —otro origen, donde su sesion no existe— asi que
+    // terminaba de donar y caia en una app aparentemente deslogueada.
+    //
+    // Regla para el futuro: aca solo van dominios que controlamos.
     const ALLOWED_REDIRECT_ORIGINS = new Set([
+      "https://app.jabadencampus.com",
       "https://pushka-pwa.web.app",
       "https://pushka-app-ioel.web.app",
       "https://pushka-app-ioel-test.web.app",
-      "https://pushkapp.cc",
-      "https://www.pushkapp.cc",
-      "https://app.pushkapp.cc",
     ]);
     function _isAllowedRedirect(u) {
       if (typeof u !== "string" || !u.startsWith("https://")) return false;
@@ -12059,8 +12070,8 @@ exports.createCheckoutSession = onCall(
     }
     const rawSuccessUrl = String(request.data?.successUrl || "").trim();
     const rawCancelUrl = String(request.data?.cancelUrl || "").trim();
-    const defaultSuccessUrl = "https://pushka-pwa.web.app/donation-success?session_id={CHECKOUT_SESSION_ID}";
-    const defaultCancelUrl = "https://pushka-pwa.web.app/donation-cancel";
+    const defaultSuccessUrl = "https://app.jabadencampus.com/donation-success?session_id={CHECKOUT_SESSION_ID}";
+    const defaultCancelUrl = "https://app.jabadencampus.com/donation-cancel";
     const successUrl = _isAllowedRedirect(rawSuccessUrl) ? rawSuccessUrl : defaultSuccessUrl;
     const cancelUrl = _isAllowedRedirect(rawCancelUrl) ? rawCancelUrl : defaultCancelUrl;
 
