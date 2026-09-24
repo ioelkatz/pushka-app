@@ -235,9 +235,9 @@ could squat a legacy tenant's slug.
 
 - [ ] Apple Developer account ($99/yr) + create Apple Pay merchant ID
 - [ ] Add merchant ID to Xcode → Signing & Capabilities → Apple Pay
-- [ ] Set `MERCHANT_IDENTIFIER` dart-define so `StripeConfig.merchantIdentifier` is non-empty
-- [ ] Configure `apple-app-site-association` JSON on `pushkapp.cc/.well-known/`
-- [ ] Add Associated Domains entitlement in Xcode (`applinks:pushkapp.cc`)
+- [ ] Set `MERCHANT_IDENTIFIER` dart-define so `StripeConfig.merchantIdentifier` is non-empty (la clave del dart-define es `STRIPE_MERCHANT_ID`)
+- [ ] Verificar el `apple-app-site-association` (ya servido desde `public/.well-known/` y `web/.well-known/`) — falta reemplazar REPLACE_ME_APPLE_TEAM_ID por el Team ID real
+- [ ] Associated Domains ya declarado en `ios/Runner/Runner.entitlements` (`app.jabadencampus.com` + `pushka-app-ioel.web.app`)
 - [ ] Configure Apple Push Notifications certificates (Firebase Console → Cloud Messaging → APNs)
 - [ ] Configure App Check DeviceCheck/AppAttest in Firebase Console
 - [ ] Test ATT prompt fires on first launch (already wired in `app_initializer.dart`)

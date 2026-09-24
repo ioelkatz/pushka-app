@@ -243,8 +243,10 @@ Once the TestFlight build is on the phone, run through:
 - [ ] **Universal Link**: tap a `https://pushka-app-ioel.web.app/...`
       link from an email/note — should open the app, not Safari.
       Currently `apple-app-site-association` is hosted only at the
-      `.web.app` domain; once `pushkaapp.com` DNS is mapped the
-      `applinks:www.pushkaapp.com` entitlement also activates.
+      `.web.app` domain. ⚠️ 2026-09-24: las entitlements listaban
+      `pushkaapp.com`, que NO es del proyecto — redirige a pushkahub.com,
+      producto de otra empresa. Ahora son `app.jabadencampus.com` y
+      `pushka-app-ioel.web.app`, los dos sirviendo el AASA real.
 - [ ] **App Check**: backend logs (Cloud Functions) should NOT report
       App Check failures. App Attest needs the device to be production
       (i.e. App Store / TestFlight build, not a sideload), so this is
@@ -277,7 +279,7 @@ When TestFlight QA is green:
   fetch) and `FirebaseAppDelegateProxyEnabled`.
 - `ios/Runner/Runner.entitlements` — added Apple Pay, Push, App Attest,
   Sign in with Apple, plus universal link domains for `web.app` AND
-  `www.pushkaapp.com`.
+  `app.jabadencampus.com`.
 - `ios/Runner.xcodeproj/project.pbxproj` — wired `CODE_SIGN_ENTITLEMENTS`
   to point at `Runner/Runner.entitlements` for all 3 build configs
   (Debug, Release, Profile). Without this the entitlements above are
