@@ -1,7 +1,8 @@
 {
     "//id": "Round-8 audit HIGH fix: stable manifest identity. Without `id`, changing start_url or scope makes browsers treat the manifest as a NEW app and orphan existing installations. Never change this value after users have installed.",
     "id": "/?source=pwa",
-    "name": "Chabad Pushka",
+    "//name": "Debe coincidir con el nombre en Play: la PWA y la app nativa son el mismo producto y el donante no deberia ver dos nombres. Decia \"Chabad Pushka\", un nombre que no aparecia en ningun otro lado del proyecto.",
+    "name": "Jabad en Campus - Pushka",
     "short_name": "Pushka",
     "start_url": "/?source=pwa",
     "scope": "/",
@@ -11,12 +12,17 @@
     "//background_color": "Debe coincidir con index.html body color para evitar flash en cold start (Round-6 audit MEDIUM fix).",
     "background_color": "#2563EB",
     "theme_color": "#2563EB",
-    "description": "Tu alcancía de tzedaká digital. Donaciones seguras.",
+    "description": "La pushka de Jabad en Campus: la alcancía de siempre, en tu teléfono.",
     "orientation": "portrait-primary",
     "lang": "es",
     "prefer_related_applications": false,
     "related_applications": [
-        { "platform": "webapp", "url": "https://app.jabadencampus.com/manifest.json" }
+        {
+            "//": "Apuntaba a su propio manifest, que no servia de nada. Ahora es la app de Play. Con prefer_related_applications en false, el navegador la ofrece como alternativa sin dejar de permitir instalar la PWA — que es el unico camino en iPhone.",
+            "platform": "play",
+            "id": "com.pushka.app",
+            "url": "https://play.google.com/store/apps/details?id=com.pushka.app"
+        }
     ],
     "categories": ["lifestyle", "finance", "social"],
     "icons": [
