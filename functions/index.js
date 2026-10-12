@@ -12511,16 +12511,17 @@ exports.sendWeeklySummary = onSchedule(
           ${tabla(perCurrencyRows)}
         </div>
 
+        ${activeTenantsCount > 1 ? `
         <div style="${S.card}">
           <div style="${S.h2}">Organizaciones</div>
           ${tabla(topTenantsRows)}
-        </div>
+        </div>`: ""}
 
         <div style="${S.card}">
           <div style="${S.h2}">Plataforma</div>
           ${tabla(
             fila("Usuarios nuevos", fmtInt(newUsersCount)) +
-            fila("Organizaciones activas", fmtInt(activeTenantsCount)) +
+            (activeTenantsCount > 1 ? fila("Organizaciones activas", fmtInt(activeTenantsCount)) : "") +
             fila("Pagos fallidos", `${fmtInt(failedCount)} <span style="${S.muted}">(${(failRate * 100).toFixed(2)}%)</span>`) +
             fila("Contracargos", fmtInt(chargebackCount)) +
             fila("Alertas sin resolver", fmtInt(unresolvedActivityCount), true)
@@ -12566,23 +12567,35 @@ exports.sendWeeklySummary = onSchedule(
       return;
     }
 
-    try {
-      await sendEmail({ to: SUPER_ADMIN_EMAIL, subject, html });
-      console.info("sendWeeklySummary: sent", {
-        to: _redactEmail(SUPER_ADMIN_EMAIL),
-        donationCount,
-        donationUSD: Math.round(donationUSD * 100) / 100,
-        newUsersCount, failedCount, chargebackCount, activeTenantsCount,
-        unresolvedActivityCount, alertCount,
-        failRate: Number(failRate.toFixed(4)),
-        redFlags,
-      });
-    } catch (err) {
-      // Fire-and-forget: log but don't throw so the scheduler doesn't retry
-      // and flood the inbox on a transient Brevo glitch.
-      console.error("sendWeeklySummary: sendEmail threw (non-fatal)", {
-        err: err?.message,
-      });
+    // Destinatarios del resumen. Se manda UNO POR UNO, no con los dos en el
+    // mismo "to": asi ninguno ve la direccion personal del otro, y si una
+    // rebota la otra igual llega.
+    const destinatarios = [
+      SUPER_ADMIN_EMAIL,      // Ioel, que opera la plataforma
+      "jymmexico@gmail.com",  // el Rab, a quien van las donaciones
+    ];
+
+    for (const destino of destinatarios) {
+      try {
+        await sendEmail({ to: destino, subject, html });
+        console.info("sendWeeklySummary: sent", {
+          to: _redactEmail(destino),
+          donationCount,
+          donationUSD: Math.round(donationUSD * 100) / 100,
+          newUsersCount, failedCount, chargebackCount, activeTenantsCount,
+          unresolvedActivityCount, alertCount,
+          failRate: Number(failRate.toFixed(4)),
+          redFlags,
+        });
+      } catch (err) {
+        // Cada destinatario tiene su propio try: que falle uno no puede
+        // dejar al otro sin resumen. Y no se relanza el error para que el
+        // programador no reintente y mande el correo dos veces.
+        console.error("sendWeeklySummary: sendEmail threw (non-fatal)", {
+          to: _redactEmail(destino),
+          err: err?.message,
+        });
+      }
     }
   }
 );
