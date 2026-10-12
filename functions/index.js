@@ -12308,23 +12308,30 @@ async function sumarDonaciones({ desde, hasta, rates }) {
   return { donationCount, donationUSD, perCurrencyOriginal, tenantRevenue };
 }
 
-/// Cuantas donaciones recurrentes estan activas ahora mismo.
+/// Las donaciones recurrentes activas, agrupadas por cada cuanto se cobran y
+/// en que moneda.
 ///
-/// Para una organizacion sin fines de lucro este es el numero que mas dice
-/// del futuro: es la plata con la que puede contar el mes que viene, sin
-/// depender de que alguien se acuerde de donar.
+/// Para una organizacion sin fines de lucro son los numeros que mas dicen del
+/// futuro: con cuanta gente y con cuanta plata puede contar sin depender de
+/// que nadie se acuerde de donar.
+///
+/// NO se normaliza nada. Una version anterior convertia todo a equivalente
+/// mensual —10 semanales pasaban a ~43— y Ioel pidio lo contrario: que el
+/// correo traiga los datos como son. Tiene razon: cualquier conversion
+/// obliga al lector a confiar en una cuenta que no puede ver, y "5 mensuales
+/// de 900 MXN" se entiende sin que nadie explique nada.
 ///
 /// Las suscripciones NO viven en Firestore — se leen de Stripe, de la cuenta
-/// conectada de cada tenant. Por eso esto es una llamada de red y no una
-/// consulta local, y por eso devuelve null si falla: un resumen sin este
-/// numero es mejor que ningun resumen.
+/// conectada de cada tenant. Por eso esto es una llamada de red y devuelve
+/// null si falla: un resumen sin estos numeros es mejor que ningun resumen.
 ///
 /// `past_due` y `unpaid` cuentan como activas a proposito: el donante no
 /// cancelo, le fallo la tarjeta. Tratarlas como bajas haria que el numero
 /// cayera por un problema de cobro y no por una decision de nadie.
-async function contarRecurrentesActivas(tenantsDocs) {
+async function resumirRecurrentesActivas(tenantsDocs) {
   const ESTADOS_ACTIVOS = new Set(["active", "trialing", "past_due", "unpaid"]);
-  let total = 0;
+  const grupos = new Map(); // "month|1|MXN" -> { intervalo, cada, moneda, cantidad, monto }
+  let cantidadTotal = 0;
   let hubo = false;
 
   for (const d of tenantsDocs) {
@@ -12340,18 +12347,62 @@ async function contarRecurrentesActivas(tenantsDocs) {
         { status: "all", limit: 100 },
         { stripeAccount: acct },
       );
-      total += subs.data.filter((s) =>
-        s.metadata?.purpose === "donation_recurring" && ESTADOS_ACTIVOS.has(s.status)
-      ).length;
+
+      for (const s of subs.data) {
+        if (s.metadata?.purpose !== "donation_recurring") continue;
+        if (!ESTADOS_ACTIVOS.has(s.status)) continue;
+        cantidadTotal += 1;
+
+        for (const item of (s.items?.data || [])) {
+          const precio = item.price;
+          if (!precio?.unit_amount) continue;
+
+          const moneda = String(precio.currency || "usd").toUpperCase();
+          const intervalo = precio.recurring?.interval || "month";
+          const cada = precio.recurring?.interval_count || 1;
+          const monto = (precio.unit_amount / currencyUnitDivisor(moneda)) * (item.quantity || 1);
+
+          const clave = `${intervalo}|${cada}|${moneda}`;
+          const g = grupos.get(clave) || { intervalo, cada, moneda, cantidad: 0, monto: 0 };
+          g.cantidad += 1;
+          g.monto += monto;
+          grupos.set(clave, g);
+        }
+      }
       hubo = true;
     } catch (err) {
-      console.warn("contarRecurrentesActivas: fallo para un tenant", {
+      console.warn("resumirRecurrentesActivas: fallo para un tenant", {
         tenantId: d.id, err: err?.message,
       });
     }
   }
 
-  return hubo ? total : null;
+  if (!hubo) return null;
+
+  // De la mas frecuente a la menos: asi lo que se cobra seguido queda arriba.
+  const orden = { day: 0, week: 1, month: 2, year: 3 };
+  const lista = [...grupos.values()].sort((a, b) =>
+    (orden[a.intervalo] ?? 9) - (orden[b.intervalo] ?? 9) || b.monto - a.monto
+  );
+
+  return { cantidadTotal, grupos: lista };
+}
+
+/// Como se llama un grupo de recurrentes en castellano. El plural importa:
+/// "1 mensuales" se lee mal y delata que lo escribio una maquina.
+function etiquetaIntervalo(intervalo, cada, cantidad) {
+  const uno = cantidad === 1;
+  if (cada === 1) {
+    const nombres = {
+      day: uno ? "diaria" : "diarias",
+      week: uno ? "semanal" : "semanales",
+      month: uno ? "mensual" : "mensuales",
+      year: uno ? "anual" : "anuales",
+    };
+    return nombres[intervalo] || intervalo;
+  }
+  const plural = { day: "dias", week: "semanas", month: "meses", year: "anios" };
+  return `cada ${cada} ${plural[intervalo] || intervalo}`;
 }
 /// Arma y manda el resumen de un periodo. La comparten el informe semanal y
 /// el mensual: una sola plantilla, un solo calculo, dos horarios.
@@ -12498,7 +12549,7 @@ async function generarYEnviarResumen({ desde, hasta, periodo, compararCon }) {
     }
 
     // --- Donaciones recurrentes activas ----------------------------------
-    const recurrentesActivas = await contarRecurrentesActivas(activeTenantsDocs);
+    const recurrentes = await resumirRecurrentesActivas(activeTenantsDocs);
 
     // --- Unresolved activity items requiring action ---------------------
     // Needs composite index (requiresAction ASC, resolved ASC) on _activityLog.
@@ -12591,6 +12642,16 @@ async function generarYEnviarResumen({ desde, hasta, periodo, compararCon }) {
       </tr>`;
     };
 
+    /// Un importe en su moneda original, sin convertir. Se usa en las
+    /// recurrentes, donde el punto es justamente mostrar el dato como es.
+    const fmtMoneda = (n, moneda) => {
+      const m = String(moneda || "USD").toUpperCase();
+      const num = Number(n).toLocaleString("en-US", {
+        minimumFractionDigits: 2, maximumFractionDigits: 2,
+      });
+      return m === "USD" ? `$${num}` : `${num} ${m}`;
+    };
+
     const tabla = (filas) =>
       `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">${filas}</table>`;
 
@@ -12645,13 +12706,22 @@ async function generarYEnviarResumen({ desde, hasta, periodo, compararCon }) {
           ${tabla(topTenantsRows)}
         </div>`: ""}
 
+        ${recurrentes && recurrentes.cantidadTotal > 0 ? `
+        <div style="${S.card}">
+          <div style="${S.h2}">Donaciones recurrentes</div>
+          ${tabla(recurrentes.grupos.map((g, i, arr) => fila(
+            `${fmtInt(g.cantidad)} ${etiquetaIntervalo(g.intervalo, g.cada, g.cantidad)}`,
+            `${fmtMoneda(g.monto, g.moneda)}`,
+            i === arr.length - 1,
+          )).join(""))}
+        </div>`: ""}
+
         <div style="${S.card}">
           <div style="${S.h2}">Plataforma</div>
           ${tabla(
             fila("Usuarios", totalUsersCount === null
               ? fmtInt(newUsersCount)
               : `${fmtInt(totalUsersCount)} <span style="${S.muted}">(+${fmtInt(newUsersCount)} ${periodo.nuevos})</span>`) +
-            (recurrentesActivas !== null ? fila("Donaciones recurrentes activas", fmtInt(recurrentesActivas)) : "") +
             (activeTenantsCount > 1 ? fila("Organizaciones activas", fmtInt(activeTenantsCount)) : "") +
             fila("Pagos fallidos", `${fmtInt(failedCount)} <span style="${S.muted}">(${(failRate * 100).toFixed(2)}%)</span>`) +
             fila("Contracargos", fmtInt(chargebackCount)) +
@@ -12660,6 +12730,7 @@ async function generarYEnviarResumen({ desde, hasta, periodo, compararCon }) {
         </div>
 
         <div style="${S.footer}">
+          Incluye solo lo que entra por la app.<br>
           ${periodo.cadencia}<br>
           Si deja de llegar, algo se rompi&oacute;: Brevo, esta funci&oacute;n, o el programador de Cloud Functions.
         </div>
@@ -12713,7 +12784,7 @@ async function generarYEnviarResumen({ desde, hasta, periodo, compararCon }) {
           to: _redactEmail(destino),
           donationCount,
           donationUSD: Math.round(donationUSD * 100) / 100,
-          newUsersCount, totalUsersCount, recurrentesActivas, failedCount, chargebackCount, activeTenantsCount,
+          newUsersCount, totalUsersCount, recurrentes, failedCount, chargebackCount, activeTenantsCount,
           unresolvedActivityCount, alertCount,
           failRate: Number(failRate.toFixed(4)),
           redFlags,
