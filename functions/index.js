@@ -12497,7 +12497,36 @@ exports.sendWeeklySummary = onSchedule(
       </div>
     `;
 
-    const subject = `[Pushka Weekly] ${startDate} - ${endDate}: ${fmtInt(donationCount)} donaciones, ${alertCount} alertas`;
+    // El entorno va en el ASUNTO porque esta funcion corre en los dos
+    // proyectos y los dos escriben al mismo correo. El 2026-10-12 llegaron
+    // dos resumenes a la misma hora con el mismo rango de fechas y datos
+    // distintos —uno con 0 donaciones y otro con 1— y parecian contradecirse:
+    // eran dev y prod, indistinguibles desde la bandeja.
+    //
+    // En dev NO se manda. Ioel pregunto si el de dev no era ruido y tenia
+    // razon: ese correo siempre dice cero, y si dejara de llegar no haria
+    // falta hacer nada —no hay usuarios ni plata, y un programador roto en
+    // dev se nota la proxima vez que se prueba algo. Un aviso que no dispara
+    // ninguna accion no es un latido.
+    //
+    // Y tenia un costo: un correo semanal que siempre dice cero entrena a
+    // saltear el hilo, y por ese mismo hilo llega el de produccion. La semana
+    // que haya un problema real, ese correo competiria con uno que ya
+    // aprendiste a ignorar.
+    //
+    // Los datos de dev siguen quedando en los logs de la funcion.
+    const projectId = process.env.GCLOUD_PROJECT ||
+        process.env.GOOGLE_CLOUD_PROJECT ||
+        "pushka-app-ioel";
+    const entorno = projectId.endsWith("-test") ? "dev" : "prod";
+    const subject = `[Pushka Weekly · ${entorno}] ${startDate} - ${endDate}: ${fmtInt(donationCount)} donaciones, ${alertCount} alertas`;
+
+    if (entorno !== "prod") {
+      console.info("sendWeeklySummary: entorno dev, no se envia correo", {
+        projectId, donationCount, newUsersCount, alertCount,
+      });
+      return;
+    }
 
     try {
       await sendEmail({ to: SUPER_ADMIN_EMAIL, subject, html });
