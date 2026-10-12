@@ -12630,7 +12630,11 @@ async function generarYEnviarResumen({ desde, hasta, periodo, compararCon }) {
     })}`;
     const fmtInt = (n) => (Number(n) || 0).toLocaleString("en-US");
 
-    const ACCENT = "#2563EB";
+    // Azul marino. Era #2563EB, un azul electrico que en un correo de
+    // tzedaka se lee a software y no a institucion. Este es mas sobrio y
+    // mantiene el contraste alto sobre blanco, que es lo que importa cuando
+    // el numero grande del total es lo primero que se mira.
+    const ACCENT = "#1E3A5F";
     // ⚠️ El correo se maqueta con TABLAS, no con flex.
     //
     // Hasta el 2026-10-12 las filas usaban `display:flex` con
@@ -12648,7 +12652,12 @@ async function generarYEnviarResumen({ desde, hasta, periodo, compararCon }) {
       card: "background:#FFFFFF; border:1px solid #E2E8F0; border-radius:10px; padding:20px; margin:0 0 14px 0;",
       h1: `color:${ACCENT}; font-size:21px; font-weight:700; margin:0 0 2px 0; letter-spacing:-0.2px;`,
       sub: "color:#64748B; font-size:13px; margin:0 0 22px 0;",
-      h2: "font-size:11px; text-transform:uppercase; letter-spacing:1px; color:#94A3B8; font-weight:700; margin:0 0 14px 0;",
+      // Los titulos y los textos secundarios pasaron de #94A3B8 a #64748B.
+      // Un gris claro sobre blanco da 2.8:1 de contraste, por debajo del
+      // minimo accesible de 4.5:1 — y en mayusculas chiquitas con espaciado,
+      // que es como estan los titulos, es donde mas se nota. #64748B llega a
+      // 4.8:1 y sigue leyendose como secundario al lado del negro del valor.
+      h2: "font-size:11px; text-transform:uppercase; letter-spacing:1px; color:#64748B; font-weight:700; margin:0 0 14px 0;",
       heroNum: `font-size:38px; font-weight:700; color:${ACCENT}; line-height:1.1; margin:0;`,
       heroCap: "color:#64748B; font-size:13px; margin:6px 0 0 0;",
       comp: "font-size:13px; margin:10px 0 0 0; font-weight:600;",
@@ -12657,10 +12666,10 @@ async function generarYEnviarResumen({ desde, hasta, periodo, compararCon }) {
       cell: "padding:9px 0; font-size:14px; color:#334155; border-bottom:1px solid #F1F5F9;",
       cellLast: "padding:9px 0; font-size:14px; color:#334155;",
       num: "font-variant-numeric:tabular-nums; font-weight:600; color:#0F172A; white-space:nowrap;",
-      muted: "color:#94A3B8;",
+      muted: "color:#64748B;",
       red: "background:#FEF2F2; border:1px solid #FCA5A5; border-left:4px solid #DC2626; border-radius:10px; padding:20px; margin:0 0 14px 0;",
       redH2: "font-size:11px; text-transform:uppercase; letter-spacing:1px; color:#991B1B; font-weight:700; margin:0 0 12px 0;",
-      footer: "color:#94A3B8; font-size:12px; line-height:1.6; margin:22px 4px 0 4px;",
+      footer: "color:#64748B; font-size:12px; line-height:1.6; margin:22px 4px 0 4px;",
     };
 
     /// Una fila de dos columnas. `ultima` saca la linea divisoria del final
@@ -12676,16 +12685,16 @@ async function generarYEnviarResumen({ desde, hasta, periodo, compararCon }) {
     /// Un importe en su moneda original, sin convertir. Se usa en las
     /// recurrentes, donde el punto es justamente mostrar el dato como es.
     ///
-    /// Siempre con el codigo de moneda detras, el dolar tambien: en una
-    /// columna donde conviven varias monedas, mezclar un simbolo con un
-    /// codigo obliga a leer dos formatos distintos. "36.00 USD" al lado de
-    /// "540.00 MXN" se compara de un vistazo; "$36.00" no.
+    /// Simbolo delante y codigo detras, como se escribe en Mexico:
+    /// $3,070.00 MXN. El simbolo marca que es dinero, el codigo dice cual.
+    /// El dolar lleva los dos igual que el peso: en una columna donde
+    /// conviven varias monedas, un formato distinto obliga a leer dos veces.
     const fmtMoneda = (n, moneda) => {
       const m = String(moneda || "USD").toUpperCase();
       const num = Number(n).toLocaleString("en-US", {
         minimumFractionDigits: 2, maximumFractionDigits: 2,
       });
-      return `${num} ${m}`;
+      return `$${num} ${m}`;
     };
 
     const tabla = (filas) =>
@@ -12694,7 +12703,7 @@ async function generarYEnviarResumen({ desde, hasta, periodo, compararCon }) {
     const perCurrencyRows = Object.entries(perCurrencyOriginal)
       .sort((a, b) => b[1] - a[1])
       .map(([cur, amt], idx, arr) =>
-        fila(_escapeHtmlForEmail(cur), fmtInt(Math.round(amt)), idx === arr.length - 1)
+        fila(_escapeHtmlForEmail(cur), `$${fmtInt(Math.round(amt))}`, idx === arr.length - 1)
       ).join("") || fila(`<span style="${S.muted}">Sin donaciones esta semana</span>`, "—", true);
 
     const topTenantsRows = topTenants.length > 0
@@ -12745,7 +12754,7 @@ async function generarYEnviarResumen({ desde, hasta, periodo, compararCon }) {
         ${recurrentes && recurrentes.cantidadTotal > 0 ? recurrentes.grupos.map((g) => `
         <div style="${S.card}">
           <div style="${S.h2}">Recurrentes ${etiquetaIntervalo(g.intervalo, g.cada, g.filas.length)}</div>
-          <p style="${S.totalGrupo}">${g.totales.map((t) => fmtMoneda(t.monto, t.moneda)).join(" &middot; ")}</p>
+          <p style="${S.totalGrupo}">${g.totales.map((t) => fmtMoneda(t.monto, t.moneda)).join(`<span style="${S.muted}; font-weight:400"> | </span>`)}</p>
           <p style="${S.heroCap}">${fmtInt(g.filas.length)} ${g.filas.length === 1 ? "donante" : "donantes"}</p>
           ${tabla(g.filas.map((f, i, arr) => fila(
             `${_escapeHtmlForEmail(f.quien)}${f.fallando ? ` <span style="${S.alerta}">cobro fallido</span>` : ""}`,
