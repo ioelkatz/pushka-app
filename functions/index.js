@@ -12217,7 +12217,10 @@ exports.createCheckoutSession = onCall(
 exports.sendWeeklySummary = onSchedule(
   {
     schedule: "every monday 08:00",
-    timeZone: "America/Argentina/Buenos_Aires",
+    // Hora de Ciudad de Mexico, que es donde esta la organizacion y donde se
+    // lee este correo. Estaba en Buenos Aires por herencia del proyecto, y
+    // por eso llegaba a las 5 de la manana.
+    timeZone: "America/Mexico_City",
     region: "us-central1",
     secrets: [brevoApiKey],
     timeoutSeconds: 300,
@@ -12422,78 +12425,113 @@ exports.sendWeeklySummary = onSchedule(
     const fmtInt = (n) => (Number(n) || 0).toLocaleString("en-US");
 
     const ACCENT = "#2563EB";
+    // ⚠️ El correo se maqueta con TABLAS, no con flex.
+    //
+    // Hasta el 2026-10-12 las filas usaban `display:flex` con
+    // `justify-content:space-between`. Gmail y Outlook **descartan flexbox**,
+    // asi que lo que deberia verse como "etiqueta a la izquierda, numero a la
+    // derecha" se desarmaba en dos lineas sueltas y el resumen parecia una
+    // lista plana. No era un problema de gusto sino de maquetado.
+    //
+    // En correo HTML sigue valiendo lo de 2003: dos columnas se hacen con
+    // <table> y align="right". Nada de flex, grid, ni hojas de estilo
+    // externas — todo inline.
     const S = {
-      wrap: "font-family: -apple-system, Segoe UI, Roboto, sans-serif; color: #111; max-width: 640px; margin: 0 auto; padding: 24px;",
-      h1: `color: ${ACCENT}; font-size: 22px; margin: 0 0 4px 0;`,
-      sub: "color: #666; font-size: 13px; margin: 0 0 24px 0;",
-      section: `margin: 20px 0; padding: 16px; background: #F8FAFC; border-left: 4px solid ${ACCENT}; border-radius: 4px;`,
-      h2: "font-size: 14px; text-transform: uppercase; letter-spacing: 0.5px; color: #334155; margin: 0 0 12px 0;",
-      row: "display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid #E2E8F0; font-size: 14px;",
-      num: "font-family: SF Mono, Menlo, Consolas, monospace; font-weight: 600;",
-      red: "margin: 20px 0; padding: 16px; background: #FEF2F2; border-left: 4px solid #DC2626; border-radius: 4px; color: #7F1D1D;",
-      redH2: "font-size: 14px; text-transform: uppercase; letter-spacing: 0.5px; color: #991B1B; margin: 0 0 12px 0;",
-      footer: "margin-top: 32px; padding-top: 16px; border-top: 1px solid #E2E8F0; color: #94A3B8; font-size: 12px; line-height: 1.5;",
+      body: "margin:0; padding:0; background:#F1F5F9;",
+      wrap: "font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; color:#0F172A; max-width:600px; margin:0 auto; padding:28px 20px;",
+      card: "background:#FFFFFF; border:1px solid #E2E8F0; border-radius:10px; padding:20px; margin:0 0 14px 0;",
+      h1: `color:${ACCENT}; font-size:21px; font-weight:700; margin:0 0 2px 0; letter-spacing:-0.2px;`,
+      sub: "color:#64748B; font-size:13px; margin:0 0 22px 0;",
+      h2: "font-size:11px; text-transform:uppercase; letter-spacing:1px; color:#94A3B8; font-weight:700; margin:0 0 14px 0;",
+      heroNum: `font-size:38px; font-weight:700; color:${ACCENT}; line-height:1.1; margin:0;`,
+      heroCap: "color:#64748B; font-size:13px; margin:6px 0 0 0;",
+      cell: "padding:9px 0; font-size:14px; color:#334155; border-bottom:1px solid #F1F5F9;",
+      cellLast: "padding:9px 0; font-size:14px; color:#334155;",
+      num: "font-variant-numeric:tabular-nums; font-weight:600; color:#0F172A; white-space:nowrap;",
+      muted: "color:#94A3B8;",
+      red: "background:#FEF2F2; border:1px solid #FCA5A5; border-left:4px solid #DC2626; border-radius:10px; padding:20px; margin:0 0 14px 0;",
+      redH2: "font-size:11px; text-transform:uppercase; letter-spacing:1px; color:#991B1B; font-weight:700; margin:0 0 12px 0;",
+      footer: "color:#94A3B8; font-size:12px; line-height:1.6; margin:22px 4px 0 4px;",
     };
+
+    /// Una fila de dos columnas. `ultima` saca la linea divisoria del final
+    /// del bloque, que si no queda flotando sin nada debajo.
+    const fila = (etiqueta, valor, ultima = false) => {
+      const c = ultima ? S.cellLast : S.cell;
+      return `<tr>
+        <td style="${c}">${etiqueta}</td>
+        <td style="${c} ${S.num}" align="right">${valor}</td>
+      </tr>`;
+    };
+
+    const tabla = (filas) =>
+      `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">${filas}</table>`;
 
     const perCurrencyRows = Object.entries(perCurrencyOriginal)
       .sort((a, b) => b[1] - a[1])
-      .map(([cur, amt]) =>
-        `<div style="${S.row}"><span>${_escapeHtmlForEmail(cur)}</span><span style="${S.num}">${fmtInt(Math.round(amt))}</span></div>`
-      ).join("") || `<div style="${S.row}"><span>(sin donaciones)</span><span style="${S.num}">0</span></div>`;
+      .map(([cur, amt], idx, arr) =>
+        fila(_escapeHtmlForEmail(cur), fmtInt(Math.round(amt)), idx === arr.length - 1)
+      ).join("") || fila(`<span style="${S.muted}">Sin donaciones esta semana</span>`, "—", true);
 
     const topTenantsRows = topTenants.length > 0
-      ? topTenants.map((t, i) =>
-          `<div style="${S.row}"><span>${i + 1}. ${_escapeHtmlForEmail(t.name)} <span style="color:#94A3B8">(${fmtInt(t.count)} donaciones)</span></span><span style="${S.num}">${fmtUSD(t.usd)}</span></div>`
+      ? topTenants.map((t, i, arr) =>
+          fila(
+            `${i + 1}. ${_escapeHtmlForEmail(t.name)} <span style="${S.muted}">(${fmtInt(t.count)})</span>`,
+            fmtUSD(t.usd),
+            i === arr.length - 1,
+          )
         ).join("")
-      : `<div style="${S.row}"><span>(sin actividad)</span><span style="${S.num}">—</span></div>`;
+      : fila(`<span style="${S.muted}">Sin actividad</span>`, "—", true);
 
     const redFlagBlock = redFlags.length > 0
       ? `<div style="${S.red}">
            <div style="${S.redH2}">Se&ntilde;ales de alarma (${redFlags.length})</div>
-           <ul style="margin:0; padding-left: 20px;">
-             ${redFlags.map((f) => `<li style="margin:4px 0;">${_escapeHtmlForEmail(f)}</li>`).join("")}
+           <ul style="margin:0; padding-left:18px; color:#7F1D1D; font-size:14px;">
+             ${redFlags.map((f) => `<li style="margin:5px 0;">${_escapeHtmlForEmail(f)}</li>`).join("")}
            </ul>
          </div>`
       : "";
 
     const html = `
+      <div style="${S.body}">
       <div style="${S.wrap}">
-        <h1 style="${S.h1}">Pushka &mdash; Resumen Semanal</h1>
+        <h1 style="${S.h1}">Resumen semanal</h1>
         <p style="${S.sub}">Del ${startDate} al ${endDate}</p>
 
         ${redFlagBlock}
 
-        <div style="${S.section}">
+        <div style="${S.card}">
           <div style="${S.h2}">Donaciones</div>
-          <div style="${S.row}"><span>Total (USD equivalente)</span><span style="${S.num}">${fmtUSD(donationUSD)}</span></div>
-          <div style="${S.row}"><span>Cantidad</span><span style="${S.num}">${fmtInt(donationCount)}</span></div>
-          <div style="${S.row}"><span>Promedio por donaci&oacute;n</span><span style="${S.num}">${fmtUSD(donationCount > 0 ? donationUSD / donationCount : 0)}</span></div>
+          <p style="${S.heroNum}">${fmtUSD(donationUSD)}</p>
+          <p style="${S.heroCap}">${fmtInt(donationCount)} ${donationCount === 1 ? "donaci&oacute;n" : "donaciones"}${donationCount > 1 ? `, ${fmtUSD(donationUSD / donationCount)} en promedio` : ""}</p>
         </div>
 
-        <div style="${S.section}">
-          <div style="${S.h2}">Por moneda (importe original)</div>
-          ${perCurrencyRows}
+        <div style="${S.card}">
+          <div style="${S.h2}">Por moneda</div>
+          ${tabla(perCurrencyRows)}
         </div>
 
-        <div style="${S.section}">
-          <div style="${S.h2}">Top 3 organizaciones (semana)</div>
-          ${topTenantsRows}
+        <div style="${S.card}">
+          <div style="${S.h2}">Organizaciones</div>
+          ${tabla(topTenantsRows)}
         </div>
 
-        <div style="${S.section}">
+        <div style="${S.card}">
           <div style="${S.h2}">Plataforma</div>
-          <div style="${S.row}"><span>Nuevos usuarios</span><span style="${S.num}">${fmtInt(newUsersCount)}</span></div>
-          <div style="${S.row}"><span>Organizaciones activas</span><span style="${S.num}">${fmtInt(activeTenantsCount)}</span></div>
-          <div style="${S.row}"><span>Pagos fallidos (payment_intent.payment_failed)</span><span style="${S.num}">${fmtInt(failedCount)}</span></div>
-          <div style="${S.row}"><span>Tasa de fallo</span><span style="${S.num}">${(failRate * 100).toFixed(2)}%</span></div>
-          <div style="${S.row}"><span>Chargebacks</span><span style="${S.num}">${fmtInt(chargebackCount)}</span></div>
-          <div style="${S.row}"><span>Alertas sin resolver (activityLog)</span><span style="${S.num}">${fmtInt(unresolvedActivityCount)}</span></div>
+          ${tabla(
+            fila("Usuarios nuevos", fmtInt(newUsersCount)) +
+            fila("Organizaciones activas", fmtInt(activeTenantsCount)) +
+            fila("Pagos fallidos", `${fmtInt(failedCount)} <span style="${S.muted}">(${(failRate * 100).toFixed(2)}%)</span>`) +
+            fila("Contracargos", fmtInt(chargebackCount)) +
+            fila("Alertas sin resolver", fmtInt(unresolvedActivityCount), true)
+          )}
         </div>
 
         <div style="${S.footer}">
-          Este resumen se env&iacute;a todos los lunes 08:00 ART autom&aacute;ticamente.<br>
-          Si dej&aacute;s de recibirlo, algo puede estar roto (Brevo, esta CF, o el scheduler de Cloud Functions).
+          Se env&iacute;a solo, todos los lunes por la ma&ntilde;ana.<br>
+          Si deja de llegar, algo se rompi&oacute;: Brevo, esta funci&oacute;n, o el programador de Cloud Functions.
         </div>
+      </div>
       </div>
     `;
 
