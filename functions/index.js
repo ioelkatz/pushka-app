@@ -12676,16 +12676,16 @@ async function generarYEnviarResumen({ desde, hasta, periodo, compararCon }) {
     /// Un importe en su moneda original, sin convertir. Se usa en las
     /// recurrentes, donde el punto es justamente mostrar el dato como es.
     ///
-    /// Siempre con el codigo de moneda detras, el dolar tambien: en una
-    /// columna donde conviven varias monedas, mezclar un simbolo con un
-    /// codigo obliga a leer dos formatos distintos. "36.00 USD" al lado de
-    /// "540.00 MXN" se compara de un vistazo; "$36.00" no.
+    /// Simbolo delante y codigo detras, como se escribe en Mexico:
+    /// $3,070.00 MXN. El simbolo marca que es dinero, el codigo dice cual.
+    /// El dolar lleva los dos igual que el peso: en una columna donde
+    /// conviven varias monedas, un formato distinto obliga a leer dos veces.
     const fmtMoneda = (n, moneda) => {
       const m = String(moneda || "USD").toUpperCase();
       const num = Number(n).toLocaleString("en-US", {
         minimumFractionDigits: 2, maximumFractionDigits: 2,
       });
-      return `${num} ${m}`;
+      return `$${num} ${m}`;
     };
 
     const tabla = (filas) =>
@@ -12694,7 +12694,7 @@ async function generarYEnviarResumen({ desde, hasta, periodo, compararCon }) {
     const perCurrencyRows = Object.entries(perCurrencyOriginal)
       .sort((a, b) => b[1] - a[1])
       .map(([cur, amt], idx, arr) =>
-        fila(_escapeHtmlForEmail(cur), fmtInt(Math.round(amt)), idx === arr.length - 1)
+        fila(_escapeHtmlForEmail(cur), `$${fmtInt(Math.round(amt))}`, idx === arr.length - 1)
       ).join("") || fila(`<span style="${S.muted}">Sin donaciones esta semana</span>`, "—", true);
 
     const topTenantsRows = topTenants.length > 0
@@ -12745,7 +12745,7 @@ async function generarYEnviarResumen({ desde, hasta, periodo, compararCon }) {
         ${recurrentes && recurrentes.cantidadTotal > 0 ? recurrentes.grupos.map((g) => `
         <div style="${S.card}">
           <div style="${S.h2}">Recurrentes ${etiquetaIntervalo(g.intervalo, g.cada, g.filas.length)}</div>
-          <p style="${S.totalGrupo}">${g.totales.map((t) => fmtMoneda(t.monto, t.moneda)).join(" &middot; ")}</p>
+          <p style="${S.totalGrupo}">${g.totales.map((t) => fmtMoneda(t.monto, t.moneda)).join(`<span style="${S.muted}; font-weight:400"> | </span>`)}</p>
           <p style="${S.heroCap}">${fmtInt(g.filas.length)} ${g.filas.length === 1 ? "donante" : "donantes"}</p>
           ${tabla(g.filas.map((f, i, arr) => fila(
             `${_escapeHtmlForEmail(f.quien)}${f.fallando ? ` <span style="${S.alerta}">cobro fallido</span>` : ""}`,
