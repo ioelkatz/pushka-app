@@ -12630,7 +12630,11 @@ async function generarYEnviarResumen({ desde, hasta, periodo, compararCon }) {
     })}`;
     const fmtInt = (n) => (Number(n) || 0).toLocaleString("en-US");
 
-    const ACCENT = "#2563EB";
+    // Azul marino. Era #2563EB, un azul electrico que en un correo de
+    // tzedaka se lee a software y no a institucion. Este es mas sobrio y
+    // mantiene el contraste alto sobre blanco, que es lo que importa cuando
+    // el numero grande del total es lo primero que se mira.
+    const ACCENT = "#1E3A5F";
     // ⚠️ El correo se maqueta con TABLAS, no con flex.
     //
     // Hasta el 2026-10-12 las filas usaban `display:flex` con
