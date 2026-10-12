@@ -12652,7 +12652,12 @@ async function generarYEnviarResumen({ desde, hasta, periodo, compararCon }) {
       card: "background:#FFFFFF; border:1px solid #E2E8F0; border-radius:10px; padding:20px; margin:0 0 14px 0;",
       h1: `color:${ACCENT}; font-size:21px; font-weight:700; margin:0 0 2px 0; letter-spacing:-0.2px;`,
       sub: "color:#64748B; font-size:13px; margin:0 0 22px 0;",
-      h2: "font-size:11px; text-transform:uppercase; letter-spacing:1px; color:#94A3B8; font-weight:700; margin:0 0 14px 0;",
+      // Los titulos y los textos secundarios pasaron de #94A3B8 a #64748B.
+      // Un gris claro sobre blanco da 2.8:1 de contraste, por debajo del
+      // minimo accesible de 4.5:1 — y en mayusculas chiquitas con espaciado,
+      // que es como estan los titulos, es donde mas se nota. #64748B llega a
+      // 4.8:1 y sigue leyendose como secundario al lado del negro del valor.
+      h2: "font-size:11px; text-transform:uppercase; letter-spacing:1px; color:#64748B; font-weight:700; margin:0 0 14px 0;",
       heroNum: `font-size:38px; font-weight:700; color:${ACCENT}; line-height:1.1; margin:0;`,
       heroCap: "color:#64748B; font-size:13px; margin:6px 0 0 0;",
       comp: "font-size:13px; margin:10px 0 0 0; font-weight:600;",
@@ -12661,10 +12666,10 @@ async function generarYEnviarResumen({ desde, hasta, periodo, compararCon }) {
       cell: "padding:9px 0; font-size:14px; color:#334155; border-bottom:1px solid #F1F5F9;",
       cellLast: "padding:9px 0; font-size:14px; color:#334155;",
       num: "font-variant-numeric:tabular-nums; font-weight:600; color:#0F172A; white-space:nowrap;",
-      muted: "color:#94A3B8;",
+      muted: "color:#64748B;",
       red: "background:#FEF2F2; border:1px solid #FCA5A5; border-left:4px solid #DC2626; border-radius:10px; padding:20px; margin:0 0 14px 0;",
       redH2: "font-size:11px; text-transform:uppercase; letter-spacing:1px; color:#991B1B; font-weight:700; margin:0 0 12px 0;",
-      footer: "color:#94A3B8; font-size:12px; line-height:1.6; margin:22px 4px 0 4px;",
+      footer: "color:#64748B; font-size:12px; line-height:1.6; margin:22px 4px 0 4px;",
     };
 
     /// Una fila de dos columnas. `ultima` saca la linea divisoria del final
