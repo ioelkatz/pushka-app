@@ -12214,25 +12214,160 @@ exports.createCheckoutSession = onCall(
 // on the sendEmail failure path: we swallow + log so the scheduler doesn't
 // retry and flood the inbox on a transient Brevo blip.
 // ---------------------------------------------------------------------------
-exports.sendWeeklySummary = onSchedule(
-  {
-    schedule: "every monday 08:00",
-    // Hora de Ciudad de Mexico, que es donde esta la organizacion y donde se
-    // lee este correo. Estaba en Buenos Aires por herencia del proyecto, y
-    // por eso llegaba a las 5 de la manana.
-    timeZone: "America/Mexico_City",
-    region: "us-central1",
-    secrets: [brevoApiKey],
-    timeoutSeconds: 300,
-  },
-  async () => {
-    const now = new Date();
-    const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-    const sinceTs = admin.firestore.Timestamp.fromDate(sevenDaysAgo);
+/// La linea que compara con el periodo anterior.
+///
+/// Verde si subio, rojo si bajo, gris si no hay con que comparar. El color
+/// hace el trabajo de un vistazo; el texto da el detalle para quien se
+/// detiene.
+function textoComparacion(c, ahora) {
+  const VERDE = "#15803D", ROJO = "#B91C1C", GRIS = "#64748B";
+  const money = (n) => "$" + Number(n).toLocaleString("en-US", {
+    minimumFractionDigits: 2, maximumFractionDigits: 2,
+  });
 
+  if (c.pct === null) {
+    // El periodo anterior fue cero. Decir "subio infinito" seria ridiculo;
+    // lo honesto es nombrar el hecho.
+    return ahora > 0
+      ? `<span style="color:${VERDE}">Primer per&iacute;odo con donaciones.</span>`
+      : `<span style="color:${GRIS}">Sin donaciones, igual que el per&iacute;odo anterior.</span>`;
+  }
+
+  const subio = c.pct >= 0;
+  const signo = subio ? "+" : "";
+  const color = Math.abs(c.pct) < 1 ? GRIS : (subio ? VERDE : ROJO);
+  return `<span style="color:${color}">${signo}${c.pct.toFixed(0)}% vs. el per&iacute;odo anterior</span>` +
+    `<span style="color:${GRIS}; font-weight:400"> (${money(c.antes)})</span>`;
+}
+
+/// Suma las donaciones de una ventana de tiempo.
+///
+/// Esta separado del resumen a proposito: el informe mensual lo llama DOS
+/// veces —el mes que paso y el anterior— para poder comparar. Si el calculo
+/// viviera dentro del resumen, comparar obligaria a duplicarlo, y dos copias
+/// de la misma cuenta se despegan tarde o temprano.
+///
+/// `hasta` es exclusivo: asi dos ventanas consecutivas no comparten ninguna
+/// transaccion y los totales suman sin pisarse.
+async function sumarDonaciones({ desde, hasta, rates }) {
+  const desdeTs = admin.firestore.Timestamp.fromDate(desde);
+  const hastaTs = admin.firestore.Timestamp.fromDate(hasta);
+
+  // collectionGroup scan, igual que getAdminStats. El tope de 20k es amplio
+  // para esta escala; si alguna vez se cruza, hay que pasar a contadores
+  // precalculados por tenant en vez de recorrer en vivo.
+  const TX_HARD_CAP = 20000;
+  const txSnap = await db.collectionGroup("transactions")
+    .where("createdAt", ">=", desdeTs)
+    .where("createdAt", "<", hastaTs)
+    .limit(TX_HARD_CAP)
+    .get()
+    .catch((err) => {
+      console.error("sumarDonaciones: transactions query failed", { err: err?.message });
+      return { docs: [], size: 0 };
+    });
+  if (txSnap.size >= TX_HARD_CAP) {
+    console.warn("sumarDonaciones: hit TX_HARD_CAP — totales truncados", { cap: TX_HARD_CAP });
+  }
+
+  let donationCount = 0;
+  let donationUSD = 0;
+  const perCurrencyOriginal = {};
+  const tenantRevenue = {}; // tenantId -> { usd, count, name }
+
+  for (const txDoc of (txSnap.docs || [])) {
+    const tx = txDoc.data() || {};
+    // Solo donaciones completadas — mismo criterio que getDonationReasonStats.
+    if (tx.type && tx.type !== "tzedaka" && tx.type !== "pushkaEmpty") continue;
+    if (tx.status && tx.status !== "completed") continue;
+
+    const currency = String(tx.currencyCode || "USD").toUpperCase();
+    let amountUSD;
+    if (tx.amountUSD != null) {
+      amountUSD = Number(tx.amountUSD);
+    } else {
+      const rate = rates[currency];
+      amountUSD = (rate && rate > 0) ? (Number(tx.amount) || 0) / rate : 0;
+    }
+    if (!Number.isFinite(amountUSD)) amountUSD = 0;
+
+    donationCount += 1;
+    donationUSD += amountUSD;
+
+    const origAmount = Number(tx.amount) || 0;
+    perCurrencyOriginal[currency] = (perCurrencyOriginal[currency] || 0) + origAmount;
+
+    const tenantId = tx.tenantId || null;
+    if (tenantId) {
+      if (!tenantRevenue[tenantId]) tenantRevenue[tenantId] = { usd: 0, count: 0, name: null };
+      tenantRevenue[tenantId].usd += amountUSD;
+      tenantRevenue[tenantId].count += 1;
+    }
+  }
+
+  return { donationCount, donationUSD, perCurrencyOriginal, tenantRevenue };
+}
+
+/// Cuantas donaciones recurrentes estan activas ahora mismo.
+///
+/// Para una organizacion sin fines de lucro este es el numero que mas dice
+/// del futuro: es la plata con la que puede contar el mes que viene, sin
+/// depender de que alguien se acuerde de donar.
+///
+/// Las suscripciones NO viven en Firestore — se leen de Stripe, de la cuenta
+/// conectada de cada tenant. Por eso esto es una llamada de red y no una
+/// consulta local, y por eso devuelve null si falla: un resumen sin este
+/// numero es mejor que ningun resumen.
+///
+/// `past_due` y `unpaid` cuentan como activas a proposito: el donante no
+/// cancelo, le fallo la tarjeta. Tratarlas como bajas haria que el numero
+/// cayera por un problema de cobro y no por una decision de nadie.
+async function contarRecurrentesActivas(tenantsDocs) {
+  const ESTADOS_ACTIVOS = new Set(["active", "trialing", "past_due", "unpaid"]);
+  let total = 0;
+  let hubo = false;
+
+  for (const d of tenantsDocs) {
+    const t = d.data() || {};
+    const acct = t.stripeConnectAccountId;
+    if (!acct || t.stripeConnectStatus !== "active") continue;
+
+    try {
+      const stripe = require("stripe")(stripeSecret.value());
+      // `status: all` y filtrado propio: el filtro de Stripe no permite pedir
+      // varios estados a la vez, y nos interesan cuatro.
+      const subs = await stripe.subscriptions.list(
+        { status: "all", limit: 100 },
+        { stripeAccount: acct },
+      );
+      total += subs.data.filter((s) =>
+        s.metadata?.purpose === "donation_recurring" && ESTADOS_ACTIVOS.has(s.status)
+      ).length;
+      hubo = true;
+    } catch (err) {
+      console.warn("contarRecurrentesActivas: fallo para un tenant", {
+        tenantId: d.id, err: err?.message,
+      });
+    }
+  }
+
+  return hubo ? total : null;
+}
+/// Arma y manda el resumen de un periodo. La comparten el informe semanal y
+/// el mensual: una sola plantilla, un solo calculo, dos horarios.
+///
+/// `hasta` es exclusivo. `compararCon` es opcional: si viene, el correo
+/// muestra cuanto cambio respecto del periodo anterior, que es lo que
+/// convierte un numero suelto en una señal.
+async function generarYEnviarResumen({ desde, hasta, periodo, compararCon }) {
     const fmtDay = (d) => d.toISOString().slice(0, 10);
-    const startDate = fmtDay(sevenDaysAgo);
-    const endDate = fmtDay(now);
+    const startDate = fmtDay(desde);
+    // Se resta un dia porque `hasta` es exclusivo: al lector le interesa el
+    // ultimo dia INCLUIDO, no el primero que queda afuera.
+    const endDate = fmtDay(new Date(hasta.getTime() - 86400000));
+
+    const desdeTs = admin.firestore.Timestamp.fromDate(desde);
+    const hastaTs = admin.firestore.Timestamp.fromDate(hasta);
 
     // Live FX rates for USD conversion of any legacy tx docs missing the
     // frozen amountUSD snapshot. If the rate provider itself is down we
@@ -12246,66 +12381,14 @@ exports.sendWeeklySummary = onSchedule(
       return {};
     });
 
-    // --- Donations (transactions in the last 7d) ------------------------
-    // collectionGroup scan same as getAdminStats. 20k cap is generous for a
-    // pre-launch app; if we ever cross it we'd want per-tenant aggregation
-    // via pre-computed counters instead of a live scan.
-    const TX_HARD_CAP = 20000;
-    const txSnap = await db.collectionGroup("transactions")
-      .where("createdAt", ">=", sinceTs)
-      .limit(TX_HARD_CAP)
-      .get()
-      .catch((err) => {
-        console.error("sendWeeklySummary: transactions query failed", {
-          err: err?.message,
-        });
-        return { docs: [], size: 0 };
-      });
-    if (txSnap.size >= TX_HARD_CAP) {
-      console.warn("sendWeeklySummary: hit TX_HARD_CAP — totals truncated", {
-        cap: TX_HARD_CAP,
-      });
-    }
-
-    let donationCount = 0;
-    let donationUSD = 0;
-    const perCurrencyOriginal = {};
-    const tenantRevenue = {}; // tenantId -> { usd, count, name }
-
-    for (const txDoc of (txSnap.docs || [])) {
-      const tx = txDoc.data() || {};
-      // Only completed donation-type txs — mirrors getDonationReasonStats.
-      if (tx.type && tx.type !== "tzedaka" && tx.type !== "pushkaEmpty") continue;
-      if (tx.status && tx.status !== "completed") continue;
-
-      const currency = String(tx.currencyCode || "USD").toUpperCase();
-      let amountUSD;
-      if (tx.amountUSD != null) {
-        amountUSD = Number(tx.amountUSD);
-      } else {
-        const rate = rates[currency];
-        amountUSD = (rate && rate > 0) ? (Number(tx.amount) || 0) / rate : 0;
-      }
-      if (!Number.isFinite(amountUSD)) amountUSD = 0;
-
-      donationCount += 1;
-      donationUSD += amountUSD;
-
-      const origAmount = Number(tx.amount) || 0;
-      perCurrencyOriginal[currency] = (perCurrencyOriginal[currency] || 0) + origAmount;
-
-      const tenantId = tx.tenantId || null;
-      if (tenantId) {
-        if (!tenantRevenue[tenantId]) tenantRevenue[tenantId] = { usd: 0, count: 0, name: null };
-        tenantRevenue[tenantId].usd += amountUSD;
-        tenantRevenue[tenantId].count += 1;
-      }
-    }
-
+    // --- Donaciones de la ventana ---------------------------------------
+    const { donationCount, donationUSD, perCurrencyOriginal, tenantRevenue } =
+      await sumarDonaciones({ desde, hasta, rates });
     // --- New users (last 7d) --------------------------------------------
     // Requires a users.createdAt ASC index. If missing, we log + zero out.
     const newUsersSnap = await db.collection("users")
-      .where("createdAt", ">=", sinceTs)
+      .where("createdAt", ">=", desdeTs)
+      .where("createdAt", "<", hastaTs)
       .limit(5000)
       .get()
       .catch((err) => {
@@ -12316,11 +12399,30 @@ exports.sendWeeklySummary = onSchedule(
       });
     const newUsersCount = newUsersSnap.size || 0;
 
+    // --- Usuarios totales -----------------------------------------------
+    // Cuantos usan la pushka en total, no solo los que entraron esta semana.
+    // Para el Rab es el numero que mas dice: los nuevos cuentan el impulso,
+    // el total cuenta la comunidad.
+    //
+    // Se usa count() en vez de traer los documentos: es una agregacion del
+    // lado del servidor, cuesta una fraccion de una lectura y no crece con
+    // la cantidad de usuarios. Traerlos con .get() funcionaria hoy con
+    // decenas y se volveria caro y lento con miles.
+    const totalUsersCount = await db.collection("users").count().get()
+      .then((r) => r.data().count)
+      .catch((err) => {
+        console.warn("sendWeeklySummary: conteo total de usuarios fallo", {
+          err: err?.message,
+        });
+        return null;
+      });
+
     // --- Failed payment intents (last 7d) -------------------------------
     // Needs composite index (type ASC, createdAt ASC) on _stripeWebhookEvents.
     const failedSnap = await db.collection("_stripeWebhookEvents")
       .where("type", "==", "payment_intent.payment_failed")
-      .where("createdAt", ">=", sinceTs)
+      .where("createdAt", ">=", desdeTs)
+      .where("createdAt", "<", hastaTs)
       .limit(5000)
       .get()
       .catch((err) => {
@@ -12334,7 +12436,8 @@ exports.sendWeeklySummary = onSchedule(
     // --- Chargebacks (last 7d) ------------------------------------------
     const chargebackSnap = await db.collection("_stripeWebhookEvents")
       .where("type", "==", "charge.dispute.created")
-      .where("createdAt", ">=", sinceTs)
+      .where("createdAt", ">=", desdeTs)
+      .where("createdAt", "<", hastaTs)
       .limit(1000)
       .get()
       .catch((err) => {
@@ -12373,6 +12476,29 @@ exports.sendWeeklySummary = onSchedule(
       const data = s?.data?.() || {};
       tenantNameById[tid] = data.name || data.appName || tid;
     }
+
+    // --- Comparacion con el periodo anterior -----------------------------
+    // Un numero solo no dice nada: "$36" es bueno o malo segun con que se
+    // compare. Esto es lo que convierte el correo en una señal en vez de un
+    // reporte. Solo el informe mensual la pide: una semana con una festividad
+    // o un asado distorsiona demasiado como para que el dato signifique algo.
+    let comparacion = null;
+    if (compararCon) {
+      const previo = await sumarDonaciones({
+        desde: compararCon.desde, hasta: compararCon.hasta, rates,
+      });
+      const antes = previo.donationUSD;
+      comparacion = {
+        antes,
+        // Sin base no hay porcentaje posible: de cero a cualquier cosa no es
+        // "infinito por ciento", es simplemente el primer periodo con algo.
+        pct: antes > 0 ? ((donationUSD - antes) / antes) * 100 : null,
+        cantidadAntes: previo.donationCount,
+      };
+    }
+
+    // --- Donaciones recurrentes activas ----------------------------------
+    const recurrentesActivas = await contarRecurrentesActivas(activeTenantsDocs);
 
     // --- Unresolved activity items requiring action ---------------------
     // Needs composite index (requiresAction ASC, resolved ASC) on _activityLog.
@@ -12445,6 +12571,7 @@ exports.sendWeeklySummary = onSchedule(
       h2: "font-size:11px; text-transform:uppercase; letter-spacing:1px; color:#94A3B8; font-weight:700; margin:0 0 14px 0;",
       heroNum: `font-size:38px; font-weight:700; color:${ACCENT}; line-height:1.1; margin:0;`,
       heroCap: "color:#64748B; font-size:13px; margin:6px 0 0 0;",
+      comp: "font-size:13px; margin:10px 0 0 0; font-weight:600;",
       cell: "padding:9px 0; font-size:14px; color:#334155; border-bottom:1px solid #F1F5F9;",
       cellLast: "padding:9px 0; font-size:14px; color:#334155;",
       num: "font-variant-numeric:tabular-nums; font-weight:600; color:#0F172A; white-space:nowrap;",
@@ -12495,7 +12622,7 @@ exports.sendWeeklySummary = onSchedule(
     const html = `
       <div style="${S.body}">
       <div style="${S.wrap}">
-        <h1 style="${S.h1}">Resumen semanal</h1>
+        <h1 style="${S.h1}">${periodo.titulo}</h1>
         <p style="${S.sub}">Del ${startDate} al ${endDate}</p>
 
         ${redFlagBlock}
@@ -12504,6 +12631,7 @@ exports.sendWeeklySummary = onSchedule(
           <div style="${S.h2}">Donaciones</div>
           <p style="${S.heroNum}">${fmtUSD(donationUSD)}</p>
           <p style="${S.heroCap}">${fmtInt(donationCount)} ${donationCount === 1 ? "donaci&oacute;n" : "donaciones"}${donationCount > 1 ? `, ${fmtUSD(donationUSD / donationCount)} en promedio` : ""}</p>
+          ${comparacion ? `<p style="${S.comp}">${textoComparacion(comparacion, donationUSD)}</p>` : ""}
         </div>
 
         <div style="${S.card}">
@@ -12511,16 +12639,20 @@ exports.sendWeeklySummary = onSchedule(
           ${tabla(perCurrencyRows)}
         </div>
 
+        ${activeTenantsCount > 1 ? `
         <div style="${S.card}">
           <div style="${S.h2}">Organizaciones</div>
           ${tabla(topTenantsRows)}
-        </div>
+        </div>`: ""}
 
         <div style="${S.card}">
           <div style="${S.h2}">Plataforma</div>
           ${tabla(
-            fila("Usuarios nuevos", fmtInt(newUsersCount)) +
-            fila("Organizaciones activas", fmtInt(activeTenantsCount)) +
+            fila("Usuarios", totalUsersCount === null
+              ? fmtInt(newUsersCount)
+              : `${fmtInt(totalUsersCount)} <span style="${S.muted}">(+${fmtInt(newUsersCount)} ${periodo.nuevos})</span>`) +
+            (recurrentesActivas !== null ? fila("Donaciones recurrentes activas", fmtInt(recurrentesActivas)) : "") +
+            (activeTenantsCount > 1 ? fila("Organizaciones activas", fmtInt(activeTenantsCount)) : "") +
             fila("Pagos fallidos", `${fmtInt(failedCount)} <span style="${S.muted}">(${(failRate * 100).toFixed(2)}%)</span>`) +
             fila("Contracargos", fmtInt(chargebackCount)) +
             fila("Alertas sin resolver", fmtInt(unresolvedActivityCount), true)
@@ -12528,7 +12660,7 @@ exports.sendWeeklySummary = onSchedule(
         </div>
 
         <div style="${S.footer}">
-          Se env&iacute;a solo, todos los lunes por la ma&ntilde;ana.<br>
+          ${periodo.cadencia}<br>
           Si deja de llegar, algo se rompi&oacute;: Brevo, esta funci&oacute;n, o el programador de Cloud Functions.
         </div>
       </div>
@@ -12557,7 +12689,7 @@ exports.sendWeeklySummary = onSchedule(
         process.env.GOOGLE_CLOUD_PROJECT ||
         "pushka-app-ioel";
     const entorno = projectId.endsWith("-test") ? "dev" : "prod";
-    const subject = `[Pushka Weekly · ${entorno}] ${startDate} - ${endDate}: ${fmtInt(donationCount)} donaciones, ${alertCount} alertas`;
+    const subject = `[Pushka ${periodo.etiqueta} · ${entorno}] ${startDate} - ${endDate}: ${fmtInt(donationCount)} donaciones, ${alertCount} alertas`;
 
     if (entorno !== "prod") {
       console.info("sendWeeklySummary: entorno dev, no se envia correo", {
@@ -12566,25 +12698,94 @@ exports.sendWeeklySummary = onSchedule(
       return;
     }
 
-    try {
-      await sendEmail({ to: SUPER_ADMIN_EMAIL, subject, html });
-      console.info("sendWeeklySummary: sent", {
-        to: _redactEmail(SUPER_ADMIN_EMAIL),
-        donationCount,
-        donationUSD: Math.round(donationUSD * 100) / 100,
-        newUsersCount, failedCount, chargebackCount, activeTenantsCount,
-        unresolvedActivityCount, alertCount,
-        failRate: Number(failRate.toFixed(4)),
-        redFlags,
-      });
-    } catch (err) {
-      // Fire-and-forget: log but don't throw so the scheduler doesn't retry
-      // and flood the inbox on a transient Brevo glitch.
-      console.error("sendWeeklySummary: sendEmail threw (non-fatal)", {
-        err: err?.message,
-      });
+    // Destinatarios del resumen. Se manda UNO POR UNO, no con los dos en el
+    // mismo "to": asi ninguno ve la direccion personal del otro, y si una
+    // rebota la otra igual llega.
+    const destinatarios = [
+      SUPER_ADMIN_EMAIL,      // Ioel, que opera la plataforma
+      "jymmexico@gmail.com",  // el Rab, a quien van las donaciones
+    ];
+
+    for (const destino of destinatarios) {
+      try {
+        await sendEmail({ to: destino, subject, html });
+        console.info("sendWeeklySummary: sent", {
+          to: _redactEmail(destino),
+          donationCount,
+          donationUSD: Math.round(donationUSD * 100) / 100,
+          newUsersCount, totalUsersCount, recurrentesActivas, failedCount, chargebackCount, activeTenantsCount,
+          unresolvedActivityCount, alertCount,
+          failRate: Number(failRate.toFixed(4)),
+          redFlags,
+        });
+      } catch (err) {
+        // Cada destinatario tiene su propio try: que falle uno no puede
+        // dejar al otro sin resumen. Y no se relanza el error para que el
+        // programador no reintente y mande el correo dos veces.
+        console.error("sendWeeklySummary: sendEmail threw (non-fatal)", {
+          to: _redactEmail(destino),
+          err: err?.message,
+        });
+      }
     }
-  }
+}
+
+
+// --- Los dos horarios -------------------------------------------------------
+// Misma plantilla, mismo calculo, distinto periodo. El semanal es el pulso:
+// dice si algo se rompio. El mensual es la señal: compara con el mes anterior,
+// que es la unica escala donde la comparacion significa algo — una semana con
+// una festividad o un asado distorsiona demasiado.
+
+const HORARIO = {
+  timeZone: "America/Mexico_City",
+  region: "us-central1",
+  secrets: [brevoApiKey, stripeSecret],
+  timeoutSeconds: 300,
+};
+
+exports.sendWeeklySummary = onSchedule(
+  { ...HORARIO, schedule: "every monday 08:00" },
+  async () => {
+    const hasta = new Date();
+    const desde = new Date(hasta.getTime() - 7 * 24 * 60 * 60 * 1000);
+    await generarYEnviarResumen({
+      desde,
+      hasta,
+      periodo: {
+        etiqueta: "Semanal",
+        titulo: "Resumen semanal",
+        cadencia: "Se env&iacute;a solo, todos los lunes por la ma&ntilde;ana.",
+        nuevos: "esta semana",
+      },
+    });
+  },
+);
+
+exports.sendMonthlySummary = onSchedule(
+  { ...HORARIO, schedule: "1 of month 08:00" },
+  async () => {
+    // El mes que acaba de terminar, de su dia 1 al dia 1 del actual. Se
+    // construye en UTC a proposito: las consultas a Firestore comparan
+    // Timestamps, y mezclar husos aca es como se corren los limites de mes
+    // sin que nadie lo note.
+    const ahora = new Date();
+    const inicioEsteMes = new Date(Date.UTC(ahora.getUTCFullYear(), ahora.getUTCMonth(), 1));
+    const inicioMesPasado = new Date(Date.UTC(ahora.getUTCFullYear(), ahora.getUTCMonth() - 1, 1));
+    const inicioMesAnterior = new Date(Date.UTC(ahora.getUTCFullYear(), ahora.getUTCMonth() - 2, 1));
+
+    await generarYEnviarResumen({
+      desde: inicioMesPasado,
+      hasta: inicioEsteMes,
+      periodo: {
+        etiqueta: "Mensual",
+        titulo: "Resumen del mes",
+        cadencia: "Se env&iacute;a solo, el primero de cada mes.",
+        nuevos: "este mes",
+      },
+      compararCon: { desde: inicioMesAnterior, hasta: inicioMesPasado },
+    });
+  },
 );
 
 // Local HTML escaper for the weekly summary email — tenant names, activity
