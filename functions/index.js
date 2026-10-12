@@ -12644,12 +12644,17 @@ async function generarYEnviarResumen({ desde, hasta, periodo, compararCon }) {
 
     /// Un importe en su moneda original, sin convertir. Se usa en las
     /// recurrentes, donde el punto es justamente mostrar el dato como es.
+    ///
+    /// Siempre con el codigo de moneda detras, el dolar tambien: en una
+    /// columna donde conviven varias monedas, mezclar un simbolo con un
+    /// codigo obliga a leer dos formatos distintos. "36.00 USD" al lado de
+    /// "540.00 MXN" se compara de un vistazo; "$36.00" no.
     const fmtMoneda = (n, moneda) => {
       const m = String(moneda || "USD").toUpperCase();
       const num = Number(n).toLocaleString("en-US", {
         minimumFractionDigits: 2, maximumFractionDigits: 2,
       });
-      return m === "USD" ? `$${num}` : `${num} ${m}`;
+      return `${num} ${m}`;
     };
 
     const tabla = (filas) =>
