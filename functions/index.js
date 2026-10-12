@@ -12497,7 +12497,19 @@ exports.sendWeeklySummary = onSchedule(
       </div>
     `;
 
-    const subject = `[Pushka Weekly] ${startDate} - ${endDate}: ${fmtInt(donationCount)} donaciones, ${alertCount} alertas`;
+    // El entorno va en el ASUNTO porque esta funcion corre en los dos
+    // proyectos y los dos escriben al mismo correo. El 2026-10-12 llegaron
+    // dos resumenes a la misma hora con el mismo rango de fechas y datos
+    // distintos —uno con 0 donaciones y otro con 1— y parecian contradecirse:
+    // eran dev y prod, indistinguibles desde la bandeja.
+    //
+    // Se mantienen los dos a proposito: cada uno es el latido de su entorno,
+    // y dejar de recibir cualquiera de los dos avisa que algo se rompio.
+    const projectId = process.env.GCLOUD_PROJECT ||
+        process.env.GOOGLE_CLOUD_PROJECT ||
+        "pushka-app-ioel";
+    const entorno = projectId.endsWith("-test") ? "dev" : "prod";
+    const subject = `[Pushka Weekly · ${entorno}] ${startDate} - ${endDate}: ${fmtInt(donationCount)} donaciones, ${alertCount} alertas`;
 
     try {
       await sendEmail({ to: SUPER_ADMIN_EMAIL, subject, html });
