@@ -12217,7 +12217,10 @@ exports.createCheckoutSession = onCall(
 exports.sendWeeklySummary = onSchedule(
   {
     schedule: "every monday 08:00",
-    timeZone: "America/Argentina/Buenos_Aires",
+    // Hora de Ciudad de Mexico, que es donde esta la organizacion y donde se
+    // lee este correo. Estaba en Buenos Aires por herencia del proyecto, y
+    // por eso llegaba a las 5 de la manana.
+    timeZone: "America/Mexico_City",
     region: "us-central1",
     secrets: [brevoApiKey],
     timeoutSeconds: 300,
