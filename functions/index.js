@@ -12308,24 +12308,35 @@ async function sumarDonaciones({ desde, hasta, rates }) {
   return { donationCount, donationUSD, perCurrencyOriginal, tenantRevenue };
 }
 
-/// Cuantas donaciones recurrentes estan activas ahora mismo.
+/// Cuantas donaciones recurrentes estan activas, y cuanto suman por mes.
 ///
-/// Para una organizacion sin fines de lucro este es el numero que mas dice
-/// del futuro: es la plata con la que puede contar el mes que viene, sin
-/// depender de que alguien se acuerde de donar.
+/// Para una organizacion sin fines de lucro estos dos numeros son los que mas
+/// dicen del futuro: con cuanta gente y con cuanta plata puede contar el mes
+/// que viene, sin depender de que nadie se acuerde de donar.
+///
+/// ⚠️ El total se normaliza a EQUIVALENTE MENSUAL, no es la suma cruda de los
+/// importes. Sumar 10 USD semanales con 100 USD mensuales da 110, un numero
+/// que no significa nada: no es lo que entra por mes ni por semana. Llevadas
+/// las dos a su equivalente mensual, 10 semanales son ~43 y el total es ~143,
+/// que si es la plata que entra en un mes.
 ///
 /// Las suscripciones NO viven en Firestore — se leen de Stripe, de la cuenta
-/// conectada de cada tenant. Por eso esto es una llamada de red y no una
-/// consulta local, y por eso devuelve null si falla: un resumen sin este
-/// numero es mejor que ningun resumen.
+/// conectada de cada tenant. Por eso esto es una llamada de red y devuelve
+/// null si falla: un resumen sin estos numeros es mejor que ningun resumen.
 ///
 /// `past_due` y `unpaid` cuentan como activas a proposito: el donante no
 /// cancelo, le fallo la tarjeta. Tratarlas como bajas haria que el numero
 /// cayera por un problema de cobro y no por una decision de nadie.
-async function contarRecurrentesActivas(tenantsDocs) {
+async function resumirRecurrentesActivas(tenantsDocs, rates) {
   const ESTADOS_ACTIVOS = new Set(["active", "trialing", "past_due", "unpaid"]);
-  let total = 0;
+  let cantidad = 0;
+  let mensualUSD = 0;
   let hubo = false;
+
+  // Cuantos de ese intervalo entran en un mes. 365/12 y 52/12 en vez de 30 y
+  // 4: un mes no tiene 4 semanas exactas, y con suficientes suscripciones esa
+  // diferencia del 8% se nota.
+  const porMes = { day: 365 / 12, week: 52 / 12, month: 1, year: 1 / 12 };
 
   for (const d of tenantsDocs) {
     const t = d.data() || {};
@@ -12340,18 +12351,36 @@ async function contarRecurrentesActivas(tenantsDocs) {
         { status: "all", limit: 100 },
         { stripeAccount: acct },
       );
-      total += subs.data.filter((s) =>
-        s.metadata?.purpose === "donation_recurring" && ESTADOS_ACTIVOS.has(s.status)
-      ).length;
+
+      for (const s of subs.data) {
+        if (s.metadata?.purpose !== "donation_recurring") continue;
+        if (!ESTADOS_ACTIVOS.has(s.status)) continue;
+        cantidad += 1;
+
+        for (const item of (s.items?.data || [])) {
+          const precio = item.price;
+          if (!precio?.unit_amount) continue;
+
+          const moneda = String(precio.currency || "usd").toUpperCase();
+          const bruto = (precio.unit_amount / currencyUnitDivisor(moneda)) * (item.quantity || 1);
+
+          const tasa = rates?.[moneda];
+          const enUSD = moneda === "USD" ? bruto : ((tasa && tasa > 0) ? bruto / tasa : 0);
+
+          const r = precio.recurring;
+          const factor = (porMes[r?.interval] ?? 1) / (r?.interval_count || 1);
+          mensualUSD += enUSD * factor;
+        }
+      }
       hubo = true;
     } catch (err) {
-      console.warn("contarRecurrentesActivas: fallo para un tenant", {
+      console.warn("resumirRecurrentesActivas: fallo para un tenant", {
         tenantId: d.id, err: err?.message,
       });
     }
   }
 
-  return hubo ? total : null;
+  return hubo ? { cantidad, mensualUSD } : null;
 }
 /// Arma y manda el resumen de un periodo. La comparten el informe semanal y
 /// el mensual: una sola plantilla, un solo calculo, dos horarios.
@@ -12498,7 +12527,7 @@ async function generarYEnviarResumen({ desde, hasta, periodo, compararCon }) {
     }
 
     // --- Donaciones recurrentes activas ----------------------------------
-    const recurrentesActivas = await contarRecurrentesActivas(activeTenantsDocs);
+    const recurrentes = await resumirRecurrentesActivas(activeTenantsDocs, rates);
 
     // --- Unresolved activity items requiring action ---------------------
     // Needs composite index (requiresAction ASC, resolved ASC) on _activityLog.
@@ -12651,7 +12680,8 @@ async function generarYEnviarResumen({ desde, hasta, periodo, compararCon }) {
             fila("Usuarios", totalUsersCount === null
               ? fmtInt(newUsersCount)
               : `${fmtInt(totalUsersCount)} <span style="${S.muted}">(+${fmtInt(newUsersCount)} ${periodo.nuevos})</span>`) +
-            (recurrentesActivas !== null ? fila("Donaciones recurrentes activas", fmtInt(recurrentesActivas)) : "") +
+            (recurrentes !== null ? fila("Donaciones recurrentes",
+              `${fmtInt(recurrentes.cantidad)} <span style="${S.muted}">(${fmtUSD(recurrentes.mensualUSD)} al mes)</span>`) : "") +
             (activeTenantsCount > 1 ? fila("Organizaciones activas", fmtInt(activeTenantsCount)) : "") +
             fila("Pagos fallidos", `${fmtInt(failedCount)} <span style="${S.muted}">(${(failRate * 100).toFixed(2)}%)</span>`) +
             fila("Contracargos", fmtInt(chargebackCount)) +
@@ -12713,7 +12743,7 @@ async function generarYEnviarResumen({ desde, hasta, periodo, compararCon }) {
           to: _redactEmail(destino),
           donationCount,
           donationUSD: Math.round(donationUSD * 100) / 100,
-          newUsersCount, totalUsersCount, recurrentesActivas, failedCount, chargebackCount, activeTenantsCount,
+          newUsersCount, totalUsersCount, recurrentes, failedCount, chargebackCount, activeTenantsCount,
           unresolvedActivityCount, alertCount,
           failRate: Number(failRate.toFixed(4)),
           redFlags,
