@@ -12308,29 +12308,35 @@ async function sumarDonaciones({ desde, hasta, rates }) {
   return { donationCount, donationUSD, perCurrencyOriginal, tenantRevenue };
 }
 
-/// Las donaciones recurrentes activas, agrupadas por cada cuanto se cobran y
-/// en que moneda.
+/// Las donaciones recurrentes activas, una por una, agrupadas por cada cuanto
+/// se cobran.
 ///
 /// Para una organizacion sin fines de lucro son los numeros que mas dicen del
 /// futuro: con cuanta gente y con cuanta plata puede contar sin depender de
-/// que nadie se acuerde de donar.
+/// que nadie se acuerde de donar. Al ser pocas, verlas una por una dice mucho
+/// mas que un total: se sabe QUIEN sostiene la organizacion mes a mes.
 ///
-/// NO se normaliza nada. Una version anterior convertia todo a equivalente
-/// mensual —10 semanales pasaban a ~43— y Ioel pidio lo contrario: que el
-/// correo traiga los datos como son. Tiene razon: cualquier conversion
-/// obliga al lector a confiar en una cuenta que no puede ver, y "5 mensuales
-/// de 900 MXN" se entiende sin que nadie explique nada.
+/// NO se normaliza ni se convierte nada. Una version anterior pasaba todo a
+/// equivalente mensual y Ioel pidio lo contrario: los datos como son.
+/// Cualquier conversion obliga al lector a confiar en una cuenta que no puede
+/// ver.
 ///
-/// Las suscripciones NO viven en Firestore — se leen de Stripe, de la cuenta
-/// conectada de cada tenant. Por eso esto es una llamada de red y devuelve
-/// null si falla: un resumen sin estos numeros es mejor que ningun resumen.
+/// El nombre sale de Firestore vIA el uid que la suscripcion guarda en su
+/// metadata, no del cliente de Stripe —que no tiene nombre cargado— ni del
+/// correo. Ademas de leerse mejor, evita poner direcciones de correo en un
+/// mensaje que puede reenviarse.
+///
+/// Las suscripciones NO viven en Firestore: se leen de Stripe, de la cuenta
+/// conectada de cada tenant. Por eso devuelve null si falla — un resumen sin
+/// estos numeros es mejor que ningun resumen.
 ///
 /// `past_due` y `unpaid` cuentan como activas a proposito: el donante no
-/// cancelo, le fallo la tarjeta. Tratarlas como bajas haria que el numero
-/// cayera por un problema de cobro y no por una decision de nadie.
+/// cancelo, le fallo la tarjeta. Se marcan aparte porque son accionables: a
+/// esa persona conviene escribirle.
 async function resumirRecurrentesActivas(tenantsDocs) {
   const ESTADOS_ACTIVOS = new Set(["active", "trialing", "past_due", "unpaid"]);
-  const grupos = new Map(); // "month|1|MXN" -> { intervalo, cada, moneda, cantidad, monto }
+  const FALLANDO = new Set(["past_due", "unpaid"]);
+  const porIntervalo = new Map(); // "month|1" -> { intervalo, cada, filas: [] }
   let cantidadTotal = 0;
   let hubo = false;
 
@@ -12341,10 +12347,8 @@ async function resumirRecurrentesActivas(tenantsDocs) {
 
     try {
       const stripe = require("stripe")(stripeSecret.value());
-      // `status: all` y filtrado propio: el filtro de Stripe no permite pedir
-      // varios estados a la vez, y nos interesan cuatro.
       const subs = await stripe.subscriptions.list(
-        { status: "all", limit: 100 },
+        { status: "all", limit: 100, expand: ["data.customer"] },
         { stripeAccount: acct },
       );
 
@@ -12353,20 +12357,33 @@ async function resumirRecurrentesActivas(tenantsDocs) {
         if (!ESTADOS_ACTIVOS.has(s.status)) continue;
         cantidadTotal += 1;
 
+        // Nombre del donante. Se cae en cascada hasta algo digno de mostrar:
+        // nunca el id crudo de Stripe, que no le dice nada a nadie.
+        let quien = null;
+        const uid = s.metadata?.uid;
+        if (uid) {
+          const u = await db.collection("users").doc(String(uid)).get().catch(() => null);
+          quien = (u?.data?.()?.displayName || "").trim() || null;
+        }
+        if (!quien) quien = (s.customer?.name || "").trim() || null;
+        if (!quien) quien = (s.customer?.email || "").trim() || null;
+        if (!quien) quien = "Donante";
+
         for (const item of (s.items?.data || [])) {
           const precio = item.price;
           if (!precio?.unit_amount) continue;
 
-          const moneda = String(precio.currency || "usd").toUpperCase();
           const intervalo = precio.recurring?.interval || "month";
           const cada = precio.recurring?.interval_count || 1;
-          const monto = (precio.unit_amount / currencyUnitDivisor(moneda)) * (item.quantity || 1);
-
-          const clave = `${intervalo}|${cada}|${moneda}`;
-          const g = grupos.get(clave) || { intervalo, cada, moneda, cantidad: 0, monto: 0 };
-          g.cantidad += 1;
-          g.monto += monto;
-          grupos.set(clave, g);
+          const clave = `${intervalo}|${cada}`;
+          const g = porIntervalo.get(clave) || { intervalo, cada, filas: [] };
+          g.filas.push({
+            quien,
+            monto: (precio.unit_amount / currencyUnitDivisor(precio.currency)) * (item.quantity || 1),
+            moneda: String(precio.currency || "usd").toUpperCase(),
+            fallando: FALLANDO.has(s.status),
+          });
+          porIntervalo.set(clave, g);
         }
       }
       hubo = true;
@@ -12379,17 +12396,29 @@ async function resumirRecurrentesActivas(tenantsDocs) {
 
   if (!hubo) return null;
 
-  // De la mas frecuente a la menos: asi lo que se cobra seguido queda arriba.
+  // De la mas frecuente a la menos, y dentro de cada grupo de mayor a menor.
   const orden = { day: 0, week: 1, month: 2, year: 3 };
-  const lista = [...grupos.values()].sort((a, b) =>
-    (orden[a.intervalo] ?? 9) - (orden[b.intervalo] ?? 9) || b.monto - a.monto
-  );
+  const grupos = [...porIntervalo.values()]
+    .sort((a, b) => (orden[a.intervalo] ?? 9) - (orden[b.intervalo] ?? 9));
+  for (const g of grupos) {
+    // Por moneda primero y despues por monto. Ordenar solo por el numero
+    // pondria 500 MXN arriba de 36 USD, insinuando que vale mas cuando es al
+    // reves. Sin conversion no hay forma de ordenarlos entre si, asi que se
+    // agrupan por moneda y dentro de cada una si el orden es real.
+    g.filas.sort((a, b) => a.moneda.localeCompare(b.moneda) || b.monto - a.monto);
+    // Total del grupo, por moneda. Se muestra ARRIBA de la tabla para que
+    // nadie tenga que sumar de cabeza. Separado por moneda porque sumar
+    // pesos con dolares daria un numero que no es ninguna de las dos cosas.
+    const porMoneda = new Map();
+    for (const f of g.filas) porMoneda.set(f.moneda, (porMoneda.get(f.moneda) || 0) + f.monto);
+    g.totales = [...porMoneda.entries()].map(([moneda, monto]) => ({ moneda, monto }));
+  }
 
-  return { cantidadTotal, grupos: lista };
+  return { cantidadTotal, grupos };
 }
 
-/// Como se llama un grupo de recurrentes en castellano. El plural importa:
-/// "1 mensuales" se lee mal y delata que lo escribio una maquina.
+/// Como se titula una tabla de recurrentes. El plural importa: "1 Mensuales"
+/// se lee mal y delata que lo escribio una maquina.
 function etiquetaIntervalo(intervalo, cada, cantidad) {
   const uno = cantidad === 1;
   if (cada === 1) {
@@ -12623,6 +12652,8 @@ async function generarYEnviarResumen({ desde, hasta, periodo, compararCon }) {
       heroNum: `font-size:38px; font-weight:700; color:${ACCENT}; line-height:1.1; margin:0;`,
       heroCap: "color:#64748B; font-size:13px; margin:6px 0 0 0;",
       comp: "font-size:13px; margin:10px 0 0 0; font-weight:600;",
+      totalGrupo: `font-size:26px; font-weight:700; color:${ACCENT}; line-height:1.15; margin:0;`,
+      alerta: "color:#B91C1C; font-size:12px; font-weight:600;",
       cell: "padding:9px 0; font-size:14px; color:#334155; border-bottom:1px solid #F1F5F9;",
       cellLast: "padding:9px 0; font-size:14px; color:#334155;",
       num: "font-variant-numeric:tabular-nums; font-weight:600; color:#0F172A; white-space:nowrap;",
@@ -12644,12 +12675,17 @@ async function generarYEnviarResumen({ desde, hasta, periodo, compararCon }) {
 
     /// Un importe en su moneda original, sin convertir. Se usa en las
     /// recurrentes, donde el punto es justamente mostrar el dato como es.
+    ///
+    /// Siempre con el codigo de moneda detras, el dolar tambien: en una
+    /// columna donde conviven varias monedas, mezclar un simbolo con un
+    /// codigo obliga a leer dos formatos distintos. "36.00 USD" al lado de
+    /// "540.00 MXN" se compara de un vistazo; "$36.00" no.
     const fmtMoneda = (n, moneda) => {
       const m = String(moneda || "USD").toUpperCase();
       const num = Number(n).toLocaleString("en-US", {
         minimumFractionDigits: 2, maximumFractionDigits: 2,
       });
-      return m === "USD" ? `$${num}` : `${num} ${m}`;
+      return `${num} ${m}`;
     };
 
     const tabla = (filas) =>
@@ -12706,15 +12742,17 @@ async function generarYEnviarResumen({ desde, hasta, periodo, compararCon }) {
           ${tabla(topTenantsRows)}
         </div>`: ""}
 
-        ${recurrentes && recurrentes.cantidadTotal > 0 ? `
+        ${recurrentes && recurrentes.cantidadTotal > 0 ? recurrentes.grupos.map((g) => `
         <div style="${S.card}">
-          <div style="${S.h2}">Donaciones recurrentes</div>
-          ${tabla(recurrentes.grupos.map((g, i, arr) => fila(
-            `${fmtInt(g.cantidad)} ${etiquetaIntervalo(g.intervalo, g.cada, g.cantidad)}`,
-            `${fmtMoneda(g.monto, g.moneda)}`,
+          <div style="${S.h2}">Recurrentes ${etiquetaIntervalo(g.intervalo, g.cada, g.filas.length)}</div>
+          <p style="${S.totalGrupo}">${g.totales.map((t) => fmtMoneda(t.monto, t.moneda)).join(" &middot; ")}</p>
+          <p style="${S.heroCap}">${fmtInt(g.filas.length)} ${g.filas.length === 1 ? "donante" : "donantes"}</p>
+          ${tabla(g.filas.map((f, i, arr) => fila(
+            `${_escapeHtmlForEmail(f.quien)}${f.fallando ? ` <span style="${S.alerta}">cobro fallido</span>` : ""}`,
+            fmtMoneda(f.monto, f.moneda),
             i === arr.length - 1,
           )).join(""))}
-        </div>`: ""}
+        </div>`).join("") : ""}
 
         <div style="${S.card}">
           <div style="${S.h2}">Plataforma</div>
