@@ -120,14 +120,42 @@ firebase deploy --only functions --project pushka-app-ioel          # to prod
 
 Secrets are scoped per project (`firebase functions:secrets:set <NAME> --project <PROJECT_ID>`). Currently set in dev: `STRIPE_SECRET_KEY` + `STRIPE_WEBHOOK_SECRET` (real test values), `STRIPE_BILLING_WEBHOOK_SECRET`, `STRIPE_CONNECT_CLIENT_ID`, `SENDGRID_API_KEY` (placeholders — set real test values when testing those flows).
 
-### ⚠️ Always pipe secrets with `printf`, never `echo`
+### ⚠️ Never type a secret as a command argument — use `scripts/set-secret.ps1`
 
-`echo "value" | firebase functions:secrets:set NAME --data-file -` appends a `\n`
-to the secret value. The Stripe Node SDK (and any HTTP client that constructs
-strict headers) rejects the `Authorization: Bearer <secret>\n` header with
-`ERR_INVALID_CHAR`, surfacing as `StripeConnectionError: An error occurred with
-our connection to Stripe`. Use `printf 'value' | ...` instead — it does NOT
-add a trailing newline. This bit us hard once; don't repeat the mistake.
+```powershell
+.\scripts\set-secret.ps1 -Nombre STRIPE_SECRET_KEY -Proyecto pushka-app-ioel -Prefijo sk_live_
+```
+
+The script takes the value from the clipboard and validates prefix, length and
+whitespace **before** writing anything. Use it instead of the raw CLI command.
+Full inventory of where every credential lives: `docs/credenciales.md`.
+
+Three traps, all learned the expensive way:
+
+1. **A secret typed on the command line lands in the shell history** in plain
+   text — `(Get-PSReadLineOption).HistorySavePath` on Windows, `~/.bash_history`
+   elsewhere. Any key that goes through there has to be considered burned.
+
+2. **`Read-Host` does not accept Ctrl+V.** That prompt bypasses PowerShell's
+   line editor, so Ctrl+V inserts a literal control character instead of
+   pasting. On 2026-10-23 that character was stored as `STRIPE_SECRET_KEY`,
+   26 functions were redeployed with it, and production payments were down
+   until `/health` surfaced it. Always verify the value before applying it.
+
+3. **`echo "value" | firebase functions:secrets:set NAME --data-file -`**
+   appends a `\n`. The Stripe Node SDK rejects the resulting
+   `Authorization: Bearer <secret>\n` header with `ERR_INVALID_CHAR`, surfacing
+   as `StripeConnectionError: An error occurred with our connection to Stripe`,
+   which points at nothing useful. In bash use `printf '%s' 'value' | ...`.
+   **`printf` does not exist in PowerShell** — on Windows use the script above.
+
+After any rotation, check production before revoking the old key:
+
+```
+curl https://us-central1-pushka-app-ioel.cloudfunctions.net/health
+```
+
+Must return `"stripe":"ok"` and HTTP 200.
 
 ## Tooling versions
 
@@ -259,4 +287,4 @@ could squat a legacy tenant's slug.
 - Default to `--flavor dev` when running locally — never test against prod backend with real card data unless explicitly asked.
 - For payment flow tests: always use `pk_test_...` + Stripe test cards (`4242...`).
 - If both devs are working in parallel: prefer narrow, focused commits so PRs are easier to review and conflict-free.
-- **Always set Cloud Functions secrets with `printf`, never `echo`** (see Functions deployment section above).
+- **Never type a secret as a command argument.** Load Cloud Functions secrets with `scripts/set-secret.ps1` (see Functions deployment section above). Ioel's shell is PowerShell, where `printf` does not exist — that advice is bash-only.
