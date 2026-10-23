@@ -185,31 +185,6 @@ class SupportScreen extends ConsumerWidget {
               ),
             ),
 
-          const SizedBox(height: 32),
-
-          // Developer Section — always Pushka (constant)
-          Text(
-            tr.developedBy,
-            style: TextStyle(
-              fontSize: 11,
-              fontWeight: FontWeight.w600,
-              letterSpacing: 1.2,
-              color: cs.onSurface,
-            ),
-          ),
-          const SizedBox(height: 12),
-          Text(
-            'Ioel Katz',
-            // Familia nativa, NO google_fonts: sin carga diferida ni cambio
-            // de fuente a los segundos. Ver la nota del pubspec.
-            style: TextStyle(
-              fontFamily: 'IBM Plex Sans',
-              fontSize: 18,
-              fontWeight: FontWeight.w300,
-              color: cs.onSurface,
-            ),
-          ),
-
           const SizedBox(height: 20),
         ],
       ),

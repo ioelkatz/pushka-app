@@ -2010,9 +2010,6 @@ class S {
     'גלה עוד על $brand',
   );
   String get learnMoreColel => learnMoreAbout(colelJabad);
-  String get developedBy =>
-      _t('DESARROLLADO POR', 'DEVELOPED BY', 'DÉVELOPPÉ PAR', 'פותח על ידי');
-
   // ---------------------------------------------------------------------------
   // ABOUT SCREEN
   // ---------------------------------------------------------------------------
