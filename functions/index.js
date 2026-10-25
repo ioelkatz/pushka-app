@@ -3387,24 +3387,46 @@ exports.stripeWebhook = onRequest(
       stripeWebhookSecret.value(),
     );
   } catch (err) {
-    // Signature failures during a fresh deploy are EXPECTED for up to 3
-    // days after a signing secret rotation: Stripe keeps retrying events
-    // that were queued with the old secret. Log at WARN (not ERROR) so
-    // alerts don't fire on transient rotation-window noise. If persistent
-    // failures still show up past that window, it's likely a real
-    // misconfiguration (webhook endpoint pointing here without our secret)
-    // and worth investigating manually via `firebase functions:log`.
+    // Dos causas producen exactamente este error y desde acá no se pueden
+    // distinguir:
     //
-    // Also surface enough header context to correlate with the Stripe
-    // dashboard events → deliveries view: sig prefix + body size + IP,
-    // without leaking the raw signature (which is a HMAC and pointless
-    // in logs anyway).
+    //   1. Ventana de rotación. Después de cambiar el signing secret, Stripe
+    //      sigue reintentando por hasta 3 días los eventos que había
+    //      encolado con el anterior. Es ruido y se va solo.
+    //
+    //   2. Un endpoint de más apuntando a esta URL, firmado con un secreto
+    //      que no tenemos. No se va solo: reintenta para siempre hasta que
+    //      Stripe lo deshabilita.
+    //
+    // El 2026-10-25 apareció el caso 2 — un webhook viejo en la cuenta
+    // conectada del Rab — y había estado una semana registrándose como
+    // "ruido de rotación". Nadie lo miró porque el mensaje decía que era
+    // esperable. Por eso ahora el log no afirma cuál de las dos es, y
+    // además saca del cuerpo SIN VERIFICAR la cuenta y el tipo de evento:
+    // es justo el dato que señala al endpoint culpable. Son campos no
+    // confiables (la firma falló), sirven para mirar, nunca para decidir.
+    //
+    // Se mantiene en WARN y no ERROR para no disparar alertas en cada
+    // rotación legítima. Si estas líneas persisten más de 3 días, es el
+    // caso 2: buscar el endpoint sobrante en el panel de Stripe de la
+    // cuenta que aparece en `cuentaSinVerificar`.
     const sigPreview = String(sig || "").split(",")[0] || "";
-    console.warn("stripeWebhook: Signature verification failed (likely secret-rotation retry noise)", {
+    let cuentaSinVerificar = null;
+    let tipoSinVerificar = null;
+    try {
+      const crudo = JSON.parse(req.rawBody?.toString("utf8") || "{}");
+      cuentaSinVerificar = typeof crudo.account === "string" ? crudo.account : null;
+      tipoSinVerificar = typeof crudo.type === "string" ? crudo.type : null;
+    } catch (_) {
+      // Cuerpo no parseable: no aporta nada y no debe tumbar el log.
+    }
+    console.warn("stripeWebhook: Signature verification failed — rotation noise OR a stray endpoint without our secret", {
       error: err?.message || String(err),
       sigTimestampChunk: sigPreview,
       bodySize: req.rawBody?.length ?? 0,
       remoteIp: req.headers["x-forwarded-for"] || req.ip,
+      cuentaSinVerificar,
+      tipoSinVerificar,
     });
     res.status(400).send(`Webhook Error: ${err.message}`);
     return;
