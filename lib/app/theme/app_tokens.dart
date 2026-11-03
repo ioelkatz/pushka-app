@@ -3,25 +3,47 @@ import 'package:flutter/material.dart';
 class AppTokens {
   const AppTokens._();
 
+  // =====================================================================
+  // PALETA OFICIAL JYM — fuente unica de verdad
+  // =====================================================================
+  // Los tres valores los dio el cliente el 2026-11-03 y coinciden exactos
+  // con el muestreo del logo pixel por pixel. NO se tocan sin pedirselos de
+  // nuevo: son la identidad de Jabad en Campus, no una decision de diseno
+  // nuestra.
+  //
+  //   rosado  #F82D4A   galon exterior del logo + la llama
+  //   gris    #D3D3D3   galon del medio
+  //   verde   #05806E   galon interior
+  //
+  // Lo que parece un segundo rojo mas claro en el logo es el antialias del
+  // borde, no un cuarto color.
+  //
+  // Todo color de marca de la app sale de aca. `test/unit/paleta_jym_test.dart`
+  // bloquea los tres valores Y falla si alguien vuelve a escribir uno de estos
+  // hex a mano en cualquier archivo de `lib/`.
+
+  /// El rosado del logo. El cliente lo llama "rosado"; en pantalla lee como
+  /// un rojo frambuesa.
+  static const Color brandRed = Color(0xFFF82D4A);
+
+  /// El verde del galon interior.
+  static const Color brandGreen = Color(0xFF05806E);
+
+  /// El gris del galon del medio.
+  static const Color brandGrey = Color(0xFFD3D3D3);
+
   // ---------------------------------------------------------------------
-  // Identidad JYM
+  // Roles derivados
   // ---------------------------------------------------------------------
-  // Los tres colores salen de muestrear el logo oficial pixel por pixel el
-  // 2026-11-03, no de estimarlos a ojo sobre una captura. El galon grande y
-  // la llama son exactamente el mismo rojo: lo que parece un segundo tono
-  // mas claro en el logo es el antialias del borde.
-  static const Color brandRed = Color(0xFFF82D4A); // galon exterior + llama
-  static const Color brandGreen = Color(0xFF05806E); // galon interior
-  static const Color brandGrey = Color(0xFFD3D3D3); // galon del medio
 
   /// Acciones positivas: donar, guardar, continuar, el relleno de la barra
   /// de progreso.
   ///
-  /// Es el VERDE y no el rojo a proposito. `primary` alimenta por defecto
+  /// Es el VERDE y no el rosado a proposito. `primary` alimenta por defecto
   /// todos los ElevatedButton de la app — guardar tarjeta, confirmar, seguir
   /// — y un boton rojo solido se lee como destructivo en cualquier interfaz.
-  /// El rojo queda reservado para lo que el diseno del cliente le asigna: la
-  /// pildora de la racha, la llama y vaciar la pushka.
+  /// El rosado queda reservado para lo que el diseno del cliente le asigna:
+  /// la pildora de la racha, la llama y vaciar la pushka.
   static const Color primary = brandGreen;
 
   /// El mismo verde aclarado para fondo oscuro (lerp 0.3 hacia blanco).
@@ -33,8 +55,8 @@ class AppTokens {
   // ---------------------------------------------------------------------
   /// Fondo de pantalla. NO es blanco puro a proposito: las tarjetas si lo
   /// son, y sin diferencia de luminosidad entre las dos desaparecen en
-  /// monitores de poco contraste. Da ~6% de diferencia contra el blanco, por
-  /// encima del 5% minimo de la regla de superficies.
+  /// monitores de poco contraste. Da ~7% de diferencia contra el blanco, por
+  /// encima del 5% minimo de la regla de superficies (el test lo verifica).
   static const Color surface = Color(0xFFF6F7F9);
   static const Color cardSilver = Color(0xFFF1F5F9);
   static const Color white = Colors.white;
@@ -56,7 +78,7 @@ class AppTokens {
   // ---------------------------------------------------------------------
   // Semanticos
   // ---------------------------------------------------------------------
-  // Una sola familia de verde y una sola de rojo en toda la app: dos verdes
+  // Una sola familia de verde y una sola de rosado en toda la app: dos verdes
   // parecidos conviviendo se leen como un error de diseno, no como jerarquia.
   static const Color success = brandGreen;
   static const Color destructive = brandRed;
