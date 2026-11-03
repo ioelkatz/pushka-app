@@ -238,7 +238,7 @@ class _OrgLogo extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final bg = config.primaryColor ?? AppTokens.primaryBlue;
+    final bg = config.primaryColor ?? AppTokens.primary;
     return Container(
       width: size,
       height: size,

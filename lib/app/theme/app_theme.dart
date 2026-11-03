@@ -8,8 +8,21 @@ class AppTheme {
 
   const AppTheme._();
 
-  /// Builds light + dark themes using a custom primary color from the tenant.
-  /// If [primaryColor] is null, falls back to [AppTokens.primaryBlue].
+  /// Arma los temas claro y oscuro.
+  ///
+  /// [primaryColor] llega del doc del tenant en Firestore y HOY SE IGNORA a
+  /// proposito. Dos razones:
+  ///
+  ///   1. La identidad de JYM la aprobo el cliente y tiene que ser estable.
+  ///      Con el color saliendo de Firestore, cualquiera con acceso al panel
+  ///      de administracion podia descolorear la app entera y no quedaba
+  ///      rastro en el codigo ni en el historial de git.
+  ///   2. Rompia las vistas previas. El doc pisaba lo que dijera la rama, asi
+  ///      que una previa del rediseno mostraba igual la paleta vieja.
+  ///
+  /// El parametro se mantiene en la firma para no reescribir el provider ni
+  /// el camino del tenant. Si algun dia vuelve a haber mas de un tenant con
+  /// marca propia, se vuelve a honrar aca y en ningun otro lado.
   ///
   /// Audit Round 4 — Bug C: removed `secondaryColor` parameter. The tenant
   /// admin used to be able to set a second color, but no widget consumed
@@ -26,8 +39,9 @@ class AppTheme {
   static ({ThemeData light, ThemeData dark}) fromTenantColors({
     Color? primaryColor,
   }) {
-    final effectivePrimary = primaryColor ?? AppTokens.primaryBlue;
-    final effectiveDark = Color.lerp(effectivePrimary, Colors.white, 0.3) ?? AppTokens.skyBlue;
+    // Ver la nota de arriba: el color del tenant no se honra.
+    const effectivePrimary = AppTokens.primary;
+    const effectiveDark = AppTokens.primaryOnDark;
     final onLightPrimary = _onColorFor(effectivePrimary);
     final onDarkPrimary  = _onColorFor(effectiveDark);
 
@@ -79,14 +93,14 @@ class AppTheme {
 
     final base = ThemeData(
       useMaterial3: true,
-      colorSchemeSeed: AppTokens.primaryBlue,
+      colorSchemeSeed: AppTokens.primary,
       brightness: Brightness.dark,
       textTheme: textTheme,
     );
 
     return base.copyWith(
       colorScheme: base.colorScheme.copyWith(
-        primary: AppTokens.skyBlue,
+        primary: AppTokens.primaryOnDark,
         onPrimary: Colors.white,
         surface: cardDark,
         surfaceContainerLowest: surfaceDark,
@@ -140,7 +154,7 @@ class AppTheme {
         ),
         focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(AppTokens.radiusMd),
-          borderSide: const BorderSide(color: AppTokens.primaryBlue, width: 1.5),
+          borderSide: const BorderSide(color: AppTokens.primary, width: 1.5),
         ),
         contentPadding: const EdgeInsets.symmetric(
           horizontal: AppTokens.spaceLg,
@@ -150,7 +164,7 @@ class AppTheme {
       ),
       elevatedButtonTheme: ElevatedButtonThemeData(
         style: ElevatedButton.styleFrom(
-          backgroundColor: AppTokens.primaryBlue,
+          backgroundColor: AppTokens.primary,
           foregroundColor: Colors.white,
           minimumSize: const Size(0, AppTokens.buttonHeight),
           shape: RoundedRectangleBorder(
@@ -207,7 +221,7 @@ class AppTheme {
       ),
       bottomNavigationBarTheme: BottomNavigationBarThemeData(
         backgroundColor: cardDark,
-        selectedItemColor: AppTokens.skyBlue,
+        selectedItemColor: AppTokens.primaryOnDark,
         unselectedItemColor: mutedDark,
         type: BottomNavigationBarType.fixed,
         elevation: 0,
@@ -217,21 +231,21 @@ class AppTheme {
       ),
       switchTheme: SwitchThemeData(
         thumbColor: WidgetStateProperty.resolveWith((states) {
-          if (states.contains(WidgetState.selected)) return AppTokens.skyBlue;
+          if (states.contains(WidgetState.selected)) return AppTokens.primaryOnDark;
           return const Color(0xFF94A3B8); // mutedDark — visible circle when OFF
         }),
         trackColor: WidgetStateProperty.resolveWith((states) {
-          if (states.contains(WidgetState.selected)) return AppTokens.skyBlue.withValues(alpha: 0.45);
+          if (states.contains(WidgetState.selected)) return AppTokens.primaryOnDark.withValues(alpha: 0.45);
           return const Color(0xFF334155); // borderDark — muted track when OFF
         }),
       ),
       textSelectionTheme: TextSelectionThemeData(
-        cursorColor: AppTokens.primaryBlue,
-        selectionHandleColor: AppTokens.primaryBlue,
-        selectionColor: AppTokens.primaryBlue.withValues(alpha: 0.3),
+        cursorColor: AppTokens.primary,
+        selectionHandleColor: AppTokens.primary,
+        selectionColor: AppTokens.primary.withValues(alpha: 0.3),
       ),
       progressIndicatorTheme: const ProgressIndicatorThemeData(
-        color: AppTokens.primaryBlue,
+        color: AppTokens.primary,
       ),
     );
   }
@@ -242,7 +256,7 @@ class AppTheme {
 
     final base = ThemeData(
       useMaterial3: true,
-      colorSchemeSeed: AppTokens.primaryBlue,
+      colorSchemeSeed: AppTokens.primary,
       brightness: Brightness.light,
       textTheme: textTheme,
     );
@@ -286,7 +300,7 @@ class AppTheme {
         ),
         focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(AppTokens.radiusMd),
-          borderSide: const BorderSide(color: AppTokens.primaryBlue, width: 1.5),
+          borderSide: const BorderSide(color: AppTokens.primary, width: 1.5),
         ),
         contentPadding: const EdgeInsets.symmetric(
           horizontal: AppTokens.spaceLg,
@@ -296,7 +310,7 @@ class AppTheme {
       ),
       elevatedButtonTheme: ElevatedButtonThemeData(
         style: ElevatedButton.styleFrom(
-          backgroundColor: AppTokens.primaryBlue,
+          backgroundColor: AppTokens.primary,
           foregroundColor: Colors.white,
           minimumSize: const Size(0, AppTokens.buttonHeight),
           shape: RoundedRectangleBorder(
@@ -308,7 +322,7 @@ class AppTheme {
       ),
       outlinedButtonTheme: OutlinedButtonThemeData(
         style: OutlinedButton.styleFrom(
-          foregroundColor: AppTokens.primaryBlue,
+          foregroundColor: AppTokens.primary,
           minimumSize: const Size(0, AppTokens.buttonHeight),
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(AppTokens.radiusMd),
@@ -319,7 +333,7 @@ class AppTheme {
       ),
       textButtonTheme: TextButtonThemeData(
         style: TextButton.styleFrom(
-          foregroundColor: AppTokens.primaryBlue,
+          foregroundColor: AppTokens.primary,
           textStyle: const TextStyle(fontWeight: FontWeight.w600),
         ),
       ),
@@ -353,7 +367,7 @@ class AppTheme {
       ),
       bottomNavigationBarTheme: const BottomNavigationBarThemeData(
         backgroundColor: Colors.white,
-        selectedItemColor: AppTokens.primaryBlue,
+        selectedItemColor: AppTokens.primary,
         unselectedItemColor: AppTokens.mutedText,
         type: BottomNavigationBarType.fixed,
         elevation: 0,
@@ -363,21 +377,21 @@ class AppTheme {
       ),
       switchTheme: SwitchThemeData(
         thumbColor: WidgetStateProperty.resolveWith((states) {
-          if (states.contains(WidgetState.selected)) return const Color(0xFFFF9500);
+          if (states.contains(WidgetState.selected)) return AppTokens.primary;
           return const Color(0xFF94A3B8); // muted grey — visible circle when OFF
         }),
         trackColor: WidgetStateProperty.resolveWith((states) {
-          if (states.contains(WidgetState.selected)) return const Color(0xFFFF9500).withValues(alpha: 0.45);
+          if (states.contains(WidgetState.selected)) return AppTokens.primary.withValues(alpha: 0.45);
           return const Color(0xFFE2E8F0); // border light — muted track when OFF
         }),
       ),
       textSelectionTheme: TextSelectionThemeData(
-        cursorColor: AppTokens.primaryBlue,
-        selectionHandleColor: AppTokens.primaryBlue,
-        selectionColor: AppTokens.primaryBlue.withValues(alpha: 0.3),
+        cursorColor: AppTokens.primary,
+        selectionHandleColor: AppTokens.primary,
+        selectionColor: AppTokens.primary.withValues(alpha: 0.3),
       ),
       progressIndicatorTheme: const ProgressIndicatorThemeData(
-        color: AppTokens.primaryBlue,
+        color: AppTokens.primary,
       ),
     );
   }

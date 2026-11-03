@@ -735,7 +735,7 @@ class _RemindersScreenState extends ConsumerState<RemindersScreen>
                   height: 48,
                   child: ElevatedButton(
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: AppTokens.primaryBlue,
+                      backgroundColor: AppTokens.primary,
                       foregroundColor: Colors.white,
                       shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(12)),
@@ -1278,9 +1278,9 @@ class _ReminderFormPageState extends State<_ReminderFormPage> {
             height: 42,
             alignment: Alignment.center,
             decoration: BoxDecoration(
-              color: selected ? AppTokens.primaryBlue : cs.surface,
+              color: selected ? AppTokens.primary : cs.surface,
               border: Border.all(
-                color: selected ? AppTokens.primaryBlue : cs.outline,
+                color: selected ? AppTokens.primary : cs.outline,
               ),
               borderRadius: BorderRadius.circular(AppTokens.radiusSm),
             ),
@@ -1392,13 +1392,13 @@ class _ReminderFormPageState extends State<_ReminderFormPage> {
 
   /// Wraps the showTimePicker subtree with an overridden ColorScheme
   /// so the clock dial, hour/minute selection, and OK button render in
-  /// AppTokens.primaryBlue instead of the tenant primary.
+  /// AppTokens.primary instead of the tenant primary.
   Widget _bluePickerBuilder(BuildContext ctx, Widget? child) {
     final base = Theme.of(ctx);
     return Theme(
       data: base.copyWith(
         colorScheme: base.colorScheme.copyWith(
-          primary: AppTokens.primaryBlue,
+          primary: AppTokens.primary,
           onPrimary: Colors.white,
         ),
       ),

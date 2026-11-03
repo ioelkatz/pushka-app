@@ -35,7 +35,7 @@ class SupportScreen extends ConsumerWidget {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     // Fixed link color: sky blue in dark mode (same as toggles), platform blue in light mode.
     // NOT derived from tenant primaryColor so it can't be overridden by branding.
-    final linkColor = isDark ? const Color(0xFF60A5FA) : AppTokens.primaryBlue;
+    final linkColor = isDark ? const Color(0xFF60A5FA) : AppTokens.primary;
 
     final tenantConfig = ref.watch(tenantConfigProvider).valueOrNull;
     final brandName = tenantConfig?.appName.isNotEmpty == true

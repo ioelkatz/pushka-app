@@ -113,7 +113,7 @@ class _DonationChartState extends State<DonationChart> {
                   maxY: maxVal * 1.25,
                   barTouchData: BarTouchData(
                     touchTooltipData: BarTouchTooltipData(
-                      getTooltipColor: (_) => AppTokens.primaryBlue,
+                      getTooltipColor: (_) => AppTokens.primary,
                       getTooltipItem: (group, groupIndex, rod, rodIndex) {
                         if (group.x < 0 || group.x >= buckets.length) return null;
                         final b = buckets[group.x];
@@ -189,8 +189,8 @@ class _DonationChartState extends State<DonationChart> {
                         BarChartRodData(
                           toY: b.total,
                           color: isTouched
-                              ? AppTokens.primaryBlue
-                              : AppTokens.primaryBlue.withValues(alpha: 0.55),
+                              ? AppTokens.primary
+                              : AppTokens.primary.withValues(alpha: 0.55),
                           width: 20,
                           borderRadius: const BorderRadius.only(
                             topLeft: Radius.circular(4),

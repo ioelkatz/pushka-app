@@ -375,7 +375,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                   height: 48,
                   child: ElevatedButton(
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: AppTokens.primaryBlue,
+                      backgroundColor: AppTokens.primary,
                       foregroundColor: Colors.white,
                       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                     ),

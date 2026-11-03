@@ -163,7 +163,7 @@ class _JumpPill extends StatelessWidget {
     // as a Pushka surface, not a tenant-branded one. Light mode → app blue,
     // dark mode → sky blue (matches the rest of the app's accent system).
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final accent = isDark ? AppTokens.skyBlue : AppTokens.primaryBlue;
+    final accent = isDark ? AppTokens.primaryOnDark : AppTokens.primary;
     return Material(
       color: accent.withValues(alpha: 0.08),
       borderRadius: BorderRadius.circular(12),

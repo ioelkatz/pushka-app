@@ -944,7 +944,7 @@ class _SavedCardsScreenState extends ConsumerState<SavedCardsScreen> {
           if (isDefault) ...[
             Tooltip(
               message: tr.cardDefault,
-              child: Icon(Icons.check, color: AppTokens.primaryBlue, size: 22),
+              child: Icon(Icons.check, color: AppTokens.primary, size: 22),
             ),
             const SizedBox(width: 6),
           ],
@@ -1014,7 +1014,7 @@ class _SavedCardsScreenState extends ConsumerState<SavedCardsScreen> {
                   border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
                   focusedBorder: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(12),
-                    borderSide: const BorderSide(color: AppTokens.primaryBlue, width: 2),
+                    borderSide: const BorderSide(color: AppTokens.primary, width: 2),
                   ),
                 ),
               ),
@@ -1030,7 +1030,7 @@ class _SavedCardsScreenState extends ConsumerState<SavedCardsScreen> {
                   ElevatedButton(
                     onPressed: () => Navigator.pop(ctx, ctrl.text.trim()),
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: AppTokens.primaryBlue,
+                      backgroundColor: AppTokens.primary,
                       foregroundColor: Colors.white,
                       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                     ),
@@ -1110,7 +1110,7 @@ class _SavedCardsScreenState extends ConsumerState<SavedCardsScreen> {
             ),
             if (!isDefault)
               ListTile(
-                leading: Icon(Icons.star_outline, color: AppTokens.primaryBlue),
+                leading: Icon(Icons.star_outline, color: AppTokens.primary),
                 title: Text(tr.setAsDefault),
                 onTap: () {
                   Navigator.pop(sheetCtx);
@@ -1118,7 +1118,7 @@ class _SavedCardsScreenState extends ConsumerState<SavedCardsScreen> {
                 },
               ),
             ListTile(
-              leading: Icon(Icons.edit_outlined, color: AppTokens.primaryBlue),
+              leading: Icon(Icons.edit_outlined, color: AppTokens.primary),
               title: Text(currentNickname != null && currentNickname.isNotEmpty
                   ? tr.cardNicknameEditAction
                   : tr.cardNicknameAddAction),
@@ -1148,7 +1148,7 @@ class _SavedCardsScreenState extends ConsumerState<SavedCardsScreen> {
   @override
   Widget build(BuildContext context) {
     final tr = S.of(context);
-    const actionColor = AppTokens.primaryBlue;
+    const actionColor = AppTokens.primary;
 
     // BUG #20 fix: reactively pick up default PM changes from tenantState
     // stream (e.g. another device set a new default, or setDefault CF

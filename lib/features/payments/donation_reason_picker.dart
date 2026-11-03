@@ -103,8 +103,8 @@ class _ReasonTile extends StatelessWidget {
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
         decoration: BoxDecoration(
-          color: selected ? AppTokens.primaryBlue.withValues(alpha: 0.12) : cs.surface,
-          border: Border.all(color: selected ? AppTokens.primaryBlue : cs.outline),
+          color: selected ? AppTokens.primary.withValues(alpha: 0.12) : cs.surface,
+          border: Border.all(color: selected ? AppTokens.primary : cs.outline),
           borderRadius: BorderRadius.circular(12),
         ),
         child: Row(
@@ -120,7 +120,7 @@ class _ReasonTile extends StatelessWidget {
               ),
             ),
             if (selected)
-              Icon(Icons.check, color: AppTokens.primaryBlue, size: 22),
+              Icon(Icons.check, color: AppTokens.primary, size: 22),
           ],
         ),
       ),

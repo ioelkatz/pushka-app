@@ -24,7 +24,7 @@ class EmptyState extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final color = iconColor ?? AppTokens.primaryBlue;
+    final color = iconColor ?? AppTokens.primary;
     final bgColor = iconBackgroundColor ?? color.withValues(alpha: 0.1);
 
     return Center(

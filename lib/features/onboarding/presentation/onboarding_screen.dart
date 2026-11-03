@@ -133,7 +133,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
                     count: _total,
                     effect: WormEffect(
                       dotColor: Colors.grey.shade300,
-                      activeDotColor: AppTokens.primaryBlue,
+                      activeDotColor: AppTokens.primary,
                       dotHeight: 8,
                       dotWidth: 8,
                     ),
@@ -145,7 +145,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
                     child: ElevatedButton(
                       onPressed: _completing ? null : _next,
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: AppTokens.primaryBlue,
+                        backgroundColor: AppTokens.primary,
                         foregroundColor: Colors.white,
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(AppTokens.radiusMd),

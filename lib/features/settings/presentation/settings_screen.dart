@@ -294,7 +294,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 ),
                 focusedBorder: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(12),
-                  borderSide: BorderSide(color: AppTokens.primaryBlue, width: 2),
+                  borderSide: BorderSide(color: AppTokens.primary, width: 2),
                 ),
               ),
             );
@@ -854,14 +854,14 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                       textCapitalization: TextCapitalization.words,
                       decoration: InputDecoration(
                         labelText: tr.displayNameLabel,
-                        labelStyle: const TextStyle(color: AppTokens.primaryBlue),
-                        floatingLabelStyle: const TextStyle(color: AppTokens.primaryBlue),
+                        labelStyle: const TextStyle(color: AppTokens.primary),
+                        floatingLabelStyle: const TextStyle(color: AppTokens.primary),
                         hintText: tr.displayNameHint,
                         errorText: error,
                         border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
                         focusedBorder: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(12),
-                          borderSide: BorderSide(color: AppTokens.primaryBlue, width: 1.6),
+                          borderSide: BorderSide(color: AppTokens.primary, width: 1.6),
                         ),
                       ),
                       onChanged: (_) {
@@ -873,7 +873,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                       height: 48,
                       child: ElevatedButton(
                         style: ElevatedButton.styleFrom(
-                          backgroundColor: AppTokens.primaryBlue,
+                          backgroundColor: AppTokens.primary,
                           foregroundColor: Colors.white,
                           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                         ),
@@ -1146,7 +1146,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 ),
                 focusedBorder: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(12),
-                  borderSide: BorderSide(color: AppTokens.primaryBlue, width: 2),
+                  borderSide: BorderSide(color: AppTokens.primary, width: 2),
                 ),
               ),
               onSubmitted: (_) => _commitPreset(idx),
@@ -1514,7 +1514,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     height: 48,
                     child: ElevatedButton(
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: AppTokens.primaryBlue,
+                        backgroundColor: AppTokens.primary,
                         foregroundColor: Colors.white,
                         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                       ),
@@ -1659,7 +1659,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                           keyboardType: TextInputType.phone,
                           decoration: InputDecoration(hintText: S.of(context).phoneHint, errorText: errorText,
                             border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                            focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: AppTokens.primaryBlue, width: 1.6)),
+                            focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: AppTokens.primary, width: 1.6)),
                           ),
                           onChanged: (_) { if (errorText != null) setSheetState(() => errorText = null); },
                         )),
@@ -1671,14 +1671,14 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                         keyboardType: _keyboardTypeForKey(fieldKey),
                         decoration: InputDecoration(hintText: S.of(context).enterField(title.toLowerCase()), errorText: errorText,
                           border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                          focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: AppTokens.primaryBlue, width: 1.6)),
+                          focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: AppTokens.primary, width: 1.6)),
                         ),
                         onChanged: (_) { if (errorText != null) setSheetState(() => errorText = null); },
                       ),
                     ],
                     const SizedBox(height: 20),
                     SizedBox(width: double.infinity, height: 48, child: ElevatedButton(
-                      style: ElevatedButton.styleFrom(backgroundColor: AppTokens.primaryBlue, foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
+                      style: ElevatedButton.styleFrom(backgroundColor: AppTokens.primary, foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
                       onPressed: () {
                         final typed = controller.text.trim();
                         // For phone, only prepend the country prefix when the user
@@ -1978,7 +1978,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                           border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
                           focusedBorder: OutlineInputBorder(
                             borderRadius: BorderRadius.circular(12),
-                            borderSide: BorderSide(color: AppTokens.primaryBlue, width: 2),
+                            borderSide: BorderSide(color: AppTokens.primary, width: 2),
                           ),
                         ),
                         onChanged: (_) { if (errorText != null) setSS(() => errorText = null); },
@@ -2394,7 +2394,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     height: 48,
                     child: ElevatedButton(
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: AppTokens.primaryBlue,
+                        backgroundColor: AppTokens.primary,
                         foregroundColor: Colors.white,
                         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                       ),
@@ -2607,7 +2607,7 @@ class _DeleteConfirmDialogState extends State<_DeleteConfirmDialog> {
                   border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
                   focusedBorder: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(12),
-                    borderSide: BorderSide(color: AppTokens.primaryBlue, width: 2),
+                    borderSide: BorderSide(color: AppTokens.primary, width: 2),
                   ),
                 ),
               ),

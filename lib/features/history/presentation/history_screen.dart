@@ -230,9 +230,9 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
                                         label: Text(_tr.loadMore),
                                         style: OutlinedButton.styleFrom(
                                           foregroundColor:
-                                              AppTokens.primaryBlue,
+                                              AppTokens.primary,
                                           side: const BorderSide(
-                                            color: AppTokens.primaryBlue,
+                                            color: AppTokens.primary,
                                           ),
                                           shape: RoundedRectangleBorder(
                                             borderRadius: BorderRadius.circular(
@@ -532,10 +532,10 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
         decoration: BoxDecoration(
           color: selected
-              ? AppTokens.primaryBlue.withValues(alpha: 0.12)
+              ? AppTokens.primary.withValues(alpha: 0.12)
               : cs.surface,
           border: Border.all(
-            color: selected ? AppTokens.primaryBlue : cs.outline,
+            color: selected ? AppTokens.primary : cs.outline,
           ),
           borderRadius: BorderRadius.circular(12),
         ),
@@ -552,7 +552,7 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
               ),
             ),
             if (selected)
-              Icon(Icons.check, color: AppTokens.primaryBlue, size: 22),
+              Icon(Icons.check, color: AppTokens.primary, size: 22),
           ],
         ),
       ),

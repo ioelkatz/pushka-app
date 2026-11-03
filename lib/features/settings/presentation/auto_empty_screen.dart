@@ -416,7 +416,7 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
                       focusedBorder: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(12),
                         borderSide: BorderSide(
-                          color: AppTokens.primaryBlue,
+                          color: AppTokens.primary,
                           width: 2,
                         ),
                       ),
@@ -527,7 +527,7 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
                           }
                         },
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: AppTokens.primaryBlue,
+                    backgroundColor: AppTokens.primary,
                     foregroundColor: Colors.white,
                     padding: const EdgeInsets.symmetric(vertical: 16),
                     shape: RoundedRectangleBorder(
@@ -751,10 +751,10 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
         decoration: BoxDecoration(
           color: isSelected
-              ? AppTokens.primaryBlue.withValues(alpha: 0.12)
+              ? AppTokens.primary.withValues(alpha: 0.12)
               : cs.surface,
           border: Border.all(
-            color: isSelected ? AppTokens.primaryBlue : cs.outline,
+            color: isSelected ? AppTokens.primary : cs.outline,
           ),
           borderRadius: BorderRadius.circular(12),
         ),
@@ -791,7 +791,7 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
                 ),
               ),
             if (isSelected)
-              Icon(Icons.check, color: AppTokens.primaryBlue, size: 22),
+              Icon(Icons.check, color: AppTokens.primary, size: 22),
           ],
         ),
       ),
@@ -833,7 +833,7 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
   /// — surface this hard before save, with a one-tap path to add the card.
   Future<void> _showAddCardRequiredDialog() async {
     final tr = S.of(context);
-    const accent = AppTokens.primaryBlue;
+    const accent = AppTokens.primary;
 
     await showModalBottomSheet<void>(
       context: context,
@@ -1012,7 +1012,7 @@ class _AutoEmptyScreenState extends ConsumerState<AutoEmptyScreen> {
                   height: 50,
                   child: ElevatedButton(
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: AppTokens.primaryBlue,
+                      backgroundColor: AppTokens.primary,
                       foregroundColor: Colors.white,
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(12),

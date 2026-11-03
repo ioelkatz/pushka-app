@@ -378,7 +378,7 @@ class _DonationSubscriptionsScreenState
                     ),
                   ),
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: AppTokens.primaryBlue,
+                    backgroundColor: AppTokens.primary,
                     foregroundColor: Colors.white,
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(12),
@@ -477,7 +477,7 @@ class _DonationSubscriptionsScreenState
                     height: 48,
                     child: ElevatedButton(
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: AppTokens.primaryBlue,
+                        backgroundColor: AppTokens.primary,
                         foregroundColor: Colors.white,
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(12),
@@ -651,7 +651,7 @@ class _DonationSubscriptionsScreenState
                   focusedBorder: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(12),
                     borderSide: const BorderSide(
-                      color: AppTokens.primaryBlue,
+                      color: AppTokens.primary,
                       width: 1.6,
                     ),
                   ),
@@ -666,7 +666,7 @@ class _DonationSubscriptionsScreenState
                 height: 48,
                 child: ElevatedButton(
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: AppTokens.primaryBlue,
+                    backgroundColor: AppTokens.primary,
                     foregroundColor: Colors.white,
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(12),
@@ -940,13 +940,13 @@ class _DonationSubscriptionsScreenState
               width: 40,
               height: 40,
               decoration: BoxDecoration(
-                color: AppTokens.primaryBlue.withValues(alpha: 0.10),
+                color: AppTokens.primary.withValues(alpha: 0.10),
                 borderRadius: BorderRadius.circular(10),
               ),
               alignment: Alignment.center,
               child: const Icon(
                 Icons.autorenew_rounded,
-                color: AppTokens.primaryBlue,
+                color: AppTokens.primary,
                 size: 22,
               ),
             ),
@@ -1044,11 +1044,11 @@ class _IntervalChip extends StatelessWidget {
         padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 12),
         decoration: BoxDecoration(
           color: selected
-              ? AppTokens.primaryBlue.withValues(alpha: 0.10)
+              ? AppTokens.primary.withValues(alpha: 0.10)
               : cs.surface,
           borderRadius: BorderRadius.circular(12),
           border: Border.all(
-            color: selected ? AppTokens.primaryBlue : cs.outline,
+            color: selected ? AppTokens.primary : cs.outline,
             width: selected ? 1.6 : 1,
           ),
         ),
@@ -1058,7 +1058,7 @@ class _IntervalChip extends StatelessWidget {
           style: TextStyle(
             fontSize: 15,
             fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
-            color: selected ? AppTokens.primaryBlue : cs.onSurface,
+            color: selected ? AppTokens.primary : cs.onSurface,
           ),
         ),
       ),

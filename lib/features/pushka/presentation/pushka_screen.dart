@@ -605,7 +605,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                       label: tr.donateMonthly,
                       selected: monthly,
                       icon: Icons.favorite,
-                      iconColor: const Color(0xFFCC2936),
+                      iconColor: AppTokens.brandRed,
                       onTap: () => setDialogState(() => monthly = true),
                     ),
                   ),
@@ -646,7 +646,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                   focusedBorder: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(12),
                     borderSide: const BorderSide(
-                      color: AppTokens.primaryBlue,
+                      color: AppTokens.primary,
                       width: 1.6,
                     ),
                   ),
@@ -729,7 +729,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                           value: dedicateOn,
                           onChanged: (v) =>
                               setDialogState(() => dedicateOn = v ?? false),
-                          activeColor: AppTokens.primaryBlue,
+                          activeColor: AppTokens.primary,
                           materialTapTargetSize:
                               MaterialTapTargetSize.shrinkWrap,
                           visualDensity: VisualDensity.compact,
@@ -776,7 +776,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                     focusedBorder: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(12),
                       borderSide: const BorderSide(
-                        color: AppTokens.primaryBlue,
+                        color: AppTokens.primary,
                         width: 1.6,
                       ),
                     ),
@@ -789,7 +789,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                 height: 48,
                 child: ElevatedButton(
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: AppTokens.primaryBlue,
+                    backgroundColor: AppTokens.primary,
                     foregroundColor: Colors.white,
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(12),
@@ -1387,7 +1387,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                         minHeight: 4,
                         backgroundColor: cs.surfaceContainerHighest,
                         valueColor: AlwaysStoppedAnimation<Color>(
-                          isDark ? Colors.white : AppTokens.primaryBlue,
+                          isDark ? Colors.white : AppTokens.primary,
                         ),
                       ),
                     ),
@@ -1429,7 +1429,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                     child: ElevatedButton(
                       onPressed: emptyPushka,
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: AppTokens.primaryBlue,
+                        backgroundColor: AppTokens.primary,
                         foregroundColor: Colors.white,
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(12),
@@ -1489,11 +1489,11 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                             style: OutlinedButton.styleFrom(
                               foregroundColor: isDark
                                   ? Colors.white
-                                  : AppTokens.primaryBlue,
+                                  : AppTokens.primary,
                               side: BorderSide(
                                 color: isDark
                                     ? Colors.white
-                                    : AppTokens.primaryBlue,
+                                    : AppTokens.primary,
                                 width: 1.6,
                               ),
                               shape: RoundedRectangleBorder(
@@ -1523,7 +1523,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                             style: ElevatedButton.styleFrom(
                               backgroundColor: isDark
                                   ? Colors.white
-                                  : AppTokens.primaryBlue,
+                                  : AppTokens.primary,
                               foregroundColor: isDark
                                   ? cs.surface
                                   : Colors.white,
@@ -1957,7 +1957,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                   focusedBorder: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(12),
                     borderSide: const BorderSide(
-                      color: AppTokens.primaryBlue,
+                      color: AppTokens.primary,
                       width: 1.6,
                     ),
                   ),
@@ -1981,7 +1981,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                           value: dedicateOn,
                           onChanged: (v) =>
                               setDialogState(() => dedicateOn = v ?? false),
-                          activeColor: AppTokens.primaryBlue,
+                          activeColor: AppTokens.primary,
                           materialTapTargetSize:
                               MaterialTapTargetSize.shrinkWrap,
                           visualDensity: VisualDensity.compact,
@@ -2022,7 +2022,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                     focusedBorder: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(12),
                       borderSide: const BorderSide(
-                        color: AppTokens.primaryBlue,
+                        color: AppTokens.primary,
                         width: 1.6,
                       ),
                     ),
@@ -2048,7 +2048,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                     ));
                   },
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: AppTokens.primaryBlue,
+                    backgroundColor: AppTokens.primary,
                     foregroundColor: Colors.white,
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(12),
@@ -2174,7 +2174,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                 focusedBorder: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(12),
                   borderSide: const BorderSide(
-                    color: AppTokens.primaryBlue,
+                    color: AppTokens.primary,
                     width: 2,
                   ),
                 ),
@@ -2189,7 +2189,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
               height: 48,
               child: ElevatedButton(
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: AppTokens.primaryBlue,
+                  backgroundColor: AppTokens.primary,
                   foregroundColor: Colors.white,
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(12),
@@ -2406,7 +2406,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                   height: 48,
                   child: ElevatedButton(
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: AppTokens.primaryBlue,
+                      backgroundColor: AppTokens.primary,
                       foregroundColor: Colors.white,
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(12),
@@ -2503,12 +2503,12 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                         width: 36,
                         height: 36,
                         decoration: BoxDecoration(
-                          color: const Color(0xFFFFE5E5),
+                          color: AppTokens.brandRed.withValues(alpha: 0.12),
                           borderRadius: BorderRadius.circular(10),
                         ),
                         child: const Icon(
                           Icons.error_outline_rounded,
-                          color: Color(0xFFCC2936),
+                          color: AppTokens.brandRed,
                           size: 22,
                         ),
                       ),
@@ -2542,7 +2542,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                       height: 48,
                       child: ElevatedButton(
                         style: ElevatedButton.styleFrom(
-                          backgroundColor: AppTokens.primaryBlue,
+                          backgroundColor: AppTokens.primary,
                           foregroundColor: Colors.white,
                           shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(12),
@@ -2703,7 +2703,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                 height: 46,
                 child: ElevatedButton(
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: AppTokens.primaryBlue,
+                    backgroundColor: AppTokens.primary,
                     foregroundColor: Colors.white,
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(12),
@@ -2783,7 +2783,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                 height: 46,
                 child: ElevatedButton(
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: AppTokens.primaryBlue,
+                    backgroundColor: AppTokens.primary,
                     foregroundColor: Colors.white,
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(12),
@@ -3026,7 +3026,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
     );
     OutlineInputBorder focusedBorder() => OutlineInputBorder(
       borderRadius: BorderRadius.circular(12),
-      borderSide: const BorderSide(color: AppTokens.primaryBlue, width: 1.6),
+      borderSide: const BorderSide(color: AppTokens.primary, width: 1.6),
     );
 
     try {
@@ -3083,7 +3083,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                           label: tr.emptyAuto,
                           selected: auto,
                           icon: Icons.autorenew_rounded,
-                          iconColor: AppTokens.primaryBlue,
+                          iconColor: AppTokens.primary,
                           onTap: () => setDialogState(() => auto = true),
                         ),
                       ),
@@ -3112,13 +3112,13 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                               alignment: Alignment.center,
                               decoration: BoxDecoration(
                                 color: isSelected
-                                    ? AppTokens.primaryBlue.withValues(
+                                    ? AppTokens.primary.withValues(
                                         alpha: 0.12,
                                       )
                                     : surface(ctx),
                                 border: Border.all(
                                   color: isSelected
-                                      ? AppTokens.primaryBlue
+                                      ? AppTokens.primary
                                       : outline(ctx),
                                   width: isSelected ? 1.6 : 1,
                                 ),
@@ -3252,7 +3252,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                               value: dedicateOn,
                               onChanged: (v) =>
                                   setDialogState(() => dedicateOn = v ?? false),
-                              activeColor: AppTokens.primaryBlue,
+                              activeColor: AppTokens.primary,
                               materialTapTargetSize:
                                   MaterialTapTargetSize.shrinkWrap,
                               visualDensity: VisualDensity.compact,
@@ -3297,7 +3297,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                   height: 48,
                   child: ElevatedButton(
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: AppTokens.primaryBlue,
+                      backgroundColor: AppTokens.primary,
                       foregroundColor: Colors.white,
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(12),
@@ -3630,7 +3630,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                   focusedBorder: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(12),
                     borderSide: BorderSide(
-                      color: AppTokens.primaryBlue,
+                      color: AppTokens.primary,
                       width: 2,
                     ),
                   ),
@@ -3693,7 +3693,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                   focusedBorder: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(12),
                     borderSide: BorderSide(
-                      color: AppTokens.primaryBlue,
+                      color: AppTokens.primary,
                       width: 2,
                     ),
                   ),
@@ -3766,7 +3766,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                           focusedBorder: OutlineInputBorder(
                             borderRadius: BorderRadius.circular(12),
                             borderSide: BorderSide(
-                              color: AppTokens.primaryBlue,
+                              color: AppTokens.primary,
                               width: 2,
                             ),
                           ),
@@ -3781,7 +3781,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                 width: double.infinity,
                 child: ElevatedButton(
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: AppTokens.primaryBlue,
+                    backgroundColor: AppTokens.primary,
                     foregroundColor: Colors.white,
                     padding: const EdgeInsets.symmetric(vertical: 14),
                     shape: RoundedRectangleBorder(
@@ -4437,7 +4437,7 @@ class _HexBadge extends StatelessWidget {
 
 /// Pill toggle for the donation-frequency selector ("Donar una vez" /
 /// "Mensual"). Selected state mirrors the rest of the picker convention:
-/// AppTokens.primaryBlue border + tinted background.
+/// AppTokens.primary border + tinted background.
 /// Shield-with-lock icon used in the donation-secure header. Sources the
 /// asset bundled at `assets/images/secure_shield.jpeg`.
 class _SecureShieldIcon extends StatelessWidget {
@@ -4481,10 +4481,10 @@ class _FrequencyChip extends StatelessWidget {
         alignment: Alignment.center,
         decoration: BoxDecoration(
           color: selected
-              ? AppTokens.primaryBlue.withValues(alpha: 0.08)
+              ? AppTokens.primary.withValues(alpha: 0.08)
               : cs.surface,
           border: Border.all(
-            color: selected ? AppTokens.primaryBlue : cs.outline,
+            color: selected ? AppTokens.primary : cs.outline,
             width: selected ? 1.6 : 1,
           ),
           borderRadius: BorderRadius.circular(12),
