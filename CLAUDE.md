@@ -59,6 +59,25 @@ flutter build apk --flavor prod --split-per-abi \
 > visible. Olvidar el flag en un build de sideload se nota enseguida y no
 > expone nada.
 
+> ⚠️ **No mezclar APK partido y APK universal en el mismo dispositivo.**
+> `--split-per-abi` le suma un offset al versionCode según la arquitectura:
+> armeabi-v7a `1000+`, arm64-v8a `2000+`, x86_64 `3000+`. Con
+> `version: 1.0.15+18` en el pubspec, el APK arm64 queda en **2018** y el
+> universal en **18**.
+>
+> Instalar el universal encima de un arm64 ya instalado es un **downgrade**
+> para Android, y falla con un escueto *"La aplicación no está instalada"*
+> que no menciona versiones ni da ninguna pista. Pasó el 2026-11-03 con un
+> build de prueba.
+>
+> Para una app de sideload ya instalada, **rebuildear con `--split-per-abi` y
+> servir el arm64**, que además pesa ~62 MB en vez de ~107 MB. Verificar
+> antes de publicar:
+>
+> ```
+> "$ANDROID_HOME/build-tools/36.1.0/aapt2.exe" dump badging <apk> | head -1
+> ```
+
 ## Git workflow
 
 - `dev` is the integration branch. **Never commit directly to `dev`** — protected, requires PR + 1 approval.
