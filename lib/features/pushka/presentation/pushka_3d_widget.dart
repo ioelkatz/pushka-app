@@ -73,22 +73,47 @@ class Pushka3DWidget extends StatefulWidget {
 class Pushka3DWidgetState extends State<Pushka3DWidget> {
   @override
   Widget build(BuildContext context) {
+    // Ancho util de la pantalla: el total menos lo que se comen muescas o
+    // bordes curvos. En un celular en vertical esos insets son 0, pero
+    // restarlos evita que la imagen se meta debajo de un notch lateral en
+    // horizontal o en un plegable.
+    final medios = MediaQuery.of(context);
+    final anchoPantalla =
+        medios.size.width - medios.padding.left - medios.padding.right;
+
     return LayoutBuilder(
       builder: (context, constraints) {
-        final ancho = constraints.maxWidth;
-        // Con el ancho completo la lata queda lo más grande que permite la
-        // pantalla y los chevrones llegan a los bordes, que es como está
-        // compuesta la imagen. El techo solo entra en juego en pantallas
-        // bajas, donde la imagen se achica a lo ancho para no empujar los
-        // botones fuera de la vista.
-        final alto = math.min(ancho / Pushka3DWidget.assetAspect, widget.maxHeight);
+        // Ojo: `constraints.maxWidth` es el ancho de la COLUMNA, que lleva el
+        // margen de 16 de la pantalla. La imagen no lo respeta a proposito.
+        final alto = math.min(
+          anchoPantalla / Pushka3DWidget.assetAspect,
+          widget.maxHeight,
+        );
         return SizedBox(
-          width: ancho,
+          width: constraints.maxWidth,
           height: alto,
-          child: Image.asset(
-            'assets/images/pushka_can.png',
-            fit: BoxFit.contain,
-            gaplessPlayback: true,
+          // La lata se sale del margen de la pantalla y llega borde a borde.
+          // Los chevrones del logo vienen cortados contra los bordes del
+          // archivo: encerrados entre dos franjas blancas el corte se lee
+          // como un error, y contra el borde del celular se lee como lo que
+          // es. Quien recorta de verdad es el SingleChildScrollView de
+          // pushka_screen, que mide la pantalla completa — por eso esto no
+          // desborda a ningun lado.
+          child: OverflowBox(
+            minWidth: anchoPantalla,
+            maxWidth: anchoPantalla,
+            minHeight: alto,
+            maxHeight: alto,
+            alignment: Alignment.center,
+            child: Image.asset(
+              'assets/images/pushka_can.png',
+              // `contain` y no `cover`: en pantallas muy bajas el techo de
+              // alto manda y la imagen se achica dejando un hilo de margen a
+              // los costados. Es feo, pero `cover` ahi le cortaria la tapa y
+              // la base a la lata, que es peor.
+              fit: BoxFit.contain,
+              gaplessPlayback: true,
+            ),
           ),
         );
       },

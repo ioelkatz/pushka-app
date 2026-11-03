@@ -88,10 +88,9 @@ Future<void> _cargarFuentes() async {
       '$raizFlutter/bin/cache/artifacts/material_fonts/MaterialIcons-Regular.otf',
     );
     if (archivo.existsSync()) {
-      final iconos = FontLoader('MaterialIcons')
-        ..addFont(
-          Future.value(ByteData.sublistView(archivo.readAsBytesSync())),
-        );
+      final iconos = FontLoader(
+        'MaterialIcons',
+      )..addFont(Future.value(ByteData.sublistView(archivo.readAsBytesSync())));
       await iconos.load();
     }
   }
@@ -107,7 +106,14 @@ void main() {
     if (!salida.existsSync()) salida.createSync(recursive: true);
   });
 
-  for (final tel in telefonos) {
+  // Cada captura despues de la primera tarda 10 minutos (ver la nota en
+  // docs/rediseno-pendientes.md). Con SOLO=s25 se corre una sola.
+  final filtro = Platform.environment['SOLO'];
+  final aCapturar = filtro == null || filtro.isEmpty
+      ? telefonos
+      : telefonos.where((t) => t.nombre.contains(filtro)).toList();
+
+  for (final tel in aCapturar) {
     testWidgets('captura ${tel.nombre}', (tester) async {
       tester.view.devicePixelRatio = tel.densidad;
       tester.view.physicalSize = Size(
@@ -211,7 +217,7 @@ class _PantallaFalsa extends StatelessWidget {
       body: SafeArea(
         maintainBottomViewPadding: true,
         child: Padding(
-          padding: const EdgeInsets.fromLTRB(16, 20, 16, 10),
+          padding: const EdgeInsets.fromLTRB(0, 20, 0, 10),
           child: LayoutBuilder(
             builder: (context, constraints) {
               // Mismos numeros que pushka_screen.dart.
@@ -222,8 +228,9 @@ class _PantallaFalsa extends StatelessWidget {
               );
               final topGap = isCompact ? 16.0 : 24.0;
               final titleSize = isCompact ? 20.0 : 24.0;
-              final titleBottomGap = isCompact ? 2.0 : 4.0;
-              final actionsTopGap = isCompact ? 2.0 : 4.0;
+              final aire = ((constraints.maxHeight - 560) / 2).clamp(0.0, 40.0);
+              final titleBottomGap = (isCompact ? 2.0 : 4.0) + aire;
+              final actionsTopGap = (isCompact ? 2.0 : 4.0) + aire;
 
               return SingleChildScrollView(
                 child: ConstrainedBox(
@@ -231,74 +238,84 @@ class _PantallaFalsa extends StatelessWidget {
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      _banner(),
-                      SizedBox(height: topGap),
-                      Text(
-                        'Llenala!',
-                        style: TextStyle(
-                          fontSize: titleSize,
-                          fontWeight: FontWeight.w700,
-                          color: cs.onSurface,
-                        ),
-                      ),
-                      const SizedBox(height: 6),
-                      Text(
-                        'MX\$120.00 / MX\$500.00',
-                        style: TextStyle(
-                          fontSize: 13,
-                          fontWeight: FontWeight.w500,
-                          color: cs.onSurfaceVariant,
-                        ),
-                      ),
-                      const SizedBox(height: 8),
                       Padding(
-                        padding: EdgeInsets.symmetric(
-                          horizontal: constraints.maxWidth * 0.09,
-                        ),
-                        child: ClipRRect(
-                          borderRadius: BorderRadius.circular(2),
-                          child: LinearProgressIndicator(
-                            value: 0.24,
-                            minHeight: 4,
-                            backgroundColor: cs.surfaceContainerHighest,
-                            valueColor: const AlwaysStoppedAnimation<Color>(
-                              AppTokens.primary,
+                        // Igual que en pushka_screen: el margen de la
+                        // pantalla vive aca adentro, y la lata se le escapa.
+                        padding: const EdgeInsets.symmetric(horizontal: 16),
+                        child: Column(
+                          children: [
+                            _banner(),
+                            SizedBox(height: topGap),
+                            Text(
+                              'Llenala!',
+                              style: TextStyle(
+                                fontSize: titleSize,
+                                fontWeight: FontWeight.w700,
+                                color: cs.onSurface,
+                              ),
                             ),
-                          ),
-                        ),
-                      ),
-                      SizedBox(height: titleBottomGap),
-                      RepaintBoundary(
-                        child: Pushka3DWidget(
-                          maxHeight: imageHeight,
-                          fillPercentage: 0.24,
-                          goal: 500,
-                          amount: 120,
-                          currencySymbol: 'MX\$',
-                        ),
-                      ),
-                      SizedBox(height: actionsTopGap),
-                      _montos(),
-                      const SizedBox(height: 10),
-                      SizedBox(
-                        width: double.infinity,
-                        height: 50,
-                        child: ElevatedButton(
-                          onPressed: () {},
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: AppTokens.primary,
-                            foregroundColor: Colors.white,
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(12),
+                            const SizedBox(height: 6),
+                            Text(
+                              'MX\$120.00 / MX\$500.00',
+                              style: TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w500,
+                                color: cs.onSurfaceVariant,
+                              ),
                             ),
-                          ),
-                          child: const Text(
-                            'Donar ahora',
-                            style: TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.w600,
+                            const SizedBox(height: 8),
+                            Padding(
+                              padding: EdgeInsets.symmetric(
+                                horizontal: (constraints.maxWidth - 32) * 0.09,
+                              ),
+                              child: ClipRRect(
+                                borderRadius: BorderRadius.circular(2),
+                                child: LinearProgressIndicator(
+                                  value: 0.24,
+                                  minHeight: 4,
+                                  backgroundColor: cs.surfaceContainerHighest,
+                                  valueColor:
+                                      const AlwaysStoppedAnimation<Color>(
+                                        AppTokens.primary,
+                                      ),
+                                ),
+                              ),
                             ),
-                          ),
+                            SizedBox(height: titleBottomGap),
+                            RepaintBoundary(
+                              child: Pushka3DWidget(
+                                maxHeight: imageHeight,
+                                fillPercentage: 0.24,
+                                goal: 500,
+                                amount: 120,
+                                currencySymbol: 'MX\$',
+                              ),
+                            ),
+                            SizedBox(height: actionsTopGap),
+                            _montos(),
+                            const SizedBox(height: 10),
+                            SizedBox(
+                              width: double.infinity,
+                              height: 50,
+                              child: ElevatedButton(
+                                onPressed: () {},
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: AppTokens.primary,
+                                  foregroundColor: Colors.white,
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(12),
+                                  ),
+                                ),
+                                child: const Text(
+                                  'Donar ahora',
+                                  style: TextStyle(
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
                         ),
                       ),
                     ],

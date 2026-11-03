@@ -1280,7 +1280,14 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
     return SafeArea(
       maintainBottomViewPadding: true,
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 20, 16, 10),
+        // ⚠️ SIN padding horizontal a proposito. Antes era 16 a cada lado y
+        // encerraba la pantalla entera, imagen incluida. La lata trae los
+        // chevrones del
+        // logo cortados contra sus bordes: encerrarla dejaba dos franjas
+        // blancas a los costados y el corte parecia un error en vez de una
+        // decision. Ahora el margen de 16 lo pone `content` mas abajo, para
+        // todo menos la lata, que llega al borde de la pantalla.
+        padding: const EdgeInsets.fromLTRB(0, 20, 0, 10),
         child: LayoutBuilder(
           builder: (context, constraints) {
             final isCompact = constraints.maxHeight < 560;
@@ -1292,8 +1299,22 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
             final topGap = isCompact ? 16.0 : 24.0;
             final titleSize = isCompact ? 20.0 : 24.0;
             final subtitleSize = isCompact ? 14.0 : 16.0;
-            final titleBottomGap = isCompact ? 2.0 : 4.0;
-            final actionsTopGap = isCompact ? 2.0 : 4.0;
+
+            // Aire que se reparte arriba y abajo de la lata.
+            //
+            // La columna entera se centra vertical (ver el ConstrainedBox mas
+            // abajo), asi que agrandar estos dos huecos NO hunde el contenido:
+            // lo estira. El bloque crece 2*aire, y al centrarse sube la racha
+            // y el titulo otro tanto y baja los botones lo mismo. Era el
+            // pedido de Ioel el 2026-11-03: todo lo de arriba mas arriba, los
+            // botones mas abajo, y la lata respirando en el medio.
+            //
+            // Se apaga sola en pantallas bajas (clamp a 0 bajo 560 de alto),
+            // donde el contenido ya entra justo y estirarlo lo mandaria al
+            // scroll.
+            final aire = ((constraints.maxHeight - 560) / 2).clamp(0.0, 40.0);
+            final titleBottomGap = (isCompact ? 2.0 : 4.0) + aire;
+            final actionsTopGap = (isCompact ? 2.0 : 4.0) + aire;
 
             final activeHoliday = _HolidayInfo.getActiveHoliday();
             final bool isFull = pushkaGoal > 0 && pushkaAmount >= pushkaGoal;
@@ -1377,8 +1398,12 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                   ),
                   const SizedBox(height: 8),
                   Padding(
+                    // El -32 compensa que `constraints` ahora mide la
+                    // pantalla completa y ya no el ancho con el margen de 16
+                    // descontado. Sin eso la barra se angostaba 3 px de cada
+                    // lado al sacar el padding de afuera.
                     padding: EdgeInsets.symmetric(
-                      horizontal: constraints.maxWidth * 0.09,
+                      horizontal: (constraints.maxWidth - 32) * 0.09,
                     ),
                     child: ClipRRect(
                       borderRadius: BorderRadius.circular(2),
@@ -1578,7 +1603,18 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                     child: Column(
                       mainAxisAlignment: MainAxisAlignment.center,
                       mainAxisSize: MainAxisSize.max,
-                      children: [content],
+                      children: [
+                        // Aca vive ahora el margen horizontal de la pantalla,
+                        // que antes estaba en el Padding de afuera. Se bajo un
+                        // nivel para que la lata pueda salirse de el y llegar
+                        // al borde: Padding no recorta, y el recorte real lo
+                        // hace este SingleChildScrollView, que ya mide el
+                        // ancho completo de la pantalla.
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 16),
+                          child: content,
+                        ),
+                      ],
                     ),
                   ),
                 ),
