@@ -1403,20 +1403,30 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                 // (animated transitions, hot-reload races, debug overlays) crashes
                 // with "Multiple widgets used the same GlobalKey".
                 RepaintBoundary(
-                  child: SizedBox(
-                    height: imageHeight,
-                    child: pushkaStyle == PushkaStyle.building770
-                        ? Building770Widget(fillFraction: fillPercentage)
-                        : Pushka3DWidget(
-                            key: _pushkaKey,
-                            fillPercentage: fillPercentage,
-                            goal: pushkaGoal,
-                            amount: pushkaAmount,
-                            currencySymbol: _currencySymbol(
-                              _currencyCodeFromProfile(),
-                            ),
+                  child: pushkaStyle == PushkaStyle.building770
+                      // El 770 se pinta a mano y llena la caja que le den:
+                      // sigue con alto fijo.
+                      ? SizedBox(
+                          height: imageHeight,
+                          child: Building770Widget(
+                            fillFraction: fillPercentage,
                           ),
-                  ),
+                        )
+                      // La lata NO lleva alto fijo: deriva su alto de la
+                      // proporción real del PNG y toma `imageHeight` solo
+                      // como techo. Ver la nota larga en Pushka3DWidget —
+                      // la imagen pasó de vertical a apaisada y un alto fijo
+                      // le deja una franja muerta arriba y abajo.
+                      : Pushka3DWidget(
+                          key: _pushkaKey,
+                          maxHeight: imageHeight,
+                          fillPercentage: fillPercentage,
+                          goal: pushkaGoal,
+                          amount: pushkaAmount,
+                          currencySymbol: _currencySymbol(
+                            _currencyCodeFromProfile(),
+                          ),
+                        ),
                 ),
 
                 SizedBox(height: actionsTopGap),
@@ -2261,20 +2271,26 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
     final style = ref.read(pushkaStyleProvider);
 
     if (style == PushkaStyle.classic) {
-      // Coin lands right at the slot of the pushka image. Pushka3DWidget
-      // wraps the asset in Center > FractionallySizedBox(0.80) > BoxFit
-      // .contain — the portrait image fits by height, so the rendered
-      // image starts at 10% from the SizedBox top, and the slot sits at
-      // ~10% from the image top → 18% of the widget's height. If the
-      // RenderBox isn't available (first paint race), we fall back to
-      // a mid-screen target which still looks acceptable.
+      // La moneda tiene que caer justo en la ranura de la lata.
+      //
+      // El 0.18 que vivía acá estaba atado a la lata VERTICAL: esa imagen
+      // entraba por alto en una caja más alta que la foto, así que al 10% de
+      // la imagen había que sumarle el 10% de margen de la caja. Con la lata
+      // apaisada del 2026-11-03 el widget mide exactamente lo que mide la
+      // imagen, y el porcentaje salió del archivo (92 px de 978). Por eso la
+      // constante vive en Pushka3DWidget, al lado de las medidas del asset:
+      // si mañana cambia la imagen, las tres cosas se actualizan juntas.
+      //
+      // Si el RenderBox no está (carrera con el primer frame) cae a un punto
+      // medio de pantalla, que sigue siendo aceptable.
       final pushkaBox =
           _pushkaKey.currentContext?.findRenderObject() as RenderBox?;
       double targetY;
       if (pushkaBox != null) {
         final pushkaTopGlobal = pushkaBox.localToGlobal(Offset.zero).dy;
         final pushkaHeight = pushkaBox.size.height;
-        final slotGlobalY = pushkaTopGlobal + pushkaHeight * 0.18;
+        final slotGlobalY =
+            pushkaTopGlobal + pushkaHeight * Pushka3DWidget.slotFromTop;
         targetY = stackBox.globalToLocal(Offset(0, slotGlobalY)).dy;
       } else {
         targetY = stackBox.size.height * 0.43;

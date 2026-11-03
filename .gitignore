@@ -91,3 +91,6 @@ fix*.js
 
 # APK de sideload servido desde landing/instalar (no versionar, 100+ MB)
 landing/instalar/*.apk
+
+# Capturas del arnes tool/capturas (se regeneran, no se versionan)
+tool/capturas/salida/

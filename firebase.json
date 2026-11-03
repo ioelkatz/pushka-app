@@ -146,6 +146,14 @@
           "headers": [
             { "key": "Cache-Control", "value": "public, max-age=3600" }
           ]
+        },
+        {
+          "//": "APK de prueba servido desde los canales de preview. Mismas dos cabeceras que en el target landing, y por el mismo motivo: sin Content-Type explicito Chrome puede bajarlo como octet-stream y el instalador de Android no lo reconoce, y sin no-store un APK ya descargado se vuelve a servir de cache aunque arriba haya uno nuevo con el mismo nombre. El 2026-11-03 paso exactamente eso: Ioel bajo de nuevo el archivo viejo y creyo que el cambio no habia entrado.",
+          "source": "**/*.apk",
+          "headers": [
+            { "key": "Content-Type", "value": "application/vnd.android.package-archive" },
+            { "key": "Cache-Control", "value": "no-store" }
+          ]
         }
       ],
       "rewrites": [
