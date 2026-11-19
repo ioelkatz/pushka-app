@@ -125,12 +125,26 @@ definitions:
       script: |
         # Auto-issues an App Store distribution cert + provisioning profile
         # for $BUNDLE_ID via the App Store Connect API integration.
+        #
+        # `--create` necesita una clave privada para emitir el certificado.
+        # Si no se le pasa `--certificate-key`, el CLI la busca en la variable
+        # de entorno CERTIFICATE_PRIVATE_KEY, que está cargada como secreta en
+        # los grupos de env. Sin ella el paso muere con "Cannot save Signing
+        # Certificates without certificate private key" y después "Did not find
+        # any certificates from specified locations" — dos mensajes que no
+        # mencionan la variable que falta.
         keychain initialize
         app-store-connect fetch-signing-files \
           "$BUNDLE_ID" --type IOS_APP_STORE \
           --create
         keychain add-certificates
-        xcode-project use-profiles
+        # `--project` acotado a ios/: por defecto use-profiles usa el glob
+        # `**/*.xcodeproj`, que en este repo también matchea
+        # macos/Runner.xcodeproj. Ese proyecto no tiene perfil de
+        # aprovisionamiento —no distribuimos para macOS— así que la acción
+        # falla entera con "Failed to set code signing settings for
+        # macos/Runner.xcodeproj" aunque el proyecto de iOS esté perfecto.
+        xcode-project use-profiles --project "ios/Runner.xcodeproj"
 
     - &bump_build_number
       name: Bump build number from App Store Connect
