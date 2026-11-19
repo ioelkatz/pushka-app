@@ -1,9 +1,8 @@
 {
-  "_TODO": "Replace REPLACE_ME_APPLE_TEAM_ID with the 10-char Apple Team ID once Jym Inc's Apple Developer enrollment is provisioned. Team ID appears in developer.apple.com > Membership. Serving with a placeholder will make iOS silently reject the association — the file below is scaffolding, NOT production-ready until the Team ID lands.",
   "applinks": {
     "details": [
       {
-        "appIDs": ["REPLACE_ME_APPLE_TEAM_ID.com.pushka.app"],
+        "appIDs": ["PB777BVGBV.com.pushka.app"],
         "components": [
           { "/": "/join/*", "comment": "Deep link to join a tenant via slug" },
           { "/": "/donation-success*", "comment": "Post-checkout redirect from Stripe" },
@@ -14,6 +13,6 @@
     ]
   },
   "webcredentials": {
-    "apps": ["REPLACE_ME_APPLE_TEAM_ID.com.pushka.app"]
+    "apps": ["PB777BVGBV.com.pushka.app"]
   }
 }
