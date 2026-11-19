@@ -91,3 +91,7 @@ fix*.js
 
 # APK de sideload servido desde landing/instalar (no versionar, 100+ MB)
 landing/instalar/*.apk
+
+# Base64 de los archivos de Firebase para pegar en Codemagic. Son los mismos
+# secretos que ya ignoramos arriba, solo que codificados — no deben commitearse.
+.codemagic_envvars_tmp/
