@@ -127,20 +127,41 @@ contenido".
 
 ## Capturas — lo que falta y por qué
 
-Apple pide capturas de 6,9" (1320×2868 o 1290×2796). Las del S25 son
-1080×2340, y la proporción es casi idéntica (2,167 contra 2,173), así que
-escalarlas sería técnicamente viable.
+**No hacen falta ni Mac ni simulador.** Esta sección decía lo contrario y
+estaba equivocada por partida doble: por el tamaño que pide Apple y por de
+dónde hay que sacarlas.
 
-**Pero muestran la barra de estado de Android.** Una captura que no representa
-la app corriendo en iOS es motivo de rechazo. Hay que sacarlas de un iPhone o
-del simulador, o sea que dependen de tener Mac.
+El único tamaño **obligatorio** hoy es el del **iPhone con Dynamic Island de
+pantalla media: 1179 × 2556** (o 1206 × 2622). Lo dan nativo el 14 Pro, el 15,
+el 15 Pro, el 16 y el 16 Pro. No es el de 6,9" (1320×2868) que decía antes —
+ese es opcional, igual que 1284×2778 y los más chicos.
 
-Es de las últimas cosas que se pueden hacer, y conviene no descubrirlo tarde.
+Y alcanza con **un solo juego**: si la interfaz es la misma en todos los
+tamaños, App Store Connect escala las de mayor resolución para el resto. Entre
+1 y 10 capturas, en `.png` o `.jpg`, **sin canal alfa**.
+
+O sea que se sacan del iPhone, con el build de TestFlight instalado, apretando
+los dos botones. Salen en resolución nativa y se suben tal cual.
+
+Lo que sigue en pie es el motivo por el que no sirven las de Android: muestran
+la barra de estado de Android, y una captura que no representa la app corriendo
+en iOS es motivo de rechazo. Escalar las del S25 no arregla eso.
+
+Siguen siendo de las últimas cosas que se pueden hacer — necesitan el build en
+TestFlight primero — pero ya no dependen de conseguir una Mac.
 
 ## Antes de enviar
 
+- [ ] **Candid Seal of Transparency para JYM Inc.** — el que decide si la
+      aprueban. Sin él aplica la guideline 3.2.2(iv) y una app que recauda
+      caridad adentro se rechaza; con él, JYM Inc. queda habilitada para
+      recibir donaciones con Apple Pay. Basta el Bronze: cinco campos, gratis,
+      ~15 min en https://www.guidestar.org/UpdateNonprofitProfile/
+      El perfil ya existe pero está sin reclamar. Ver
+      [ios_setup.md](ios_setup.md) § 0.
 - [ ] Que el Rab apruebe el nombre y el subtítulo
-- [ ] Capturas desde iOS
+- [ ] Capturas desde iOS — 1179 × 2556, sacadas del iPhone con el build de
+      TestFlight. Un solo juego alcanza.
 - [ ] Firmar **solo** el Free Apps Agreement — nunca el Paid Applications
       Agreement, que invalida la exención del fee sin avisar
 - [ ] Cuestionario de privacidad: ver [app-store-privacy.md](app-store-privacy.md)

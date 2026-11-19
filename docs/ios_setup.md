@@ -20,10 +20,40 @@ spread across whichever services are still verifying you.
 
 ## 0. Prerequisites
 
-- [ ] Apple Developer Program account (paid, $99 USD/year). Sign up at
-      https://developer.apple.com. Verification can take a few days the
-      first time — start this BEFORE the rest.
-- [ ] An iPhone running iOS 13.0 or later (Stripe SDK requires it).
+- [x] **Apple Developer Program account** — enrolled as **JYM Inc.**
+      (D-U-N-S `145014300`, EIN 83-3494408), entity type **Nonprofit**, with
+      the **membership fee waived**. Approved 2026-11. Account Holder is
+      Menachem M Meer, who signed as incorporator on the NJ articles.
+      Enrollment ID `NWMN54KFAM`.
+
+      > Sign **only** the Free Apps Agreement. Signing the Paid Applications
+      > Agreement silently voids the fee waiver, and Apple does not refund a
+      > membership once paid.
+
+- [ ] **Candid Seal of Transparency** for JYM Inc. — the one that is still
+      missing, and the one that blocks App Review rather than the build.
+
+      Guideline **3.2.2(iv)**: collecting charitable donations inside the app
+      is unacceptable "unless you are an approved nonprofit"; such apps "must
+      be free on the App Store and may only collect funds outside of the app,
+      such as via Safari or SMS". Guideline **3.2.1(vi)** adds that approved
+      nonprofits must offer Apple Pay, disclose how funds are used and make
+      tax receipts available.
+
+      JYM Inc. is a US entity, so the route is **Candid**, not Benevity
+      (Benevity is for nonprofits outside the US). A **Bronze** seal is
+      enough — Candid states that a 2026 Bronze seal makes an organization
+      eligible for donations with Apple Pay — and it only asks for name,
+      mission, subject area, population served and address. ~15 minutes,
+      free, at https://www.guidestar.org/UpdateNonprofitProfile/
+      The profile already exists (auto-created from the IRS Business Master
+      File) but is unclaimed.
+
+      This is separate from the fee waiver. Both are "nonprofit paperwork
+      with Apple", they are requested in different places, and having one
+      does not grant the other.
+
+- [x] An iPhone for TestFlight and for the App Store screenshots.
 - [ ] The TestFlight app installed on that iPhone.
 - [ ] Owner access on the GitHub repo (`ioelkatz/pushka-app`).
 
@@ -77,12 +107,25 @@ spread across whichever services are still verifying you.
 ### 1e. Generate the App Store Connect API key
 
 1. https://appstoreconnect.apple.com → Users and Access → Keys → "+"
-2. Name: `Codemagic CI`. Access: **App Manager**.
+2. Name: `Codemagic CI`. Access: **Admin**.
 3. Download the `.p8` file (you can only download it once).
 4. Note the **Key ID** and **Issuer ID** shown on the screen.
 
 > These three values let Codemagic upload to TestFlight without a session
-> token. Treat the `.p8` like a password.
+> token. Treat the `.p8` like a password: it goes straight into the
+> Codemagic UI, never into the repo or a chat.
+
+> **Admin, not App Manager.** The `codemagic_signing` step runs
+> `app-store-connect fetch-signing-files "$BUNDLE_ID" --type IOS_APP_STORE
+> --create`, and that `--create` *issues a distribution certificate*.
+> Creating certificates is restricted to Account Holder and Admin — App
+> Manager can upload builds and edit App Store metadata but cannot create
+> certificates or provisioning profiles. A key scoped to App Manager fails
+> on the first build, at the signing step, before anything is compiled.
+
+Same split applies to the people on the team: whoever needs to run builds
+must be **Admin**, not App Manager, or they cannot generate the signing
+assets either.
 
 ---
 

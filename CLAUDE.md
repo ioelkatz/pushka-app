@@ -259,10 +259,21 @@ could squat a legacy tenant's slug.
   a one-off scan: for each tenantState, read parent tenant doc, write
   current values via batch.
 
-### iOS launch checklist (need Mac)
+### iOS launch checklist (no Mac needed — Codemagic builds on a hosted one)
 
-- [ ] Apple Developer account ($99/yr) + create Apple Pay merchant ID
-- [ ] Add merchant ID to Xcode → Signing & Capabilities → Apple Pay
+> Runbook completo en [`docs/ios_setup.md`](docs/ios_setup.md). Nada de esto
+> requiere una Mac: `codemagic.yaml` compila en un mac mini M2 en la nube y
+> las capturas salen del iPhone con el build de TestFlight.
+
+- [x] Apple Developer Program — **JYM Inc.**, tipo Nonprofit, con el fee
+      eximido. Aprobada 2026-11. Enrollment `NWMN54KFAM`.
+- [ ] **Candid Seal of Transparency (Bronze) para JYM Inc.** — sin esto la
+      guideline 3.2.2(iv) rechaza una app que recauda caridad adentro. Gratis,
+      ~15 min, en guidestar.org. Es el bloqueo real de la submission.
+- [ ] Create Apple Pay merchant ID (`merchant.com.pushka.app`) + bind it to
+      the App ID, y el round-trip del certificado con Stripe
+- [ ] App Store Connect API key (`.p8`) con rol **Admin** (no App Manager:
+      el workflow crea certificados y App Manager no puede) → Codemagic
 - [ ] Set `MERCHANT_IDENTIFIER` dart-define so `StripeConfig.merchantIdentifier` is non-empty (la clave del dart-define es `STRIPE_MERCHANT_ID`)
 - [ ] Verificar el `apple-app-site-association` (ya servido desde `public/.well-known/` y `web/.well-known/`) — falta reemplazar REPLACE_ME_APPLE_TEAM_ID por el Team ID real
 - [ ] Associated Domains ya declarado en `ios/Runner/Runner.entitlements` (`app.jabadencampus.com` + `pushka-app-ioel.web.app`)
