@@ -187,7 +187,7 @@ credenciales de la cuenta de prueba.
 
 ```
 Usuario        play-review@jabadencampus.com
-Contraseña     está en la memoria del proyecto, no en el repositorio
+Contraseña     en review-accounts.env (gitignored, en la raíz del repo)
 Instrucciones  Iniciar sesión con correo y contraseña (NO con Google).
                Cuando la app pida el código de invitación, ingresar JYM-770.
 ```
