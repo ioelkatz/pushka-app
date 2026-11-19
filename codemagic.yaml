@@ -109,6 +109,26 @@ definitions:
     - &cocoapods_install
       name: Install CocoaPods
       script: |
+        # Desactivar Swift Package Manager: que Firebase lo resuelva CocoaPods.
+        #
+        # Flutter habilita SPM solo cuando el Xcode de la máquina lo soporta, y
+        # su resolutor elige una versión de firebase-ios-sdk más vieja que la
+        # que bridgea cloud_firestore 6.3.x. El síntoma no menciona SPM por
+        # ningún lado — son errores opacos de ARC al archivar:
+        #
+        #   No visible @interface for 'FIRCollectionSourceStageBridge'
+        #     declares the selector 'initWithRef:firestore:'
+        #   cloud_firestore-6.3.0/.../FLTPipelineParser.m:864
+        #
+        # Esa clase vive en firebase-ios-sdk 12.x (la API nueva de Pipelines).
+        # El .podspec sí pinea la versión correcta, así que volvemos a pods
+        # hasta que los plugins de FlutterFire publiquen un manifiesto de SPM
+        # consistente. Se nota en el log por la línea "Adding Swift Package
+        # Manager integration..." que aparece recién al archivar, mucho después
+        # de este paso.
+        flutter config --no-enable-swift-package-manager
+        flutter config --list | grep -i swift || true
+
         # First-build path: Flutter generates `ios/Podfile` lazily as part
         # of `flutter build ipa`. If the file isn't there yet, skip the
         # manual `pod install` and let the build step handle pods. On
