@@ -275,7 +275,10 @@ could squat a legacy tenant's slug.
 - [ ] App Store Connect API key (`.p8`) con rol **Admin** (no App Manager:
       el workflow crea certificados y App Manager no puede) → Codemagic
 - [ ] Set `MERCHANT_IDENTIFIER` dart-define so `StripeConfig.merchantIdentifier` is non-empty (la clave del dart-define es `STRIPE_MERCHANT_ID`)
-- [ ] Verificar el `apple-app-site-association` (ya servido desde `public/.well-known/` y `web/.well-known/`) — falta reemplazar REPLACE_ME_APPLE_TEAM_ID por el Team ID real
+- [x] `apple-app-site-association` con el Team ID real (`PB777BVGBV`), en
+      `public/.well-known/` y `web/.well-known/`. **Falta desplegarlo**:
+      hasta que corra `firebase deploy --only hosting` se sigue sirviendo la
+      versión con el placeholder y los universal links no verifican.
 - [ ] Associated Domains ya declarado en `ios/Runner/Runner.entitlements` (`app.jabadencampus.com` + `pushka-app-ioel.web.app`)
 - [ ] Configure Apple Push Notifications certificates (Firebase Console → Cloud Messaging → APNs)
 - [ ] Configure App Check DeviceCheck/AppAttest in Firebase Console
