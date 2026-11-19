@@ -29,7 +29,7 @@
 	     so flutter_stripe activates the wallet sheet. -->
 	<key>com.apple.developer.in-app-payments</key>
 	<array>
-		<string>merchant.com.pushka.app</string>
+		<string>merchant.com.jabadencampus.pushka</string>
 	</array>
 
 	<!-- Push Notifications. `production` covers TestFlight + App Store

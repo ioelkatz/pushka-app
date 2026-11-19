@@ -7,7 +7,7 @@
 #   - ios-testflight-prod → Stripe live keys + Firebase prod project +
 #                           TestFlight upload. Last stop before App Store.
 #
-# Both workflows produce the same bundle ID (`com.pushka.app`). Codemagic
+# Both workflows produce the same bundle ID (`com.jabadencampus.pushka`). Codemagic
 # manages the iOS distribution cert + provisioning profile via the Apple
 # Developer integration. Per-Firebase-project secrets are bound through
 # environment groups so the same source tree can target either project.
@@ -48,14 +48,14 @@
 #
 #    `pushka_dev_secrets` (bound to ios-testflight-dev):
 #      STRIPE_PUBLISHABLE_KEY  pk_test_…
-#      STRIPE_MERCHANT_ID      merchant.com.pushka.app
+#      STRIPE_MERCHANT_ID      merchant.com.jabadencampus.pushka
 #      GOOGLE_SERVICE_INFO_PLIST_B64  <base64 of test project plist>
 #      FIREBASE_OPTIONS_DEV_DART_B64  <base64 of firebase_options_dev.dart>
 #      FIREBASE_OPTIONS_PROD_DART_B64 <base64 of firebase_options_prod.dart>
 #
 #    `pushka_prod_secrets` (bound to ios-testflight-prod):
 #      STRIPE_PUBLISHABLE_KEY  pk_live_…
-#      STRIPE_MERCHANT_ID      merchant.com.pushka.app
+#      STRIPE_MERCHANT_ID      merchant.com.jabadencampus.pushka
 #      GOOGLE_SERVICE_INFO_PLIST_B64  <base64 of prod project plist>
 #      FIREBASE_OPTIONS_DEV_DART_B64  <base64 of firebase_options_dev.dart>
 #      FIREBASE_OPTIONS_PROD_DART_B64 <base64 of firebase_options_prod.dart>
@@ -151,7 +151,7 @@ workflows:
       groups:
         - pushka_dev_secrets
       vars:
-        BUNDLE_ID: com.pushka.app
+        BUNDLE_ID: com.jabadencampus.pushka
         XCODE_PROJECT: ios/Runner.xcodeproj
         XCODE_SCHEME: Runner
     triggering:
@@ -199,7 +199,7 @@ workflows:
       groups:
         - pushka_prod_secrets
       vars:
-        BUNDLE_ID: com.pushka.app
+        BUNDLE_ID: com.jabadencampus.pushka
         XCODE_PROJECT: ios/Runner.xcodeproj
         XCODE_SCHEME: Runner
     triggering:
@@ -281,7 +281,7 @@ workflows:
                                # GOOGLE_SERVICE_INFO_PLIST_B64 (test project),
                                # FIREBASE_OPTIONS_*_DART_B64
       vars:
-        BUNDLE_ID: com.pushka.app
+        BUNDLE_ID: com.jabadencampus.pushka
         XCODE_PROJECT: ios/Runner.xcodeproj
         XCODE_SCHEME: Runner
     triggering:
