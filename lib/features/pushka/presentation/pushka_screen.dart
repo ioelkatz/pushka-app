@@ -21,6 +21,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../../analytics/analytics_service.dart';
 import '../../auth/biometric_service.dart';
+import '../../payments/donation_payment_actions.dart';
 import '../../payments/donation_reason_picker.dart';
 import '../../payments/stripe_service.dart';
 import '../../settings/presentation/auto_empty_screen.dart';
@@ -470,6 +471,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
         tenantId: activeTenantId,
         sheetContext: context,
         defaultCard: _readDefaultCard(),
+        useApplePay: details.applePay,
       );
 
       await AnalyticsService.instance.logPushkaEmpty(amountToEmpty);
@@ -784,18 +786,9 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                 ),
               ],
               const SizedBox(height: 14),
-              SizedBox(
-                width: double.infinity,
-                height: 48,
-                child: ElevatedButton(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AppTokens.primary,
-                    foregroundColor: Colors.white,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                  ),
-                  onPressed: () {
+              Builder(
+                builder: (_) {
+                  void enviar({required bool conApplePay}) {
                     final value = double.tryParse(
                       amountCtrl.text.trim().replaceAll(',', '.'),
                     );
@@ -809,16 +802,47 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                       'reason': selectedReason,
                       'message': msg,
                       'monthly': monthly,
+                      'applePay': conApplePay,
                     });
-                  },
-                  child: Text(
-                    monthly ? tr.donateMonthlyBtn : tr.donate,
-                    style: const TextStyle(
-                      fontWeight: FontWeight.w700,
-                      fontSize: 16,
+                  }
+
+                  final botonDeSiempre = ElevatedButton(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppTokens.primary,
+                      foregroundColor: Colors.white,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
                     ),
-                  ),
-                ),
+                    onPressed: () => enviar(conApplePay: false),
+                    child: Text(
+                      monthly ? tr.donateMonthlyBtn : tr.donate,
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w700,
+                        fontSize: 16,
+                      ),
+                    ),
+                  );
+
+                  // La donacion mensual se cobra con `subscribe()`, que todavia
+                  // no tiene camino nativo de Apple Pay. Ahi queda el boton de
+                  // siempre — y Apple Pay igual aparece DENTRO de la hoja de
+                  // Stripe, con el boton de "Donate with" que configura
+                  // _applePayConfigFor. O sea que la app sigue ofreciendo Apple
+                  // Pay para el mensual, que es lo que pide la guideline.
+                  if (monthly) {
+                    return SizedBox(
+                      width: double.infinity,
+                      height: 48,
+                      child: botonDeSiempre,
+                    );
+                  }
+                  return DonationPaymentActions(
+                    alto: 48,
+                    onApplePay: () => enviar(conApplePay: true),
+                    botonAlternativo: botonDeSiempre,
+                  );
+                },
               ),
             ],
           ),
@@ -838,6 +862,10 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
       final donationMessage = (result['message'] as String?)?.trim() ?? '';
       final donationReason = (result['reason'] as String?)?.trim();
       final isMonthly = result['monthly'] == true;
+      // La persona toco el boton nativo de Apple Pay en vez del de siempre.
+      // Solo puede venir en true cuando NO es mensual: ver el Builder de la
+      // hoja, donde el mensual muestra solo el boton de siempre.
+      final conApplePay = result['applePay'] == true;
 
       // Note: _isProcessing was already set at the top of _donateNow (MF2
       // fix — blocks re-entry BEFORE the amount sheet opens). No re-set here.
@@ -902,6 +930,7 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                 : donationReason,
             sheetContext: context,
             defaultCard: _readDefaultCard(),
+            useApplePay: conApplePay,
           );
         }
 
@@ -3041,7 +3070,15 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
   /// is chosen it surfaces designación + optional dedication.
   ///
   /// Returns null if the user dismissed the sheet → caller aborts.
-  Future<({String? reason, String message, bool auto, double amount})?>
+  Future<
+    ({
+      String? reason,
+      String message,
+      bool auto,
+      double amount,
+      bool applePay,
+    })?
+  >
   _showEmptyPushkaSheet({required double amount}) async {
     final tr = S.of(context);
     // Same tenant-first fallback as _donateNow above.
@@ -3068,7 +3105,14 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
         activeAutoFreq != null &&
         activeAutoFreq.isNotEmpty &&
         activeAutoFreq != 'manual';
-    ({String? reason, String message, bool auto, double amount})? result;
+    ({
+      String? reason,
+      String message,
+      bool auto,
+      double amount,
+      bool applePay,
+    })?
+    result;
 
     Color outline(BuildContext c) => Theme.of(c).colorScheme.outline;
     Color surface(BuildContext c) => Theme.of(c).colorScheme.surface;
@@ -3084,7 +3128,13 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
     try {
       result =
           await showKeyboardSafeSheet<
-            ({String? reason, String message, bool auto, double amount})
+            ({
+              String? reason,
+              String message,
+              bool auto,
+              double amount,
+              bool applePay,
+            })
           >(
             context: context,
             builder: (ctx, setDialogState) => Column(
@@ -3344,18 +3394,9 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                   ],
                 ],
                 const SizedBox(height: 14),
-                SizedBox(
-                  width: double.infinity,
-                  height: 48,
-                  child: ElevatedButton(
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: AppTokens.primary,
-                      foregroundColor: Colors.white,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                    ),
-                    onPressed: () {
+                Builder(
+                  builder: (_) {
+                    void enviar({required bool conApplePay}) {
                       if (auto) {
                         // Push AutoEmptyScreen ON TOP so back returns to the
                         // still-open sheet. popExtra=true makes save dismiss
@@ -3374,16 +3415,44 @@ class _PushkaScreenState extends ConsumerState<PushkaScreen>
                         message: dedicateOn ? messageCtrl.text.trim() : '',
                         auto: false,
                         amount: currentAmount,
+                        applePay: conApplePay,
                       ));
-                    },
-                    child: Text(
-                      auto ? tr.emptyAutoBtn : tr.emptyPushkaBtn,
-                      style: const TextStyle(
-                        fontWeight: FontWeight.w700,
-                        fontSize: 16,
+                    }
+
+                    final botonDeSiempre = ElevatedButton(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppTokens.primary,
+                        foregroundColor: Colors.white,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
                       ),
-                    ),
-                  ),
+                      onPressed: () => enviar(conApplePay: false),
+                      child: Text(
+                        auto ? tr.emptyAutoBtn : tr.emptyPushkaBtn,
+                        style: const TextStyle(
+                          fontWeight: FontWeight.w700,
+                          fontSize: 16,
+                        ),
+                      ),
+                    );
+
+                    // Con `auto` el boton no cobra nada: abre la pantalla de
+                    // vaciado automatico. Ofrecer Apple Pay ahi seria mentir
+                    // sobre lo que va a pasar al tocarlo.
+                    if (auto) {
+                      return SizedBox(
+                        width: double.infinity,
+                        height: 48,
+                        child: botonDeSiempre,
+                      );
+                    }
+                    return DonationPaymentActions(
+                      alto: 48,
+                      onApplePay: () => enviar(conApplePay: true),
+                      botonAlternativo: botonDeSiempre,
+                    );
+                  },
                 ),
               ],
             ),

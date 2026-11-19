@@ -9,6 +9,7 @@ import 'package:flutter_stripe/flutter_stripe.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../config/stripe_config.dart';
+import '../../core/format_utils.dart';
 import '../../core/l10n/s.dart';
 import '../../core/network_status_provider.dart';
 import '../../firebase_options.dart';
@@ -140,25 +141,99 @@ class StripeService {
   // this needs to become dynamic — read from tenantState.tenantCountry or
   // similar. For now, hardcoded is safe.
   //
-  // Apple Pay merchant ID (Stripe.merchantIdentifier from dart-define) is
-  // ALWAYS the platform's, not the connected's — per Stripe docs, that's
-  // the correct config for Connect Direct Charges. The charge routes to
-  // the connected account regardless.
+  // Apple Pay merchant ID (Stripe.merchantIdentifier from dart-define) es uno
+  // solo para toda la app: lo define el bundle de iOS, no la cuenta de Stripe.
+  // Hay un unico merchant ID, `merchant.com.jabadencampus.pushka`, y vive en
+  // la cuenta de Apple Developer de Jym Inc.
+  //
+  // ⚠️ Esto NO es lo mismo que el Apple Pay Payment Processing Certificate.
+  // Ese certificado va en la cuenta CONECTADA (la del Rab), no en la
+  // plataforma. Confirmado por un agente humano de soporte de Stripe el
+  // 2026-11-19: *"Si lo configura en la plataforma, Apple Pay NO funcionara
+  // con los cobros DIRECTOS de una cuenta conectada."* Stripe no lo documenta
+  // en ningun lado — hubo que preguntarlo. Antes aca decia lo contrario
+  // ("per Stripe docs, that's the correct config"), cosa que la documentacion
+  // nunca dijo.
   //
   // Google Pay: testEnv must be true on dev builds to hit Google's test PSP
   // sandbox; false on production. Stripe rejects mixing prod testEnv with
   // a pk_test_ key (and vice versa).
   static const _platformCountryCode = 'US';
 
-  // Apple Pay config is gated on having a non-empty Stripe merchantIdentifier
-  // configured (passed via dart-define + applied to Stripe.merchantIdentifier
-  // in app_initializer). The Stripe SDK throws an assertion if applePay is
-  // present without merchantIdentifier set — passing null skips the wallet
-  // entirely on platforms / builds where it's not configured.
-  static PaymentSheetApplePay? get _applePayConfig =>
-      StripeConfig.merchantIdentifier.isEmpty
-          ? null
-          : const PaymentSheetApplePay(merchantCountryCode: _platformCountryCode);
+  /// Config de Apple Pay para la hoja de pago.
+  ///
+  /// Gated en tener un merchantIdentifier no vacio (dart-define aplicado en
+  /// app_initializer). El SDK de Stripe tira una assertion si se pasa
+  /// `applePay` sin merchantIdentifier — devolver null saltea la wallet en
+  /// las plataformas y builds donde no esta configurada.
+  ///
+  /// `buttonType: donate` cambia el texto del boton de confirmacion DENTRO de
+  /// la hoja de Apple Pay: en vez de "Pay" dice "Donate with". Es el tipo que
+  /// Apple reserva para organizaciones sin fines de lucro aprobadas, y es lo
+  /// que corresponde acá — la guideline 3.2.1(vi) exige *"offer Apple Pay
+  /// support"* justamente para nonprofits.
+  ///
+  /// `cartItems` es lo que la persona lee con el dedo sobre el Face ID. Sin
+  /// esto la hoja muestra una linea generica. El ultimo item es el total para
+  /// Apple, y acá hay uno solo.
+  static PaymentSheetApplePay? _applePayConfigFor({
+    required int amountCents,
+    required String currency,
+    required String label,
+  }) {
+    if (StripeConfig.merchantIdentifier.isEmpty) return null;
+    return PaymentSheetApplePay(
+      merchantCountryCode: _platformCountryCode,
+      buttonType: PlatformButtonType.donate,
+      cartItems: [
+        ApplePayCartSummaryItem.immediate(
+          label: label,
+          amount: _montoParaApplePay(amountCents, currency),
+        ),
+      ],
+    );
+  }
+
+  /// Cobra directo con Apple Pay, sin pasar por la hoja de Stripe.
+  ///
+  /// Es el camino del boton nativo de Apple Pay: la persona toca el boton y
+  /// va derecho al Face ID. La hoja de Stripe no aparece.
+  ///
+  /// ⚠️ El PaymentIntent vive en la cuenta CONECTADA (direct charges), asi que
+  /// `Stripe.stripeAccountId` ya tiene que estar seteado cuando esto corre.
+  /// Lo hace `pay()` apenas vuelve la Cloud Function, antes de llamar aca.
+  ///
+  /// No atrapa errores a proposito: los deja subir para que el try/catch de
+  /// `pay()` haga el release del lock de pushka_empty y la traduccion a
+  /// StripeServiceException, igual que con la hoja.
+  static Future<void> _confirmarConApplePay({
+    required String clientSecret,
+    required int amountCents,
+    required String currency,
+    required String label,
+  }) async {
+    await Stripe.instance.confirmPlatformPayPaymentIntent(
+      clientSecret: clientSecret,
+      confirmParams: PlatformPayConfirmParams.applePay(
+        applePay: ApplePayParams(
+          merchantCountryCode: _platformCountryCode,
+          currencyCode: currency.toUpperCase(),
+          cartItems: [
+            ApplePayCartSummaryItem.immediate(
+              label: label,
+              amount: _montoParaApplePay(amountCents, currency),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Monto en unidades mayores, como string, para la hoja de Apple Pay.
+  /// La logica —y la trampa de las monedas sin decimales— vive en
+  /// `format_utils`, donde esta testeada.
+  static String _montoParaApplePay(int amountCents, String currency) =>
+      stripeUnitsToPlainString(amountCents, currency);
 
   static PaymentSheetGooglePay _googlePayConfigFor(String currency) =>
       PaymentSheetGooglePay(
@@ -200,6 +275,15 @@ class StripeService {
     /// PaymentSheet orders by MRU, not by invoice_settings.default_payment_method).
     /// User can tap "Cambiar tarjeta" to open the full PaymentSheet picker.
     DefaultCardInfo? defaultCard,
+
+    /// La persona toco el boton nativo de Apple Pay, asi que va derecho al
+    /// Face ID y la hoja de Stripe no aparece.
+    ///
+    /// Solo lo pasa en true `BotonDonarApplePay`, que ya verifico que el
+    /// dispositivo tenga Apple Pay andando. El resto del flujo —Cloud
+    /// Function, cuenta conectada, release del lock, manejo de errores— es
+    /// exactamente el mismo: lo unico que cambia es como se confirma.
+    bool useApplePay = false,
   }) async {
     // Web (PWA): use Stripe Elements inline in a bottom sheet — user stays
     // inside the PWA (no full-page redirect to hosted Checkout). Falls back
@@ -354,7 +438,14 @@ class StripeService {
     // to PaymentSheet as before. Solves the flutter_stripe v12 limitation
     // where PaymentSheet mobile orders PMs by MRU, not by
     // customer.invoice_settings.default_payment_method.
-    if (!kIsWeb && defaultCard != null && sheetContext != null && sheetContext.mounted) {
+    // `!useApplePay`: si la persona toco el boton de Apple Pay, ya eligio
+    // como pagar. Mostrarle "confirma con tu tarjeta guardada" seria
+    // ignorarle el gesto y meterle un paso que no pidio.
+    if (!kIsWeb &&
+        !useApplePay &&
+        defaultCard != null &&
+        sheetContext != null &&
+        sheetContext.mounted) {
       final expressChoice = await showExpressCheckoutSheet(
         context: sheetContext,
         cardBrand: defaultCard.brand,
@@ -459,23 +550,42 @@ class StripeService {
     final hasCustomerContext = customerId != null && customerId.isNotEmpty && (hasSessionAuth || hasEphemeralAuth);
 
     try {
-      await Stripe.instance.initPaymentSheet(
-        paymentSheetParameters: SetupPaymentSheetParameters(
-          paymentIntentClientSecret: clientSecret,
-          merchantDisplayName: merchantDisplayName,
-          allowsDelayedPaymentMethods: false,
-          customerId: hasCustomerContext ? customerId : null,
-          customerSessionClientSecret: hasCustomerContext && hasSessionAuth ? customerSessionClientSecret : null,
-          customerEphemeralKeySecret: hasCustomerContext && !hasSessionAuth ? ephemeralKeySecret : null,
-          applePay: _applePayConfig,
-          googlePay: _googlePayConfigFor(currency),
-        ),
-      );
-      debugPrint('StripeService.pay: initPaymentSheet returned in ${sw.elapsedMilliseconds}ms');
-      sw.reset();
+      if (useApplePay) {
+        // Camino del boton nativo: derecho al Face ID, sin hoja de Stripe en
+        // el medio. Comparte todo lo de abajo —catch, release del lock,
+        // traduccion de errores— con el camino de la hoja, a proposito: lo
+        // unico que cambia es como se confirma, no que pasa si falla.
+        debugPrint('StripeService.pay: confirmando con Apple Pay nativo');
+        await _confirmarConApplePay(
+          clientSecret: clientSecret,
+          amountCents: amountCents,
+          currency: currency,
+          label: merchantDisplayName,
+        );
+        debugPrint('StripeService.pay: Apple Pay confirmo en ${sw.elapsedMilliseconds}ms');
+      } else {
+        await Stripe.instance.initPaymentSheet(
+          paymentSheetParameters: SetupPaymentSheetParameters(
+            paymentIntentClientSecret: clientSecret,
+            merchantDisplayName: merchantDisplayName,
+            allowsDelayedPaymentMethods: false,
+            customerId: hasCustomerContext ? customerId : null,
+            customerSessionClientSecret: hasCustomerContext && hasSessionAuth ? customerSessionClientSecret : null,
+            customerEphemeralKeySecret: hasCustomerContext && !hasSessionAuth ? ephemeralKeySecret : null,
+            applePay: _applePayConfigFor(
+              amountCents: amountCents,
+              currency: currency,
+              label: merchantDisplayName,
+            ),
+            googlePay: _googlePayConfigFor(currency),
+          ),
+        );
+        debugPrint('StripeService.pay: initPaymentSheet returned in ${sw.elapsedMilliseconds}ms');
+        sw.reset();
 
-      await Stripe.instance.presentPaymentSheet();
-      debugPrint('StripeService.pay: presentPaymentSheet returned (user closed/paid) in ${sw.elapsedMilliseconds}ms');
+        await Stripe.instance.presentPaymentSheet();
+        debugPrint('StripeService.pay: presentPaymentSheet returned (user closed/paid) in ${sw.elapsedMilliseconds}ms');
+      }
     } on StripeException catch (e, st) {
       // PaymentSheet failed or user dismissed. For purpose=='pushka_empty'
       // the CF claimed _autoEmptyChargeLockAt before returning the
@@ -650,7 +760,14 @@ class StripeService {
           customerId: hasCustomerContext ? customerId : null,
           customerSessionClientSecret: hasCustomerContext && hasSessionAuth ? customerSessionClientSecret : null,
           customerEphemeralKeySecret: hasCustomerContext && !hasSessionAuth ? ephemeralKeySecret : null,
-          applePay: _applePayConfig,
+          // Donacion recurrente: se muestra el monto de UN periodo, que es lo
+          // que se cobra ahora. Stripe indica pasar igual el cartItem aunque
+          // el cobro sea recurrente, para que la hoja no salga en blanco.
+          applePay: _applePayConfigFor(
+            amountCents: amountCents,
+            currency: currency,
+            label: merchantDisplayName,
+          ),
           googlePay: _googlePayConfigFor(currency),
         ),
       );

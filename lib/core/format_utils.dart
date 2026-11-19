@@ -66,6 +66,28 @@ double stripeUnitsToAmount(int units, String currency) {
   return units / currencyUnitMultiplier(currency);
 }
 
+/// El mismo monto que [stripeUnitsToAmount], pero como string pelado y con la
+/// cantidad de decimales que la moneda realmente usa: `"10.50"` para USD,
+/// `"1000"` para CLP, `"10.500"` para BHD. Sin simbolo y sin separador de
+/// miles.
+///
+/// Es lo que pide Apple Pay en `ApplePayCartSummaryItem.amount`: el total que
+/// la persona lee con el dedo sobre el Face ID.
+///
+/// ⚠️ La tentacion es `(units / 100).toStringAsFixed(2)`. A un donante chileno
+/// eso le mostraria un total cien veces menor que el que se le va a cobrar, y
+/// la hoja de Apple Pay es justo la ultima pantalla antes de que salga la
+/// plata.
+String stripeUnitsToPlainString(int units, String currency) {
+  final multiplicador = currencyUnitMultiplier(currency);
+  final decimales = switch (multiplicador) {
+    1 => 0,
+    1000 => 3,
+    _ => 2,
+  };
+  return stripeUnitsToAmount(units, currency).toStringAsFixed(decimales);
+}
+
 // Currencies whose glyph is legibly different from the ISO code. Anything not
 // in this table falls back to "<CODE> <amount>" so we never lie with `$` on a
 // EUR / ILS / JPY charge (which express_checkout_sheet used to do).

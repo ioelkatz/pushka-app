@@ -220,6 +220,10 @@ class S {
       _t('DONAR AHORA', 'DONATE NOW', 'FAIRE UN DON', 'תרום עכשיו');
   String get emptyPushkaBtn =>
       _t('VACIAR PUSHKA', 'EMPTY PUSHKA', 'VIDER LA PUSHKA', 'רוקן פושקה');
+
+  /// Separa el boton de Apple Pay del de "otro medio de pago". Minuscula a
+  /// proposito: no es un titulo, es una conjuncion entre dos caminos.
+  String get orSeparator => _t('o', 'or', 'ou', 'או');
   String get changePushkaGoal => _t(
     'CAMBIAR META DE PUSHKA',
     'CHANGE PUSHKA GOAL',
