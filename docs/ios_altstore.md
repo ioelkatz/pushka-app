@@ -37,7 +37,7 @@ workflow.
 ## Prerequisites (all $0)
 
 - [ ] An Apple ID (the same one you use on the iPhone). Free.
-- [ ] iPhone running iOS 13+, with the **TestFlight** app NOT needed (we use AltStore instead).
+- [ ] iPhone running iOS 15+, with the **TestFlight** app NOT needed (we use AltStore instead).
 - [ ] Windows 10/11 PC with USB cable to the iPhone.
 - [ ] iTunes (Microsoft Store version) + iCloud for Windows. AltServer
       depends on iTunes' Apple Mobile Device Service to talk to the phone.
