@@ -95,3 +95,6 @@ landing/instalar/*.apk
 # Base64 de los archivos de Firebase para pegar en Codemagic. Son los mismos
 # secretos que ya ignoramos arriba, solo que codificados — no deben commitearse.
 .codemagic_envvars_tmp/
+
+# Credenciales de las cuentas de revision de las tiendas
+review-accounts.env
