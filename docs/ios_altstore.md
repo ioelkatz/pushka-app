@@ -56,13 +56,13 @@ dart pub global activate flutterfire_cli
 
 flutterfire configure --project=pushka-app-ioel-test \
   --platforms=ios,android \
-  --ios-bundle-id=com.pushka.app \
+  --ios-bundle-id=com.jabadencampus.pushka \
   --out=lib/firebase_options_dev.dart --yes
 # Open the file and rename: class DefaultFirebaseOptions → class DevFirebaseOptions
 
 flutterfire configure --project=pushka-app-ioel \
   --platforms=ios,android \
-  --ios-bundle-id=com.pushka.app \
+  --ios-bundle-id=com.jabadencampus.pushka \
   --out=lib/firebase_options_prod.dart --yes
 # Same rename: class DefaultFirebaseOptions → class ProdFirebaseOptions
 ```
@@ -81,7 +81,7 @@ app there so `flutterfire configure` can pick it up + so App Check can
 accept debug tokens for it.
 
 1. Firebase Console → `pushka-app-ioel-test` → ⚙️ → Your apps → Add app → iOS
-2. Bundle ID: `com.pushka.app`
+2. Bundle ID: `com.jabadencampus.pushka`
 3. Skip the SDK steps (FlutterFire handles them)
 4. Download `GoogleService-Info.plist` (this is a different file than the
    Android one)
@@ -155,7 +155,7 @@ To base64 a file on Windows:
 4. AltStore is now an app on your iPhone.
 
 > **Free Apple ID limit**: 3 different bundle IDs per 7 days. Pushka uses
-> 1 (`com.pushka.app`), so you have 2 left for other sideloaded apps.
+> 1 (`com.jabadencampus.pushka`), so you have 2 left for other sideloaded apps.
 
 ---
 

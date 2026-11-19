@@ -2,7 +2,7 @@
   "applinks": {
     "details": [
       {
-        "appIDs": ["PB777BVGBV.com.pushka.app"],
+        "appIDs": ["PB777BVGBV.com.jabadencampus.pushka"],
         "components": [
           { "/": "/join/*", "comment": "Deep link to join a tenant via slug" },
           { "/": "/donation-success*", "comment": "Post-checkout redirect from Stripe" },
@@ -13,6 +13,6 @@
     ]
   },
   "webcredentials": {
-    "apps": ["PB777BVGBV.com.pushka.app"]
+    "apps": ["PB777BVGBV.com.jabadencampus.pushka"]
   }
 }

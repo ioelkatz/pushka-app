@@ -18,6 +18,22 @@ Two Firebase projects, two Stripe modes, two Android applicationIds — switched
 
 Both APKs install side-by-side on the same device (different applicationId). Dev shows as **"Pushka Test"** in the launcher; prod as **"Pushka"**.
 
+> ⚠️ **iOS usa otro identificador: `com.jabadencampus.pushka`.**
+>
+> La tabla de arriba es de Android. En iOS el bundle id NO es `com.pushka.app`:
+> ese identificador ya está registrado en otra cuenta de Apple Developer, y los
+> bundle ids son únicos a nivel mundial, así que JYM Inc no puede usarlo. No es
+> un descuido ni algo a "corregir" — es a propósito y no tiene vuelta atrás
+> salvo que el dueño actual lo libere.
+>
+> Mismo criterio para el merchant id de Apple Pay: `merchant.com.jabadencampus.pushka`.
+>
+> Que difieran no afecta nada en runtime: Firebase, Stripe y las tiendas tratan
+> cada plataforma por separado. Pero sí importa al tocar `Runner.entitlements`,
+> el `apple-app-site-association` o el `BUNDLE_ID` de `codemagic.yaml`. El
+> `assetlinks.json` y el `package_name` de `functions/index.js` siguen siendo
+> `com.pushka.app` porque son de Android.
+
 ## Build & run
 
 ### Dev (recommended for daily work — no real money, test cards work)
@@ -270,7 +286,7 @@ could squat a legacy tenant's slug.
 - [ ] **Candid Seal of Transparency (Bronze) para JYM Inc.** — sin esto la
       guideline 3.2.2(iv) rechaza una app que recauda caridad adentro. Gratis,
       ~15 min, en guidestar.org. Es el bloqueo real de la submission.
-- [ ] Create Apple Pay merchant ID (`merchant.com.pushka.app`) + bind it to
+- [ ] Create Apple Pay merchant ID (`merchant.com.jabadencampus.pushka`) + bind it to
       the App ID, y el round-trip del certificado con Stripe
 - [ ] App Store Connect API key (`.p8`) con rol **Admin** (no App Manager:
       el workflow crea certificados y App Manager no puede) → Codemagic

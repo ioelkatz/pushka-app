@@ -8,7 +8,7 @@ Codemagic web UI.**
 The `codemagic.yaml` at the repo root already encodes both workflows:
 
 - `ios-testflight-dev` — Stripe test keys + Firebase test project. Runs on
-  every push to `dev`. Uses bundle id `com.pushka.app`.
+  every push to `dev`. Uses bundle id `com.jabadencampus.pushka`.
 - `ios-testflight-prod` — Stripe live keys + Firebase prod project. Manual
   trigger only.
 
@@ -67,7 +67,7 @@ spread across whichever services are still verifying you.
 
 1. **Identifiers → +** → "App IDs" → "App"
 2. **Description**: `Pushka`
-3. **Bundle ID** (Explicit): `com.pushka.app`
+3. **Bundle ID** (Explicit): `com.jabadencampus.pushka`
 4. **Capabilities**: tick
    - Apple Pay Payment Processing
    - Associated Domains
@@ -80,23 +80,23 @@ spread across whichever services are still verifying you.
 
 1. **Identifiers → +** → "Merchant IDs"
 2. **Description**: `Pushka donations`
-3. **Identifier**: `merchant.com.pushka.app`
+3. **Identifier**: `merchant.com.jabadencampus.pushka`
 4. Save.
 
 > The same string is hard-coded in `ios/Runner/Runner.entitlements` and
-> passed to Stripe via `--dart-define=STRIPE_MERCHANT_ID=merchant.com.pushka.app`
+> passed to Stripe via `--dart-define=STRIPE_MERCHANT_ID=merchant.com.jabadencampus.pushka`
 > at build time (Codemagic env var).
 
 ### 1c. Bind the merchant ID to the App ID
 
 1. Open the App ID created in 1a → "Edit"
-2. Apple Pay Payment Processing → "Configure" → tick `merchant.com.pushka.app`
+2. Apple Pay Payment Processing → "Configure" → tick `merchant.com.jabadencampus.pushka`
 3. Save.
 
 ### 1d. Generate the Apple Pay Payment Processing certificate
 
 1. Stripe Dashboard → Settings → Payment methods → Apple Pay → "Add new
-   merchant ID" → enter `merchant.com.pushka.app` → download the CSR
+   merchant ID" → enter `merchant.com.jabadencampus.pushka` → download the CSR
    Stripe gives you.
 2. Apple Developer Portal → the merchant ID → "Create Certificate" →
    upload the CSR from Stripe.
@@ -131,14 +131,14 @@ assets either.
 
 ## 2. Firebase Console — register the iOS app in BOTH projects
 
-You need to register `com.pushka.app` as an iOS app in both
+You need to register `com.jabadencampus.pushka` as an iOS app in both
 `pushka-app-ioel-test` (dev workflow) and `pushka-app-ioel` (prod workflow).
 
 For each project:
 
 1. Firebase Console → the project → ⚙️ Project Settings → "Your apps" →
    "Add app" → iOS icon.
-2. **Apple bundle ID**: `com.pushka.app`
+2. **Apple bundle ID**: `com.jabadencampus.pushka`
 3. **App nickname**: `Pushka iOS` (or whatever).
 4. Skip the SDK-add steps (FlutterFire handles them).
 5. Download the `GoogleService-Info.plist`. Save with a descriptive name
@@ -164,7 +164,7 @@ dart pub global activate flutterfire_cli
 
 flutterfire configure --project=pushka-app-ioel-test \
   --platforms=ios,android \
-  --ios-bundle-id=com.pushka.app \
+  --ios-bundle-id=com.jabadencampus.pushka \
   --out=lib/firebase_options_dev.dart --yes
 
 # Open lib/firebase_options_dev.dart and rename:
@@ -172,7 +172,7 @@ flutterfire configure --project=pushka-app-ioel-test \
 
 flutterfire configure --project=pushka-app-ioel \
   --platforms=ios,android \
-  --ios-bundle-id=com.pushka.app \
+  --ios-bundle-id=com.jabadencampus.pushka \
   --out=lib/firebase_options_prod.dart --yes
 
 # Same rename:
@@ -222,7 +222,7 @@ Codemagic → **App settings → Environment variables**.
 | Variable | Value | Secure? |
 |---|---|---|
 | `STRIPE_PUBLISHABLE_KEY` | `pk_test_…` (from your Stripe test dashboard) | yes |
-| `STRIPE_MERCHANT_ID` | `merchant.com.pushka.app` | yes |
+| `STRIPE_MERCHANT_ID` | `merchant.com.jabadencampus.pushka` | yes |
 | `GOOGLE_SERVICE_INFO_PLIST_B64` | base64 of `GoogleService-Info-test.plist` | yes |
 | `FIREBASE_OPTIONS_DEV_DART_B64` | base64 of `lib/firebase_options_dev.dart` | yes |
 | `FIREBASE_OPTIONS_PROD_DART_B64` | base64 of `lib/firebase_options_prod.dart` | yes |
@@ -232,7 +232,7 @@ Codemagic → **App settings → Environment variables**.
 | Variable | Value | Secure? |
 |---|---|---|
 | `STRIPE_PUBLISHABLE_KEY` | `pk_live_…` | yes |
-| `STRIPE_MERCHANT_ID` | `merchant.com.pushka.app` | yes |
+| `STRIPE_MERCHANT_ID` | `merchant.com.jabadencampus.pushka` | yes |
 | `GOOGLE_SERVICE_INFO_PLIST_B64` | base64 of `GoogleService-Info-prod.plist` | yes |
 | `FIREBASE_OPTIONS_DEV_DART_B64` | base64 of `lib/firebase_options_dev.dart` | yes |
 | `FIREBASE_OPTIONS_PROD_DART_B64` | base64 of `lib/firebase_options_prod.dart` | yes |
@@ -274,7 +274,7 @@ Once the TestFlight build is on the phone, run through:
       Google Sign-In is offered).
 - [ ] **Tenant join**: enter a test tenant code from `pushka-app-ioel-test`.
 - [ ] **One-shot donation**: Apple Pay sheet should open with the
-      `merchant.com.pushka.app` identity. Use a test card.
+      `merchant.com.jabadencampus.pushka` identity. Use a test card.
 - [ ] **Recurring donation**: Mensual + Apple Pay. Verify sub appears in
       "Mis donaciones recurrentes".
 - [ ] **Cancel sub**: chevron tap → confirm → list refreshes.
