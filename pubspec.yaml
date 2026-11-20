@@ -81,7 +81,6 @@ dependencies:
   # iOS App Tracking Transparency — required by Apple for any SDK that may
   # use IDFA-equivalents (Firebase Analytics, Crashlytics). On Android this
   # package is a silent no-op so it's safe to call unconditionally.
-  app_tracking_transparency: ^2.0.6+1
   # Disk-cached network images — used for tenant org logos rendered in the
   # account switcher / join screens / tenant code screen. Without caching
   # every screen mount re-downloads the same logo from Firebase Storage,
