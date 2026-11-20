@@ -1,9 +1,5 @@
-import 'dart:io' show Platform;
 
 import 'package:flutter/foundation.dart';
-import 'package:flutter/widgets.dart' show WidgetsBinding;
-import 'package:app_tracking_transparency/app_tracking_transparency.dart';
-import 'package:firebase_analytics/firebase_analytics.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_app_check/firebase_app_check.dart';
 import 'package:firebase_crashlytics/firebase_crashlytics.dart';
@@ -139,48 +135,19 @@ Future<void> _performDeferredInit() async {
     _initFeedback(),
   ], eagerError: false);
 
-  // App Tracking Transparency (iOS only). Apple rejects apps that ship with
-  // any IDFA-equivalent SDK (Firebase Analytics counts) without prompting
-  // the user via requestTrackingAuthorization first. The package is a
-  // no-op on Android — wrapping in Platform.isIOS keeps the call site
-  // explicit. We disable Firebase Analytics + Crashlytics auto-collection
-  // when the user declines, since both can attribute behavior to a device
-  // identifier behind the scenes.
+  // Sin App Tracking Transparency, a proposito. Si volves a agregarlo, leer
+  // esto primero: el prompt estaba porque se creia que Apple exigia pedirlo
+  // al shippear cualquier SDK con IDFA, contando Firebase Analytics. Eso ya
+  // no es cierto — Analytics dejo de tomar el IDFA hace varias versiones
+  // mayores. Mientras el plugin estuvo, el binario le declaraba a Apple la
+  // capacidad de rastrear y eso contradecia el cuestionario de privacidad,
+  // que dice que no rastreamos: App Store Connect bloqueaba el envio con
+  // BINARY_INDICATES_APP_TRACKS_USERS.
   //
-  // Run AFTER FirebaseAppCheck.activate so App Check tokens still mint
-  // (App Check uses DeviceCheck/Play Integrity, NOT IDFA — independent of
-  // ATT). Run AFTER first frame (a 600ms breath) so the system prompt
-  // doesn't race the splash teardown.
-  if (!kIsWeb && Platform.isIOS) {
-    try {
-      // Round-8 audit MEDIUM fix: wait for the FIRST FRAME to render (not
-      // a hardcoded 600ms wall-clock) — the delay was avoiding a race
-      // where the ATT prompt appeared during splash teardown. Waiting on
-      // the actual frame is deterministic and typically much faster than
-      // 600ms on modern devices; on slow devices it gives extra margin.
-      await WidgetsBinding.instance.endOfFrame;
-      final status =
-          await AppTrackingTransparency.requestTrackingAuthorization();
-      final granted = status == TrackingStatus.authorized;
-      // Disable both analytics + crashlytics auto-collection when not
-      // granted. Crash REPORTING still works (manual recordError calls)
-      // but won't auto-attach device identifiers across sessions.
-      try {
-        await FirebaseAnalytics.instance.setAnalyticsCollectionEnabled(granted);
-        await FirebaseCrashlytics.instance.setCrashlyticsCollectionEnabled(
-          granted,
-        );
-      } catch (e) {
-        debugPrint('appDeferredInit: ATT analytics gate apply failed: $e');
-      }
-    } catch (e) {
-      // Older iOS (< 14) doesn't support ATT; the package returns
-      // TrackingStatus.notSupported but throws on edge devices. Treat
-      // failure as "user did not opt in" — keep analytics off until next
-      // launch when we can prompt again.
-      debugPrint('appDeferredInit: ATT request failed: $e');
-    }
-  }
+  // Consecuencia a tener presente: Analytics y Crashlytics quedan activos
+  // siempre. Antes el prompt servia de consentimiento y los apagaba si el
+  // usuario decia que no. Si hace falta volver a ofrecer esa opcion, va por
+  // una preferencia propia en Ajustes, no por ATT.
 
   // Two parallel deep-link surfaces (different concerns, same `app_links` package):
   //  - DeepLinkService (mine): static `pushka://<route>` whitelist for
