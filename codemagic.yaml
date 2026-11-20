@@ -167,10 +167,32 @@ definitions:
         xcode-project use-profiles --project "ios/Runner.xcodeproj"
 
     - &bump_build_number
-      name: Bump build number from App Store Connect
+      name: Bump build number
       script: |
-        BUILD_NUMBER=$(($(app-store-connect get-latest-app-store-build-number "$BUNDLE_ID") + 1))
-        echo "Using build number $BUILD_NUMBER"
+        # `get-latest-app-store-build-number` mira los builds de versiones YA
+        # PUBLICADAS en App Store. Mientras no haya ninguna publicada devuelve
+        # 0, el +1 da 1, y la subida rebota contra el build 1 que ya esta en
+        # TestFlight:
+        #
+        #   The bundle version must be higher than the previously uploaded
+        #   version: '1'  (ENTITY_ERROR.ATTRIBUTE.INVALID.DUPLICATE)
+        #
+        # Es un bucle: siempre propone 1 hasta que exista una version
+        # publicada, o sea justo cuando mas se necesita que funcione.
+        #
+        # Se usa el contador de builds del propio Codemagic, que es monotono
+        # por proyecto y hoy ya va por 7. Como todas las subidas salen de aca,
+        # nunca va a chocar con algo subido antes. Se toma el maximo contra lo
+        # que haya en TestFlight por si alguien sube a mano alguna vez; si ese
+        # comando falla o no existe, el || deja el fallback en 0 y manda el
+        # contador de Codemagic igual.
+        LATEST=$(app-store-connect get-latest-testflight-build-number "$APP_STORE_APP_ID" 2>/dev/null || echo 0)
+        case "$LATEST" in ''|*[!0-9]*) LATEST=0 ;; esac
+        BUILD_NUMBER=$(( LATEST + 1 ))
+        if [ "$PROJECT_BUILD_NUMBER" -gt "$BUILD_NUMBER" ]; then
+          BUILD_NUMBER=$PROJECT_BUILD_NUMBER
+        fi
+        echo "TestFlight tiene $LATEST; Codemagic va por $PROJECT_BUILD_NUMBER; se usa $BUILD_NUMBER"
         echo "BUILD_NUMBER=$BUILD_NUMBER" >> $CM_ENV
 
 workflows:
@@ -186,6 +208,7 @@ workflows:
         - pushka_dev_secrets
       vars:
         BUNDLE_ID: com.jabadencampus.pushka
+        APP_STORE_APP_ID: "6836943643"
         XCODE_PROJECT: ios/Runner.xcodeproj
         XCODE_SCHEME: Runner
     triggering:
@@ -234,6 +257,7 @@ workflows:
         - pushka_prod_secrets
       vars:
         BUNDLE_ID: com.jabadencampus.pushka
+        APP_STORE_APP_ID: "6836943643"
         XCODE_PROJECT: ios/Runner.xcodeproj
         XCODE_SCHEME: Runner
     triggering:
@@ -316,6 +340,7 @@ workflows:
                                # FIREBASE_OPTIONS_*_DART_B64
       vars:
         BUNDLE_ID: com.jabadencampus.pushka
+        APP_STORE_APP_ID: "6836943643"
         XCODE_PROJECT: ios/Runner.xcodeproj
         XCODE_SCHEME: Runner
     triggering:
