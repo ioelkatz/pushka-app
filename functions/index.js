@@ -1646,7 +1646,15 @@ exports.createPaymentIntent = onCall(
       // automatically when "card" is enabled AND the client passes
       // applePay/googlePay config to PaymentSheet (see stripe_service.dart).
       // The wallet identifier ends up under card.wallet.type on the charge.
-      payment_method_types: ["card"],
+      //
+      // "link" agregado el 2026-11-25. El PaymentSheet mostraba el boton de
+      // Link igual (Stripe lo decide por la configuracion de la cuenta), pero
+      // con solo "card" el pago no se podia confirmar. Se habilita solo en
+      // las donaciones: guardar tarjeta (createSetupIntent) y el vaciado
+      // automatico (off_session) siguen en "card", y el cliente oculta Link
+      // en setupCard(). El webhook guarda el metodo como "link" y la app lo
+      // muestra como tarjeta (PaymentMethod cae a card por defecto).
+      payment_method_types: ["card", "link"],
       ...connectParams,
       metadata: {
         uid: request.auth.uid,
@@ -1754,6 +1762,32 @@ exports.createPaymentIntent = onCall(
       stripe.paymentIntents.create(piParams, { idempotencyKey: `${idempotencyKey}_r1`, stripeAccount: tenantConnectAccountId }),
       stripe.customerSessions.create(customerSessionParams, stripeReqOpts),
     ]);
+  }
+
+  // Respaldo de Link: si la cuenta conectada del tenant no tiene Link
+  // habilitado, Stripe rechaza el PaymentIntent ENTERO por el tipo "link".
+  // Sin esto, habilitar Link podria tirar todas las donaciones de ese tenant.
+  // Se reintenta una vez solo con "card" (clave de idempotencia distinta,
+  // porque los parametros cambian) y el donante paga como antes, sin Link.
+  if (
+    piResult.status === "rejected" &&
+    piParams.payment_method_types.includes("link") &&
+    (piResult.reason?.type === "StripeInvalidRequestError" ||
+      piResult.reason?.type === "invalid_request_error") &&
+    (String(piResult.reason?.param || "").startsWith("payment_method_types") ||
+      /link/i.test(String(piResult.reason?.message || "")))
+  ) {
+    console.warn("createPaymentIntent: Link no disponible en la cuenta conectada, reintento solo con card", {
+      uid: request.auth.uid,
+      tenantId: tenantId || null,
+      connectAccountId: tenantConnectAccountId || null,
+      errorCode: piResult.reason?.code,
+      errorMessage: piResult.reason?.message,
+    });
+    piParams.payment_method_types = ["card"];
+    piResult = (await Promise.allSettled([
+      stripe.paymentIntents.create(piParams, { idempotencyKey: `${idempotencyKey}_cardonly`, stripeAccount: tenantConnectAccountId }),
+    ]))[0];
   }
 
   if (piResult.status === "rejected") {
