@@ -7,14 +7,29 @@
   Stripe + flutter_local_notifications + Hive) and the data types
   collected.
 
-  IMPORTANT — Xcode setup (do on Mac before first upload):
-    1. Open ios/Runner.xcworkspace
-    2. Right-click Runner group → Add Files to "Runner"
-    3. Select this file (PrivacyInfo.xcprivacy)
-    4. Ensure "Copy items if needed" is unchecked, target Runner IS checked
-    5. Verify Target Runner → Build Phases → Copy Bundle Resources
-       contains this file (Xcode may add it under a "Resources" build
-       phase automatically).
+  ⚠️ ESTADO REAL AL 2026-11-23: este archivo NO esta en el target de Xcode.
+  `grep -c PrivacyInfo.xcprivacy ios/Runner.xcodeproj/project.pbxproj`
+  devuelve 0, asi que no se copia al bundle y los binarios subidos (builds
+  16 y 17) viajan SIN manifiesto propio de la app.
+
+  Las instrucciones que habia aca decian "do on Mac before first upload" y
+  nunca se ejecutaron, porque no hay Mac en este proyecto: se compila en
+  Codemagic. No hacen falta: agregar el archivo al target es editar
+  project.pbxproj a mano (una PBXFileReference, una entrada en el grupo
+  Runner y una en la build phase de Resources), que se puede hacer desde
+  Windows.
+
+  Por que no se hizo todavia: agregarlo cambia el contenido del bundle, y
+  al 2026-11-23 la v1.0 esta en revision. Los uploads pasaron el chequeo
+  automatico de Apple sin ITMS-91053, probablemente porque los pods de
+  Firebase y Stripe ya traen sus propios manifiestos y cubren las Required
+  Reason APIs que de verdad se usan. O sea: embarcarlo es lo correcto, pero
+  no es lo que esta bloqueando nada hoy.
+
+  Si se agrega al target, verificar ANTES que NSPrivacyTracking siga en
+  false (ver el comentario mas abajo). Con true, el binario vuelve a
+  marcarse como rastreador y la submission rebota con
+  BINARY_INDICATES_APP_TRACKS_USERS.
 
   Third-party SDKs (Firebase pods, Stripe pods) ship their own privacy
   manifests as of current versions — CocoaPods merges them at build.
@@ -22,23 +37,29 @@
 -->
 <plist version="1.0">
 <dict>
-    <key>NSPrivacyTracking</key>
-    <true/>
     <!--
-      Domains Firebase Analytics + Crashlytics reach when the user grants
-      ATT (setAnalyticsCollectionEnabled(true) after
-      requestTrackingAuthorization). Apple hard-rejects binaries that
-      declare NSPrivacyTracking=true with an empty domains array — it
-      reads as "we track but won't say where". If in the future we drop
-      ATT entirely (never call requestTrackingAuthorization), flip
-      NSPrivacyTracking to false and empty this array in the same commit.
+      false desde 2026-11-23. Estaba en true con dominios de tracking, que
+      era correcto mientras la app pedia ATT. ATT se removio el 2026-11-21
+      porque Apple rechazaba la submission con
+      BINARY_INDICATES_APP_TRACKS_USERS, y este archivo quedo sin actualizar:
+      la condicion que su propio comentario anterior describia ("si alguna vez
+      dejamos de llamar requestTrackingAuthorization, poner false y vaciar el
+      array") se cumplio y nadie la aplico.
+
+      Sin ATT la app no accede al IDFA, asi que no hay tracking en el sentido
+      de Apple. Firebase Analytics sigue corriendo, pero eso se declara como
+      PerformanceData / ProductInteraction en NSPrivacyCollectedDataTypes y en
+      las respuestas de App Privacy, no como tracking.
+
+      Con NSPrivacyTracking en false el array de dominios TIENE que quedar
+      vacio: Apple rechaza la combinacion false + dominios declarados.
+      Si alguna vez se vuelve a agregar ATT, hay que revertir las dos cosas
+      juntas y en el mismo commit.
     -->
+    <key>NSPrivacyTracking</key>
+    <false/>
     <key>NSPrivacyTrackingDomains</key>
-    <array>
-        <string>app-measurement.com</string>
-        <string>firebase-settings.crashlytics.com</string>
-        <string>firebase-crashlytics-reports-pa.googleapis.com</string>
-    </array>
+    <array/>
     <key>NSPrivacyCollectedDataTypes</key>
     <array>
         <dict>
