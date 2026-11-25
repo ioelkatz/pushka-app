@@ -469,6 +469,17 @@ class StripeService {
           customerEphemeralKeySecret: hasCustomerContext && !hasSessionAuth ? ephemeralKeySecret : null,
           applePay: _applePayConfig,
           googlePay: _googlePayConfigFor(currency),
+          // Link oculto, igual que en setupCard(). Stripe muestra "Pay with
+          // Link" segun la configuracion de la CUENTA, aunque el
+          // PaymentIntent declare payment_method_types: ['card'] (ver
+          // createPaymentIntent en functions/index.js). El usuario completaba
+          // los datos de Link y el pago no se podia confirmar. Ademas los
+          // cobros son directos en la cuenta conectada del tenant. Las
+          // billeteras que si soportamos (Apple Pay / Google Pay) van como
+          // tarjeta y no se ven afectadas.
+          linkDisplayParams: const LinkDisplayParams(
+            linkDisplay: LinkDisplay.never,
+          ),
         ),
       );
       debugPrint('StripeService.pay: initPaymentSheet returned in ${sw.elapsedMilliseconds}ms');
@@ -652,6 +663,17 @@ class StripeService {
           customerEphemeralKeySecret: hasCustomerContext && !hasSessionAuth ? ephemeralKeySecret : null,
           applePay: _applePayConfig,
           googlePay: _googlePayConfigFor(currency),
+          // Link oculto, igual que en setupCard(). Stripe muestra "Pay with
+          // Link" segun la configuracion de la CUENTA, aunque el
+          // PaymentIntent declare payment_method_types: ['card'] (ver
+          // createPaymentIntent en functions/index.js). El usuario completaba
+          // los datos de Link y el pago no se podia confirmar. Ademas los
+          // cobros son directos en la cuenta conectada del tenant. Las
+          // billeteras que si soportamos (Apple Pay / Google Pay) van como
+          // tarjeta y no se ven afectadas.
+          linkDisplayParams: const LinkDisplayParams(
+            linkDisplay: LinkDisplay.never,
+          ),
         ),
       );
     } on StripeException catch (e, st) {
