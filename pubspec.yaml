@@ -72,7 +72,11 @@ dependencies:
   lottie: ^3.1.0
   fl_chart: ^1.2.0
   smooth_page_indicator: ^2.0.1
-  flutter_haptic_feedback: ^1.0.0
+  # flutter_haptic_feedback: REMOVIDO 2026-11-25. Su register(with:) hace
+  # `UIApplication.shared.keyWindow?.rootViewController as! FlutterViewController`,
+  # y en el arranque keyWindow es nil -> SIGTRAP en GeneratedPluginRegistrant.
+  # Crasheaba el 100% de los arranques en iOS y provoco el rechazo de la v1.0.
+  # Nunca se importo: el codigo usa HapticFeedback de package:flutter/services.dart.
   hive_flutter: ^1.1.0
   image_picker: ^1.1.2
   firebase_storage: ^13.0.0

@@ -47,6 +47,15 @@
 		<true/>
 		<key>UIStatusBarHidden</key>
 		<false/>
+		<!-- Client OAuth iOS de PRODUCCION (pushka-app-ioel), el mismo que
+		     iosClientId en lib/firebase_options_prod.dart y cuyo REVERSED esta
+		     en CFBundleURLSchemes abajo: los dos tienen que coincidir.
+		     google_sign_in_ios lo busca aca o en GoogleService-Info.plist, y ese
+		     plist NO esta en el target de Xcode (y el local es del proyecto de
+		     test). Sin esta clave el login con Google en iOS falla con
+		     "No active configuration. Make sure GIDClientID is set". -->
+		<key>GIDClientID</key>
+		<string>846580817724-gsr4n2v0nm96kc3m52mqb2ska6chtkkq.apps.googleusercontent.com</string>
 		<key>CFBundleURLTypes</key>
 		<array>
 			<dict>
