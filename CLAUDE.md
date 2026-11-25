@@ -281,25 +281,140 @@ could squat a legacy tenant's slug.
 > requiere una Mac: `codemagic.yaml` compila en un mac mini M2 en la nube y
 > las capturas salen del iPhone con el build de TestFlight.
 
+Estado al 2026-11-23. La v1.0 está enviada y en cola de revisión.
+
 - [x] Apple Developer Program — **JYM Inc.**, tipo Nonprofit, con el fee
       eximido. Aprobada 2026-11. Enrollment `NWMN54KFAM`.
-- [ ] **Candid Seal of Transparency (Bronze) para JYM Inc.** — sin esto la
-      guideline 3.2.2(iv) rechaza una app que recauda caridad adentro. Gratis,
-      ~15 min, en guidestar.org. Es el bloqueo real de la submission.
-- [ ] Create Apple Pay merchant ID (`merchant.com.jabadencampus.pushka`) + bind it to
-      the App ID, y el round-trip del certificado con Stripe
-- [ ] App Store Connect API key (`.p8`) con rol **Admin** (no App Manager:
+- [x] **Candid Seal of Transparency para JYM Inc.** — ya estaba ganado
+      ("Bronze Transparency 2026"); se descubrió el 2026-11-21 al verificar,
+      después de haberlo tratado como bloqueo durante días. Sin esto la
+      guideline 3.2.2(iv) rechaza una app que recauda caridad adentro.
+- [x] Apple Pay merchant ID `merchant.com.jabadencampus.pushka` (`HJY3J7V6D8`)
+      creado y vinculado al App ID, y el round-trip del certificado con Stripe
+      completo (CSR de Stripe → firma de Apple → `.cer` de vuelta a Stripe),
+      2026-11-22. El CSR **tiene que** salir del dashboard de Stripe: uno
+      hecho con OpenSSL falla después con "You haven't added your Apple
+      merchant account to Stripe", que no menciona el CSR.
+- [x] App Store Connect API key (`.p8`) con rol **Admin** (no App Manager:
       el workflow crea certificados y App Manager no puede) → Codemagic
-- [ ] Set `MERCHANT_IDENTIFIER` dart-define so `StripeConfig.merchantIdentifier` is non-empty (la clave del dart-define es `STRIPE_MERCHANT_ID`)
-- [x] `apple-app-site-association` con el Team ID real (`PB777BVGBV`), en
-      `public/.well-known/` y `web/.well-known/`. **Falta desplegarlo**:
-      hasta que corra `firebase deploy --only hosting` se sigue sirviendo la
-      versión con el placeholder y los universal links no verifican.
-- [ ] Associated Domains ya declarado en `ios/Runner/Runner.entitlements` (`app.jabadencampus.com` + `pushka-app-ioel.web.app`)
-- [ ] Configure Apple Push Notifications certificates (Firebase Console → Cloud Messaging → APNs)
-- [ ] Configure App Check DeviceCheck/AppAttest in Firebase Console
-- [ ] Test ATT prompt fires on first launch (already wired in `app_initializer.dart`)
-- [ ] Submit to App Store Review
+- [x] `STRIPE_MERCHANT_ID` cargado en el grupo `pushka_prod_secrets` de
+      Codemagic (2026-11-23). **El build 16 salió sin esta variable**, así que
+      no mostraba Apple Pay: `_applePayConfig` devuelve `null` con
+      `merchantIdentifier` vacío. El build 17 es el primero con el botón
+      activo. Ojo: **no está en `pushka_dev_secrets`**, así que un build de
+      dev tampoco lo muestra.
+- [~] `apple-app-site-association` con el Team ID real (`PB777BVGBV`).
+      Desplegado solo en el target `assetlinks` (`firebase deploy --only
+      hosting:assetlinks`). **`web/.well-known/` sigue sin desplegar**, así
+      que `app.jabadencampus.com` todavía sirve la versión vieja y sus
+      universal links no verifican. Falta `flutter build web` +
+      `firebase deploy --only hosting:pwa`, que publica el `dev` actual al
+      web app en vivo — por eso quedó deferido, no por olvido.
+- [x] Associated Domains declarado en `ios/Runner/Runner.entitlements`
+      (`app.jabadencampus.com` + `pushka-app-ioel.web.app`)
+- [ ] Configure Apple Push Notifications certificates (Firebase Console →
+      Cloud Messaging → APNs)
+- [ ] **Configure App Check App Attest in Firebase Console** — sin verificar
+      al 2026-11-23, y es el riesgo más grande que queda. El build de release
+      usa `AppleAppAttestWithDeviceCheckFallbackProvider`; si App Attest no
+      está registrado para la app iOS (`1:846580817724:ios:530a28637707e95b98c839`)
+      en `pushka-app-ioel`, App Check rechaza todos los tokens, las 26 CFs con
+      enforcement rebotan todo, y el revisor ve una app que no carga nada:
+      rechazo seguro por 2.1. Con `IPHONEOS_DEPLOYMENT_TARGET = 15.0` todos
+      los dispositivos soportan App Attest, así que el fallback a DeviceCheck
+      es código muerto y alcanza con configurar App Attest.
+- [ ] Verificar que el proveedor **Apple** esté habilitado en Firebase
+      Authentication. El código está completo (botón en `login_screen.dart`,
+      flujo en `auth_controller.signInWithApple`) y la guideline 4.8 lo exige
+      porque ofrecemos login con Google; pero sin el proveedor configurado en
+      consola el diálogo de Apple abre y después falla al canjear el token.
+- [x] Submit to App Store Review — enviada 2026-11-21 16:19 UTC,
+      `reviewSubmission a49137bf-00dd-4885-85de-322c402cc0d8`, v1.0 con el
+      build 16 adjunto, `releaseType = AFTER_APPROVAL` (publica sola al
+      aprobarse).
+
+> ⚠️ **ATT fue removido a propósito — no volver a agregarlo.** El paquete
+> `app_tracking_transparency` y su bloque en `app_initializer.dart` se
+> sacaron el 2026-11-21 porque Apple rechazaba la submission con
+> `BINARY_INDICATES_APP_TRACKS_USERS`: el solo hecho de linkear el framework
+> marca la app como rastreadora, y eso exige declarar tracking en App
+> Privacy. La app no rastrea a nadie. Ver el comentario en
+> `app_initializer.dart` donde estaba el bloque.
+
+> ⚠️ **Los tres workflows de iOS comparten el bundle id.** `ios-testflight-dev`,
+> `ios-testflight-prod` y `ios-altstore-debug` usan todos
+> `com.jabadencampus.pushka` — en iOS no hay identificador separado por
+> entorno como en Android (`com.pushka.app` vs `.test`). Consecuencia: un
+> build de dev, con llaves de Stripe **de prueba** y Firebase de dev, sube al
+> mismo listado de App Store Connect y solo se distingue por el número de
+> build. Si se adjunta el equivocado a la versión de la tienda se publica la
+> app con llaves de test y nada visible lo delata. Verificar siempre de qué
+> workflow salió el build antes de adjuntarlo.
+
+> **Subir un build NO afecta una revisión en curso.** Los builds nuevos entran
+> al listado de TestFlight sin tocar el que está adjunto a la versión enviada.
+> Lo que cuesta el lugar en la cola es *reemplazar* el build de la versión
+> (cancelar la submission, adjuntar otro, reenviar). Verificado el 2026-11-23:
+> se subió el build 17 con la v1.0 en `WAITING_FOR_REVIEW` y la submission
+> quedó intacta.
+
+> **TestFlight: grupo interno creado el 2026-11-25.** Hasta esa fecha
+> `betaGroups` → 0 y el `beta_groups: [Internal Testers]` de `codemagic.yaml`
+> apuntaba a un grupo inexistente, así que el publishing "funcionaba" pero
+> nadie podía instalar nada y **ningún build de iOS se había ejecutado nunca
+> en un dispositivo**.
+>
+> Ahora existe el grupo `Internal Testers` (id `dc8c38ce-3837-482b-a743-b024d478316e`),
+> interno, con `hasAccessToAllBuilds=true` — por eso ve los builds 1, 16 y 17 y
+> va a ver los futuros. El nombre es **exactamente** el que referencia
+> `codemagic.yaml`: no renombrarlo sin cambiar el yaml, o la distribución
+> automática vuelve a apuntar a la nada.
+>
+> Secuencia obligatoria para un tester interno (el orden importa):
+> 1. `POST /v1/userInvitations` — alta como usuario de App Store Connect.
+>    Rol mínimo que habilita TestFlight: `MARKETING`. Con
+>    `allAppsVisible:false` + relación `visibleApps` solo ve esta app.
+>    La invitación vence pronto — el `expirationDate` que devolvió Apple el
+>    2026-11-25 fue 2026-11-28, o sea ~3 días. Leer siempre ese campo.
+> 2. Esperar a que **acepte**. Sin eso, `POST /v1/betaTesters` devuelve
+>    `409 Tester(s) cannot be assigned`. No es un bug: un grupo interno solo
+>    admite usuarios de ASC ya existentes.
+> 3. `POST /v1/betaTesters` con la relación al grupo.
+>
+> El mail invitado tiene que ser **el Apple ID de la App Store del iPhone**:
+> TestFlight usa la cuenta de Media y Compras del dispositivo, no la del
+> invitado. Si no coinciden, la app no aparece.
+>
+> Para testers **externos** hace falta llenar `betaAppLocalizations` y
+> `betaAppReviewDetail`, que siguen vacíos, y pasar un beta review aparte.
+>
+> ⚠️ Los builds de prod usan **Stripe en modo live**: toda donación que
+> complete un tester es un cargo real. Probar con el monto mínimo y
+> reembolsar desde Stripe. Los builds de TestFlight expiran a los 90 días.
+
+> **Rechazo 2.1 del 2026-11-25 y lo que enseñó.** La v1.0 (build 16) se
+> rechazó por crash al abrir: `flutter_haptic_feedback` hacía
+> `keyWindow?.rootViewController as! FlutterViewController` en su
+> `register(with:)`, con `keyWindow` en nil durante el arranque → SIGTRAP
+> antes de correr Dart. No se importaba en ningún lado. Se sacó en el PR #78
+> y la v1.0 se reenvió con el build 19.
+>
+> - **Todo plugin con código iOS se registra al arrancar aunque nadie lo
+>   importe.** Una dependencia muerta en `pubspec.yaml` puede tirar la app.
+>   Sacar las que no se usan.
+> - **Ningún build va a revisión sin abrirse antes en un iPhone físico** por
+>   TestFlight (grupo `Internal Testers`). Ni `flutter analyze` ni el build
+>   verde de Codemagic detectan un crash de arranque.
+> - Los crash logs de TestFlight se leen por API, sin Xcode:
+>   `GET /v1/apps/6836943643/betaFeedbackCrashSubmissions` y después
+>   `/v1/betaFeedbackCrashSubmissions/{id}/crashLog` (campo `logText`).
+> - **`ios/Runner/GoogleService-Info.plist` no está en el target de Xcode y es
+>   del proyecto de TEST** (`pushka-app-ioel-test`, bundle `com.pushka.app`).
+>   Firebase se configura desde `firebase_options_*.dart`. No agregarlo al
+>   target: la app de prod hablaría con el proyecto equivocado. Por eso
+>   Google Sign-In lee el client id de `GIDClientID` en `Info.plist`, que tiene
+>   que coincidir con `iosClientId` de `firebase_options_prod.dart` y con su
+>   forma invertida en `CFBundleURLSchemes`.
 
 ### Stripe Dashboard checklist before going live
 
